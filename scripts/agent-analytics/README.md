@@ -276,7 +276,7 @@ decision, not made by this PR.
 advisories that surface tempdoc 886 §2.2/§2.3's two findings at the moment they matter, instead
 of only in a post-hoc report:
 
-- **`spawn-cost-hint.mjs`** (matcher `Agent`) fires when a subagent call returns. It resolves
+- **`spawn-cost-hint.mjs`** (Claude-only matcher `Agent`) fires when a subagent call returns. It resolves
   the spawn's OWN `subagents/agent-*.jsonl` transcript — joining on `tool_use_id` against every
   sibling `*.meta.json`'s `toolUseId` (the synchronous-spawn case), or on an `agentId:` line the
   `tool_response` text carries for an async/background spawn with no `toolUseId` recorded — reads
@@ -293,22 +293,20 @@ of only in a post-hoc report:
   the last ~256KB of `transcript_path` (never the whole file — transcripts reach hundreds of MB),
   retrying once at ~2MB if no assistant usage line turns up (a single trailing tool_result can
   exceed 256KB and push the last assistant line out of the first tail read), to find the LAST
-  assistant `usage` snapshot, computing `contextTokens = input + cache_read + cache_creation`.
-  Once per threshold per session (state under
-  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it prints a reminder at 300k and
-  500k tokens naming the two remedies 886 §2.2 identifies: `/compact <hint>` at the next task
-  boundary, or `/rewind` if abandoning the current path. **Re-arms**: any call whose context drops
-  back below 300k (e.g. after a `/compact`) clears both threshold flags for that session, so a
-  later climb back past 300k/500k fires again rather than staying silent forever (independent-review
+  usage snapshot. Claude computes `contextTokens = input + cache_read + cache_creation` and uses
+  the established 300k/500k thresholds. Codex reads the latest rollout `token_count` event and
+  uses 75%/90% of its reported `model_context_window`. Once per threshold per session (state under
+  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it names the active harness's
+  compaction remedy. **Re-arms**: Claude clears both flags below 300k; Codex clears them below 70%
+  of its model window. A later climb can therefore fire again rather than staying silent forever (independent-review
   fix — the pre-fix version fired once per session for life). Like `build-counter.mjs`'s per-session
   state, `context-ceiling-state/<session_id>.json` is **not swept on SessionEnd**
   (`dispatch.mjs`'s cleanup list covers `turn-count`/`repeat-buffer`/`build-fails` only) — a known,
   small (one file per session, a few hundred bytes each), harmless pile, not yet addressed.
 
 Both are registered in `governance/agent-hooks.v1.json` (`role: "advisory"`) with a unit-test
-`bite` entry, wired into `.claude/settings.local.json[.example]` (regenerated via
-`node scripts/codegen/gen-agent-hooks-wiring.mjs` / `--emit-local-example` — never hand-edited),
-and listed in `.claude/rules/hooks-reference.md`'s Hint hooks section. `node scripts/governance/run.mjs
---gate hook-integrity --mode gate` verifies wiring/load/bite; Codex's `hooks.json` equivalents are
-documented as optional in `docs/how-to/wire-codex-cli-into-the-otlp-sink.md` (886 PR 3) and are not
-governed by this manifest.
+`bite` entry. Claude wiring is generated into `.claude/settings.local.json[.example]`; Codex
+wiring is generated into `.codex/hooks.json` and enters through `codex-hook-adapter.mjs`.
+`spawn-cost-hint` is an explicit Codex exclusion because current rollouts do not expose its
+required parent-tool-to-spawn join. `node scripts/governance/run.mjs --gate hook-integrity
+--mode gate` and `node scripts/ci/check-codex-agent-parity.mjs` verify the two projections.

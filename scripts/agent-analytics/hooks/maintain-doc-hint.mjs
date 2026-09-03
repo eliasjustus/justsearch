@@ -56,8 +56,18 @@ function resolveTranscriptPath(input) {
   return null;
 }
 
-// Collect Edit/Write target file_paths from the transcript JSONL (normalized set).
-function editedFiles(transcriptPath) {
+function patchPaths(command) {
+  if (typeof command !== 'string') return [];
+  return [...command.matchAll(/^(?:\*\*\*\s+(?:Add|Update|Delete)\s+File:\s*(.+?)|\*\*\*\s+Move to:\s*(.+?))\s*$/gmi)]
+    .map((match) => (match[1] ?? match[2]).trim());
+}
+
+/**
+ * Collect successful edit targets from Claude transcripts and Codex rollouts.
+ * Codex's strongest success signal is its event_msg FileChange item; direct
+ * apply_patch calls are a fallback for rollout versions without that item.
+ */
+export function editedFiles(transcriptPath) {
   const files = new Set();
   let text;
   try {
@@ -73,11 +83,31 @@ function editedFiles(transcriptPath) {
     } catch {
       continue;
     }
-    if (obj?.type !== 'assistant' || !Array.isArray(obj?.message?.content)) continue;
-    for (const b of obj.message.content) {
-      if (b?.type === 'tool_use' && (b.name === 'Edit' || b.name === 'Write') && b.input?.file_path) {
-        files.add(normalizePath(b.input.file_path));
+    if (obj?.type === 'assistant' && Array.isArray(obj?.message?.content)) {
+      for (const b of obj.message.content) {
+        if (b?.type === 'tool_use' && (b.name === 'Edit' || b.name === 'Write') && b.input?.file_path) {
+          files.add(normalizePath(b.input.file_path));
+        }
       }
+      continue;
+    }
+
+    const completedItem = obj?.type === 'event_msg' && obj?.payload?.type === 'item_completed'
+      ? obj.payload.item
+      : null;
+    if (completedItem?.type === 'FileChange' && completedItem.changes) {
+      for (const filePath of Object.keys(completedItem.changes)) files.add(normalizePath(filePath));
+      continue;
+    }
+
+    const item = obj?.type === 'response_item' ? obj.payload : null;
+    if (item?.type === 'custom_tool_call' && item.name === 'apply_patch') {
+      for (const filePath of patchPaths(item.input)) files.add(normalizePath(filePath));
+    } else if (item?.type === 'function_call' && item.name === 'apply_patch') {
+      let args = item.arguments;
+      try { args = JSON.parse(args); } catch { /* older rollouts may store raw patch text */ }
+      const command = typeof args === 'object' ? args?.command : args;
+      for (const filePath of patchPaths(command)) files.add(normalizePath(filePath));
     }
   }
   return files;

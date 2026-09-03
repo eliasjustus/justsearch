@@ -1,0 +1,9 @@
+name = "worker"
+description = "Implementation-focused JustSearch worker for a bounded, independently verifiable change in its own worktree."
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Read AGENTS.md and the relevant canonical documentation. Work only on the
+bounded task in the parent brief and only in your assigned worktree. Preserve
+unrelated changes, never perform destructive git or publication actions, run
+the named acceptance checks, and report exact files changed plus evidence.
+"""

@@ -1,7 +1,7 @@
 /**
- * Single-authority reader for CLAUDE.md's `## Hard Invariants`.
+ * Single-authority reader for AGENTS.md's `## Hard invariants`.
  *
- * The invariants have ONE home (CLAUDE.md). Any consumer that needs them —
+ * The cross-harness invariants have ONE home (AGENTS.md). Any consumer that needs them —
  * notably `subagent-guide.mjs`, which injects them into subagents that don't
  * see CLAUDE.md — must PROJECT from this reader, never hand-copy them. A
  * hand-copy drifts: `subagent-guide` previously inlined invariants 1-4 and
@@ -18,10 +18,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const CLAUDE_MD = resolve(REPO_ROOT, 'CLAUDE.md');
+const AGENTS_MD = resolve(REPO_ROOT, 'AGENTS.md');
 
 /**
- * Parse the `## Hard Invariants` numbered list out of CLAUDE.md, stripping each
+ * Parse the `## Hard invariants` numbered list out of AGENTS.md, stripping each
  * item's trailing `<!-- rule:* -->` anchor.
  *
  * @returns {string[]} invariant texts in order (e.g. "**Head never touches
@@ -29,23 +29,31 @@ const CLAUDE_MD = resolve(REPO_ROOT, 'CLAUDE.md');
  */
 export function hardInvariants() {
   try {
-    const lines = readFileSync(CLAUDE_MD, 'utf8').split(/\r?\n/);
+    const lines = readFileSync(AGENTS_MD, 'utf8').split(/\r?\n/);
     const out = [];
     let inSection = false;
+    let current = null;
     for (const raw of lines) {
       const line = raw.trimEnd();
       if (/^##\s+Hard Invariants/i.test(line)) {
         inSection = true;
         continue;
       }
-      if (inSection && /^##\s+/.test(line)) break; // next section header ends it
+      if (inSection && /^##\s+/.test(line)) {
+        if (current) out.push(current);
+        break;
+      }
       if (!inSection) continue;
       const m = line.match(/^\d+\.\s+(.*)$/);
       if (m) {
+        if (current) out.push(current);
         const text = m[1].replace(/<!--\s*rule:[a-z0-9-]+\s*-->\s*$/i, '').trim();
-        if (text) out.push(text);
+        current = text || null;
+      } else if (current && /^\s+\S/.test(raw)) {
+        current += ` ${line.trim()}`;
       }
     }
+    if (current && !out.includes(current)) out.push(current);
     return out;
   } catch {
     return [];

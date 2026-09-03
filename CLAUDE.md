@@ -2,18 +2,21 @@
 
 # JustSearch — Claude Code Instructions
 
-This file provides guidance to Claude Code when working with code in this repository.
+`AGENTS.md` is the compact cross-harness contract. This file is the Claude Code
+delivery surface for that contract plus Claude-specific workflow details.
 
 Canonical entry points: `docs/llms.txt` (docs index), `docs/tempdocs/` (active work).
 
 ## Hard Invariants (Do Not Violate)
 
-1. **Head never touches Lucene** - Delegate all index IO to Worker via gRPC <!-- rule:head-never-touches-lucene -->
-2. **Local API trust boundary** - loopback bind, Host allowlist, mutation token (ADR-0046) <!-- rule:loopback-only-network -->
-3. **No legacy endpoints** - Don't resurrect removed APIs (`/api/search`, `/api/settings`) <!-- rule:no-legacy-endpoints -->
-4. **Verify, don't guess** - Use `/api/debug/state` and `/api/health` for lifecycle, `/infra/capabilities` for `host.*` sub-API contract versions; not log grepping <!-- rule:verify-dont-guess -->
-5. **Frontend is Lit, not React** - Canonical docs describe the Lit/`shell-v0` web-components stack; the React stack is retired (ADR-0032) <!-- rule:frontend-stack-is-lit -->
-6. **No per-language search levers** - Search analysis is locale-invariant (ICU + NFC + lowercase); the engine is multilingual by construction via the multilingual model stack, with no per-language analyzer/field/stopwords/spelling-dictionary/curated-synonym artifact to author or maintain (ADR-0043, tempdoc 581) <!-- rule:language-agnostic-analysis -->
+<!-- generated:agent-invariants:start — source: AGENTS.md; run: node scripts/docs/agent-instructions-sync.mjs -->
+1. **Head never touches Lucene.** All index I/O belongs to the Worker and is reached through gRPC. <!-- rule:head-never-touches-lucene -->
+2. **Preserve the local API trust boundary.** Bind to loopback, enforce the Host allowlist, validate MCP Origin, and require the per-boot mutation token where ADR-0046 requires it. <!-- rule:loopback-only-network -->
+3. **Do not resurrect legacy endpoints.** `/api/search` and `/api/settings` are removed contracts. <!-- rule:no-legacy-endpoints -->
+4. **Verify, do not guess.** Use `/api/debug/state` and `/api/health` for lifecycle state and `/infra/capabilities` for `host.*` contract versions. <!-- rule:verify-dont-guess -->
+5. **The frontend is Lit, not React.** The active UI is the `shell-v0` web-components stack. <!-- rule:frontend-stack-is-lit -->
+6. **Search analysis is locale-invariant.** Do not add per-language analyzers, fields, stopwords, spelling dictionaries, or curated synonym authorities. The multilingual model stack supplies multilingual behavior. <!-- rule:language-agnostic-analysis -->
+<!-- generated:agent-invariants:end -->
 
 ## Agent Discipline
 

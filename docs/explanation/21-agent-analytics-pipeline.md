@@ -12,8 +12,9 @@ The agent analytics pipeline tracks behavioral patterns — how agents use tools
 All scripts live under `scripts/agent-analytics/`. All data lives under `tmp/agent-telemetry/` (gitignored). The composite process-hygiene score that once sat on top of the session reports is retired — what it measured, and why it cannot be re-measured, is recorded below under [Retired: process-hygiene scoring](#retired-process-hygiene-scoring).
 
 > **Liveness is per-layer, not per-pipeline.** This doc describes several layers with different
-> health. The **hook layer** (`hooks/`, `lib/`) is wired in `.claude/settings.json` and fires on
-> every session — verify with `governance/agent-hooks.v1.json` and the `hook-integrity` gate. The
+> health. The **hook layer** (`hooks/`, `lib/`) is projected from
+> `governance/agent-hooks.v1.json` into Claude and Codex routing. Verify it with the
+> `hook-integrity` and `check-codex-agent-parity` gates. The
 > **analysis scripts** (`analyze-session`, `cost-session`, `baseline-economics`,
 > `cache-efficiency`, …) are maintainer CLI tools run on demand; nothing invokes them on a
 > schedule, so an empty or stale store under `tmp/agent-telemetry/` is expected, not a fault. The
@@ -29,8 +30,8 @@ The `hooks/export-session-env.mjs` `SessionStart` hook still writes `JUSTSEARCH_
 ## Architecture
 
 ```text
-Claude Code hooks ──> NDJSON event stream ──> Session reports ──> Trend reports
-                      (append-only)           (per session)       (on demand)
+Claude/Codex hooks ──> NDJSON event stream ──> Session reports ──> Trend reports
+                       (append-only)           (per session)       (on demand)
                                                     └──> Outcome evaluations (LLM-as-judge, optional)
 ```
 
@@ -198,12 +199,13 @@ Two harnesses are covered: **`claude-code`** (`lib/ledger/claude-adapter.mjs`, w
 
 ### OTLP sink normalisation (886 §12 PR 3)
 
-`otlp-sink.py`'s `decode_metrics` is the one place either harness's token-usage metric is decoded (`_attrs`, `~line 47`; `decode_metrics`, `~line 77`). Since 886 §12 PR 3 it additionally normalises every decoded data point onto the OTel GenAI semantic-convention vocabulary: for a data point whose metric name is in the module-level `GENAI_TOKEN_MAP` table (currently `claude_code.token.usage{type}` and `codex.turn.token_usage{token_type}`), `_genai_normalize` appends a flat twin record — `{name: 'gen_ai.usage', normalized: true, attributes: {...original attributes, 'gen_ai.system', 'gen_ai.request.model', 'gen_ai.token.kind'}, value, time_unix_nano}` — into the SAME `metrics.ndjson` stream as the original, unmodified record. `gen_ai.token.kind` is one of `input`/`output`/`cache_read`/`cache_creation` (Claude) or additionally `reasoning` (Codex); Codex's `total` type is deliberately skipped (derivable as input+output, not a new axis). Because Codex's raw `input` type already *includes* cached tokens (the OpenAI convention, unlike Claude's `input` which excludes `cacheRead`/`cacheCreation`), the normalised record for that point carries an explicit `gen_ai.input_includes_cache_read: true` flag so a cross-harness reader cannot silently sum the two harnesses' "input" as the same quantity. A third harness needing this vocabulary is one new `GENAI_TOKEN_MAP` entry, not a new code path. `loadCostsFromOtlp` (`lib/telemetry-io.mjs`) reads `gen_ai.usage` records first when present and skips the matching original point (keyed on session + `time_unix_nano` + raw type) so the two are never double-counted; archives written before this change carry no `gen_ai.usage` records at all, so the fallback to the original `claude_code.token.usage` reading runs unchanged for them. See `docs/how-to/wire-codex-cli-into-the-otlp-sink.md` for wiring Codex CLI's own `[otel]` exporter at this sink.
+`otlp-sink.py`'s `decode_metrics` is the one place either harness's token-usage metric is decoded (`_attrs`, `~line 47`; `decode_metrics`, `~line 77`). Since 886 §12 PR 3 it additionally normalises every decoded data point onto the OTel GenAI semantic-convention vocabulary: for a data point whose metric name is in the module-level `GENAI_TOKEN_MAP` table (currently `claude_code.token.usage{type}` and `codex.turn.token_usage{token_type}`), `_genai_normalize` appends a flat twin record — `{name: 'gen_ai.usage', normalized: true, attributes: {...original attributes, 'gen_ai.system', 'gen_ai.request.model', 'gen_ai.token.kind'}, value, time_unix_nano}` — into the SAME `metrics.ndjson` stream as the original, unmodified record. Claude emits number data points; current Codex emits histogram points, whose token value is `HistogramDataPoint.sum`. `gen_ai.token.kind` is one of `input`/`output`/`cache_read`/`cache_creation` (including Codex `cache_write_input`) or additionally `reasoning` (Codex); Codex's `total` type is deliberately skipped (derivable as input+output, not a new axis). Because Codex's raw `input` type already *includes* cached tokens (the OpenAI convention, unlike Claude's `input` which excludes `cacheRead`/`cacheCreation`), the normalised record for that point carries an explicit `gen_ai.input_includes_cache_read: true` flag so a cross-harness reader cannot silently sum the two harnesses' "input" as the same quantity. A third harness needing this vocabulary is one new `GENAI_TOKEN_MAP` entry, not a new code path. `loadCostsFromOtlp` (`lib/telemetry-io.mjs`) reads session-attributed `gen_ai.usage` records first when present and skips the matching original point (keyed on session + `time_unix_nano` + raw type) so the two are never double-counted; archives written before this change carry no `gen_ai.usage` records at all, so the fallback to the original `claude_code.token.usage` reading runs unchanged for them. Codex CLI 0.153.0 does not put `session.id` on token metric points; those remain useful aggregate live evidence but are deliberately not guessed into a session row. The rollout ledger remains Codex's per-session historical authority. See `docs/how-to/wire-codex-cli-into-the-otlp-sink.md` for exporter wiring.
 
 ## Implementation Components
 
 | File | Purpose |
 |------|---------|
+| `hooks/codex-hook-adapter.mjs` | Codex hook entry point. Maps Codex event/tool/transcript shapes to the shared manifest contract, runs matching shared handlers sequentially, and combines block decisions, updated inputs, and additional context. Claude-only bindings are explicitly excluded in code. |
 | `hooks/dispatch.mjs` | Async entry point for all hook events. Reads stdin JSON, validates session_id, branches on event type, appends one NDJSON line. |
 | `hooks/export-session-env.mjs` | Sync SessionStart hook. Writes `JUSTSEARCH_AGENT_SESSION_ID` into `CLAUDE_ENV_FILE` for later Bash commands in the same Claude session. |
 | `hooks/intervene.mjs` | Sync PreToolUse hook (matcher: Read, Edit). Auto-injects `limit: 200` for files >8KB. Tracks per-session read/edit counts for compact-save orientation data. |
@@ -228,7 +230,7 @@ Two harnesses are covered: **`claude-code`** (`lib/ledger/claude-adapter.mjs`, w
 | `lib/ledger/boundary-check.mjs` | Pure `findBoundaryViolations(sourceText, filename)` — the §10.4 boundary rule as an importable function (independent-review SHOULD-FIX 4), not inline test logic, so `boundary.test.mjs` can prove the checker catches a violation (side-effect import, multi-line `import {...} from`), not just that today's files pass. |
 | `lib/ledger/index.mjs` | Harness merge point. Exports `listCalls({harnesses, sinceMs, untilMs, projectFilter})` → `{calls, toolEvents, sessions, skipped}`, never throws. |
 | `hooks/spawn-cost-hint.mjs` | Advisory PostToolUse hook (matcher: `Agent`; 886 §12 PR 4 / §2.3). On a completed spawn, resolves that spawn's OWN `subagents/agent-*.jsonl` transcript — primary join on `tool_use_id` against each `*.meta.json`'s `toolUseId`, fallback to an `agentId:` line the async-spawn `tool_response` text carries — parses it via `lib/ledger/claude-adapter.mjs`'s `callsFromClaudeTranscript`, and prints one line: calls, peak context, output tokens, actual vs requested model, cost (`n/a` on an unpriced model, never a silent `$0`). Silent when unresolvable. |
-| `hooks/context-ceiling-hint.mjs` | Advisory PostToolUse hook (matcher: every tool; 886 §12 PR 4 / §2.2). Reads only the tail (~256KB) of `transcript_path` for the LAST assistant `usage` snapshot, computes `contextTokens = input + cache_read + cache_creation`, and — once per threshold per session, via a small state file under `tmp/agent-telemetry/context-ceiling-state/` — prints a reminder at 300k and 500k naming `/compact` and `/rewind`. |
+| `hooks/context-ceiling-hint.mjs` | Advisory PostToolUse hook (matcher: every tool; 886 §12 PR 4 / §2.2). Reads only the transcript tail. Claude uses the last assistant usage snapshot and fixed 300k/500k thresholds; Codex uses the latest rollout `token_count.last_token_usage` and dynamic 75%/90% thresholds from `model_context_window`. State re-arms below the recovery threshold and recommends each harness's compaction command. |
 | `context-residency.mjs` | The unmeasured variable tempdoc 886 §2 found: context tokens re-presented **per call**, not cache-hit rate. Sections (a-c) read the neutral ledger (harness-neutral by construction): per-call context distribution by harness × lineage-kind (main vs spawn/fork) × model (p50/p75/p90/p99/max, total context/output, ctx/out ratio); share of context tokens and cache-read-priced cost above `--cap` (fails closed on an unpriced model — counts tokens, never prices at silent `$0`); the compaction ledger (trigger breakdown, pre/post tokens, durationMs). Section (d) — compounded residency, tokens × calls-resident × cache-read-rate, reset at each compaction boundary — reads raw Claude transcripts directly (same precedent as `cache-efficiency.mjs`'s TTL taxonomy: no neutral `Call`/`ToolEvent` axis for a plain text/thinking block's size), so it reports `claude-code` only. Productionises `tmp/tokeff/{deep,deep3,deep4}.mjs` (886 §12 PR 2). CLI: `--since <ISO>` (default trailing 30 days), `--until`, `--harness claude-code\|codex-cli\|all`, `--cap <tokens>` (default 200000), `--json`. Synthetic calls are excluded from every distribution. |
 | `spawn-economics.mjs` | Joins spawn/fork lineage (already on every Claude `Call`: `agentType`, requested vs actual model, parent session) to COST (the ledger stores token axes, not dollars — priced per call via each axis's own rate) and `firstUserMessageChars` (opening-turn chars, read off the raw spawn transcript — same no-neutral-axis rationale as `context-residency.mjs` §d; a mixed proxy, not a clean "brief length" — a skill-invoked subagent's opening turn is the skill body, not an Agent-tool brief). Tables: requested→actual model, by `agentType`, run-length buckets (`[0-10,10-30,30-60,60-120,120-250,250-500,500+]`, so `120-250` is `calls >= 120`) with cost share, top-N by cost. Codex has no per-spawn lineage yet (every Call is `lineage.kind:'main'`), so a multi-agent Codex session (`session.multiAgent`) is reported as ONE row in a separate table, not fabricated per-spawn. Productionises `tmp/tokeff/deep3.mjs` (886 §12 PR 2). CLI: `--since`, `--until`, `--harness`, `--json`, `--top N` (default 20). |
 | `overhead-taxonomy.mjs` | Tempdoc 743 Phase 2's WAITING / RE-ORIENTATION / HOOK-FRICTION / CEREMONY taxonomy (byte-faithful category definitions since the scratchpad rescue). Default window is **trailing 30 days** (886 §12 PR 2 — a bare invocation previously hardcoded 2026-06-18..07-16 and so returned 0 sessions on any later date); pass `--since`/`--until` explicitly to reproduce the original T1 figures. Its own private `firstTranscriptTimestamp` copy was retired in favor of `lib/transcript-store.mjs`'s (886 §12 PR 5b). CLI: `--since`, `--until`, `--projects-root`. |
@@ -242,7 +244,13 @@ Two harnesses are covered: **`claude-code`** (`lib/ledger/claude-adapter.mjs`, w
 
 ### Hook Configuration
 
-In `.claude/settings.local.json`:
+`governance/agent-hooks.v1.json` is the binding authority. Claude's generator
+projects `.claude/settings.json`; Codex's generator projects a single adapter
+entry per supported event into `.codex/hooks.json`. The single adapter preserves
+manifest order because Codex otherwise runs same-event command handlers
+concurrently.
+
+Claude-specific behavior:
 - Hook entries across multiple event types
 - `export-session-env.mjs` runs first on `SessionStart` so later Bash commands inherit `JUSTSEARCH_AGENT_SESSION_ID`
 - Analytics hooks (`dispatch.mjs`) use `"async": true` — never block the agent
@@ -251,6 +259,14 @@ In `.claude/settings.local.json`:
 - `compact-restore.mjs` is wired on both `SessionStart` and `SessionEnd`
 - 5s timeout for hot-path hooks; 30s for SessionEnd
 - **Kill switch:** `JUSTSEARCH_DISABLE_HOOKS=1` disables all session-affecting hooks via `hook-base.runHook` / `hooksDisabled` (tempdoc 520 P1c)
+
+Codex-specific behavior:
+
+- `apply_patch`, unified shell execution, and native agent events are normalized to the shared Edit/Write, Bash, and Agent matchers.
+- `PostToolUseFailure`, `CwdChanged`, and `InstructionsLoaded` have no Codex event equivalent and are not generated.
+- `subagent-model-guard`, `spawn-cost-hint`, and `taskcreate-guard` are explicit semantic exclusions, not silent no-ops.
+- `compact-restore` injects recovery context directly and does not write a Claude rule file in Codex sessions.
+- The same `JUSTSEARCH_DISABLE_HOOKS=1` kill switch applies.
 
 ### Hook Interaction
 

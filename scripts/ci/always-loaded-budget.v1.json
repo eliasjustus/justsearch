@@ -1,16 +1,17 @@
 {
   "version": 1,
   "unit": "bytes",
-  "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3). Every session loads CLAUDE.md + .claude/rules/*.md unconditionally; this caps that context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: WIRED into .github/workflows/ci.yml (public-claims job) as of tempdoc 799 — before that it ran nowhere and the set drifted 18.5% past ceiling across four sessions that each logged it red. Kept as a CI lint rather than a kernel gate per 582 R3 (extend the proven meta-gate, do NOT author a new kernel gate).",
+  "$comment": "Always-loaded agent-doc budget RATCHET (tempdoc 620 Move 3, extended for Codex in tempdoc 920). Codex loads AGENTS.md; Claude loads CLAUDE.md + .claude/rules/*.md. This caps each harness's unconditional context. Each file's size must stay <= its ceiling, and the ceiling only ratchets DOWN: run `node scripts/ci/check-always-loaded-budget.mjs --rebalance` after content migrates out (Moves 1/2: generation, the consult-register, skill/doc relocation) to shrink the ceiling to the new size. A net-new always-loaded addition that regrows a file past its ceiling fails the check — UNLESS the growth is justified and declared via `node scripts/ci/check-always-loaded-budget.mjs --bump <file> --reason \"<why>\"`, which raises that ceiling to current size and records the reason in `bumps` (tempdoc 618 §13: an explicit, auditable raise, not silent ceiling surgery). ~tokens = bytes/4. Wiring: WIRED into .github/workflows/ci.yml (public-claims job) as of tempdoc 799 — before that it ran nowhere and the set drifted 18.5% past ceiling across four sessions that each logged it red. Kept as a CI lint rather than a kernel gate per 582 R3 (extend the proven meta-gate, do NOT author a new kernel gate).",
   "ceilings": {
-    "CLAUDE.md": 22406,
+    "CLAUDE.md": 22589,
     ".claude/rules/agent-lessons.md": 9811,
     ".claude/rules/branch-safety.md": 12921,
     ".claude/rules/context-efficiency.md": 1912,
     ".claude/rules/hooks-reference.md": 2878,
-    ".claude/rules/slice-execution.md": 4667
+    ".claude/rules/slice-execution.md": 4667,
+    "AGENTS.md": 8306
   },
-  "totalCeiling": 54595,
+  "totalCeiling": 63084,
   "bumps": [
     {
       "file": "CLAUDE.md",
@@ -165,6 +166,20 @@
       "to": 9811,
       "reason": "residue-2 close-out (909 review): extend utf8-bulk-edits check with a NUL-byte diff assertion",
       "ts": "2026-09-02T18:24:58.009Z"
+    },
+    {
+      "file": "AGENTS.md",
+      "from": 0,
+      "to": 8306,
+      "reason": "tempdoc 920: Codex requires a compact always-loaded cross-harness safety, startup, worktree, stack, delegation, and verification contract",
+      "ts": "2026-09-03T11:14:44.393Z"
+    },
+    {
+      "file": "CLAUDE.md",
+      "from": 22406,
+      "to": 22589,
+      "reason": "tempdoc 920: identify AGENTS.md as cross-harness authority and delimit its generated hard-invariant projection",
+      "ts": "2026-09-03T11:14:44.440Z"
     }
   ]
 }

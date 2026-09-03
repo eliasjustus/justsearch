@@ -1,0 +1,562 @@
+---
+name: jseval
+description: >-
+  TRIGGER when: running eval datasets, profiling indexing pipeline, measuring
+  throughput, polling backend status, writing bash/node scripts to monitor
+  /api/status, comparing run results, ingesting test corpora, waiting for
+  enrichment readiness, checking search quality metrics, benchmarking indexing
+  speed, or verifying pipeline changes with live data. Also TRIGGER when about
+  to use curl to poll the backend, write a polling loop, or time a pipeline run
+  manually. Use jseval instead of ad-hoc scripts. If jseval is missing a feature
+  you need, propose an improvement to jseval rather than building a workaround.
+---
+<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
+
+> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
+
+# jseval — Search Evaluation & Pipeline Profiling
+
+Use `python -m jseval` for ALL evaluation, profiling, and benchmarking.
+Do NOT write ad-hoc bash/node scripts. If jseval can't do what you need,
+**improve jseval** (`scripts/jseval/`) rather than building a workaround.
+
+## Benchmark model-cost policy (current — 2026-06-23)
+
+**Run agentic / utility benchmarks on cheap models only (haiku-class) for now, to save money.** Haiku is the
+cheapest agent tier by a wide margin — ≈3× cheaper per query than sonnet, ≈13× cheaper than opus (tempdoc 624
+§R6: ~$0.12/q haiku vs ~$0.45 sonnet vs ~$1.80 opus). Every eval command already defaults to `--model haiku`;
+keep it there.
+
+- **Higher batch on the cheap model is fine — encouraged, even.** More queries + seeds buy statistical power
+  (McNemar significance, a tighter seed envelope) and haiku makes them affordable: a 100q × 3-condition ×
+  5-seed run is ≈ **$200**. Scale n and seeds freely on haiku.
+- **Multi-tier (sonnet / opus) sweeps require explicit user budget sign-off.** That is the expensive part — a
+  full 3-tier matrix is ~$1.8–3.6k, dominated by opus (~13× haiku). Do not run sonnet/opus benchmarks without
+  the user authorizing the spend.
+- Rationale: developers accept a cheap-model benchmark for cost reasons; the marginal value of expensive tiers
+  (cross-model generalization + an accuracy claim) is gated on budget *and* a contamination-resistant corpus
+  (tempdoc 635). Lead with token-efficiency — it is contamination-robust and already significant at floor scale.
+
+**`tier2-eval` quality runs must be attributable to a real chat model (tempdoc 842).** It records the local
+LLM's `served_model` and hard-errors if that model is a compact dev-tier profile, so a poisoned baseline
+can't happen by accident. Pass `--allow-compact-model` only for plumbing/smoke runs whose numbers you do
+NOT intend to compare against standard-model baselines — activate the standard profile
+(`ai_activate {chatProfile:"standard"}`) for any quality-sensitive tier-2 run instead.
+Note: an ambient `JUSTSEARCH_CHAT_PROFILE` in your shell reaches `runHeadlessEval`
+backends through the env whitelist — leave it unset for quality campaigns (the
+served-model guard is the backstop, not the primary control).
+
+<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+
+<!-- source: docs/reference/jseval-pipeline-reference.md -->
+
+# jseval Pipeline Reference
+
+`python -m jseval` is the canonical **agent-only** tool for dataset
+evaluation, pipeline profiling, and throughput benchmarking. It is not
+designed for human developers — all output and progress reporting is
+optimized for machine consumption. Agents should use jseval for ALL
+eval/profiling work instead of ad-hoc bash/node scripts. When jseval
+lacks a feature, improve it (`scripts/jseval/`) rather than building
+workarounds.
+
+## Quick Reference
+
+### Ingest + eval (most common)
+
+```bash
+# Ingest SciFact, wait for ALL enrichments, run queries
+python -m jseval run --dataset scifact --modes lexical,hybrid --pipeline
+
+# Quick iteration (10 queries, skip ingest)
+python -m jseval run --dataset scifact --modes hybrid --max-queries 10 --skip-ingest
+
+# Full lifecycle: start backend, clean data, ingest, wait, query, stop
+python -m jseval run --dataset scifact --modes lexical --pipeline \
+  --start-backend --clean --timeline tmp/timeline.tsv
+
+# Full lifecycle with LLM (Brain/llama-server) enabled
+# -Pllm=true auto-detects llama-server from the dev layout
+python -m jseval run --dataset multihop --modes hybrid --pipeline \
+  --start-backend --llm --clean
+
+# From YAML config file
+python -m jseval run --config eval-run.yaml --start-backend
+```
+
+### Compare runs
+
+```bash
+# Compare two eval runs for regression
+python -m jseval compare tmp/eval-results/run-a tmp/eval-results/run-b
+
+# Fail CI on regression (includes pipeline timing comparison)
+python -m jseval compare run-a run-b --fail-on-regression
+```
+
+### Benchmarks
+
+```bash
+# Indexing throughput (Claim B)
+python -m jseval ingest-bench --corpus-dir tmp/eval-corpora/scifact
+
+# Engine-only indexing (Claim A)
+python -m jseval engine-bench --corpus <path>
+
+# kNN latency
+python -m jseval knn-bench
+```
+
+### Standing ratchets (engine-quality gates)
+
+Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions; the
+`search-engine-hint` hook nudges them after engine/inference/MCP-surface edits. All share
+`jseval/ratchet_kernel.py` (load baselines → resolve run → compare → report) and project their floors from a
+canonical source (never hand-typed).
+
+```bash
+# Relevance (nDCG@10 mean) — floor projects from release.v1.json
+python -m jseval relevance-gate --data-dir <dir> --dataset beir/scifact
+# Performance (CE-stage p50 latency / throughput / resident footprint) — floor projects from release.v1.json
+python -m jseval perf-gate      --data-dir <dir> --dataset scifact
+# Recall-leak (cross-mode leak_rate — a leg's correct answer dropped before the judge; needs leg-modes run)
+python -m jseval leak-gate      --data-dir <dir> --dataset beir/scifact
+# LLM-generation latency/throughput (TTFT / e2e / tokens-sec) — needs a bench, not an eval run; AI must be active
+python -m jseval llm-bench --base-url <api-url> --output-dir <d> && python -m jseval llm-gate --bench-file <d>/llm-bench.json
+# Agent-utility (condition-C absolute-accuracy floor on the util-smoke smoke corpus — tempdoc 673; DETECTION,
+# not the near-null realistic with-tool-vs-baseline delta 624 reports) — reads a utility-comparison.v1 RECORD
+# directly (not a run-dir projection); costs a real paid agent-call run, so it's deliberate/periodic, not
+# routinely re-run like the four above.
+python -m jseval utility-gate --record <utility-comparison.v1.json> --corpus golden/util-smoke
+```
+
+Re-pin after a deliberate change: `perf-gate --update-baseline` (re-pins from the run); `leak-gate-derive --datasets
+<slugs>`; `llm-gate --bench-file <f> --update-baseline`; `utility-gate --record <f> --update-baseline` (or
+`utility-gate-derive --records <f1,f2>` for multiple corpora at once). Relevance re-baselines when
+`release.v1.json` is recomposed (`jseval release --latest-per-dataset`). Floor files:
+`scripts/jseval/{relevance,perf,llm-gen,utility-ratchet}-baselines.v1.json` + `leak-gate-baselines.v1.json`.
+Exit codes: 0 = within band, 1 = regression, 2 = data/projection missing.
+
+### Chunk-completeness validity guard (tempdoc 718)
+
+A fresh `--clean` index build can silently ship with its chunk (RAG passage) sub-system absent
+(tempdoc 717) — the run reports `COMPLETED`, gates pass, and vector-mode nDCG is simply worse (a
+measured case: 0.34 instead of a healthy 0.62), with no error anywhere. This is a
+**measurement-integrity** hole distinct from 717's enrichment-correctness bug: any consumer that
+reads the degenerate index (release scorecard, ratchets, a founder A/B) scores it as healthy.
+
+Every `run` embeds a `chunk_completeness` block in `summary.json` (sibling of `manifest` /
+`corpus_identity`): `{"expected": N, "observed": M, "verdict":
+"ok"|"chunk-free"|"degenerate"|"unevaluable", "reasons": [...], "threshold_chars": T|null}`.
+`expected` is computed OFFLINE from the corpus's `corpus.jsonl` — a count of docs whose
+materialized content (`title + "\n\n" + text`) reaches the chunk threshold —
+before/independent of any ingest, so a degenerate enrichment pipeline can never move it (the
+anti-spoof property: a build that suppresses chunk-doc *creation* still can't fake the *offline*
+expectation). `observed` is `chunkDocCount`/`chunkVectorCoveragePercent` from the run-completion
+`/api/status`, corroborated by `chunk_merge` in vector mode's `pipeline_tracking.observed`. A
+`chunk-free` verdict (`expected == 0`, e.g. a short-doc BEIR/golden corpus) is a legitimate pass,
+distinguished from a `degenerate` verdict (`expected > 0` but the index shows none/incomplete
+chunk docs) — the two 0-chunk cases that are otherwise bit-identical at the pipeline-output layer.
+
+**Threshold provenance (tempdoc 821 §3-C3).** The threshold is no longer a jseval-side mirror of
+`ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`; the worker's enrichment auditor OWNS it and publishes
+it on the wire as `worker.enrichment.chunkMinChars`, which `resolve_chunk_threshold_chars()` reads
+off the same `/api/status` snapshot the observed counts come from. There is deliberately **no local
+fallback constant** — a fallback would re-create the mirror. `threshold_chars` in the block records
+which value the expectation was computed against (`null` = the backend published none). A backend
+that predates the field reports `0` for it (proto3 scalar — never absent), which yields the fourth
+verdict, `unevaluable`: the expectation could not be computed at all. `unevaluable` is deliberately
+NOT collapsed into `chunk-free`, because `chunk-free` is the affirmative claim "no corpus doc
+reaches the threshold" — a fact that path never established, and one that is affirmatively wrong on
+a degenerate build. It does not gate (back-compat), but `assert_chunk_completeness` prints a loud
+stderr stand-down warning rather than passing silently, so a degenerate build measured against an
+old backend can no longer read as a clean pass.
+
+All four ratchet gates (`relevance-gate`, `perf-gate`, `leak-gate`, `union-recall-gate`) refuse an
+un-overridden `degenerate` run before evaluating anything, exit code 2:
+
+```bash
+python -m jseval relevance-gate --data-dir <dir> --dataset golden/legal-clerc
+# {"exit_code": 2, "error": "chunk-completeness guard: ...", "expected": 340, "observed": 0, ...}
+```
+
+Escape hatch (deliberate chunk-incomplete certification only): `--allow-chunk-incompleteness` per
+gate command, or `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` — mirrors `--allow-engine-mismatch` /
+`JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL`. A run predating the guard (no `chunk_completeness` block)
+is treated as `ok` — backward-compatible. Implementation: `jseval/chunk_completeness.py`
+(`resolve_chunk_threshold_chars`, `expected_chunk_docs`, `chunk_completeness_verdict`,
+`unevaluable_result`) + `ratchet_kernel.assert_chunk_completeness`.
+
+**Dual-source-of-truth risk — closed (tempdoc 821 §3-C3).** The 2000-char mirror of
+`ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS` that tempdoc 718 flagged as drift-prone has been
+deleted; the oracle reads the backend's published `worker.enrichment.chunkMinChars` instead (see
+*Threshold provenance* above), and stands down loudly (`unevaluable`) rather than guessing when a
+backend does not publish it.
+
+### Diagnostics
+
+```bash
+# Check backend health, models, GPU before running eval
+python -m jseval preflight
+
+# Discover worker.log path from running backend
+python -m jseval log-path
+
+# List available datasets and modes
+python -m jseval datasets
+python -m jseval modes
+```
+
+### Interactive development (360)
+
+```bash
+# Start eval backend and keep running until Ctrl-C (attaches if already running)
+python -m jseval dev [--clean]
+
+# Send a single search and show full pipeline execution (CE status, timing)
+python -m jseval search --query "vitamin D" [--mode hybrid] [--ce] [--json]
+
+# Tail Worker/Head logs with structured filtering
+python -m jseval logs [--source worker|head] [--filter rerank] [--tail] [--level WARN]
+```
+
+### Long detached runs (Windows)
+
+A long pipeline run launched through the Bash tool's `run_in_background` gets
+**killed mid-run** (observed repeatedly, e.g. mid-enrichment). Launch it fully
+detached instead, and stamp a `.done` marker with the exit code on completion:
+
+```powershell
+# Runs in a PowerShell that outlives the tool call; writes the exit code to a marker.
+Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+  '-Command',
+  'python -m jseval run --dataset scifact --output-dir tmp/run1; $LASTEXITCODE | Out-File tmp/run1.done'
+)
+```
+
+Then wait on the `tmp/run1.done` marker with the `Monitor` tool, and read results
+from the run's `--output-dir` (`tmp/run1`) — do **not** parse the process's
+redirected stdout/stderr: PowerShell 5.1 writes those UTF-16 and wraps stderr
+lines, so the run's own JSON artifacts are the reliable source.
+
+> **`--clean` caveat:** `jseval run --clean` does **not** reliably wipe the index /
+> `watched_roots` (observations-logged defect). When a clean state matters between
+> arms, wipe `tmp/headless-eval-data` manually.
+>
+> **Windows console encoding:** Inspect AI's rich display crashes with
+> `UnicodeEncodeError` when stdout is redirected or backgrounded — cp1252 cannot encode
+> its braille spinner. Set `INSPECT_DISPLAY=none PYTHONUTF8=1` for **any** backgrounded
+> `eval_set` / `jseval utility-run` invocation.
+
+### Invoking jseval from a worktree (Windows)
+
+`jseval` is normally pip-installed editable against wherever it was **first** installed,
+so invoking it from a *different* worktree once silently ran the wrong copy. It now
+**fails closed** instead, printing the exact remedy inline:
+
+```text
+PYTHONPATH=<worktree>/scripts/jseval
+```
+
+Follow the printed fix. `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL=1` overrides the guard
+deliberately — use it only when you actually intend to run another checkout's copy.
+
+### Observability (tempdoc 400 Layer 1/4/5)
+
+Post-§23 closure, jseval is the single CLI surface for every piece of
+tempdoc 400 observability. Every subcommand below reads/writes the
+jseval-owned data root (tempdoc 716): `--data-dir` defaults to
+`scripts/jseval/tmp/`, which hosts both `eval-results/` (where a defaults
+`run` writes) and `cohort_baselines/` (where `calibrate` files envelopes) —
+defaults-only invocations compose without path flags. Pre-716 calibration
+state left inside a backend data dir still resolves read-only, with a
+deprecation WARN. See `docs/explanation/08-observability.md` for the schema.
+
+```bash
+# Calibrate cross-run non-determinism envelope (LR1-b).
+# --data-dir = where the envelope is FILED (default: jseval data root);
+# --backend-data-dir = isolated Worker dir the sub-runs execute against.
+python -m jseval calibrate --dataset scifact --modes full --runs 5 \
+  --max-queries 50 [--backend-data-dir <path>]
+
+# Capture drift baseline from N warm runs (LR4-g, Phase 6/6.2 opt-in)
+# Requires >= 3 runs at stable SHA; blocks cold-start outliers
+python -m jseval calibrate-drift-baseline --cohort-hash H \
+  --from-runs R1 R2 R3
+
+# Extract sigma from an existing envelope for nightly-baseline refresh
+python -m jseval recalibrate-nightly-baseline \
+  --cohort-hash H [--output env.txt]
+
+# Nightly-style quality gate (Phase 6/6.13; was scripts/ci/phase3_*)
+python -m jseval gate --baseline-stdev 0.00108 \
+  --tolerance-pct 10 [--report-out <json>]
+
+# Layer-5 experiment runners
+python -m jseval counterfactual --dataset scifact --max-queries 50
+python -m jseval shadow-eval --dataset scifact \
+  --policy-a <a.json> --policy-b <b.json>
+python -m jseval bench-concurrency --dataset scifact --concurrency 4 \
+  --max-queries 50 [--warmup N]
+python -m jseval bisect --run-a <run_dir> --run-b <run_dir> \
+  [--synthesize --dataset scifact --modes full --dry-run]
+```
+
+**Operator guides:** `docs/how-to/recalibrate-phase3-baseline.md`,
+`docs/how-to/calibrate-drift-baseline.md`,
+`docs/how-to/interpret-bisect-output.md`,
+`docs/how-to/triage-psi-drift.md`,
+`docs/how-to/envelope-staleness-policy.md`.
+
+## Available Datasets
+
+Use `python -m jseval datasets` to list all available datasets,
+including local mixed/golden corpora discovered on disk.
+
+| Slug | Source | Notes |
+|------|--------|-------|
+| `scifact` | BEIR | 5183 docs, 300 queries, academic |
+| `nfcorpus` | BEIR | nutrition/health |
+| `arguana` | BEIR | argumentation |
+| `fiqa` | BEIR | financial QA |
+| `webis-touche2020` | BEIR | controversial topics |
+| `mixed/<name>` | local | Scanned from `datasets/mixed/` |
+| `mixed/ohr-bench-clean` | local | OHR-Bench ground-truth text (7 domains, 1000 docs, 962 queries) |
+| `mixed/ohr-bench-tika-pdf` | local | OHR-Bench original PDFs through Tika StructuredContentExtractor |
+| `mixed/ohr-bench-got-moderate` | local | OHR-Bench GOT OCR extraction (moderate noise) |
+| `mixed/ohr-bench-mineru-moderate` | local | OHR-Bench MinerU extraction (moderate noise) |
+| `golden/<name>` | local | Scanned from `datasets/golden/` |
+
+## Available Modes
+
+Use `python -m jseval modes` to list all modes with their components.
+
+| Mode | Resolution | Components |
+|------|-----------|------------|
+| `lexical` | client | sparse (BM25) |
+| `vector` | client | dense |
+| `splade` | client | SPLADE |
+| `bm25_splade` | client | sparse + SPLADE |
+| `dense_splade` | client | dense + SPLADE |
+| `full` | client | sparse + dense + SPLADE |
+| `hybrid` | server | sparse + dense + RRF + LambdaMART |
+
+Client-resolved modes send an explicit pipeline config. Server-resolved
+modes (like `hybrid`) send a mode string for backend resolution.
+
+**Trap — an omitted leg mode silently lowers union recall.** The
+`staged_recall_accounting` projection computes its leg union over
+`LEG_MODES = ("vector", "lexical", "splade")` and keeps only the modes
+actually present (`projections/staged_recall_accounting.py:76`, `:240`).
+A mode you did not run is *absent from the union*, not an error, and the
+projection still reports `status: "ok"` as long as one leg plus a final
+mode (`hybrid`/`full`) is present. So `--modes lexical,vector,hybrid`
+looks green while under-measuring `leg_union_recall`. Measured instance:
+a cell certified at union 0.75 with all three legs re-measured at 0.48 —
+exactly its vector recall, i.e. one contributing leg — with `splade`
+omitted, enough to fail a 0.65 floor after a full paid + GPU run. **When
+a run feeds `union_recall` / `leak_floor` gates, or is compared against a
+threshold derived elsewhere, pass all three leg modes:**
+`--modes lexical,vector,splade,hybrid --embedding --splade`. Calibration
+runs additionally require `--embedding` with `hybrid` as the headline
+mode. The structural check is satisfied by two legs, so an omitted
+`splade` produces a green-looking projection with a silently lowered
+`leg_union_recall` — every `union_recall` gate then fails after the run.
+
+## What jseval Handles
+
+- **Corpus materialization**: Downloads and converts datasets to .txt
+- **Ingestion**: Adds watched root, waits for file watcher to start
+- **Readiness wait**: Polls `/api/status` with progress logging every
+  30s (embedding %, SPLADE %, NER count, chunk %, GPU %, VRAM, heap)
+- **Pipeline wait**: `--pipeline` waits for ALL enrichment stages
+  (embedding, SPLADE, chunks, NER) to reach completion
+- **Timeline recording**: `--timeline out.tsv` captures status snapshots
+  with GPU/VRAM/enrichment counters per row
+- **Pipeline summary**: Per-stage completion times written to
+  `summary.json → pipeline_timing`
+- **Query execution**: Runs queries, computes nDCG@10/P@1/R@10
+- **Result comparison**: A/B diff with per-query rank analysis and
+  pipeline timing comparison
+- **Backend lifecycle**: `--start-backend` starts runHeadlessEval,
+  `--clean` wipes the whole data dir, auto-stops via taskkill on
+  completion. `--clean` is **fail-closed** (tempdoc 711 item 4) and,
+  since tempdoc 716, **unconditional**: calibration state
+  (`cohort_baselines/`, `non_determinism_envelopes/`) is filed under the
+  jseval data root (`scripts/jseval/tmp/`), never inside the backend
+  data dir, so nothing in the backend dir is protected from the wipe.
+  Because the Worker JVM (spawned by the Head as a grandchild of the
+  Gradle process) has been observed to survive the process-tree
+  `taskkill` and keep the Lucene index open, the wipe runs a
+  double-keyed orphan-Worker sweep (matched by the index lock file's
+  recorded PID/start-time **and** by the process command line's
+  `-Djustsearch.data.dir=` value, so it can never target another
+  session's process on a shared machine) before retrying any failed
+  deletion. If a survivor remains after the sweep and retry, the run
+  raises a hard error naming the survivor and the last-known holder
+  PID/cmdline instead of silently proceeding on a dirty data dir. This
+  also runs on `stop_backend()` after every `--start-backend` run, not
+  only under `--clean`.
+  `--llm` enables Brain/llama-server with autostart and extended
+  health timeout (waits for model load + inference readiness).
+  Auto-detects llama-server from the dev layout; override with
+  `JUSTSEARCH_SERVER_EXE` if needed. **Cold starts may fail once**
+  (Worker port discovery races with GGUF disk read) — retry resolves it
+- **Index reset**: `--reset` calls `POST /api/debug/reset-index` before
+  ingestion — wipes index without process restart (requires running
+  backend in eval mode). Mutually exclusive with `--start-backend`.
+- **Preflight checks**: `jseval preflight` reports loaded models, GPU
+  status, enrichment coverage, and `embedding_model_sha256` from
+  commit metadata
+- **YAML config**: `--config run.yaml` for reproducible runs with GPU
+  settings, dataset, modes in a single file
+- **Crash detection**: Fails fast after 5 consecutive status fetch
+  failures; checks `meta.workerRpcStale` for Worker-down detection
+- **NDJSON progress**: `--json` emits structured progress objects to
+  stderr and the final result to stdout
+- **Output**: Structured `summary.json` with metrics, git SHA,
+  pipeline timing, comparability tracking
+
+## Key Flags
+
+| Flag | Effect |
+|------|--------|
+| `--pipeline` | Wait for ALL enrichments (implies `--embedding --splade`) |
+| `--embedding` | Wait for embedding coverage ≥ 99.9% |
+| `--splade` | Wait for SPLADE coverage ≥ 99.9% |
+| `--start-backend` | Start runHeadlessEval, stop when done |
+| `--llm` | Enable LLM/llama-server in backend (requires `--start-backend`) |
+| `--clean` | Clean data dir before start (requires `--start-backend`); fail-closed — wipes the WHOLE backend data dir (tempdoc 716: calibration state lives under `scripts/jseval/tmp/`, not here), sweeps orphan Worker processes on a delete failure, raises rather than proceeding if a survivor remains (711 item 4) |
+| `--reset` | Reset index via API before ingestion (eval mode, no restart) |
+| `--timeline PATH` | Record status snapshots to TSV during wait |
+| `--config PATH` | Load YAML run configuration file |
+| `--max-queries 0` | Ingest only, no queries (pipeline profiling). When 0, `--modes` is not required. Scoring uses filtered qrel count (only evaluated queries), not full corpus query count (353). |
+| `--skip-ingest` | Query only, skip materialization and ingestion |
+| `--corpus-dir PATH` | Use existing corpus dir as-is (no materialization) |
+| `--allow-errors` | Continue on query errors (don't abort run) |
+| `--lambdamart` | Enable LambdaMART reranking check |
+| `--json` | NDJSON progress to stderr, JSON result to stdout |
+| `-v` / `--verbose` | DEBUG logging (httpcore/httpx suppressed) |
+| `--history-db PATH` | Shared history database for trend tracking |
+| `--search-load-qpm N` | Drive N queries/minute (evenly spaced) against `POST /api/knowledge/search` on a background thread **during** ingest + the readiness/pipeline wait, and record a `search_load` block in `summary.json` (mode, queries issued, errors, latency p50/p95/max, start/end). Queries come from the dataset's own query file, in `hybrid` mode. Off by default; nothing changes when it is absent (885) |
+| `--search-load continuous` | As above but back-to-back with one request in flight (the continuous MCP-style agent loop). Mutually exclusive with `--search-load-qpm` |
+| `--first-search-probe` | After every batch of `--first-search-probe-files` (default 50) newly indexed documents, issue ONE search and record its latency separately from `--search-load*`. Reopen-on-demand moves the segment-open cost onto exactly that query, so averaging it into steady-state traffic hides it. Off by default (885 item 19) |
+
+That endpoint is the one that writes the Worker's MMF activity slot, so these two flags are how a
+throughput measurement is taken *with foreground search traffic present* — see tempdoc 885's
+chunk-1 baseline for the measured effect. Both are ignored (with a WARN) on a run that does no
+ingest, i.e. `--skip-ingest` or an adopted index-cache entry.
+
+**Trap — `datasets/` resolves differently per command.** `jseval run`
+resolves `datasets/` from the **repo root** and ignores the current
+working directory (`corpora.py:306` → `REPO_ROOT / "datasets"`), while
+`corpus-certify --datasets-dir datasets` is a `click.Path` resolved
+against **cwd** (`commands/corpus.py:184-197`). Materializing into
+`scripts/jseval/datasets/` therefore satisfies `corpus-certify` run from
+`scripts/jseval/` and then fails `jseval run` with
+`FileNotFoundError: corpus.jsonl not found at <repo-root>/datasets/...`.
+Materialize into the **repo-root `datasets/`** and pass `--datasets-dir`
+as an absolute path. Both `datasets/` and `datasets-*/` are gitignored,
+so nothing there survives a fresh checkout.
+
+## Output Structure
+
+The jseval data root (`scripts/jseval/tmp/`; tempdoc 716) hosts every
+durable jseval artifact — run results and calibration state — so every
+gate/calibrate reader's `--data-dir` defaults compose with `run`'s
+default `--output-dir`:
+
+```text
+scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
+  eval-results/<timestamp>_<dataset>/      # `run` default --output-dir
+    summary.json            # Metrics, config, git SHA, pipeline timing
+    <mode>_per_query.json   # Per-query scores and ranks
+    <mode>_run.trec         # TREC-format run file
+  cohort_baselines/<hash>/  # `calibrate` envelopes + drift baselines
+```
+
+**Additive schema key, always present (885 item 19).** Every `run` emits a `cadence` block in
+`summary.json`, whether or not `--first-search-probe` was passed — this is a disclosed schema
+addition, not a no-op: a consumer that enumerates `summary.json` keys will see it on every run.
+It carries `reopen_total`, `commit_total` and `segments_since_reopen` read from the Worker
+telemetry NDJSON (`index.runtime.*`), plus `first_search_after_indexing` (null unless the probe
+ran). Every field degrades to `null` when the Worker does not publish the metric, so the comparison
+columns exist on every row rather than appearing only on some — which is the point, an arm table
+with missing columns cannot be read.
+
+**Local prerequisite for the full pytest suite.** `python -m pytest scripts/jseval/tests` needs the
+optional extras: `pip install -e "scripts/jseval[dev,agent]"`. Without them four test modules fail
+at *collection* (`inspect_ai`, `hypothesis`), so the run reports collection errors and executes
+nothing rather than reporting a partial pass.
+
+`summary.json` fields agents typically need:
+- `per_mode.<mode>.aggregate_metrics["nDCG@10"]` — headline quality
+- `per_mode.<mode>.pipeline_tracking.observed` — which retrieval legs ran
+- `per_mode.<mode>.comparable` — whether metrics are trustworthy
+- `pipeline_timing.stages` — per-stage completion times (when `--pipeline`)
+- `pipeline_timing.inference.<stage>.total_ms` — cumulative ORT inference wall time (350)
+- `pipeline_timing.inference.<stage>.batches` — batch count for this stage (350)
+- `pipeline_timing.inference.<stage>.avg_ms_per_batch` — average per-batch time (350)
+- `pipeline_timing.encoder_profiles.<encoder>.calls` — total ORT inference calls (357)
+- `pipeline_timing.encoder_profiles.<encoder>.ort_p50_us` — ORT call latency p50 in microseconds (357)
+- `pipeline_timing.encoder_profiles.<encoder>.ort_p95_us` — ORT call latency p95 (357)
+- `pipeline_timing.encoder_profiles.<encoder>.ort_p99_us` — ORT call latency p99 (357)
+- `pipeline_timing.encoder_profiles.<encoder>.phases` — per-phase cumulative time map (357)
+- `pipeline_timing.encoder_profiles.<encoder>.seq_len` — sequence length stats (357)
+- `pipeline_timing.primary_indexing.docs_per_s` — indexing rate
+- `ingest.worker_throughput_docs_per_sec` — primary indexing throughput
+- `search_config` — active search pipeline config snapshot from `/api/status` (343)
+- `env_overrides` — env vars applied by jseval config that differed from defaults (343)
+- `git_sha` — for reproducibility
+
+## YAML Run Config
+
+```yaml
+dataset: scifact
+modes: [lexical, hybrid]
+embedding: true
+splade: true
+pipeline: true
+max_queries: 0
+output_dir: tmp/eval-results
+
+gpu:
+  embed:
+    enabled: true
+    layers: 32
+    mem_mb: 2048
+  splade:
+    enabled: true
+
+backend:
+  clean: true
+  llm: true
+
+# Passthrough env vars (arbitrary)
+env:
+  JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY: REINDEX
+```
+
+## Source Code
+
+jseval lives at `scripts/jseval/`. Key files:
+- `jseval/_paths.py` — Canonical path constants (`REPO_ROOT`, default output dirs)
+- `jseval/types.py` — Shared types (`IngestConfig` dataclass for parameter threading)
+- `jseval/cli.py` — Click CLI, subcommand registration
+- `jseval/run.py` — Eval run orchestration, summary building
+- `jseval/ingest.py` — Corpus ingestion, readiness wait
+- `jseval/readiness.py` — Status polling, readiness conditions, progress logging
+- `jseval/retriever.py` — Query execution, doc ID resolution
+- `jseval/scoring.py` — ir-measures wrapper for nDCG/AP/RR
+- `jseval/corpora.py` — Dataset registry, BEIR + local loading
+- `jseval/timeline.py` — Timeline recording, pipeline summary computation
+- `jseval/preflight.py` — Backend health and model identity checks
+- `jseval/backend.py` — Backend lifecycle (start/stop)
+- `jseval/run_config.py` — YAML config loading and env mapping
+- `jseval/compare_runs.py` — Statistical comparison with pipeline timing
+- `jseval/provenance.py` — Per-hit and per-run evidence extraction
+- `jseval/artifacts.py` — Output file writing (JSON, TREC)
+
+When improving jseval, follow existing patterns in these files.
+
+<!-- generated:end -->

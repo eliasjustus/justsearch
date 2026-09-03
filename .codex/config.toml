@@ -1,0 +1,15 @@
+# Shared Codex configuration for this trusted repository. Machine credentials,
+# telemetry endpoints, and personal model preferences belong in ~/.codex/config.toml.
+
+[mcp_servers.justsearch-dev]
+command = "node"
+# Resolve the active checkout/worktree root at process start. A bare relative
+# script path breaks when Codex is launched from a module subdirectory.
+args = ["-e", "const c=require('node:child_process'),p=require('node:path'),u=require('node:url');const r=c.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim();process.chdir(r);import(u.pathToFileURL(p.join(r,'scripts','dev','justsearch-dev-mcp.mjs')).href)"]
+required = true
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3

@@ -1,9 +1,9 @@
 /**
  * Tempdoc 681 §De-risk — regression guard for hard-invariants.mjs.
  *
- * `hardInvariants()` is the single-authority projection of CLAUDE.md's
+ * `hardInvariants()` is the single-authority projection of AGENTS.md's
  * `## Hard Invariants` into every subagent brief (`subagent-guide.mjs`), and it
- * is fail-open: a parse-breaking restructure of CLAUDE.md would silently strip
+ * is fail-open: a parse-breaking restructure of AGENTS.md would silently strip
  * the invariants from all subagent briefs. No test pinned the parse contract
  * before 681's instruction-layer edits; this file is that pin.
  *
@@ -27,7 +27,7 @@ function check(name, fn) {
 
 const inv = hardInvariants();
 
-check('parses a non-empty invariant list from the live CLAUDE.md', () => {
+check('parses a non-empty invariant list from the live AGENTS.md', () => {
   assert.ok(Array.isArray(inv), 'returns an array');
   assert.ok(inv.length >= 6, `expected >= 6 invariants, got ${inv.length} — the section shrank or the parse broke`);
 });

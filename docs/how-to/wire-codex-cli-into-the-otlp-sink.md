@@ -43,18 +43,19 @@ merge into an existing `[otel]` section):
 [otel]
 environment = "dev"
 log_user_prompt = false
-
-[otel.exporter]
-otlp-http = { endpoint = "http://127.0.0.1:4318", protocol = "binary" }
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol = "binary" } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/traces", protocol = "binary" } }
+metrics_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/metrics", protocol = "binary" } }
 ```
 
 - `log_user_prompt = false` keeps prompt text out of the emitted
   `codex.user_prompt` log event — this repo's telemetry capture is
   local-only and never leaves the machine, but redaction at the
   source is still the safer default.
-- `endpoint` targets the same loopback port (`4318`) and path
-  (`/v1/metrics`, `/v1/traces`, `/v1/logs`) the sink already listens
-  on for Claude Code — no second receiver, no second port.
+- `exporter`, `trace_exporter`, and `metrics_exporter` target the sink's
+  explicit `/v1/logs`, `/v1/traces`, and `/v1/metrics` routes. Current Codex
+  configures these independently; setting only `exporter` does not redirect
+  metrics from its default backend.
 - `protocol = "binary"` (OTLP/HTTP protobuf) matches what the sink's
   `ROUTES` table decodes; this is the same wire format Claude Code
   already sends.
@@ -62,20 +63,20 @@ otlp-http = { endpoint = "http://127.0.0.1:4318", protocol = "binary" }
 Restart Codex CLI (or start a fresh session) after editing the config
 so it picks up the new `[otel]` block.
 
-## The sink must be running
+## Sink startup
 
-For a Claude Code session, the `otlp-sink-ensure` hook starts
-`otlp-sink.py` automatically — see
-`docs/explanation/21-agent-analytics-pipeline.md`. A **Codex-only**
-session (no Claude Code session active in this repo at the same time)
-has no such hook, so start the sink by hand before running Codex:
+The repository's generated `.codex/hooks.json` projects the shared
+`otlp-sink-ensure` SessionStart binding through
+`scripts/agent-analytics/hooks/codex-hook-adapter.mjs`. A trusted Codex
+session therefore starts or reuses the same ownerless sink automatically,
+just as Claude Code does. If hooks are disabled or you are diagnosing startup,
+the equivalent manual command is:
 
 ```bash
 python scripts/agent-analytics/otlp-sink.py --port 4318
 ```
 
-Leave it running in a background terminal for the duration of the
-Codex session; it appends to `tmp/agent-telemetry/otlp/{metrics,
+It appends to `tmp/agent-telemetry/otlp/{metrics,
 traces,logs}.ndjson` exactly as it does for Claude Code, and rotates/
 prunes those streams the same way (`docs/explanation/
 21-agent-analytics-pipeline.md`, `RETENTION` in `otlp-sink.py`).
@@ -107,23 +108,26 @@ one of: the `[otel]` block wasn't picked up (restart Codex), the sink
 isn't listening on `4318` (check for a bound-port error), or the turn
 ran before the sink started (start the sink first, then run Codex).
 
-This is a **user-run step** — it needs a live Codex CLI session, which
-an agent worktree cannot start on your behalf.
+Current Codex emits token usage as histogram points; the sink reads each
+point's `sum`. It maps `cached_input` to `cache_read`, `cache_write_input` to
+`cache_creation`, and `reasoning_output` to `reasoning`. As of Codex CLI
+0.153.0 those metric points do not carry `session.id`, so they support the
+aggregate live feed but are not attached to a per-session cost row by
+`loadCostsFromOtlp`. The rollout adapter under `lib/ledger/` remains the
+per-session historical authority. Do not synthesize a session join from timing.
 
-## Optional: Codex hook equivalents (forward pointer, not governed)
+The migration smoke test runs a real non-interactive Codex turn and checks this
+record. For later diagnosis, the same count remains a useful end-to-end probe.
 
-Tempdoc 886 §12 PR 4 adds two Claude Code hints that read context/cost
-off the ledger at the moment they matter: `spawn-cost-hint.mjs`
-(prints a spawn's cost/calls/model on return) and
-`context-ceiling-hint.mjs` (warns at 300k/500k resident context
-tokens). Codex CLI has its own `hooks.json` mechanism
-(`~/.codex/hooks.json`) that could run equivalent checks against the
-same `lib/ledger/codex-adapter.mjs` data — e.g. a `session-end` hook
-that prints context growth for the just-finished turn. This is **not
-wired or governed by this repo** (`agent-hooks.v1.json` and the
-tier-register only cover Claude Code hooks); it is noted here only so
-a future PR 4-equivalent for Codex has a starting pointer instead of
-re-discovering that Codex hooks exist.
+## Hook coverage
+
+Codex hooks are repository-governed: edit `governance/agent-hooks.v1.json` and
+regenerate `.codex/hooks.json`, never hand-edit it. The shared context-ceiling
+hint reads Codex rollout `token_count` events and warns at 75% and 90% of the
+reported model context window. `spawn-cost-hint` remains Claude-only because
+Codex rollouts do not expose a reliable parent-tool-to-spawn transcript join;
+aggregate Codex multi-agent economics remain available through the neutral
+ledger reports.
 
 ## References
 

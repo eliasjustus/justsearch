@@ -132,9 +132,7 @@ def _set_kv_attrs(container, attrs: dict) -> None:
 
 
 def _metric_export_request(metric_name: str, point_attrs: dict, value: int) -> metrics_service_pb2.ExportMetricsServiceRequest:
-    """One resource_metrics -> one scope_metrics -> one Metric (Sum) carrying
-    a single NumberDataPoint, mirroring the shape both harnesses' native OTel
-    exporters send for a token-usage counter."""
+    """One Metric Sum carrying a single NumberDataPoint (Claude shape)."""
     req = metrics_service_pb2.ExportMetricsServiceRequest()
     rm = req.resource_metrics.add()
     sm = rm.scope_metrics.add()
@@ -142,6 +140,21 @@ def _metric_export_request(metric_name: str, point_attrs: dict, value: int) -> m
     m.name = metric_name
     dp = m.sum.data_points.add()
     dp.as_int = value
+    dp.time_unix_nano = 1
+    _set_kv_attrs(dp.attributes, point_attrs)
+    return req
+
+
+def _histogram_metric_export_request(metric_name: str, point_attrs: dict, value: int) -> metrics_service_pb2.ExportMetricsServiceRequest:
+    """One histogram point with sum=value, matching current Codex OTel."""
+    req = metrics_service_pb2.ExportMetricsServiceRequest()
+    rm = req.resource_metrics.add()
+    sm = rm.scope_metrics.add()
+    m = sm.metrics.add()
+    m.name = metric_name
+    dp = m.histogram.data_points.add()
+    dp.count = 1
+    dp.sum = value
     dp.time_unix_nano = 1
     _set_kv_attrs(dp.attributes, point_attrs)
     return req
@@ -179,7 +192,7 @@ class GenAiNormalizationTests(unittest.TestCase):
         self.assertEqual(rec["attributes"]["session.id"], "s1")
 
     def test_codex_cached_input_maps_to_cache_read(self):
-        req = _metric_export_request(
+        req = _histogram_metric_export_request(
             "codex.turn.token_usage",
             {"token_type": "cached_input", "model": "gpt-5-codex"},
             500,
@@ -192,8 +205,21 @@ class GenAiNormalizationTests(unittest.TestCase):
         self.assertEqual(rec["attributes"]["gen_ai.token.kind"], "cache_read")
         self.assertNotIn("gen_ai.input_includes_cache_read", rec["attributes"])
 
+    def test_codex_histogram_sum_is_preserved_and_cache_write_is_mapped(self):
+        req = _histogram_metric_export_request(
+            "codex.turn.token_usage",
+            {"token_type": "cache_write_input", "model": "gpt-5.6-sol"},
+            321,
+        )
+        records = otlp_sink.decode_metrics(req)
+        original = next(r for r in records if r["name"] == "codex.turn.token_usage")
+        normalised = next(r for r in records if r["name"] == "gen_ai.usage")
+        self.assertEqual(original["points"][0]["value"], 321)
+        self.assertEqual(normalised["value"], 321)
+        self.assertEqual(normalised["attributes"]["gen_ai.token.kind"], "cache_creation")
+
     def test_codex_raw_input_flags_cache_inclusion(self):
-        req = _metric_export_request(
+        req = _histogram_metric_export_request(
             "codex.turn.token_usage",
             {"token_type": "input", "model": "gpt-5-codex"},
             1000,
@@ -204,7 +230,7 @@ class GenAiNormalizationTests(unittest.TestCase):
         self.assertIs(normalised[0]["attributes"]["gen_ai.input_includes_cache_read"], True)
 
     def test_codex_total_yields_no_normalised_record(self):
-        req = _metric_export_request(
+        req = _histogram_metric_export_request(
             "codex.turn.token_usage",
             {"token_type": "total", "model": "gpt-5-codex"},
             1500,
