@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * uiModeState — the one app-wide "Simple vs Advanced" UI-mode authority
+ * uiModeState — the one app-wide "Simple vs Detailed" UI-mode authority
  * (tempdoc 557 Q8).
  *
  * The mode is a persisted user preference (settings `ui.mode`). It was only
  * read inside SettingsSurface, so other surfaces couldn't gate advanced-only
  * affordances on it. This tiny shared store lets any surface subscribe — e.g.
- * SearchSurface hides the raw retrieval-trace diagnostics outside Advanced mode
+ * Search surfaces hide raw retrieval-trace diagnostics outside Detailed mode
  * (Q8). Seeded from `/api/settings/v2` at boot; SettingsSurface republishes on
  * load + change. Defaults to 'simple' (hide advanced affordances until known).
  */

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-/** uiModeState — the app-wide Simple/Advanced authority (tempdoc 557 Q8). */
+/** uiModeState — the app-wide Simple/Detailed authority (tempdoc 557 Q8). */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getUiMode,

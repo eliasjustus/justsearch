@@ -48,7 +48,7 @@ graph TD
 *   **Location:** Left vertical strip.
 *   **Purpose:** Top-level navigation between major views.
 *   **Components:**
-    *   **Chat:** (Home) The one interaction window — search, grounded Q&A, and agent runs in escalating intent tiers (tempdoc 577 Goal 3). It **lands in the `retrieve` base tier** (instant file search, no model required); when a chat model is online it auto-escalates the landing to **Documents** (grounded Q&A), so the pure-search landing is the offline / bare state. Past conversations stay reachable from the retrieve landing via the "Continue your last conversation?" card (restoring *loads* a thread to read; only a new turn needs the model). The standalone Search window was retired as a rail peer — Placement DEEPLINK, still URL-routable for the rich facet/trace surface.
+    *   **Search:** (Home) The one interaction window for retrieval, grounded Q&A, and agent runs. It lands in the `retrieve` base tier (instant file search, no model required) and stays there until the user chooses **Ask** for a cited answer or **Delegate** for multi-step agent work. Past conversations stay reachable from the retrieve landing via the "Continue your last conversation?" card. Legacy mode-specific surface IDs remain URL-routable compatibility addresses, not additional rail destinations.
     *   **Library:** Manage indexed folders.
     *   **Brain:** AI Model Configuration & VRAM Monitoring (also surfaces index schema mismatch / reindex-required state).
     *   **System:** System diagnostics and telemetry (hosts Health / Logs / Activity).

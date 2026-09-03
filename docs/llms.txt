@@ -125,6 +125,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Frontend kernel — streaming envelope](reference/ui/frontend-kernel/kernel/05-streaming-envelope.md): The universal multi-frame SSE envelope contract (initial snapshot + delta frames).
 - [Frontend kernel — declarative presentation](reference/ui/frontend-kernel/kernel/06-declarative-presentation.md): The as-built presentation kernel: the DeclaredSurface engine, x-ui-renderer hint dispatch, the frontend Effect vocabulary, behaviour-as-statechart, the four declaration-default surfaces under CORE_DECLARED, the co-projected accessibility facets, and the truth/presentation cut.
 - [Frontend substrate-state map](reference/ui/frontend-substrate-state.md): What frontend framework substrate exists, where it shipped, its current consumer state, and the named user-visible consumer gaps. Graduated 2026-06-09 from the retired 421 kernel draft's R5.1 register (snapshot current through tempdoc 564).
+- [Simple and Detailed UI modes](reference/ui/simple-vs-detailed-mode.md): The app-wide disclosure-level contract, its Lit state authority, projections, and stable wire values.
 
 ### Governance (Policies & SLOs)
 

@@ -22,12 +22,14 @@ document that owns its full meaning.
 | **spec / status** | Use this distinction only for types that declare it: `Spec` is desired operation intent and `Status` is its observed state. Do not generalize the suffixes into a project-wide runtime contract without a named type authority. | [Operation contract authority](../explanation/22-agent-system-architecture.md) |
 | **grant / source tier / risk tier / gate behavior** | A grant is the revocable authorization artifact (single-use capsule or durable grant). `SourceTier × RiskTier` resolves to `GateBehavior`, which selects the authorization ceremony; none of those policy values is itself a grant. | [Agent system architecture](../explanation/22-agent-system-architecture.md) |
 
-## Known unresolved naming decisions
+## Naming decisions
 
-Two product-language decisions remain deliberately open: F-22 concerns the
-fragmented user-facing **Ask** entry points, and F-25 concerns the scope and
-labeling collision between **Simple** and **Advanced/Detailed** modes. This
-glossary does not decide either question. Until owners do, follow the current
-[UI/UX design](../explanation/10-ui-ux-design.md) and
-[Simple versus Advanced mode](ui/simple-vs-advanced-mode.md), and avoid adding
-another label for either concept.
+The app-wide disclosure setting is **Simple** or **Detailed**. The compatible persisted value for
+Detailed remains `advanced`; it is not user-facing terminology. Follow the
+[Simple and Detailed mode reference](ui/simple-vs-detailed-mode.md) and do not introduce another label
+for this setting.
+
+**Search** is the one top-level interaction place. Within it, **Ask** requests a grounded, cited answer,
+**Delegate** starts multi-step agent work, and **Structured** requests field extraction. **Chat** is only
+a subordinate free-conversation mode or compatibility address, not another rail, palette, or split-pane
+destination. Follow the current [UI/UX design](../explanation/10-ui-ux-design.md).

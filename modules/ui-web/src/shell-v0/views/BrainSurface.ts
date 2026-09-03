@@ -3,7 +3,7 @@
  * BrainSurface — Lit-side Brain rail surface (slice 452 phase 9).
  *
  * Self-mounting Surface with full functional parity to React BrainView:
- * install/cancel/repair AI, simple/advanced mode toggle, GPU runtime
+ * install/cancel/repair AI, Simple/Detailed mode toggle, GPU runtime
  * variant activation, inference mode switching, pack import (Tauri),
  * LLM settings, policy banners, runtime status display.
  *
@@ -40,6 +40,12 @@ import {
   type AiRuntimeStatus,
   type PackImportStatus,
 } from '../state/aiStateStore.js';
+import {
+  getUiMode,
+  setUiMode,
+  subscribeUiMode,
+  type UiMode,
+} from '../state/uiModeState.js';
 // Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
 import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
 import {
@@ -134,7 +140,7 @@ interface TraceExplorerResponse {
 // which carries the embedding/schema fields this surface reads).
 
 interface UiSettings {
-  mode?: 'simple' | 'advanced';
+  mode?: UiMode;
 }
 
 interface LlmSettings {
@@ -335,9 +341,9 @@ export function repairRemedyHeadline(remedy: RepairRemedy): string | null {
 export function repairRemedySub(remedy: RepairRemedy): string | null {
   switch (remedy.kind) {
     case 'manual':
-      return 'Automatic repair could not download a file — see AI install in Advanced for the direct link.';
+      return 'Automatic repair could not download a file — see AI install in Detailed for the direct link.';
     case 'repair':
-      return 'A required component is missing — use Repair in Advanced.';
+      return 'A required component is missing — use Repair in Detailed.';
     case 'repair-soft':
       return 'Working, but an expected file is missing — Repair will restore it.';
     default:
@@ -536,6 +542,9 @@ export class BrainSurface extends JfElement {
   private clientRef: OperationClient | null = null;
   private _unifiedAiState: UnifiedAiState | null = null;
   private unsubAi: (() => void) | null = null;
+  private uiModeUnsub: (() => void) | null = null;
+  private modeSaveQueue: Promise<void> = Promise.resolve();
+  private modeSaveRevision = 0;
   private memberTabUnsub: (() => void) | null = null;
   private pollDiagnostics: number | null = null;
 
@@ -553,7 +562,7 @@ export class BrainSurface extends JfElement {
     this.policy = null;
     this.packStatus = null;
     this.systemStatus = null;
-    // Advanced sections start with Runtime open (matching React) + Models
+    // Detailed sections start with Runtime open + Models
     // collapsed by default. Install AI / Search Quality Features collapsed
     // unless install is in flight.
     this.expanded = { runtime: true };
@@ -1019,6 +1028,13 @@ export class BrainSurface extends JfElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    // Tempdoc 923 — Brain, Settings, and the top-bar toggle are projections of the same persisted
+    // ui.mode authority. Mirroring the shared store makes changes propagate immediately; `advanced`
+    // remains the wire value while Detailed is its one user-facing name.
+    this.uiModeUnsub = subscribeUiMode((mode) => {
+      if (this.settings.mode !== mode) this.settings = { ...this.settings, mode };
+      this.requestUpdate();
+    });
     // Tempdoc 571 §11 / 578 — if reached via a member deep-link (core.memory-surface → redirected
     // here), open that member's tab. Drain a pending intent (mounting now) AND subscribe (member
     // deep-link while THIS host is already active still switches the tab).
@@ -1077,6 +1093,8 @@ export class BrainSurface extends JfElement {
     super.disconnectedCallback();
     this.stopAllPolling();
     this.unsubAi?.();
+    this.uiModeUnsub?.();
+    this.uiModeUnsub = null;
     this.memberTabUnsub?.();
     this.memberTabUnsub = null;
   }
@@ -1127,7 +1145,10 @@ export class BrainSurface extends JfElement {
         getAiInstallManifest(this.base()).catch(() => null),
       ]);
       if (settings) {
-        this.settings = settings.ui ?? {};
+        // The boot appearance restore owns persisted-mode seeding. Brain is a projection, not a
+        // second bootstrap writer: a slower settings response must not overwrite a newer top-bar
+        // or Settings choice made while this refresh was in flight.
+        this.settings = { ...(settings.ui ?? {}), mode: getUiMode() };
         this.llm = settings.llm ?? {};
       }
       if (policy) this.policy = policy;
@@ -1285,15 +1306,43 @@ export class BrainSurface extends JfElement {
 
   // ---------- Mode toggle ----------
 
-  private async setMode(mode: 'simple' | 'advanced'): Promise<void> {
-    await this.withBusy('mode', async () => {
-      this.settings = { ...this.settings, mode };
-      await authorizedFetch(this.base() + '/api/settings/v2', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ui: { mode } }),
-      });
+  private async setMode(mode: UiMode): Promise<void> {
+    if (getUiMode() === mode) return;
+    const previous = getUiMode();
+    const revision = ++this.modeSaveRevision;
+    this.settings = { ...this.settings, mode };
+    setUiMode(mode);
+    this.busy = { ...this.busy, mode: true };
+
+    // Serialize mode writes so response ordering cannot persist an older click after a newer one.
+    // Unlike withBusy(), queued clicks are real user intents and must not be mistaken for failures.
+    this.modeSaveQueue = this.modeSaveQueue.then(async () => {
+      let failure: string | null = null;
+      try {
+        const response = await authorizedFetch(this.base() + '/api/settings/v2', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ui: { mode } }),
+        });
+        if (!response.ok) failure = `Couldn't save detail level (HTTP ${response.status}).`;
+      } catch (err) {
+        failure = err instanceof Error ? err.message : String(err);
+      }
+
+      // Only the newest Brain-authored intent controls the visible error/rollback. An older queued
+      // failure cannot undo or obscure a later choice that is still waiting to persist.
+      if (revision === this.modeSaveRevision) {
+        if (failure !== null && getUiMode() === mode) {
+          this.runtimeError = failure;
+          this.settings = { ...this.settings, mode: previous };
+          setUiMode(previous);
+        } else if (failure === null) {
+          this.runtimeError = null;
+        }
+        this.busy = { ...this.busy, mode: false };
+      }
     });
+    await this.modeSaveQueue;
   }
 
   // ---------- Install actions ----------
@@ -1537,7 +1586,7 @@ export class BrainSurface extends JfElement {
   }
 
   private renderHeader(): TemplateResult {
-    const mode: 'simple' | 'advanced' = this.settings.mode ?? 'simple';
+    const mode = getUiMode();
     return html`
       <div class="header">
         <div>
@@ -1545,7 +1594,7 @@ export class BrainSurface extends JfElement {
           <p class="subtitle">Configure local language models</p>
         </div>
         <div class="row">
-          <div class="mode-toggle">
+          <div class="mode-toggle" role="group" aria-label="Detail level">
             <button class=${mode === 'simple' ? 'active' : ''} @click=${() => this.setMode('simple')}>
               Simple
             </button>
@@ -1553,7 +1602,7 @@ export class BrainSurface extends JfElement {
               class=${mode === 'advanced' ? 'active' : ''}
               @click=${() => this.setMode('advanced')}
             >
-              Advanced
+              Detailed
             </button>
           </div>
           <jf-button
@@ -1647,7 +1696,7 @@ export class BrainSurface extends JfElement {
         // missing, name the action; "Installed with limitations" alone tells a user nothing to do.
         // Tempdoc 824 §3.3c/§3.4: which sentence is true also depends on whether the capability is
         // observably running and on whether Repair can still succeed — `deriveRepairRemedy` is the
-        // one place that decides, so this panel and the Advanced one cannot name different remedies.
+        // one place that decides, so this panel and the Detailed one cannot name different remedies.
         label:
           repairRemedyHeadline(repairRemedy) ??
           (this.installStatus?.installedFully === false
@@ -1925,7 +1974,7 @@ export class BrainSurface extends JfElement {
               data-testid="brain-gpu-fallback-hint"
               style="margin-top: 0.75rem"
               >Search features are running on CPU: a GPU component is missing from disk. Use Repair
-              in Advanced to download it.</jf-error-alert
+              in Detailed to download it.</jf-error-alert
             >`
           : nothing}
       </div>
@@ -2079,7 +2128,7 @@ export class BrainSurface extends JfElement {
    * `tracesAvailable: false` — which DiagnosticsController derives purely from whether
    * `<dataDir>/telemetry/traces.ndjson` is a regular file, NOT from the tracing level: with
    * JUSTSEARCH_HEAD_TRACING_LEVEL=none but a leftover traces file on disk, the panel still renders
-   * (verified empirically). Advanced-mode-only for that reason among others.
+   * (verified empirically). Detailed-mode-only for that reason among others.
    * Clicking a row copies its trace_id to the clipboard so it can be looked up in
    * otel-desktop-viewer or grep'd against traces.ndjson.
    */
@@ -2636,7 +2685,7 @@ export class BrainSurface extends JfElement {
       () => html`
         <div style="margin-top: 0.625rem; font-size: var(--font-size-sm)">
           ${/* Tempdoc 840 Phase 5 — the same component list the Simple panel shows (Simple and
-                Advanced are mutually exclusive, so it is never on screen twice). */ ''}
+                Detailed are mutually exclusive, so it is never on screen twice). */ ''}
           ${this.renderComponentList()} ${this.renderTierBreakdown()}
           ${this.installStatus?.packages?.length
             ? this.installStatus.packages.map(
@@ -2822,12 +2871,12 @@ export class BrainSurface extends JfElement {
     // feedback the Simple panel already gets, closing the same gap here.
     const installing = this.deriveAiEngineVerdict().kind === 'installing';
     // Tempdoc 806 B.2 (round-12): ONE condition, ONE named remedy. The SIMPLE panel points at this
-    // panel by name for `repairNeeded` ("A required component is missing — use Repair in Advanced",
+    // panel by name for `repairNeeded` ("A required component is missing — use Repair in Detailed",
     // :1310) while this panel offered Install as the primary CTA for the same condition — the user
     // was sent here for Repair and shown Install. When a required file is missing on disk, Repair is
     // the primary affordance here too; Install stays available (it is a superset), just not primary.
     // Tempdoc 824 §3.3c/§3.4 — the same derivation the Simple panel reads, so "use Repair in
-    // Advanced" cannot land on a panel that has stopped believing Repair is the remedy. Repair is
+    // Detailed" cannot land on a panel that has stopped believing Repair is the remedy. Repair is
     // the primary affordance only while it can still succeed: once a file has failed three
     // consecutive passes at transport, presenting Repair as THE action is the round-16 defect.
     const repairRemedy = deriveRepairRemedy(this.installStatus);
@@ -3224,7 +3273,7 @@ export class BrainSurface extends JfElement {
     if (!this.apiBase && this.apiBase !== '') {
       return html`<div class="empty-state">No API connection. Start the JustSearch backend to configure AI.</div>`;
     }
-    const mode = this.settings.mode ?? 'simple';
+    const mode = getUiMode();
     // Tempdoc 586 §F-1a — true cold start (no snapshot yet from store or refreshAll).
     const loading =
       this.inference == null && this.installStatus == null && this.runtimeStatus == null;
@@ -3262,7 +3311,7 @@ export class BrainSurface extends JfElement {
               )}
               ${this.renderModels()}
               ${this.renderPackImport()}
-              <!-- Developer telemetry: Advanced-only. Both panels expose runtime internals (mode
+              <!-- Developer telemetry: Detailed-only. Both panels expose runtime internals (mode
                    transitions, span/trace IDs) that have no meaning on the first-run Simple panel,
                    where they previously rendered. -->
               ${this.renderTransitionTimeline()}

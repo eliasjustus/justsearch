@@ -68,6 +68,16 @@ function makeRailSurface(id: string, mountTag: string): Surface {
 
 const SEARCH = makeRailSurface('core.search-surface', 'jf-search-surface');
 const LIBRARY = makeRailSurface('core.library-surface', 'jf-library-surface');
+const UNIFIED_SEARCH: Surface = {
+  ...makeRailSurface('core.unified-chat-surface', 'jf-unified-chat-view'),
+  splitPairing: { secondary: 'core.library-surface' },
+};
+const LEGACY_ASK: Surface = {
+  ...makeRailSurface('core.ask-surface', 'jf-chat-shape-mount'),
+  placement: 'DEEPLINK',
+};
+const LEGACY_FREE_CHAT: Surface = { ...LEGACY_ASK, id: 'core.free-chat-surface' };
+const LEGACY_EXTRACT: Surface = { ...LEGACY_ASK, id: 'core.extract-surface' };
 
 function seedTwoSurfaces(): void {
   const catalog: SurfaceCatalog = {
@@ -160,6 +170,37 @@ describe('Shell — slice 492 substrate integration', () => {
     opts()[0]!.click();
     await shell.updateComplete;
     expect(getUiMode()).toBe('simple');
+  });
+
+  it('923 F-22 — normalizes a persisted Ask pane to Search or its Library pair', () => {
+    seedSurfaceCatalog({
+      schemaVersion: '1.0.0',
+      catalogVersion: 1,
+      namespace: 'core',
+      primitive: 'Surface',
+      entries: [LIBRARY, UNIFIED_SEARCH, LEGACY_ASK, LEGACY_FREE_CHAT, LEGACY_EXTRACT],
+    });
+    const shell = document.createElement('jf-shell') as ShellElement & {
+      userConfig?: { secondaryActiveSurface?: string };
+      surfaces: Surface[];
+      resolveSecondarySurface(primaryId: string): Surface | null;
+    };
+    shell.userConfig = { secondaryActiveSurface: 'core.ask-surface' };
+    shell.surfaces = [LIBRARY, UNIFIED_SEARCH];
+
+    expect(shell.resolveSecondarySurface('core.library-surface')?.id).toBe(
+      'core.unified-chat-surface',
+    );
+    expect(shell.resolveSecondarySurface('core.unified-chat-surface')?.id).toBe(
+      'core.library-surface',
+    );
+    for (const legacyId of [
+      'core.ask-surface',
+      'core.free-chat-surface',
+      'core.extract-surface',
+    ]) {
+      expect(shell.resolveSecondarySurface(legacyId)?.id).toBe('core.library-surface');
+    }
   });
 
   describe('connectedCallback bootstrap', () => {

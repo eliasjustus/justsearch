@@ -7,8 +7,9 @@
  * doesn't serialize Lit templates — must render through the element.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import './BrainSurface';
+import { __resetUiModeForTest, setUiMode } from '../state/uiModeState.js';
 
 interface SparklineHost extends HTMLElement {
   settings: { mode?: 'simple' | 'advanced' };
@@ -30,20 +31,23 @@ async function mountAndRender(state: {
   transitions: SparklineHost['transitions'];
 }): Promise<string> {
   const el = document.createElement('jf-brain-surface') as SparklineHost;
-  // The transition timeline (and its sparkline) is Advanced-mode developer telemetry — it was
+  // The transition timeline (and its sparkline) is Detailed-mode developer telemetry — it was
   // moved out of the Simple panel, which is the first-run consumer surface.
+  setUiMode('advanced');
   el.settings = { mode: 'advanced' };
   el.inference = { generation: state.generation, mode: 'offline', activeModelId: null };
   el.transitions = state.transitions;
   document.body.appendChild(el);
   await el.updateComplete;
-  // Scope to the sparkline itself: the Advanced panel's own chrome contains SVG icons, so a
+  // Scope to the sparkline itself: the Detailed panel's own chrome contains SVG icons, so a
   // whole-shadowRoot `<circle` count would no longer measure the sparkline's dots.
   const sparkline = el.shadowRoot?.querySelector('[data-testid="brain-generation-sparkline"]');
   const html = sparkline?.outerHTML ?? '';
   document.body.removeChild(el);
   return html;
 }
+
+afterEach(() => __resetUiModeForTest());
 
 describe('BrainSurface.renderGenerationSparkline', () => {
   it('renders no sparkline when generation is 0', async () => {
