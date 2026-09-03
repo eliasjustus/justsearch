@@ -36,7 +36,17 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
    */
   public static void resetUncomputableWarnedForTest() {
     uncomputableWarned.set(false);
+    lastUnreadableCommitWarned.set("");
   }
+
+  /**
+   * The last directory whose commit could not be read. One unreadable index produces one line, not
+   * one per reader of it: the pre-open check and the open-time guard both ask the same question of
+   * the same bytes, so a corrupt index logged the same WARN twice per boot. Keyed on the path (not a
+   * plain boolean) so a second, genuinely different unreadable generation still says so.
+   */
+  private static final java.util.concurrent.atomic.AtomicReference<String>
+      lastUnreadableCommitWarned = new java.util.concurrent.atomic.AtomicReference<>("");
 
   private final Supplier<Path> indexPathSupplier;
   private final Supplier<Map<String, Object>> expectedMetadataSupplier;
@@ -100,13 +110,16 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       // covers them; the open that follows classifies corruption itself (ComponentsFactory
       // classifies IOException on the reader/writer open as CORRUPT_INDEX) and routes it into the
       // recovery this method must not pre-empt.
-      log.warn(
-          "Could not read committed parity metadata at {} ({}: {}). Treating the index shape as"
-              + " unverified for now and letting the open decide — corruption recovery, a Lucene"
-              + " format upgrade and the open-time guard all live there.",
-          indexPath,
-          e.getClass().getSimpleName(),
-          e.getMessage());
+      String key = indexPath + "|" + e.getClass().getSimpleName();
+      if (!key.equals(lastUnreadableCommitWarned.getAndSet(key))) {
+        log.warn(
+            "Could not read committed parity metadata at {} ({}: {}). Treating the index shape as"
+                + " unverified for now and letting the open decide — corruption recovery, a Lucene"
+                + " format upgrade and the open-time guard all live there.",
+            indexPath,
+            e.getClass().getSimpleName(),
+            e.getMessage());
+      }
       return java.util.List.of();
     }
   }

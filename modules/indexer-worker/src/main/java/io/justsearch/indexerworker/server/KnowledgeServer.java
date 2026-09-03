@@ -980,11 +980,18 @@ public final class KnowledgeServer implements Closeable {
       // tempdoc 628 Stage D-part2: if startup failed because the index is corrupt and could not be
       // auto-recovered (FAIL_CLOSED / recovery-failed), stamp a fatal-reason marker so the Head can
       // offer a "Rebuild index" affordance instead of blind-restarting. This is a controlled exit (the
-      // throw below → IndexerWorker's handler → System.exit), so the write is reliable. Only corruption
-      // writes it — other fatal causes stay generic.
+      // throw below → IndexerWorker's handler → System.exit), so the write is reliable.
+      //
+      // A FAIL_CLOSED schema mismatch is the same kind of fact and was missing (tempdoc 915, live
+      // validation): the refusal reached the Head only as "Worker process crashed (exit code 1)",
+      // with the actual cause visible nowhere but worker.log. It is a deliberate refusal, not a
+      // crash, and it has its own remedy. Other fatal causes stay generic.
       if (isCorruptIndexCause(e)) {
         io.justsearch.ipc.WorkerFatalReasonMarker.write(
             dataDir, io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_CORRUPT);
+      } else if (isSchemaMismatch(e)) {
+        io.justsearch.ipc.WorkerFatalReasonMarker.write(
+            dataDir, io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH);
       }
       closeQuietly();
       throw new IOException("Failed to start KnowledgeServer", e);
@@ -2372,11 +2379,22 @@ public final class KnowledgeServer implements Closeable {
                         this::verifyGreenCommitMetadataBestEffort,
                         this::drainSwitchBufferBestEffort,
                         this::initiateShutdown,
+                        this::flushTelemetryBestEffort,
                         dataDir,
                         log)),
             "migration-cutover");
     migrationCutoverThread.setDaemon(true);
     migrationCutoverThread.start();
+  }
+
+  /**
+   * Writes the pending worker metrics snapshot now rather than at the next 60s tick. Called before
+   * the cutover restart, which otherwise discards the counters the cutover itself produced.
+   */
+  private void flushTelemetryBestEffort() {
+    if (telemetry instanceof LocalTelemetry lt) {
+      lt.flush();
+    }
   }
 
   /**

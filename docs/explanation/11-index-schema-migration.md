@@ -308,6 +308,31 @@ that used to hide it. It is reported rather than propagated because that code ru
 future with no caller left to receive it; the durable handling is the next boot's pre-open detection,
 and in the meantime the status surface already reports `BLOCKED_MISMATCH` with `reindex_required`.
 
+### The compatibility surface describes the generation being SEARCHED
+
+`indexSchemaFpStored`, `indexSchemaCompatState`, `reindexRequired` and `indexedDocuments` all answer
+questions about the index the user's queries reach. That is the **active/Blue** generation, which is
+not always the generation being written:
+
+- during a blue/green migration the write runtime is Green, freshly stamped with the current shape;
+- in the exhausted-brake and deferred-open states there is no write runtime at all.
+
+Reading these off the write runtime made the surface state the opposite of the truth in exactly the
+situations it exists for. Live validation caught both halves: mid-migration it reported
+`COMPATIBLE` / `reindexRequired=false` while every query was being answered from the stale-shape
+Blue, and in the braked state it reported an empty stored fingerprint (which the
+`stored.isEmpty()` branch reads as `BLOCKED_LEGACY` — the wrong remedy) plus a document count taken
+from a job-queue counter rather than from any index. All of them are wired to the **serving**
+runtime, which is non-null in every state.
+
+The mid-migration contract that follows is therefore not a special case: Blue carries the old shape,
+so the ordinary comparison yields `indexSchemaCompatState = BLOCKED_MISMATCH`,
+`reindexRequiredReason = schema_mismatch` and `reindexRequired = true` for as long as the rebuild
+runs, alongside `migration.state = MIGRATING` and the progress fields. After cutover the active
+generation is the new one and the same comparison yields `COMPATIBLE`. `docCount` still reports the
+BUILDING generation while one exists — that is its meaning during a migration — and falls back to
+the serving reader, never to a queue counter, when there is nothing being built.
+
 ## Blue/Green migration model (current MVP)
 
 At a high level:

@@ -273,6 +273,16 @@ const CAUSE_ROWS: ReadonlyArray<{
     wording: 'The search index is corrupt and could not be repaired automatically',
     severity: 'error',
   },
+  // Tempdoc 915 (live validation) - the sibling cause, and the same shape of loss: the worker
+  // REFUSED to start because the index has a different shape than this version writes, and under
+  // FAIL_CLOSED that refusal reached the user as "worker process crashed". The index is intact, so
+  // the wording says shape, not damage. Open-Health fallback for the same reason as its sibling:
+  // the remedy is a configuration change, which no one-click operation performs.
+  {
+    code: 'worker.index_schema_mismatch',
+    wording: 'The search index was built for a different version and the server refused to open it',
+    severity: 'error',
+  },
   // Tempdoc 837 S3 — orderly teardown, not a fault: calm `info`. Distinguishing it from
   // worker.not_configured keeps "we stopped it" from reading as "it was never set up".
   {
@@ -510,6 +520,7 @@ const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
   // would let the banner claim "search is fully working" while nothing is serving it.
   'worker.lost',
   'worker.index_corrupt',
+  'worker.index_schema_mismatch',
   'worker.shut_down',
   'worker.not_connected',
 ]);

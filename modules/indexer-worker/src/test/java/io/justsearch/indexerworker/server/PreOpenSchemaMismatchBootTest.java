@@ -110,6 +110,14 @@ final class PreOpenSchemaMismatchBootTest {
               .anyMatch(m -> m.startsWith("PRE-OPEN PARITY_DIFF key=index_fingerprint")),
           "the pre-open routing must be what refused; got: "
               + appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+      // And the refusal is legible to the Head. Live validation: it arrived as "Worker process
+      // crashed (exit code 1) before writing port to signal file" with /api/health unreachable, and
+      // the index_fingerprint mismatch existed only in worker.log - because only corruption ever
+      // wrote the fatal-reason marker. A deliberate refusal is not a crash.
+      assertEquals(
+          io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH,
+          io.justsearch.ipc.WorkerFatalReasonMarker.readAndClear(layout.dataDir()),
+          "the dying worker must say WHY it refused, in the channel the Head reads");
     } finally {
       root.detachAppender(appender);
       appender.stop();
@@ -197,10 +205,15 @@ final class PreOpenSchemaMismatchBootTest {
       assertTrue(server.isRunning(), "auto-recovery must still get its chance to run");
       assertTrue(server.getPort() > 0, "a Worker with no port is a Worker gone");
       var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
-      assertTrue(
-          messages.stream().anyMatch(m -> m.startsWith("Could not read committed parity metadata")),
-          "pre-open inspection must DECLINE, loudly, rather than answer 'mismatch' to a question"
-              + " it could not read; got: " + messages);
+      assertEquals(
+          1,
+          messages.stream()
+              .filter(m -> m.startsWith("Could not read committed parity metadata"))
+              .count(),
+          "pre-open inspection must DECLINE, loudly, rather than answer 'mismatch' to a question it"
+              + " could not read - and say it ONCE: the pre-open check and the open-time guard ask"
+              + " the same question of the same bytes, and both used to answer in the log; got: "
+              + messages);
       assertNotNull(
           soleSiblingWithSuffix(layout.activePath(), ".bak-"),
           "and the open path's corruption recovery must have run — the damaged index is backed up,"

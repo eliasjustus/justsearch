@@ -281,10 +281,17 @@ final class IndexStatusOps {
       activeDocCount = totalDocs - chunkDocs;
     }
 
+    // "Documents indexed" counts the generation being WRITTEN while one exists — during a rebuild
+    // that is Green, and reporting Blue there would hide the build's progress. When nothing is being
+    // written (the exhausted-brake state, and the deferred window before the writer upgrade) it falls
+    // back to the reader that SERVES search, not to a job-queue counter: `completedCount()` counts
+    // DONE rows in jobs.db, which are ingest jobs and are pruned, so it has no relationship to corpus
+    // size. Live validation caught it reporting 5 while 205 documents were searchable.
+    IndexCountOps writtenOrServedCountOps = ingestCountOps != null ? ingestCountOps : activeCountOps;
     long docCount;
-    if (ingestCountOps != null) {
-      long totalDocs = ingestCountOps.docCount();
-      int chunkDocs = ingestCountOps.countByField(SchemaFields.IS_CHUNK, "true");
+    if (writtenOrServedCountOps != null) {
+      long totalDocs = writtenOrServedCountOps.docCount();
+      int chunkDocs = writtenOrServedCountOps.countByField(SchemaFields.IS_CHUNK, "true");
       docCount = totalDocs - chunkDocs;
     } else {
       docCount = jobQueue.completedCount();

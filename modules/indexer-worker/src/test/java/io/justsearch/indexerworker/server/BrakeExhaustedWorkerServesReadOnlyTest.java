@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -18,6 +19,8 @@ import io.justsearch.ipc.SearchResponse;
 import io.justsearch.ipc.SearchServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +45,9 @@ import org.junit.jupiter.api.io.TempDir;
  */
 @Timeout(120)
 final class BrakeExhaustedWorkerServesReadOnlyTest {
+
+  /** A recorded shape no runtime produces - a mismatch, not an absent fingerprint. */
+  private static final String FOREIGN_SHAPE = "f".repeat(64);
 
   private KnowledgeServer server;
   private ManagedChannel channel;
@@ -123,6 +129,27 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
         status.getCompatibility().getReindexRequired(),
         "an exhausted brake is a reindex-required state");
 
+    // (b2) and it describes BLUE, the generation those searches reach. Live validation found all
+    //      three of these disagreeing in this exact state: indexedDocuments came from
+    //      jobQueue.completedCount() (DONE rows in jobs.db - ingest jobs, pruned, unrelated to
+    //      corpus size) because there is no ingest runtime to count, and the stored fingerprint
+    //      came back empty because its supplier was wired to that absent runtime. An empty stored
+    //      fingerprint is what the status path reads as BLOCKED_LEGACY.
+    long indexed = status.getCore().getDocCount();
+    long searchable = status.getCore().getSearchableDocCount();
+    long active = status.getMigration().getActiveDocCount();
+    assertTrue(indexed > 0, "Blue holds documents, so the braked worker must not report zero");
+    assertEquals(
+        searchable,
+        indexed,
+        "documents indexed and documents searchable are the same set when nothing is being built");
+    assertEquals(active, indexed, "and both are the active generation's count");
+    assertEquals(
+        WorkerBootFixture.currentFingerprint().length(),
+        status.getCompatibility().getSchemaFpStored().length(),
+        "the stored fingerprint is Blue's, not the empty string: an empty value routes to"
+            + " BLOCKED_LEGACY the moment the brake check stops shadowing it");
+
     // (c) Blue still serves. This is the promise the read-only fall-through makes; a Worker that
     //     binds but cannot answer a query has kept the letter of it and none of the substance.
     SearchResponse search =
@@ -163,4 +190,70 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
         "the budget is restored, so a later genuine mismatch is not refused for this one");
   }
 
+
+  /**
+   * Tempdoc 915 (live validation D3). The braked verdict is right today only because
+   * {@code safeSchemaCompatState()} tests the brake before it looks at the stored fingerprint. With
+   * that fingerprint reported as the empty string, the moment an operator does what the brake's own
+   * ERROR message tells them to do - clear {@code auto_rebuild_*} in state.json - the next boot has
+   * to classify the same index again, and an empty stored value reads as BLOCKED_LEGACY: a
+   * "this index predates the key" story about an index that carries a perfectly good, merely
+   * different, fingerprint. This drives that exact sequence.
+   */
+  @Test
+  void clearingTheBudgetByHandMigratesAsAMismatchNotAsALegacyIndex(@TempDir Path tempDir)
+      throws Exception {
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), FOREIGN_SHAPE, 1);
+    String target = WorkerBootFixture.currentFingerprint();
+    for (int i = 0; i <= IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS; i++) {
+      layout.genManager().recordAutoRebuildAttempt(target);
+    }
+    WorkerBootFixture.publishConfig(layout.dataDir(), layout.indexBase(), "BLUE_GREEN_MIGRATE");
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+    assertTrue(server.rebuildBrakeExhaustedForTest(), "precondition: the brake is spent");
+
+    channel = ManagedChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
+    StatusResponse braked =
+        IngestServiceGrpc.newBlockingStub(channel)
+            .withDeadlineAfter(30, TimeUnit.SECONDS)
+            .indexStatus(StatusRequest.newBuilder().build());
+    assertEquals(
+        FOREIGN_SHAPE,
+        braked.getCompatibility().getSchemaFpStored(),
+        "the braked worker reports the shape Blue actually carries");
+    server.close();
+    server = null;
+    channel.shutdownNow();
+    channel = null;
+
+    clearAutoRebuildFieldsByHand(layout.indexBase());
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+    assertFalse(
+        server.rebuildBrakeExhaustedForTest(),
+        "a cleared budget is a fresh budget");
+    IndexGenerationManager.State after =
+        new IndexGenerationManager(layout.indexBase()).initializeOrLoad().state();
+    assertEquals(
+        IndexGenerationManager.MigrationState.MIGRATING.name(),
+        after.migration_state(),
+        "the index is a MISMATCH - a different recorded shape - so it is migrated, not treated as"
+            + " an index that never recorded one");
+  }
+
+  /** Exactly what the brake's ERROR message tells an operator to do: drop the three fields. */
+  private static void clearAutoRebuildFieldsByHand(Path indexBase) throws Exception {
+    Path statePath = indexBase.resolve("state.json");
+    tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+    tools.jackson.databind.node.ObjectNode root =
+        (tools.jackson.databind.node.ObjectNode) mapper.readTree(statePath.toFile());
+    root.remove("auto_rebuild_key");
+    root.remove("auto_rebuild_count");
+    root.remove("auto_rebuild_first_ms");
+    Files.writeString(statePath, mapper.writeValueAsString(root), StandardCharsets.UTF_8);
+  }
 }

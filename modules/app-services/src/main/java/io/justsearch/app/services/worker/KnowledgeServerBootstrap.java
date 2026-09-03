@@ -723,6 +723,17 @@ public final class KnowledgeServerBootstrap implements Closeable {
             + " fail-closed policy. Set index.recovery.policy=BACKUP_REBUILD (or remove the index"
             + " directory) to rebuild it from your files.";
 
+    /**
+     * The remedy sentence for a refused schema mismatch. Tempdoc 915, live validation: the Head used
+     * to report this as "Worker process crashed (exit code 1)" with the real cause visible only in
+     * worker.log, because nothing wrote the fatal-reason marker on the refusal path.
+     */
+    private static final String INDEX_SCHEMA_MISMATCH_DETAIL =
+            "The search index was built with a different index shape than this version writes, and"
+                + " index.schema_mismatch.policy=FAIL_CLOSED refuses to rebuild it. Set the policy to"
+                + " BLUE_GREEN_MIGRATE to rebuild alongside the existing index, or rebuild the index"
+                + " yourself.";
+
     /** A worker-down verdict: the reason CODE plus the human sentence behind it (tempdoc 837 §0.2). */
     private record WorkerDown(LifecycleReasonCode code, String detail) {}
 
@@ -748,6 +759,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
         String fatal = io.justsearch.ipc.WorkerFatalReasonMarker.readAndClear(config.dataDir());
         if (io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_CORRUPT.equals(fatal)) {
             return new WorkerDown(LifecycleReasonCode.WORKER_INDEX_CORRUPT, INDEX_CORRUPT_DETAIL);
+        }
+        if (io.justsearch.ipc.WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH.equals(fatal)) {
+            return new WorkerDown(
+                    LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH, INDEX_SCHEMA_MISMATCH_DETAIL);
         }
         return new WorkerDown(generic, detail);
     }

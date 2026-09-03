@@ -611,6 +611,67 @@ the guard and the status surface cannot disagree about an empty index in one dir
 agreeing in the other. What actually happens to such an index: `CommitOps.setLiveCommitData`
 replaces the whole user-data map, so the next commit **re-stamps** it.
 
+### §C.16 The status surface describes the generation being SEARCHED
+
+Live validation (2026-09-03) found three defects on one wire, and one cause behind all of them:
+`IndexStatusOps` was fed entirely from the **ingest** runtime, which is the wrong authority for
+every question the compatibility surface answers.
+
+| Field | What it said | What it means |
+|---|---|---|
+| `indexSchemaFpStored` / `indexSchemaCompatState` / `reindexRequired` | mid-migration: Green's fingerprint, hence `COMPATIBLE` / `false` | the shape of the index the user's queries reach — that is Blue |
+| the same three, braked | `""`, and `""` routes to `BLOCKED_LEGACY` if the brake check ever stops shadowing it | there is no ingest runtime at all in that state, so the supplier was null |
+| `indexedDocuments` | `jobQueue.completedCount()` — DONE rows in `jobs.db`, pruned, unrelated to corpus size (observed: 5, against 205 searchable) | documents in the generation being written, or, when none is being written, the one being served |
+
+The fix is the wiring, not a special case. `storedVectorFormat`, `openTimeCommitUserData` and
+`latestCommitUserDataBestEffort` come from `searchLifecycle`, which is non-null in every state
+including braked and deferred; `docCount` falls back to the serving reader before it falls back to a
+queue counter. The **mid-migration contract the reviewer asked to be pinned then falls out of the
+ordinary comparison**: Blue carries the old shape, so `BLOCKED_MISMATCH` + `schema_mismatch` +
+`reindexRequired` hold for as long as the rebuild runs, next to `migration.state = MIGRATING`. There
+is no `MIGRATING` value in the compat vocabulary and adding one would be worse than useless —
+`WorkerSnapshotTap`'s `SCHEMA_COMPAT_TABLE` maps exactly `BLOCKED_LEGACY` and `BLOCKED_MISMATCH`, and
+an unmapped value takes the preserve-prior + WARN-once branch, which FREEZES a stale condition
+(tempdoc 726 F5's documented failure mode). `docCount` still reports Green while Green exists: that
+is the build's progress, and it is the one number that legitimately describes the generation being
+written.
+
+This also settles §C.13's argument for reporting rather than propagating a deferred-upgrade mismatch.
+That argument rested on "the status surface already reports `BLOCKED_MISMATCH` with
+`reindex_required`", which was true only while no migration was in flight. It is true in every state
+now — but it was the claim that was wrong, not the sentence, and the comparison is what was fixed.
+
+### §C.17 A refusal is not a crash
+
+`FAIL_CLOSED` did its job live — the index was left byte-identical — and the user was told the Worker
+had crashed. `WorkerFatalReasonMarker` existed for exactly this and carried one value,
+`index_corrupt`, written only when `isCorruptIndexCause(e)`; a `SCHEMA_MISMATCH` refusal fell through
+to a bare `System.exit(1)`, so the Head reported `Worker process crashed (exit code 1) before writing
+port to signal file` with `/api/health` unreachable and the real cause visible only in `worker.log`.
+
+`index_schema_mismatch` joins the vocabulary, written from the same `catch` via the classifier §C.13
+already added, read by the same `KnowledgeServerBootstrap.workerDownCode` funnel, and worded as
+`worker.index_schema_mismatch`. A separate code rather than reusing `worker.index_corrupt` because
+the remedy differs: the index is intact and the wrong shape, so the answer is a policy that permits a
+rebuild, not a corruption repair.
+
+### §C.18 What a self-restart takes with it
+
+The cutover restart is the only shutdown the Worker performs on its own, and it is not a `stop()`:
+the monitor calls `initiateShutdown()`, which shuts the gRPC server and lets `main` unwind. Two facts
+were lost in that window, both because they were left to a later step:
+
+- the **clean-shutdown marker**, so every boot after a cutover logged `Unclean previous shutdown
+  detected` for the freshly promoted generation and paid a FULL integrity verification for an index
+  that had just been committed and verified;
+- the **metrics snapshot**, whose cadence is 60 s against a restart ~20 s after the migration starts,
+  which is why `commit_by_reason` never carried `migration/cutover` in a live run despite both emit
+  sites being production code (D4).
+
+`preserveEvidenceBeforeRestart` writes both at the point they are true — immediately after the
+promotion — instead of hoping the shutdown sequence completes first. Best-effort and independent: a
+failure costs an integrity scan or a counter, never a cutover.
+
 ### §C.15 New/changed config keys
 
 **None.** No new `System.getenv`/`getProperty` outside `io.justsearch.configuration`; no new
@@ -666,6 +727,12 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.41 | **Nit.** `ParityDiagnostics.holdsNothingToMigrate(docCount)`: the empty-index exclusion now applies to the changed branch as well as the blank one, and `IndexStatusOps` reports through the same predicate | `ParityDiagnostics.java`, `IndexStatusOps.java` (`safeSchemaCompatState`) |
 | D.42 | **Round-4 tests.** `ResumedMigrationMismatchBootTest` (B5 at a FRESH budget — the boot the brake test cannot reach); `PreOpenSchemaMismatchBootTest` +4 (`PRE-OPEN` WARN asserted under FAIL_CLOSED (S14); `REBUILD_BACKUP_FIRST` backs Blue up before emptying it, asserted on the backup's doc count (S15); an unrecognised policy boots; a corrupt index still self-heals (B4)); `ParityGuardTest` +3 (unreadable commit, empty-index-with-stale-fingerprint, expected-metadata build count on an existing index); `SchemaCompatFreshInstallTest` +1; `ResolvedConfigBuilderTest` +1. `BrakeExhaustedWorkerServesReadOnlyTest` rewritten onto `WorkerBootFixture` (S16) and drives the `startMigration` RPC rather than the generation manager (S17) | see §F round 4 |
 | D.43 | **B4 consequence.** `RecoveryIntegrationTest`'s "Gap D" assertion inverted: the parity guard is still invoked on the open path and must no longer raise `CORRUPT_INDEX`. The test's outcome assertions (backup, fresh index, writes accepted) are untouched and are what proves the open path still recovers. Also `SchemaMismatchStatusContractTest` seeds one document — its fixture committed an EMPTY index with a bogus fingerprint, which the empty-index rule now (correctly) reports COMPATIBLE | `RecoveryIntegrationTest.java`, `SchemaMismatchStatusContractTest.java` |
+| D.44 | **D1/D3.** `GrpcIngestService`: `storedVectorFormat`, `openTimeCommitUserData` and `latestCommitUserDataBestEffort` are read from `searchLifecycle`, not `ingestLifecycle`. `queryVectorFormatActual` and `configuredVectorFormat` stay on ingest — one is a query-path fact, the other is config | `GrpcIngestService.java` (the `IndexStatusOps` construction) |
+| D.45 | **D2.** `docCount` falls back to the SERVING reader before `jobQueue.completedCount()`. The building-generation branch is untouched, so a migration still reports Green's progress | `IndexStatusOps.java` (`buildStatusResponse`) |
+| D.46 | **FAIL_CLOSED visibility.** `WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH`; written from `KnowledgeServer`'s outer `catch` via `isSchemaMismatch(e)`; read by `KnowledgeServerBootstrap.workerDownCode` into `LifecycleReasonCode.WORKER_INDEX_SCHEMA_MISMATCH` (`STICKY`, same class as its corruption sibling) with a remedy detail; worded in `readinessNotice.ts` and added to the impairing set | `WorkerFatalReasonMarker.java`, `KnowledgeServer.java`, `KnowledgeServerBootstrap.java`, `LifecycleReasonCode.java`, `readinessNotice.ts` |
+| D.47 | **Cutover restart + D4.** `preserveEvidenceBeforeRestart(context, promoted)` writes the clean-shutdown marker for the promoted generation and flushes the metrics snapshot, immediately after the promotion and before `initiateShutdownAction`. New `flushTelemetryAction` component on `CutoverContext`, wired to `KnowledgeServer.flushTelemetryBestEffort` | `KnowledgeServerMigrationOps.java`, `KnowledgeServer.java` |
+| D.48 | **Nit.** The unreadable-commit WARN is latched on `path\|exceptionClass`, so one unreadable index produces one line across the pre-open check and the open-time guard — and a second, different unreadable generation still says so | `IndexMetadataParityGuard.java` |
+| D.49 | **Round-5 tests.** `MidMigrationCompatSurfaceTest` (a real `GrpcIngestService` over two different runtimes — a wiring test, because handing `IndexStatusOps` the values under test is the mistake itself); `CutoverRestartEvidenceTest`; `BrakeExhaustedWorkerServesReadOnlyTest` +count/fingerprint assertions and a second case that clears `auto_rebuild_*` from `state.json` by hand and asserts the next boot migrates as a MISMATCH rather than as a legacy index; `PreOpenSchemaMismatchBootTest` asserts the fatal-reason marker under FAIL_CLOSED and exactly ONE unreadable-commit WARN | see §F round 6 |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -997,7 +1064,32 @@ Re-run in full after the round-4 review (B4/B5/S14-S17); every line below is fro
    that can falsify the ordering claims (backup taken before the writer touches Blue; Blue serving
    throughout a real cutover) rather than merely observing their file-system traces.
 
-10. **O6 — correction to my own earlier report.** I reported
+10. **O11 — ROUTED, owner lane C / the 885 successor.** The braked ingest queue is unbounded and
+    silent. Live arm 3: with ingestion stopped the watcher re-enqueued the whole corpus
+    (`pendingJobs = 200`), a newly created file took it to 201, and it stayed there for 90 s with
+    `searchableDocuments` pinned — no cap, and no backpressure anywhere on the status surface. After
+    recovery all 201 drained correctly, so this is a missing bound, not a leak.
+11. **O12 — ROUTED, owner dev-tooling lane.** `core.rebuild-index` needs a two-phase confirm that no
+    document mentions: `POST /api/operations/core.rebuild-index/invoke` returns
+    `CONFIRMATION_REQUIRED` (gate `TYPED_CONFIRM`, risk `HIGH`) with a `pendingId`, which must be
+    approved via `POST /api/authorizations/approve` and re-invoked with a `confirmationToken`; under
+    prod every mutating call also needs `X-JustSearch-Session` from `GET /api/mcp/token`. Neither
+    `mcp-dev-tools.md` nor the api-contract-map says so, and the live validator had to discover it.
+12. **O13 — ROUTED, owner lane C. Pre-existing, not this PR.** Every deferred-open boot over an
+    existing index logs 6-8 of `Lucene health check failed: SearcherManager not available (runtime
+    closed?)`; fresh-index boots log none. `SearcherBridge.java` is byte-identical between
+    `39d38f73` and this branch, so it predates the change.
+13. **O14 — OPEN, this tempdoc.** A read-only runtime CONSUMES the clean-shutdown marker on open
+    (`ComponentsFactory` calls `consumeWasClean`, which deletes it) and never writes one back,
+    because `RuntimeSession.close()` only writes it when a writer closed cleanly. So a Worker that
+    serves Blue read-only for its whole life — a migration, and every boot of the braked state —
+    leaves Blue permanently marked unclean and pays a FULL integrity verification on every
+    subsequent boot. Live evidence: `g-20260903-052152` logged `Unclean previous shutdown` on five
+    consecutive boots. D.47 fixes the cutover half; this half is a distinct decision (restore the
+    marker a read-only session consumed, or scope the consume to writable opens) and is not made
+    here.
+
+14. **O6 — correction to my own earlier report.** I reported
    `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned
    load flake and asked whether to pin it. That was wrong: it is already pinned
    (`adapters-lucene-batchupdate-rmw-coordinator-load-flake`), as is the `OnnxEmbeddingEncoder`

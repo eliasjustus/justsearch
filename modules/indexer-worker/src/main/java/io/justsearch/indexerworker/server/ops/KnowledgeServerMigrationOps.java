@@ -6,6 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import io.grpc.stub.StreamObserver;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
+import io.justsearch.adapters.lucene.runtime.CleanShutdownMarker;
 import io.justsearch.adapters.lucene.runtime.CommitReason;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntime;
 import io.justsearch.adapters.lucene.runtime.RunningRuntime;
@@ -64,6 +65,12 @@ public final class KnowledgeServerMigrationOps {
       BooleanSupplier verifyGreenCommitMetadataSupplier,
       Runnable drainSwitchBufferAction,
       Runnable initiateShutdownAction,
+      // Tempdoc 915 (live validation D4): flush the worker metrics snapshot before the cutover
+      // restart. The snapshot cadence is 60s and the cutover restarts the worker roughly 20s after
+      // the migration starts, so the session that performed the cutover was discarded before any
+      // snapshot was written - and commit_by_reason therefore never carried migration/cutover in a
+      // live run, though both emit sites are production code.
+      Runnable flushTelemetryAction,
       Path dataDir,
       Logger log) {}
 
@@ -246,11 +253,13 @@ public final class KnowledgeServerMigrationOps {
           return;
         }
 
-        context.indexGenerationManager().promoteBuildingGenerationToActive();
+        IndexGenerationManager.State promoted =
+            context.indexGenerationManager().promoteBuildingGenerationToActive();
         try { Files.deleteIfExists(context.dataDir().resolve(".help-ingested-version")); }
         catch (IOException ignored) {
           // Best-effort cleanup of stale marker; failure is non-fatal to cutover.
         }
+        preserveEvidenceBeforeRestart(context, promoted);
         context.log().info("Migration cutover complete. Restarting worker to open new active generation...");
         context.initiateShutdownAction().run();
         return;
@@ -361,6 +370,46 @@ public final class KnowledgeServerMigrationOps {
       }
     }
     return true;
+  }
+
+  /**
+   * Records what the restarting process would otherwise take with it. The cutover restart is the one
+   * shutdown the worker performs on its own, and neither of these facts survived it (tempdoc 915,
+   * live validation).
+   *
+   * <p><b>Clean-shutdown marker.</b> The promoted generation has just taken its {@code COMPLETE}
+   * commit and been verified, so it is clean by construction at this instant. Leaving the marker to
+   * {@code RuntimeSession.close()} made that contingent on the whole shutdown sequence completing
+   * before the process goes away, and live runs showed the next boot logging {@code Unclean previous
+   * shutdown detected} for the freshly promoted generation and paying a FULL integrity verification
+   * for it. Writing it here states a fact that is true now rather than hoping a later step runs.
+   *
+   * <p><b>Telemetry flush.</b> Same shape: the cutover commit is counted in-process and the periodic
+   * snapshot is minutes away.
+   *
+   * <p>Both are best-effort. A failure costs an integrity scan or a lost counter, never correctness,
+   * and must not abort a cutover that has already completed.
+   */
+  // Package-private: the cutover loop that calls it needs a live migration to reach, and the two
+  // facts it records are observable directly (a marker file, a Runnable that ran).
+  static void preserveEvidenceBeforeRestart(
+      CutoverContext context, IndexGenerationManager.State promoted) {
+    try {
+      String activeGen = promoted == null ? null : promoted.active_generation();
+      if (activeGen != null && !activeGen.isBlank()) {
+        CleanShutdownMarker.write(
+            context.indexGenerationManager().resolveGenerationPathStrict(activeGen));
+      }
+    } catch (Exception e) {
+      context.log().debug("Clean-shutdown marker not written before cutover restart: {}", e.getMessage());
+    }
+    try {
+      if (context.flushTelemetryAction() != null) {
+        context.flushTelemetryAction().run();
+      }
+    } catch (Exception e) {
+      context.log().debug("Telemetry flush before cutover restart failed: {}", e.getMessage());
+    }
   }
 
   public static void drainSwitchBufferBestEffort(DrainSwitchBufferContext context) {
