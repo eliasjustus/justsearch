@@ -193,7 +193,11 @@ script and both read as *results* rather than as bugs. A `str.replace` whose anc
 applied no break at all, and the green run that followed was recorded as `NO FAILURE OBSERVED` — the
 signature of a weak test. And the failure reporter walked every module's `build/test-results`, so one
 case's failures were re-reported as every later case's, making seven cases look caught when one was.
-**Principle**: a break-and-restore driver restores from a byte copy taken immediately before the
-break and diffs against that copy at the end; it asserts the break actually matched before it trusts
-the run; and it wipes the result directories per case. The general form — `NO FAILURE OBSERVED` is a
+**Remedy**: a break-and-restore driver restores from a byte copy taken immediately before the
+break (`cp` aside, `cp` back) and diffs against that copy at the end — never `git checkout --`,
+`git restore` or `git stash`, all of which are defined against `HEAD` and therefore against the
+very work being falsified. Commit a WIP first as well when the campaign is long: a checkpoint
+commit makes even a restore bug recoverable, which a backup file in `tmp/` does not if the driver
+itself is what deletes it. The driver also asserts the break actually matched before it trusts
+the run, and wipes the result directories per case. The general form — `NO FAILURE OBSERVED` is a
 claim about the harness before it is a claim about the test, and it must be diagnosed as such.

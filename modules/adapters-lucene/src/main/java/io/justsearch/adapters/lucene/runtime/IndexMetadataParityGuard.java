@@ -63,12 +63,17 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
    *
    * <p>Returns an empty list when there is no index yet, so a first launch is silent.
    *
+   * <p>{@code expected} is a SUPPLIER, and lazily: building the expected metadata hashes a catalog
+   * and reads model digests, and on a directory with no commits there is nothing to compare it
+   * against. {@code CommitMetadataIntegrationTest.metadataSourceSupplierInvokedPerBuild} pins the
+   * count, which is how an eager version of this method was caught.
+   *
    * @param indexPath the generation directory to inspect
    * @param expected the metadata this runtime would commit
    * @return the parity diffs, empty when there are none
    */
   public static java.util.List<ParityDiagnostics.Diff> inspectCommittedParity(
-      Path indexPath, Map<String, Object> expected) {
+      Path indexPath, Supplier<Map<String, Object>> expected) {
     if (indexPath == null || !Files.exists(indexPath)) {
       return java.util.List.of();
     }
@@ -78,10 +83,11 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       }
       try (DirectoryReader reader = DirectoryReader.open(directory)) {
         Map<String, String> stored = reader.getIndexCommit().getUserData();
-        warnIfFingerprintUncomputable(expected);
+        Map<String, Object> expectedMetadata = expected.get();
+        warnIfFingerprintUncomputable(expectedMetadata);
         // numDocs, not maxDoc: an index whose every document is deleted has nothing left whose
         // shape could be wrong, and migrating it would rebuild emptiness.
-        return ParityDiagnostics.diff(stored, expected, reader.numDocs());
+        return ParityDiagnostics.diff(stored, expectedMetadata, reader.numDocs());
       }
     } catch (IOException e) {
       if (isCorruption(e)) {
@@ -109,9 +115,7 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
 
   @Override
   public void checkOnOpen() {
-    Path indexPath = indexPathSupplier.get();
-    Map<String, Object> expected = expectedMetadataSupplier.get();
-    var diffs = inspectCommittedParity(indexPath, expected);
+    var diffs = inspectCommittedParity(indexPathSupplier.get(), expectedMetadataSupplier);
     if (diffs.isEmpty()) {
       return;
     }

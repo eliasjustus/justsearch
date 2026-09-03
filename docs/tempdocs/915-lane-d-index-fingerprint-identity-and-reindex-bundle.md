@@ -120,6 +120,19 @@ records what re-verification found. Phase 1 is implemented in this PR. Phases 2 
       `IndexStatusOps` share one legacy predicate and the fresh-empty-index case is pinned on both
       sides; line citations refreshed; §G integration-test counts re-measured.
 
+### O7 round — the mismatch decision no longer depends on the open mode
+
+- [x] R-O7a. **Pre-open detection.** `KnowledgeServer.start()` reads the last commit's user data off
+      the directory and diffs it BEFORE choosing an open mode, then dispatches to the existing policy
+      handler. Same `ParityDiagnostics` call as the guard — one predicate, not a fork (§C.12).
+- [x] R-O7b. The `ComponentsFactory` guard stays as a second line, and is now genuinely second: it
+      can no longer be the only line, because the decision has already been made.
+- [x] R-O7c. `initDeferredModels()`'s `catch (Exception)` no longer files a `SCHEMA_MISMATCH` under
+      "non-fatal". It is reported loudly, with the reason and the remedy (§C.13 says why loudly
+      rather than propagated).
+- [x] R-O7d. Six boot-level tests (a-e) plus the classifier, each falsified (§F round 4).
+- [x] R-O7e. `11-index-schema-migration.md`: the caveat is replaced by the mechanism. O7 CLOSED.
+
 ### Phase 2 — stable document identity (PENDING)
 
 - [ ] B1. Mint `doc_uid` once per logical document; preserve across rename, re-extraction, full
@@ -458,6 +471,57 @@ the gate counted it — and nothing could emit it. Only `BrakeExhaustedWorkerSer
 boots a real `KnowledgeServer` and reads the answer off the wire, could tell. It then immediately
 found a *second* defect the static reasoning had missed (§D.24).
 
+### §C.12 Detection happens before the open, not inside it
+
+The defect O7 named: the mismatch decision depended on HOW the index was being opened. The active
+generation takes `openDeferred()` whenever it has segments; `RuntimeSession` maps `Mode.DEFERRED` to
+a read-only open; and `ComponentsFactory` only *logs* a guard failure when `readOnly`. So on the boot
+path most installs take — an existing index, with documents, whose shape changed — nothing was
+raised and no migration started. The status surface still said `reindex_required`, which is exactly
+why it survived two review rounds: the user was told, so nothing looked broken.
+
+**The question is about the bytes on disk, so it is answered from the bytes on disk.**
+`IndexMetadataParityGuard.inspectCommittedParity(path, expected)` opens an `FSDirectory` and a
+`DirectoryReader`, reads `getIndexCommit().getUserData()` and `numDocs()`, and calls the same
+`ParityDiagnostics.diff(stored, expected, docCount)` every other consumer calls. No writer, no
+`RuntimeSession`, no open-mode choice — and no second implementation, which is what keeps the
+legacy-blank rule (§C.5a), the empty-index exclusion and the model tri-state (§C.5) identical at both
+sites by construction rather than by agreement. `checkOnOpen()` was refactored to call it, so there
+is literally one implementation.
+
+Dispatch, once a rebuild-requiring diff is found:
+
+| Policy | Pre-open action | Why |
+|---|---|---|
+| `BLUE_GREEN_MIGRATE` | raise `SCHEMA_MISMATCH` | the existing boot handler already builds Green beside a read-only Blue, brake included |
+| `FAIL_CLOSED` | raise `SCHEMA_MISMATCH` | the same handler rethrows; refusing is the policy |
+| `REBUILD_BACKUP_FIRST` | do **not** raise; force a WRITABLE open | its backup-then-rebuild recovery lives in `RuntimeSession.openComponentsWithRecovery` and is the one implementation of that policy. Duplicating it here to satisfy a symmetry would be the fork this whole tempdoc is about |
+
+**Ordering, verified rather than assumed.** The expected fingerprint needs the model providers and
+the effective vector dimension installed first. `installModelFingerprintProviders` was already early
+enough (`KnowledgeServer.java:539`, right after `logConfiguration()`), but
+`installEffectiveVectorDimension` was **not** — it lived inside `buildIndexRuntime`, which does not
+run until after the point where pre-open detection now happens. Left alone, a BGE-M3 install would
+have compared a boot-time fingerprint computed with the catalog's declared 768 against a stored one
+written at 1024, and migrated every boot. It is hoisted to the same early site
+(`effectiveVectorDimensionSupplier()`), so there is now exactly one install for both inputs, before
+any comparison.
+
+### §C.13 A mismatch from the deferred writer upgrade is not "non-fatal"
+
+The second half of O7. `DeferredRuntime.upgradeWriter()` runs inside `initDeferredModels()`, whose
+`catch (Exception e)` logged everything as `"Background model initialization failed (non-fatal)"`.
+A `SCHEMA_MISMATCH` there is not a degraded capability — it is a stopped ingestion pipeline, because
+the index cannot accept writes under this runtime's shape.
+
+It is now **reported loudly rather than propagated**, and the choice is deliberate: this runs on a
+background `CompletableFuture` with no caller left to receive an exception, `start()` having long
+returned. Propagation would mean inventing a channel (a flag polled by the sentinel, a callback into
+the boot handler) whose only job is to carry a condition the next boot's pre-open detection handles
+correctly anyway — and the status surface already reports `BLOCKED_MISMATCH` with `reindex_required`
+from the same fingerprint comparison, so the user is not waiting on a restart to be told. What was
+missing was never the propagation; it was that the line said "non-fatal".
+
 ### §C.9 Green verification
 
 `KnowledgeServerMigrationOps.verifyGreenMetadata` compares `index_fingerprint` instead of
@@ -533,6 +597,11 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.20 | Docs: `11-index-schema-migration.md` (fingerprint section, enforcement status 2026-09, policy defaults + brake), `04-storage-engine.md`, `06-configuration-ssot.md`, `08-observability.md`, `09-testing-strategy.md`, `18-adapters-lucene-deep-dive.md`, `index-schema-mismatch-reindex-noop.md` (superseded banner + inline strikes), `environment-variables.md`, ADR-0014 (dated append, history not rewritten) | `docs/**` |
 | D.21 | RISK-011 instrumented to `tempdoc:915#C Design (Phase 1), tightened`; notes explain why it stays open rather than closed | `docs/reference/architectural-risks.md:264-282` |
 | D.22 | New tests: `IndexFingerprintTest`, `CatalogPhysicalProjectionTest`, `SchemaMismatchPolicyBranchTest`, `IndexRebuildBrakeTest`; extended `CommitReasonAccountingTest`, `InvariantSuiteIT`; updated 14 fixture files | see §G |
+| D.31 | **O7.** `IndexMetadataParityGuard`: `inspectCommittedParity(Path, Map)` and `schemaMismatch()` extracted; `checkOnOpen()` now calls both, so the pre-open and open-time paths share one implementation and one message | `IndexMetadataParityGuard.java:70`, `:102` |
+| D.32 | **O7.** `KnowledgeServer.start()`: pre-open detection before the open-mode choice, and dispatch | `KnowledgeServer.java:592` (`preOpenMismatch`), `:595` (`inspectCommittedParity`), `:597` (`requiresRebuild`), `:629` (`policyHandledInCatch`), `:632` (raise), `:634` (`useDeferredWriter … && !preOpenMismatch`), `:727` (the existing handler) |
+| D.33 | **O7.** `installEffectiveVectorDimension` hoisted out of `buildIndexRuntime` to the early install site, so the boot-time comparison sees the same dimension as every later one under BGE-M3 | `KnowledgeServer.java` — `effectiveVectorDimensionSupplier()`, installed beside `installModelFingerprintProviders` |
+| D.34 | **O7.** `logBackgroundInitFailure(Exception)` + `isSchemaMismatch(Throwable)`: a schema mismatch escaping the deferred writer upgrade is reported as stopped ingestion, not as a non-fatal background failure | `KnowledgeServer.java:968`, `:986`, called at `:1506` |
+| D.35 | **O7 tests.** `WorkerBootFixture` (shared boot scaffolding: production catalog, seed with matching / foreign / absent fingerprint, config publication, layout) and `PreOpenSchemaMismatchBootTest` (a-e plus the classifier) | both new, `modules/indexer-worker/src/test/.../server/` |
 | D.24 | **Delta-review round (B3).** `KnowledgeServer.start()` no longer returns on brake exhaustion: it sets `rebuildBrakeExhausted`, opens Blue read-only, and falls through the rest of the sequence. Five previously skipped sites and what each does now — `createGrpcServer` + `grpcServer.start()`: run, so the port is real; `signalBus.writePort(boundPort)`: runs, so the Head discovers the Worker; `infraCtx`/`appServices` construction: runs, which is what builds `GrpcIngestService` and with it `IndexStatusOps`, the only producer of the new reason code; `appServices.startIndexingLoop()`: deliberately NOT started (guarded flag) with an ERROR naming the recovery path, because its only job is to write into a read-only runtime; `startSentinelThread()`: runs. `drainSwitchBufferBestEffort()` is also skipped — a read-only runtime is not a `RunningRuntime`, so it could only have logged a WARN and dropped the ops | `KnowledgeServer.java` — the `rebuildBrakeExhausted` field, the brake branch, the drain guard, the loop guard |
 | D.25 | **The second defect, found by the test written for the first.** `IndexStatusOps.buildCore` dereferenced `indexingLoop` unconditionally. With no loop started that NPEs, and `GrpcIngestService.indexStatus` catches `RuntimeException` and returns a stub response with `core.state=ERROR` and NO compatibility sub-message — so `BLOCKED_REBUILD_BRAKE` was still unreachable, now silently. Null-guarded. This was ALSO a pre-existing latent hole: `DefaultWorkerAppServices.startIndexingLoop` already guards for a null loop (deferred-writer mode), so a status RPC arriving before the writer upgrade could blank the whole payload | `IndexStatusOps.java` — `buildCore`'s `setLastCommitTimestamp` |
 | D.26 | **S10.** `BrakeExhaustedWorkerServesReadOnlyTest` — boots a real `KnowledgeServer` over a seeded generation layout with an exhausted brake, then asserts over gRPC: `isRunning()` + `getPort() > 0`; `schemaCompatState=BLOCKED_REBUILD_BRAKE` and `reindexRequiredReason=rebuild_brake_exhausted` and `reindexRequired`; a `Search` RPC answered from Blue; and `startMigration` + `promoteBuildingGenerationToActive` clearing the brake | `BrakeExhaustedWorkerServesReadOnlyTest.java` (new) |
@@ -603,6 +672,15 @@ installs a throwing provider cannot leak it into the rest of the fork.
 **E6. Actionable findings from this pass: 2** — the corrupt-state assertion (E3) and the
 second blue/green trigger (E2/§B.1 2c). Both changed the implementation.
 
+**E9. The O7 round's own finding, and who found it.** Extracting the guard's inspection into a
+reusable static changed *when* the expected metadata is built: the original method checked the index
+existed before calling the supplier, and the extracted version called it first. Nothing in the O7
+work noticed — not the six new boot tests, not the critical read of the diff. What noticed was
+`CommitMetadataIntegrationTest.metadataSourceSupplierInvokedPerBuild`, a three-year-old assertion
+that the supplier is invoked exactly once per commit, in the full suite (§F G30). That is the
+argument for running the whole suite rather than the affected modules: the tests that catch a
+refactor's side effects are, by definition, not the tests you were thinking about.
+
 **E8. What the SECOND pass missed, and why (delta-review round).** The review-round critical pass
 walked the brake change and asked whether the reason code was wired on both sides. It was. What it
 never asked was whether anything could reach the code that emits it — and the answer was no, twice
@@ -647,6 +725,26 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F10 | prod default back to `FAIL_CLOSED` | `ResolvedConfigBuilderTest` | `null/blank defaults to BLUE_GREEN_MIGRATE in prod mode` FAILED (`ResolvedConfigBuilderTest.java:1495`) |
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
+
+### Round 4 — the O7 fix
+
+| ID | Break | Test that caught it | Observed failure |
+|---|---|---|---|
+| G24 | pre-open detection removed (`preOpenMismatch = false`) — i.e. back to deciding inside the open | `PreOpenSchemaMismatchBootTest` | `an index whose shape changed must start migrating at boot …` FAILED; `aLegacyIndexWithSegmentsMigratesAtBoot` FAILED; `aChangedShapeOnAnIndexWithSegmentsIsRefusedUnderFailClosed` FAILED with `Expected java.io.IOException to be thrown, but nothing was thrown` |
+| G25 | FAIL_CLOSED dropped from `policyHandledInCatch` | — | **NO FAILURE OBSERVED, and the diagnosis is the result.** With the pre-open raise gone the open is still forced writable, so the open-time guard raises and the same handler refuses: the property survives on the second line. Recorded rather than discarded — it is the defence-in-depth §C.12 claims, demonstrated |
+| G25b | both lines broken (`policyHandledInCatch` narrowed AND `useDeferredWriter` no longer forced off) | `PreOpenSchemaMismatchBootTest` | `aChangedShapeOnAnIndexWithSegmentsIsRefusedUnderFailClosed` FAILED — `Expected java.io.IOException to be thrown, but nothing was thrown` |
+| G26 | detection over-triggers (`preOpenMismatch = true`) | `PreOpenSchemaMismatchBootTest` | `a matching index must not be migrated — a detector that fires on everything is not a detector ==> expected: <IDLE> but was: <MIGRATING>`; `aFreshEmptyIndexDoesNotMigrateAtBoot` FAILED |
+| G27 | the deferred-upgrade mismatch filed as non-fatal again | `PreOpenSchemaMismatchBootTest` | `a stopped ingestion pipeline is not a degraded capability; got: [Background model initialization failed (non-fatal), …]` |
+| G28 | `isSchemaMismatch` stops at the top-level exception | `PreOpenSchemaMismatchBootTest` | `schemaMismatchIsRecognisedThroughTheCauseChain` FAILED (`expected: <true> but was: <false>`); two more, including `FAIL_CLOSED must refuse for the schema-mismatch reason, not some incidental failure` |
+| G29 | the empty-index exclusion dropped from the shared predicate | `PreOpenSchemaMismatchBootTest` | `a first launch must not spend a rebuild on an index with nothing in it (the shared ParityDiagnostics predicate …)` FAILED — the point being that breaking it in `ParityDiagnostics` breaks the NEW site too, which is what "one predicate" is supposed to mean |
+
+| G30 | (not injected — this one was a real defect, caught by an existing test) the extracted `inspectCommittedParity` took a built `Map` instead of a `Supplier`, so `checkOnOpen` built the expected metadata BEFORE checking whether the index exists — an extra catalog hash and model-digest read on every open of a fresh index | `CommitMetadataIntegrationTest` | `metadataSourceSupplierInvokedPerBuild` FAILED — `expected: <2> but was: <3>`, i.e. the supplier ran once per commit plus once for a parity check with nothing to compare. Fixed by making the parameter a lazy `Supplier` |
+
+**G25 is the useful one.** A break that produces no failure is a claim about the harness or about
+the code, and this time it was about the code: the property held because a second, independent
+mechanism enforced it. That is worth knowing and worth writing down — but it is not a passing
+falsification, so G25b breaks both lines and gets the real answer. The alternative, quietly recording
+G25 as "caught", is how a redundant guard becomes an unexamined assumption.
 
 ### Round 3 — one break per delta-review decision
 
@@ -719,14 +817,15 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Re-run in full after the DELTA-review round; every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
+Re-run in full after the O7 round; every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
 
 | Command | Result |
 |---|---|
 | `spotlessApply -PskipWebBuild=true` | exit 0 |
 | `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
-| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 12s — **1455 suites, 8887 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console) |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 32s — **1456 suites, 8894 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: it caught the eager metadata build the O7 extraction introduced (§F G30) |
 | `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` **9 tests**, 0 failures. Forced: an unforced attempt reports `UP-TO-DATE`, which is a replay, not a run |
+| `:modules:indexer-worker:test --tests "*PreOpenSchemaMismatchBootTest*"` | BUILD SUCCESSFUL — 6 boot-level cases (a-e plus the classifier). Boot-level because every one of them passes at unit level against the O7 defect |
 | `:modules:ui:integrationTest` | BUILD SUCCESSFUL — **9 tests across 4 suites**, 1 skipped, 0 failures (includes `SchemaMismatchStatusContractTest`). The earlier "16 across 5" was a stale-directory miscount, as the reviewer said |
 | `:modules:worker-core:test` (named explicitly — the brake tests live there) | BUILD SUCCESSFUL — included in the full-suite totals above; run standalone as well |
 | `:modules:indexer-worker:test --tests "*BrakeExhaustedWorkerServesReadOnlyTest*"` | BUILD SUCCESSFUL — the emit-chain test boots a real `KnowledgeServer`, so this is the first tier in this tempdoc above "compiles and unit-tests" |
@@ -735,7 +834,7 @@ Re-run in full after the DELTA-review round; every line below is from that run. 
 | `check-live-witness` · `check-store-recoverability` · `check-search-degradation-reason-codes` · `check-language-agnostic-analysis` · `check-tempdoc-numbers` · `check-premerge-table` | all OK |
 | `docs/verify-canonical-doc-links.mjs` · `llmstxt-generate --check` · `skills-sync --check` · `verify-runtime-config-matrix` | OK (156 files) · OK (115 docs) · OK (5 skills) · OK (yaml=111, pairs=250, rows=306) |
 | `docs-validate.mjs` | exit 1, **inherited** — repo-wide `heading-case` advisories, pinned as `docs-validate-heading-case-repo-wide`; no finding names a heading this branch touched |
-| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** |
+| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** (delta-review round; the O7 round changed no `modules/ui-web/src/**` file, so the recipe's trigger did not fire) |
 | `cd modules/ui-web && npm run typecheck` | exit 0 |
 | `cd modules/ui-web && npm run test:unit:run` | 468 files, **6267 tests passed** |
 | Diff hygiene | NUL bytes in the diff: 0. Every added non-ASCII line is an intended em-dash / `§` / `→`; no `Ã` / `â€` / `Â` mojibake. No whole-file CRLF rewrite — `--numstat` shows large adds only for genuinely new files. |
@@ -779,33 +878,12 @@ Re-run in full after the DELTA-review round; every line below is from that run. 
    commit path's instance, never to the two comparison paths (§B.1 claim 1c). Fixed here as a
    side-effect; recorded because it is the exact shape of defect the one-fingerprint design exists
    to prevent, and it survived undetected only because the guard was off.
-6. **O7 — OPEN, and it limits what this PR delivers. The blue/green trigger is not reached on the
-   ordinary boot path.** Found while making the S10 test honest, verified by direct execution rather
-   than by reading:
-
-   - The normal branch opens the active generation with `openDeferred()` whenever it has segments
-     (`KnowledgeServer.java`, `useDeferredWriter = hasLuceneSegments(activeIndexPath)`), and
-     `RuntimeSession` maps `Mode.DEFERRED` to `openReadOnly = true`.
-   - `ComponentsFactory.build:110-122` swallows a guard failure when `readOnly`, logging
-     `"Index open guard reported a mismatch at {} but continuing in read-only mode"`.
-   - So a boot whose index shape genuinely changed does **not** raise `SCHEMA_MISMATCH` from the
-     initial open. The mismatch surfaces later, from `DeferredRuntime.upgradeWriter()` inside
-     `initDeferredModels()`, whose `catch (Exception e)` logs
-     `"Background model initialization failed (non-fatal)"`.
-
-   Consequence: on the path most installs take, the guard WARNs, the writer upgrade fails silently,
-   ingestion is dead, and **no migration starts** — the status surface still reports
-   `BLOCKED_MISMATCH`/`reindex_required`, so the user is told, but the automatic blue/green rebuild
-   this PR makes the production default does not run. What lands here is still correct and necessary
-   (the fingerprint is truthful, the guard enforces where it is consulted, the brake is bounded and
-   no longer a dead end, and the resumed-migration branch is now covered — §D.24, G23). What is NOT
-   yet true is "the Worker rebuilds by itself on the common boot".
-
-   The fix is a design decision I am not taking unilaterally, because the read-only swallow exists
-   for a good reason (Blue must tolerate a mismatch while Green rebuilds): either `Mode.DEFERRED` is
-   distinguished from `Mode.READ_ONLY` at `ComponentsFactory:110` so a rebuild-requiring mismatch
-   propagates from a deferred open, or `initDeferredModels` stops treating `SCHEMA_MISMATCH` from
-   `upgradeWriter()` as non-fatal and routes it into the same handler. Owner decision required.
+6. **O7 — CLOSED.** The blue/green trigger was unreachable on the ordinary boot path: the active
+   generation opens deferred, a deferred open is a read-only open, and `ComponentsFactory` logs a
+   guard failure rather than raising it. Fixed by moving detection ahead of the open-mode choice
+   (§C.12) and by refusing to file a deferred-upgrade mismatch as non-fatal (§C.13). Verified at boot
+   level, not unit level, because the defect was never in a unit: §F G24-G29, including the
+   legacy-index case that was the real upgrade path this broke.
 
 7. **O6 — correction to my own earlier report.** I reported
    `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned

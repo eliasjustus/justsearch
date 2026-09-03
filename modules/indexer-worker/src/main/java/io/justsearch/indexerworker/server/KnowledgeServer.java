@@ -593,7 +593,7 @@ public final class KnowledgeServer implements Closeable {
       if (!inProgress) {
         var preOpenDiffs =
             IndexMetadataParityGuard.inspectCommittedParity(
-                activeIndexPath, expectedCommitMetadata(fpSupplier));
+                activeIndexPath, () -> expectedCommitMetadata(fpSupplier));
         preOpenMismatch = ParityDiagnostics.requiresRebuild(preOpenDiffs);
         if (preOpenMismatch) {
           for (var diff : preOpenDiffs) {

@@ -245,30 +245,38 @@ anything for its whole prior life (tempdoc 804 §D1).
   That is the detector the “reindex did nothing” failure mode originally needed, and it is unaffected
   by the 915 change.
 
-### Known limitation: a deferred open does not raise the mismatch (2026-09)
+### Detection happens before the open, not inside it (2026-09)
 
-Where the guard is *consulted* it enforces. But on the boot path most installs take, the active
-generation is opened with `openDeferred()` (chosen whenever the index has segments), and
-`RuntimeSession` treats `Mode.DEFERRED` as a read-only open — so `ComponentsFactory` takes its
-`readOnly` branch and **logs** the mismatch instead of raising it:
+The mismatch decision is made on the bytes on disk, **before** the Worker chooses how to open the
+active generation. `KnowledgeServer.start()` reads the last commit's user data straight off the
+directory — `IndexMetadataParityGuard.inspectCommittedParity(activeIndexPath, expected)`, which needs
+no writer and no `RuntimeSession` — diffs it with the same `ParityDiagnostics` call every other
+consumer uses, and only then picks an open mode:
 
-> `Index open guard reported a mismatch at {} but continuing in read-only mode: {}`
+| Resolved `index.schema_mismatch.policy` | What the pre-open detection does |
+|---|---|
+| `BLUE_GREEN_MIGRATE` | raises `SCHEMA_MISMATCH`, which the boot handler turns into a Green generation beside a read-only Blue (subject to the rebuild brake) |
+| `FAIL_CLOSED` | raises `SCHEMA_MISMATCH`, which the boot handler rethrows — the Worker refuses to start, by design |
+| `REBUILD_BACKUP_FIRST` | does **not** raise; it forces a WRITABLE open so `RuntimeSession`'s existing backup-then-rebuild recovery runs. That policy has one implementation and this is not a second one |
 
-The mismatch then reappears when the background writer upgrade runs
-(`DeferredRuntime.upgradeWriter()` inside `initDeferredModels()`), where it is caught as
-`Background model initialization failed (non-fatal)`.
+This ordering is the fix for a defect that made the automatic migration unreachable on the boot path
+most installs take. Detection used to live inside the open, in `ComponentsFactory`; the active
+generation opens `openDeferred()` whenever it has segments, `RuntimeSession` maps `Mode.DEFERRED` to
+a read-only open, and `ComponentsFactory` only *logs* a guard failure when `readOnly`. So an index
+whose shape had genuinely changed opened normally, the status surface reported `reindex_required`,
+and the Worker never acted. Nothing looked broken, which is why it survived review twice.
 
-The observable consequence: on such a boot the index opens, **search keeps serving**, the status
-surface still reports `BLOCKED_MISMATCH` with `reindex_required`, and the *user* is told to reindex —
-but the automatic blue/green rebuild does **not** start by itself, because
-`KnowledgeServer.start()`'s `SCHEMA_MISMATCH` handler is never entered. Automatic migration is
-reached today from the other two paths: a resumed migration whose Green is mismatched, and an active
-generation opened non-deferred.
+The open-time guard remains as a second line — it still catches a writable open, including the
+deferred writer upgrade — but it is no longer the only line, and it can no longer be bypassed by the
+choice of open mode.
 
-This is a gap in reachability, not in the policy: `index.schema_mismatch.policy` does what this
-document describes wherever the exception is raised. Closing it is tracked as tempdoc 915 open item
-O7 — the choice is between distinguishing `DEFERRED` from `READ_ONLY` at the guard call site and
-routing `upgradeWriter()`'s `SCHEMA_MISMATCH` into the same handler.
+**A mismatch escaping the deferred writer upgrade is not "non-fatal".** When
+`DeferredRuntime.upgradeWriter()` raises `SCHEMA_MISMATCH` inside `initDeferredModels()`, that means
+ingestion has stopped — the index cannot accept writes under this runtime's shape. It is reported at
+ERROR naming the condition and the remedy, not folded into the generic background-model-init warning
+that used to hide it. It is reported rather than propagated because that code runs on a background
+future with no caller left to receive it; the durable handling is the next boot's pre-open detection,
+and in the meantime the status surface already reports `BLOCKED_MISMATCH` with `reindex_required`.
 
 ## Blue/Green migration model (current MVP)
 
