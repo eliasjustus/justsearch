@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "RESEARCHED + RETHEORIZED (2026-09-03) — gh auto-merge transport refuted; REST async queue transport is the leading unproved hypothesis; no rollout before a new live proof"
+status: "REST FIX DERISKED (2026-09-03) — route, version, queue state machine, and CLI transport proved read-only; custom-body preservation still requires one authorized live proof"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -21,7 +21,7 @@ Read this file, then ADR-0045, tempdoc 653 from §Long-term design settlement on
 tempdoc 856 §3/§6, `.claude/skills/publish/SKILL.md`,
 `scripts/ci/preview-squash-message.mjs` and its tests, and the history-publication
 section of `docs/reference/contributing/agent-guide.md`. Treat §§0–11 as the candidate
-design that existed before the failed PR #625 proof, then read §14 before planning any
+design that existed before the failed PR #625 proof, then read §§14–15 before planning any
 implementation. Do not retry `gh pr merge --body-file`, change the repository
 squash-body default, or start PRs 1–3. The next gate is a separately authorized live
 proof of the REST asynchronous queue transport described in §14.5.
@@ -891,10 +891,12 @@ pieces the publication boundary needs:
 - `merge_action`, including an explicit `merge_queue` value.
 
 The endpoint returns a UUID for a corresponding result endpoint. A pending result
-reports the merge method, merge action, and expected head SHA; completion reports the
-landed commit or a failure. GitHub documents `200` for an already merged or already
-queued PR, `202` for a newly accepted asynchronous request, and `409` when another
-asynchronous request already exists. See
+reports the merge method, merge action, and expected head SHA. A direct merge may finish
+with a landed commit, but a queue-routed request may instead finish this first phase as
+`enqueued`; the UUID does not then replace ordinary merge-queue/PR completion monitoring.
+GitHub documents `200` for an already merged or already queued PR, `202` for a newly
+accepted asynchronous request, and `409` when another asynchronous request already
+exists. See
 [Merge a pull request asynchronously](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request-asynchronously)
 and
 [Get the result of an asynchronous merge](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#get-the-result-of-an-asynchronous-merge).
@@ -959,12 +961,14 @@ benign, single-purpose PR and one request; do not combine it with PR 1–3 imple
 3. Submit the asynchronous request with API version `2026-03-10`, explicit
    `merge_action=merge_queue`, `merge_method=squash`, the expected `sha`, the exact live
    subject as `commit_title`, and the public projection as `commit_message`.
-4. Require a new `202` response and persist its UUID. Treat `200` or `409` as an
-   ambiguous/already-enqueued stop: inspect state; never silently retry with possibly
-   different options.
-5. Poll the UUID with bounded waits. Treat transport loss or timeout as unknown state,
-   query before retrying, and never submit a second irreversible request merely because
-   the client missed the first response.
+4. Require a new `202` response and persist its UUID. Treat `200` as an already-
+   merged/already-enqueued stop. A `409` body can disclose an existing UUID, method,
+   action, and head SHA, but not its custom title/body; observe that request if useful,
+   but do not certify it as the reviewed publication or silently submit another.
+5. Poll the UUID with bounded waits only through the asynchronous submission phase. On
+   `enqueued`, switch to ordinary PR/merge-queue and merge-group monitoring. Treat
+   transport loss or timeout as unknown state, query before retrying, and never submit a
+   second irreversible request merely because the client missed the first response.
 6. After the queue lands, compare subject and body byte-for-byte with the sent values;
    assert the public sentinel is present and the review sentinel absent; then verify the
    merge-group and post-merge CI run.
@@ -996,10 +1000,137 @@ single asynchronous request and its UUID rather than around `gh pr merge`. If it
 prefer durable storage separation over PR-body swapping. Repository `PR_BODY` remains
 unchanged until one of those paths is proved end to end.
 
+## 15. Derisk pass for the replacement implementation — 2026-09-03
+
+This pass followed `.agents/skills/derisk/SKILL.md`. It investigated the REST fix and
+the implementation seams without adding feature code, changing repository settings,
+opening a PR, or invoking a merge endpoint. All GitHub calls were read-only, including
+the request/result schema queries and a deliberately unknown result UUID.
+
+### 15.1 Confidence-building plan
+
+1. Prove the current host, API version, credentials, repository merge method, and merge-
+   queue state can reach the documented asynchronous surface.
+2. Derive the actual response state machine from GitHub's OpenAPI and an official client,
+   not from the happy-path prose alone.
+3. Exercise the installed `gh` process boundary: JSON through standard input, HTTP status
+   plus body capture, non-2xx body retention, and cross-platform binary resolution.
+4. Identify which source fields can be read together, which have an optimistic lock, and
+   which metadata races remain structurally unavoidable.
+5. Pressure-test post-merge equality against GitHub's line wrapping and generated
+   co-author material.
+6. Map the repository files, dependency changes, workflow rollout, tests, and fallback
+   needed after the live transport proof.
+
+### 15.2 Evidence and conclusions
+
+| Question | Evidence gathered | Conclusion |
+|---|---|---|
+| Is the endpoint real and reachable on this host? | A request using `X-GitHub-Api-Version: 2026-03-10` selected that exact version. `GET .../merge-async/<unknown-uuid>` returned the endpoint-specific documentation URL. GitHub's 2026-03-10 OpenAPI marks both submit and result operations as not cloud-only and enabled for GitHub Apps. | **High confidence.** Only a real `PUT` can prove submit permission, but route/version availability is no longer speculative. |
+| Does the repository satisfy the transport prerequisites? | The live repository reports squash merging enabled with `PR_TITLE` / `PR_BODY`; open PR #622 reports `isMergeQueueEnabled=true`. The authenticated classic token has repository scope, which covers the documented Contents-write requirement. | **High confidence, pending the first submit.** |
+| Can one read produce a coherent publication snapshot? | Live GraphQL exposes PR title/body, `headRefOid`, `updatedAt`, `viewerMergeHeadlineText(SQUASH)`, `isInMergeQueue`, `mergeQueueEntry`, and `autoMergeRequest`. | **Yes.** Fetch them in one query immediately before mutation. |
+| What can be locked? | The REST `sha` field cancels the request if the PR head changes. Neither REST nor the live GraphQL inputs expose an expected PR `updatedAt` for the merge request. | **Code is locked; title/body are a snapshot, not an atomic metadata lock.** Print and send the same in-memory value with no saved-preview reuse. |
+| Can the installed CLI transport exact JSON safely? | `gh api --input -` accepted a JSON buffer through standard input in a read-only GraphQL probe. `--include` returned status, headers, and JSON; on a real `404`, `gh` exited nonzero but retained the response body on stdout. A scratch parser passed documented `200`, `202`, and `409` fixtures plus the live HTTP/2 response. | **Yes.** Use `spawnSync` with an argument vector and a UTF-8 `Buffer`; do not pipe JSON through Windows PowerShell or put the body in argv. |
+| Does the UUID track the whole merge? | OpenAPI defines `pending`, `enqueued`, `merged`, and `failed`. GitHub's `gh-stack` stops UUID polling at `enqueued` and tells the user the queue will finish later. | **No.** Implement two phases: async-request polling, then existing PR/merge-group completion monitoring. |
+| Can a lost response be reconciled safely? | A documented `409` includes UUID, method, action, and expected SHA, but omits commit title/message. A `200 enqueued` response can omit the UUID entirely. | **Only partially.** Recover observation of the existing request, but never claim it carries the reviewed body. No blind retry or automatic direct-merge fallback. |
+| Is `viewerMergeBodyText` an exact-body oracle? | On open PR #622 the PR body was 10,835 characters and the viewer body 10,903; the first difference was line wrapping at character 61, followed by a generated co-author block. In the latest 100 `main` commits, 90 had the same trailing separator/co-author shape. | **No.** The extracted projection is the sent-body authority. Use a single-author proof PR; design production verification around a closed, separately classified provider suffix only after the proof records its exact behavior. |
+| Is the Markdown parser dependency stable? | `markdown-it@14.2.0` is installed only below `markdownlint-cli`, not declared directly. The earlier token-map experiment already proved it distinguishes real top-level H2s from headings in fences, blockquotes, and raw HTML. | **Parser approach is sound; add `markdown-it` as a direct dev dependency before import.** |
+| Can the metadata workflow safely become required immediately? | GitHub documents that required checks attach to the latest commit SHA, but the same-SHA ordering behavior after a PR-body-only `edited` event remains unmeasured here. | **No immediate hard gate.** Retain the report-only rollout and make the local publication validator authoritative until live same-SHA evidence exists. |
+
+Official primary sources used in this pass:
+
+- [GitHub REST 2026-03-10 asynchronous merge API](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request-asynchronously)
+- [GitHub REST API description](https://github.com/github/rest-api-description/blob/main/descriptions-next/api.github.com/api.github.com.2026-03-10.yaml)
+- [GitHub's `gh-stack` async client](https://github.com/github/gh-stack/blob/main/internal/github/merge_async.go)
+  and [two-phase caller](https://github.com/github/gh-stack/blob/main/cmd/merge.go)
+- [GitHub required-status-check troubleshooting](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)
+
+### 15.3 Corrected publication state machine
+
+```text
+one GraphQL snapshot
+  -> validate and render exact title/body/head
+  -> authorized PUT returns 202 + UUID
+  -> poll UUID while pending
+       -> failed: stop and report
+       -> merged: reconcile PR and verify commit (unexpected queue shortcut)
+       -> enqueued: switch observers
+  -> watch mergeQueueEntry + PR state + merge_group run
+       -> PR open and entry gone: queue rejection; investigate
+       -> PR merged: fetch landed commit
+  -> verify subject, public-body bytes, forbidden review sentinel, and final main CI
+```
+
+Preflight `isInMergeQueue=true`, submit `200 enqueued`, submit `409`, missing UUID,
+unexpected method/action/SHA, `404`, and malformed JSON are all fail-closed branches.
+The implementation must preserve the raw response in its diagnostic output without
+printing credentials or the full rich PR review body.
+
+### 15.4 Implementation shape after the proof
+
+Keep the mutation separate from preview. The likely implementation boundary is:
+
+- a pure v2 projection/parser library consumed by the current preview and tests;
+- a small async-response parser/state classifier tested with every documented status and
+  malformed/duplicate-header fixtures;
+- an authorized enqueue command that imports `resolveGhBin`, performs one GraphQL
+  snapshot, writes the request JSON as a UTF-8 buffer to `gh api --input -`, and never
+  invokes a shell;
+- the existing required-check watcher before enqueue and the existing PR/merge-group
+  completion logic after `enqueued`;
+- report-only PR-body workflow rollout before branch-protection registration;
+- both `.agents/skills/publish/SKILL.md` and `.claude/skills/publish/SKILL.md`, plus
+  canonical publication documentation, updated together when behavior actually changes.
+
+Required transport tests before a production mutation:
+
+- `202 pending` with UUID and exact method/action/SHA;
+- `pending -> enqueued`, `pending -> failed`, and bounded timeout;
+- `200 enqueued`, `200 merged`, `409 pending`, `400`, `403`, `404`, `422`;
+- missing/mismatched UUID, SHA, method, or action;
+- HTTP/1.1 and HTTP/2 header parsing with CRLF/LF and a non-2xx JSON body;
+- multiline Unicode title/body passed as a UTF-8 stdin buffer;
+- already-queued preflight and head movement between snapshot and submit;
+- landed body with no provider suffix and with only the exact allowed provider suffix;
+- proof that a review-only sentinel cannot pass post-merge verification.
+
+The live proof should ride with a legitimate independent change rather than create a
+standalone one-file tempdoc PR. Use a single-author, single-commit candidate so the first
+transport verdict is not confounded by GitHub's generated co-author suffix. Require a
+fresh `202`; an already-existing request does not test the intended payload.
+
+### 15.5 Remaining risks and confidence
+
+| Risk | Residual severity | Why it remains |
+|---|---|---|
+| Queue discards or transforms explicit `commit_message` | **Critical** | Only a live queued squash can settle the core hypothesis. |
+| Title/body edit in the snapshot-to-submit interval | **Medium** | There is no metadata optimistic lock; the sent snapshot remains coherent, but PR display can move. |
+| Ambiguous pre-existing async request | **High** | Response metadata cannot prove its custom body. Fail closed rather than merge on inference. |
+| Provider-generated body suffix changes | **Medium** | The observed shape is stable but not documented as an API contract. Keep it a closed parser with post-merge diagnostics. |
+| Same-SHA required-check selection after body edits | **Medium** | Official documentation guarantees the SHA, not which same-context run GitHub selects. Report-only rollout still needed. |
+| API version/host drift | **Low for GitHub.com, medium for other hosts** | Explicit versioning and endpoint-specific failures make drift visible. |
+
+**Implementation confidence: 6/10 before the live proof; 8/10 if §14.5 lands the exact
+public body and excludes the review sentinel.** The route, client transport, response
+parser, preflight fields, queue state machine, and repository integration seams now have
+direct evidence. The one remaining critical unknown is the provider behavior that caused
+the original failure.
+
+**Difficulty: 8/10 (hard).** The pure Markdown work is ordinary. The difficulty is the
+irreversible two-stage state machine, partial recovery metadata, provider-added commit
+material, same-SHA metadata checks, and coordinated policy/skill/documentation rollout.
+
+**Model recommendation:** use the strongest-capability class, specifically
+`gpt-5.6-sol` at `xhigh` reasoning, for the live proof and mutation/state-machine slice.
+After that proof passes and the transport contract is frozen in fixtures,
+`gpt-5.6-terra` at `high` is sufficient for the parser, workflow, template, and
+documentation slices. Keep the root agent responsible for the authorized merge action.
+
 ## Status
 
 The stale branch-protection prerequisite is merged and verified. The `gh pr merge`
-auto-merge transport is explained and refuted. A first-class REST asynchronous queue
-request is the leading but unproved replacement hypothesis. Keep `PR_BODY`, do not start
-PRs 1–3, and do not change repository settings until §14.5 passes or the storage-
-separation fallback is selected and designed.
+auto-merge transport is explained and refuted. The REST replacement is now derisked at
+the route, API-version, CLI-process, response-parser, preflight, and queue-state-machine
+levels, but custom-body persistence is still unproved. Keep `PR_BODY`, do not start PRs
+1–3, and do not change repository settings until §14.5 passes or the storage-separation
+fallback is selected and designed.
