@@ -33,6 +33,7 @@ import { CONFIG_SURFACE_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
 
 import { scanDeadConfig } from './dead-config.mjs';
 import { scanYamlReaders } from './yaml-readers.mjs';
+import { validateConfigLifecycle } from './lifecycle.mjs';
 import {
   verdictForMetric,
   verdictForBaselineShift,
@@ -116,6 +117,26 @@ export async function enforceConfigSurface(options) {
       verdict: 'fail',
       ruleDescriptions: RULE_DESCRIPTIONS,
     };
+  }
+
+  if (!fixtureMode) {
+    const lifecycleRel =
+      gate.config?.configLifecycle ?? 'governance/config-lifecycle.v1.json';
+    let lifecycleOverlay;
+    try {
+      lifecycleOverlay = JSON.parse(readFileSync(resolve(sourceRoot, lifecycleRel), 'utf8'));
+    } catch {
+      lifecycleOverlay = null;
+    }
+    const lifecycleFindings = validateConfigLifecycle({
+      matrix: report,
+      overlay: lifecycleOverlay,
+      repoRoot: sourceRoot,
+    });
+    if (lifecycleFindings.length > 0) {
+      verdict = 'fail';
+      findings.push(...lifecycleFindings.map((finding) => ({ ...finding, uri: lifecycleRel })));
+    }
   }
 
   const declarations = gate.changesetsDir

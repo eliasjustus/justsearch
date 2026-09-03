@@ -1,0 +1,384 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "declaration": "EnvRegistry.FILTER_NORM_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "The deterministic normalization tier is useful, but the optional LLM fallback remains default-off until its incremental semantic-gap recovery and latency are measured on representative supported hardware.",
+      "introducedOn": "2026-03-30",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A representative end-to-end evaluation shows semantic-gap recovery beyond the deterministic tier, no retrieval-quality regression, and p95 normalization latency within the search timeout on supported CPU and GPU tiers.",
+        "removeWhen": "The LLM fallback adds no material recovery beyond deterministic normalization, exceeds the supported-tier latency budget, or is superseded by a non-LLM normalization path."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md#f-020-hybrid-deterministicllm-filter-normalization"
+    },
+    {
+      "declaration": "EnvRegistry.QU_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "Soft-boost query understanding remains default-off until representative user-query incidence and supported-hardware preprocessing latency justify adding an automatic LLM stage to every eligible search.",
+      "introducedOn": "2026-03-30",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Representative local-query evaluation demonstrates positive retrieval impact and p95 preprocessing latency within the search budget on supported CPU and GPU tiers, with no unresolved scheduling contention.",
+        "removeWhen": "Representative evaluation shows non-positive retrieval impact, unacceptable supported-tier latency, or explicit agent and user filters make the automatic preprocessing stage redundant."
+      },
+      "evidenceLink": "docs/decisions/0016-query-understanding-soft-boost.md"
+    },
+    {
+      "declaration": "EnvRegistry.INDEX_COLLECTION",
+      "owner": "Configuration",
+      "rationale": "The singular environment/property override is a legacy escape hatch; the supported replacement is the YAML-only ConfigKey.INDEX_COLLECTIONS declaration at index.collections.",
+      "replacement": "ConfigKey.INDEX_COLLECTIONS",
+      "introducedOn": "2026-06-25",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Restore only if a supported consumer requires a singular collection override that cannot use index.collections and a contract test demonstrates that need.",
+        "removeWhen": "Repository and packaged-runtime scans find no reads of JUSTSEARCH_INDEX_COLLECTION or justsearch.index.collection outside compatibility tests, and migration guidance points operators to index.collections."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.VLM_PROFILE",
+      "owner": "Inference runtime",
+      "rationale": "VLM_PROFILE remains only as a legacy inference fallback; the supported engine-profile replacement is EnvRegistry.CHAT_PROFILE.",
+      "replacement": "EnvRegistry.CHAT_PROFILE",
+      "introducedOn": "2026-06-25",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Restore only if VLM extraction again needs an independently supported profile contract and end-to-end extraction tests prove CHAT_PROFILE cannot represent it.",
+        "removeWhen": "All inference readers and packaged configuration use CHAT_PROFILE, and a repository scan finds VLM_PROFILE only in migration or compatibility tests."
+      },
+      "evidenceLink": "modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java"
+    },
+    {
+      "declaration": "EnvRegistry.CAPABILITY_CONTRACT_STRICT",
+      "owner": "Inference runtime",
+      "rationale": "Strict fail-closed capability validation is default-off until every supported encoder pack declares complete capability metadata.",
+      "introducedOn": "2026-07-11",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Every supported encoder install pack carries complete capability metadata and startup contract tests pass with strict mode enabled for every encoder lane.",
+        "removeWhen": "A replacement model-manifest validator enforces the same facts unconditionally or supported legacy packs cannot be migrated without permanent fallback behavior."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.BACKFILL_CHUNK_SLOTS_PER_BATCH",
+      "owner": "Indexing pipeline",
+      "rationale": "The batch-slot cap is retained for experimentation after measurement showed it was not the dense-corpus chunk-tail throughput lever.",
+      "introducedOn": "2026-07-11",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A reproducible mixed-corpus benchmark shows a non-noise throughput or memory benefit on supported hardware without indexing correctness regressions.",
+        "removeWhen": "Representative benchmark arms remain neutral or worse, or the chunk cache no longer uses a configurable per-batch slot ceiling."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.HYBRID_ADAPTIVE_WEIGHTS_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "Per-query adaptive fusion weighting is default-off and lacks representative cross-corpus evidence for a supported contract.",
+      "introducedOn": "2026-06-25",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Leak-free evaluation shows material aggregate retrieval lift across short, mixed, multilingual, and long legal corpora without a ratchet regression on any supported stratum.",
+        "removeWhen": "Representative evaluation is neutral or negative, or a learned fusion authority supersedes the adaptive-weight selector."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.RERANK_JUDGE_BLEND_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "The judge refinement floor is default-off because existing measurements do not establish a cross-corpus aggregate benefit.",
+      "introducedOn": "2026-07-01",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "True post-rerank-order evaluation shows a repeatable reduction in judge-stage regressions on academic and email corpora without nDCG or latency regression.",
+        "removeWhen": "Corrected multi-run evaluation remains neutral or harmful, or the reranker gains an unconditional stage-non-regression mechanism."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.RERANK_JUDGE_BLEND_ALPHA",
+      "owner": "Search pipeline",
+      "rationale": "The static refinement-floor blend weight is meaningful only while the default-off judge blend experiment remains under evaluation.",
+      "introducedOn": "2026-07-01",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared sweep selects a stable alpha across academic and email holdouts and the paired blend is promoted.",
+        "removeWhen": "The judge blend is removed or confidence-driven arbitration fully supersedes the static alpha."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.RERANK_JUDGE_ARBITRATION_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "Confidence-driven judge arbitration remains default-off after a positive academic result but a small negative email result.",
+      "introducedOn": "2026-07-01",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Repeated true-order evaluation is net-positive on both academic and email holdouts with no supported-corpus regression.",
+        "removeWhen": "Wider or repeated evaluation remains net-negative on any supported corpus, or a better calibrated confidence signal replaces this gate."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE",
+      "owner": "Search pipeline",
+      "rationale": "The divergence alpha is an experimental calibration parameter coupled to the default-off judge-arbitration gate.",
+      "introducedOn": "2026-07-01",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared sweep identifies a stable alpha with net-positive true-order results on academic and email holdouts and arbitration is promoted.",
+        "removeWhen": "Judge arbitration is removed or a calibrated policy derives the weight without an operator-facing scalar."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.RERANK_JUDGE_ARBITRATION_SKIP_ENABLED",
+      "owner": "Search pipeline",
+      "rationale": "Skipping the cross-encoder can save latency but has sharper quality risk and remains independently default-off.",
+      "introducedOn": "2026-07-01",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Supported-hardware measurement shows material p95 latency reduction and true-order quality remains within every registered corpus ratchet.",
+        "removeWhen": "The skip rate or latency saving is immaterial, quality regresses, or reranker scheduling makes the skip gate redundant."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED",
+      "owner": "MCP delivery",
+      "rationale": "Entity carriage is default-off; offline renderer evidence is positive but live-backend and agent-utility evidence remains incomplete.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A live-backend smoke and leak-free agent-utility evaluation improve two-hop completion while staying within the delivery byte budget and preserving ranking/tool schemas.",
+        "removeWhen": "Live evaluation shows no completion benefit, unacceptable payload growth, or evidence-span delivery fully supersedes entity carriage."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS",
+      "owner": "MCP delivery",
+      "rationale": "The entity-carriage byte ceiling is a calibration parameter coupled to the default-off carriage experiment.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Live and agent-utility measurements establish a ceiling that preserves the bridge entity and keeps payloads within the delivery budget, and carriage is promoted.",
+        "removeWhen": "Entity carriage is removed or a shared delivery-budget allocator supersedes the separate per-hit ceiling."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same default-off entity-carriage experiment as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A live-backend smoke and leak-free agent-utility evaluation improve two-hop completion while staying within the delivery byte budget and preserving ranking/tool schemas.",
+        "removeWhen": "Live evaluation shows no completion benefit, unacceptable payload growth, or evidence-span delivery fully supersedes entity carriage."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same experimental entity-carriage ceiling as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "Live and agent-utility measurements establish a ceiling that preserves the bridge entity and keeps payloads within the delivery budget, and carriage is promoted.",
+        "removeWhen": "Entity carriage is removed or a shared delivery-budget allocator supersedes the separate per-hit ceiling."
+      },
+      "evidenceLink": "docs/reference/search-quality-register.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_FRAMING_CONTINUATION",
+      "owner": "MCP delivery",
+      "rationale": "Continuation framing is a default-off probe for whether agents stop after the first retrieval hop.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation shows a statistically credible increase in correct follow-up searches without harmful query loops or payload-budget regression.",
+        "removeWhen": "The framing does not improve completion, causes harmful extra searches, or the agent protocol supplies continuation structure directly."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER",
+      "owner": "MCP delivery",
+      "rationale": "Evidence-not-answer framing is a default-off agent-behavior probe rather than a proven supported delivery contract.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation reduces unsupported-answer errors without reducing correct completion or exceeding the delivery budget.",
+        "removeWhen": "The framing is behaviorally neutral or harmful, or typed protocol metadata supersedes prose framing."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE",
+      "owner": "MCP delivery",
+      "rationale": "Calibrated-absence framing is default-off pending evidence that its corpus-coverage warning improves agent decisions.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation reduces false absence conclusions on zero, thin, and weak-result cases without reducing correct completion.",
+        "removeWhen": "The warning is behaviorally neutral or harmful, or typed coverage/confidence fields supersede prose framing."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES",
+      "owner": "MCP delivery",
+      "rationale": "The thin-result byte floor is an experimental calibration parameter coupled to calibrated-absence framing.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared utility sweep identifies a stable byte floor across supported corpora and calibrated-absence framing is promoted.",
+        "removeWhen": "Calibrated-absence framing is removed or a typed evidence-coverage signal supersedes byte length."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
+      "owner": "MCP delivery",
+      "rationale": "The weak-score threshold is an experimental calibration parameter whose meaning is limited to bounded fusion methods.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared utility sweep validates one threshold across supported bounded-score fusion modes and calibrated-absence framing is promoted.",
+        "removeWhen": "The threshold does not transfer across supported corpora or a calibrated confidence signal supersedes raw fused score."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_FRAMING_CONTINUATION",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same default-off continuation-framing experiment as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation shows a statistically credible increase in correct follow-up searches without harmful query loops or payload-budget regression.",
+        "removeWhen": "The framing does not improve completion, causes harmful extra searches, or the agent protocol supplies continuation structure directly."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same default-off evidence-not-answer experiment as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation reduces unsupported-answer errors without reducing correct completion or exceeding the delivery budget.",
+        "removeWhen": "The framing is behaviorally neutral or harmful, or typed protocol metadata supersedes prose framing."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same default-off calibrated-absence experiment as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A leak-free agent-utility evaluation reduces false absence conclusions on zero, thin, and weak-result cases without reducing correct completion.",
+        "removeWhen": "The warning is behaviorally neutral or harmful, or typed coverage/confidence fields supersede prose framing."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same experimental thin-result byte floor as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-28",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared utility sweep identifies a stable byte floor across supported corpora and calibrated-absence framing is promoted.",
+        "removeWhen": "Calibrated-absence framing is removed or a typed evidence-coverage signal supersedes byte length."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "ConfigKey.SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
+      "owner": "MCP delivery",
+      "rationale": "The YAML projection controls the same experimental weak-score threshold as its EnvRegistry counterpart.",
+      "introducedOn": "2026-07-29",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared utility sweep validates one threshold across supported bounded-score fusion modes and calibrated-absence framing is promoted.",
+        "removeWhen": "The threshold does not transfer across supported corpora or a calibrated confidence signal supersedes raw fused score."
+      },
+      "evidenceLink": "docs/reference/configuration/environment-variables.md"
+    },
+    {
+      "declaration": "EnvRegistry.INDEX_NRT_MODE",
+      "owner": "Indexing pipeline",
+      "rationale": "The on-demand NRT mode remains opt-in after its first measured arm increased reopens and reduced indexing throughput.",
+      "introducedOn": "2026-09-02",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A clean search-load re-measure shows non-regressed query freshness and throughput, lower reopen/segment churn, and no indexing correctness failure.",
+        "removeWhen": "The clean re-measure does not earn its keep or an unconditional reopen strategy supersedes the mode switch."
+      },
+      "evidenceLink": "docs/decisions/0048-extraction-isolation-and-indexing-pacing.md"
+    },
+    {
+      "declaration": "EnvRegistry.INDEX_NRT_BACKGROUND_REOPEN_MS",
+      "owner": "Indexing pipeline",
+      "rationale": "The background cadence is meaningful only for the still-unproven on-demand NRT experiment.",
+      "introducedOn": "2026-09-02",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared search-load sweep finds a cadence meeting freshness and throughput bounds and on-demand mode is promoted.",
+        "removeWhen": "On-demand mode is removed or one non-configurable cadence satisfies the measured contract."
+      },
+      "evidenceLink": "docs/decisions/0048-extraction-isolation-and-indexing-pacing.md"
+    },
+    {
+      "declaration": "EnvRegistry.INDEX_NRT_ON_DEMAND_MAX_STALE_MS",
+      "owner": "Indexing pipeline",
+      "rationale": "The blocking-refresh staleness bound is a calibration parameter coupled to the unproven on-demand NRT mode.",
+      "introducedOn": "2026-09-02",
+      "lastReviewedOn": "2026-09-03",
+      "reviewBy": "2026-12-03",
+      "exitCriteria": {
+        "promoteWhen": "A predeclared search-load sweep validates a bound that meets query freshness and latency SLOs and on-demand mode is promoted.",
+        "removeWhen": "On-demand mode is removed or the supported freshness contract supplies a fixed bound."
+      },
+      "evidenceLink": "docs/decisions/0048-extraction-isolation-and-indexing-pacing.md"
+    }
+  ]
+}

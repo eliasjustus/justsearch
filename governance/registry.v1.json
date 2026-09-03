@@ -129,7 +129,7 @@
     },
     {
       "id": "todo-fixme",
-      "title": "TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
+      "title": "Source-comment TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
       "enforcer": "scripts/governance/gates/todo-fixme/enforcer.mjs",
       "ruleDescriptions": "scripts/governance/gates/todo-fixme/rule-descriptions.mjs",
       "changesetsDir": "gates/todo-fixme/.changesets",
@@ -142,13 +142,18 @@
       },
       "config": {
         "sourceGlobs": [
-          "modules/**/src/main/**/*.java",
-          "modules/ui-web/src/**/*.{ts,tsx}"
+          "modules/**/src/{main,test,testFixtures,integrationTest,systemTest,soakTest}/**/*.java",
+          "modules/ui-web/src/**/*.{ts,tsx}",
+          "scripts/**/*.{js,mjs,cjs,py,ps1}",
+          "modules/shell/src-tauri/**/*.rs"
         ],
         "excludeGlobs": [
           "**/build/**",
           "**/generated/**",
-          "**/node_modules/**"
+          "**/node_modules/**",
+          "**/target/**",
+          "scripts/governance/_fixtures/**",
+          "scripts/governance/gates/todo-fixme/**"
         ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/todo-fixme"
@@ -636,17 +641,18 @@
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },
-      "config": {
-        "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
-        "applicationYaml": "config/application.yaml",
-        "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
-        "inputs": [
-          {
-            "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
-            "producer": "node scripts/docs/generate-runtime-config-matrix.mjs",
-            "class": "required"
-          }
-        ]
+    "config": {
+      "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+      "applicationYaml": "config/application.yaml",
+      "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
+      "configLifecycle": "governance/config-lifecycle.v1.json",
+      "inputs": [
+        {
+          "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+          "producer": "node scripts/docs/generate-runtime-config-matrix.mjs",
+          "class": "required"
+        }
+      ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/config-surface"
     }

@@ -137,6 +137,17 @@ jobs:
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
 
+      - name: Test platform lifecycle evidence policy
+        run: node scripts/ci/check-platform-lifecycle.test.mjs
+
+      # Advisory by design: invalid or unreadable evidence still fails closed, while a valid
+      # superseded/support finding is reported for an owner decision instead of making every PR red.
+      - name: Report platform lifecycle evidence
+        run: node scripts/ci/check-platform-lifecycle.mjs --mode report
+
+      - name: Screenshot-step coverage matches the reachable UI catalog
+        run: node scripts/ci/check-ui-step-coverage.mjs
+
       - name: Release metadata projection tests
         run: |
           node --test scripts/release/release-changelog.test.mjs
@@ -486,6 +497,14 @@ jobs:
       - name: Verify Claude skill doc sections are up to date
         run: node scripts/docs/skills-sync.mjs --check
 
+      - name: Upload this run's governance-health snapshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: governance-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tmp/governance-history.ndjson
+          if-no-files-found: warn
+
   license-and-notices:
     name: License and notices
     runs-on: windows-latest
@@ -575,6 +594,9 @@ jobs:
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
+
+      - name: Reference-client API projections are reproducible
+        run: node scripts/ci/check-api-client-regen.mjs
 
       - name: Upload build attribution
         if: always()

@@ -65,10 +65,11 @@ public final class InfraPhase {
       InfraHealthGrpcService grpcService = new InfraHealthGrpcService(diagnostics);
       ResolvedConfig.InfraGrpc grpcCfg = rc.infraGrpc();
       Server grpcServer = BootstrapHelpers.startInfraHealthGrpcServer(grpcService, grpcCfg);
+      boolean allowFakeCapabilities = !rc.policy().prodMode();
       HttpHandler capabilitiesHandler =
           BootstrapCapabilitiesFactory.createCapabilitiesHandler(
-              System.getProperty("app.api.fake_capabilities"),
-              System.getenv("APP_API_FAKE_CAPABILITIES"),
+              allowFakeCapabilities ? System.getProperty("app.api.fake_capabilities") : null,
+              allowFakeCapabilities ? System.getenv("APP_API_FAKE_CAPABILITIES") : null,
               FileBackedCapabilitiesHandler::new,
               () ->
                   new CapabilitiesController(

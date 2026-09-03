@@ -15,12 +15,7 @@ import { verdictForFile, verdictForBaselineShift } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
-
-const TODO_PATTERN = /\b(TODO|FIXME|XXX)\b/g;
-
-function countTodos(content) {
-  return (content.match(TODO_PATTERN) ?? []).length;
-}
+import { countCommentMarkers } from './comment-scanner.mjs';
 
 function globToRegex(glob) {
   let re = '';
@@ -119,7 +114,7 @@ export async function enforceTodoFixme(options) {
   const liveCounts = new Map();
   for (const file of files) {
     const rel = relative(sourceRoot, file).replaceAll('\\', '/');
-    const count = countTodos(readFileSync(file, 'utf8'));
+    const count = countCommentMarkers(readFileSync(file, 'utf8'), rel);
     if (count === 0 && !baseline.has(rel)) continue;
     liveCounts.set(rel, count);
     const pinned = baseline.get(rel) ?? 0;
@@ -133,7 +128,8 @@ export async function enforceTodoFixme(options) {
       findings.push(repinFinding({
         rulePrefix: 'todo-fixme', classification: cls, row: rel, measured: count,
         livePin: pinned, priorPin: priorBaseline?.get(rel), baselineFile: gate.baseline.path,
-        unit: 'TODO/FIXME markers', pinLine: `${rel} ${count} <today>`,
+        unit: 'TODO/FIXME markers (and XXX), counted only in source comments',
+        pinLine: `${rel} ${count} <today>`,
       }));
       continue;
     }
@@ -162,7 +158,9 @@ export async function enforceTodoFixme(options) {
 
   if (rebalance && rebalanceWrites.size > 0) {
     const date = new Date().toISOString().slice(0, 10);
-    const lines = [`# TODO/FIXME ratchet — tempdoc 530 §2.6. <path> <count> <date>`];
+    const lines = [
+      '# Source-comment TODO/FIXME/XXX marker ratchet — tempdoc 530 §2.6. <path> <count> <date>',
+    ];
     for (const [path, count] of [...baseline.entries()].sort()) {
       const newCount = rebalanceWrites.has(path) ? rebalanceWrites.get(path) : count;
       if (newCount > 0) lines.push(`${path} ${newCount} ${date}`);
@@ -172,7 +170,7 @@ export async function enforceTodoFixme(options) {
 
   return {
     toolName: 'justsearch-todo-fixme',
-    toolVersion: '0.1.0',
+    toolVersion: '0.2.0',
     findings,
     verdict,
     ruleDescriptions: { ...TODO_FIXME_RULE_DESCRIPTIONS, ...repinRuleDescription('todo-fixme') },

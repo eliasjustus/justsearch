@@ -280,7 +280,7 @@ The content extraction pipeline is hardened against real-world file system edge 
 *   **Native access:** both the Head and Worker JVMs are launched with `--enable-native-access=ALL-UNNAMED` because they make FFM downcalls (NVML, the Windows job object, the GPU driver probe); Lucene 10's `MMapDirectory` uses the FFM `MemorySegment` provider, so no `--add-opens` is needed.
 *   **Encoding resilience:** Tika 3.x correctly auto-detects and decodes UTF-8 (with/without BOM), UTF-16 LE/BE, Windows-1252, ISO-8859-1, and Shift-JIS. Verified by 8 encoding tests in `ContentExtractorTest`. Correctly-decoded non-ASCII text passes `TextQualityAnalyzer` without false positives.
 
-Three extraction gaps are known and deliberately deprioritized: user-configured exclude patterns are applied post-indexing rather than during the walk, Windows junction points can produce duplicate documents under different paths, and a file that cannot be extracted is indexed with placeholder content with no user-visible signal. They were routed to `docs/observations.md` when the `docs/reference/issues/` registers were retired (tempdoc 821 §7 D5); that store is itself now retired (tempdoc 872 — see its git history), and these gaps remain deliberately deprioritized without an active tracked item.
+One filesystem-identity gap remains here: Windows junction points can expose the same file under distinct paths and therefore produce duplicate documents. Tempdoc 889 owns the active investigation. User-configured excludes already reach the Worker's traversal, and extraction failures become typed failed-job and ingestion-ledger outcomes rather than placeholder-indexed documents.
 
 ## Embedding Strategy
 

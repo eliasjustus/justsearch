@@ -69,6 +69,15 @@ If we later add an automated generator, it should concatenate **canonical docs o
 4.  **Avoid formatting noise:**
     *   Do not use excessive bolding or italics for emphasis (it distracts from the tokens). Use them only for keywords.
 
+### 3.1. Make operational claims checkable
+
+Claims about current behavior, coverage, versions, counts, defaults, or support
+must name a source an agent can inspect: a code symbol, generated artifact,
+register, contract test, or exact command. Prefer a projection from that source
+over a copied value. If a sentence cannot be checked mechanically and is likely
+to change, qualify it as dated evidence or move it to a tempdoc instead of
+presenting it as current canonical truth.
+
 ---
 
 ## 4. Doc Types

@@ -613,9 +613,7 @@ When the user closes Chat or minimizes the app:
 ### 1. `llama-server` (The Engine)
 We use the compiled binary from `llama.cpp` as a separate process (`llama-server.exe`) for maximum performance and isolation.
 
-**v1 note (current shipping posture):** v1 Simple Mode bundles a **CPU-only** `llama-server` runtime by default (pinned upstream build).
-GPU-accelerated runtimes (NVIDIA CUDA) are **deferred to v3 hardware-awareness** and are expected to be distributed via an offline **GPU Booster Pack** (runtime variant) rather than downloaded as arbitrary executables.
-The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration only applies when a GPU-capable runtime is used.
+**Current shipping posture:** the baseline bundle remains a **CPU-only** `llama-server` runtime (pinned upstream build). JustSearch also stages and installs the NVIDIA CUDA 12.4 runtime as a versioned `cuda12` variant through the offline GPU Booster Pack path; it is no longer deferred architecture. GPU acceleration applies only when that GPU-capable variant is installed and active, and the existing control plane supplies flags such as `-ngl`.
 *   **Protocol:** OpenAI-compatible API (`/v1/chat/completions`).
 *   **Diagnostics:** `GET /health` and `GET /props` (includes `n_ctx` + `model_alias`).
 *   **Binary discovery:** `InferenceConfig.findServerExecutable()` searches canonical paths and `variants/` subdirectories. When GPU is configured (`gpuLayers > 0`), prefers `variants/cuda12/` for CUDA-optimized binary. Falls back to baseline binary. **Dev-layout path** (active only when `justsearch.repo.root` system property is set): searches `{repoRoot}/modules/shell/src-tauri/resources/headless/` (Tauri resource bundle). Added in tempdoc 369 for eval backend LLM support. (The former `{repoRoot}/third_party/llama.cpp/build/` local source-build path was removed with the vendored llama.cpp tree — tempdoc 632; the runtime is the pinned upstream prebuilt download.)

@@ -1,11 +1,11 @@
 """Regenerate the shared a11y baseline register from the DETERMINISTIC --fixtures
 captures (tempdoc 615 §13 Move 2). Throwaway generator, not harness runtime.
 
-The e2e `KNOWN_RULE_BASELINE` was calibrated against the now-dead demo state (§14
-U1). This recaptures each structural view in the reproducible route-mock state and
-writes `governance/ui-a11y-baseline.v1.json` — the ONE authority both the Python
-ui-shot loop and the TS e2e gate consume (so the tiers can't silently disagree —
-§13.3 / P3). Run once after a deliberate baseline change; commit the JSON.
+The retired e2e `KNOWN_RULE_BASELINE` was calibrated against the now-dead demo
+state (§14 U1). This recaptures each structural view in the reproducible route-mock
+state and writes `governance/ui-a11y-baseline.v1.json` — the ONE authority the
+Python ui-shot measurement and ui-a11y gate consume. Run once after a deliberate
+baseline change; commit the JSON.
 """
 from __future__ import annotations
 
@@ -16,16 +16,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from jseval import ui_shot  # noqa: E402
-
-# surface -> (ui-shot step, [e2e view keys the surface covers])
-SURFACES = [
-    ("search", "home", ["search", "aria"]),
-    ("library", "library", ["library"]),
-    ("settings", "settings", ["settings"]),
-    ("health", "health", ["health"]),
-    ("brain", "ai-brain", ["brain"]),
-    ("help", "help", []),
-]
 
 def _repo_root() -> Path:
     here = Path(__file__).resolve()
@@ -45,20 +35,32 @@ def _axe_rule_ids(measure_path: str) -> list[str]:
 
 
 def main() -> int:
+    current = json.loads(_OUT.read_text(encoding="utf-8"))
+    declared_surfaces = current.get("surfaces")
+    if not isinstance(declared_surfaces, list) or not declared_surfaces:
+        print(f"  ! {_OUT}: expected a non-empty surfaces array")
+        return 1
     surfaces_out = []
-    for surface, step, e2e_views in SURFACES:
+    for declared in declared_surfaces:
+        surface = declared.get("surface")
+        step = declared.get("uiShotStep")
+        if not isinstance(surface, str) or not isinstance(step, str):
+            print(f"  ! {_OUT}: every row needs string surface and uiShotStep")
+            return 1
         res = ui_shot.execute_ui_shot(step, fixtures=True)
         if not res.get("ok"):
             print(f"  ! {step}: capture failed: {res.get('error')}")
             return 1
         rules = _axe_rule_ids(res["measure"]["measure_path"])
         print(f"  {surface:9s} (step {step:9s}): knownRules={rules}")
-        surfaces_out.append({
+        refreshed = {
             "surface": surface,
             "uiShotStep": step,
-            "e2eViews": e2e_views,
             "knownRules": rules,
-        })
+        }
+        if isinstance(declared.get("note"), str):
+            refreshed["note"] = declared["note"]
+        surfaces_out.append(refreshed)
 
     register = {
         "$schema": "./ui-a11y-baseline.schema.json",
@@ -67,8 +69,8 @@ def main() -> int:
             "Shared a11y known-violation baseline (tempdoc 615 §13 Move 2). ONE authority "
             "for the per-surface axe rules accepted in the DETERMINISTIC route-mock capture "
             "state (jseval ui-shot --fixtures). Consumed by the Python ui-shot measurement "
-            "(flags NEW-vs-known) AND the TS e2e accessibility-audit gate, so the tiers cannot "
-            "silently disagree about 'passing' (§13.3 / P3). knownRules = accepted debt; a "
+            "and ui-a11y governance gate, which flag NEW-vs-known violations. "
+            "knownRules = accepted debt; a "
             "violation NOT listed is NEW and must be investigated. Regenerate via "
             "scripts/jseval/experiments/regen_a11y_baseline.py after a deliberate change."
         ),

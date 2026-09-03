@@ -2350,3 +2350,24 @@ tasks.register<JavaExec>("runHeadlessWithProfiling") {
     logger.lifecycle("See docs/tempdocs/59-profiling-guide.md for analysis instructions")
   }
 }
+
+// Tempdoc 893 §D.2 — offline projection from the committed live-route capture. This proves only
+// snapshot-to-derivative coherence; the live capture command owns router fidelity.
+tasks.register<JavaExec>("generateReferenceClientOpenApiSnapshot") {
+  group = "build"
+  description = "Generate/check the classified reference-client OpenAPI snapshot"
+  dependsOn(tasks.named("classes"))
+  mainClass.set("io.justsearch.ui.api.OpenApiSnapshotExporter")
+  classpath = sourceSets["main"].runtimeClasspath
+  args(
+    rootProject.layout.projectDirectory.file(
+      "modules/ui-web/src/api/generated/route-manifest.snapshot.json"
+    ).asFile.absolutePath,
+    rootProject.layout.projectDirectory.file(
+      "modules/ui-web/src/api/generated/reference-client-openapi.snapshot.json"
+    ).asFile.absolutePath
+  )
+  if (providers.gradleProperty("referenceClientOpenApiCheck").orNull == "true") {
+    args("--check")
+  }
+}

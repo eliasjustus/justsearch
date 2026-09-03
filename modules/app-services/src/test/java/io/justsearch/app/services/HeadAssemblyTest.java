@@ -1,6 +1,7 @@
 package io.justsearch.app.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -42,13 +43,16 @@ import org.junit.jupiter.api.io.TempDir;
 class HeadAssemblyTest {
   @TempDir private Path tempDir;
   private String previousCapabilitiesProp;
+  private String previousProdProp;
   private ConfigStore previousStore;
 
   @BeforeEach
   void captureOverrides() {
     previousCapabilitiesProp = System.getProperty("app.api.fake_capabilities");
+    previousProdProp = System.getProperty("justsearch.prod");
     previousStore = ConfigStore.globalOrNull();
     System.clearProperty("app.api.fake_capabilities");
+    System.clearProperty("justsearch.prod");
     TestResolvedConfigHelper.storeFromEnvironment();
   }
 
@@ -58,6 +62,11 @@ class HeadAssemblyTest {
       System.clearProperty("app.api.fake_capabilities");
     } else {
       System.setProperty("app.api.fake_capabilities", previousCapabilitiesProp);
+    }
+    if (previousProdProp == null) {
+      System.clearProperty("justsearch.prod");
+    } else {
+      System.setProperty("justsearch.prod", previousProdProp);
     }
     TestResolvedConfigHelper.restoreGlobal(previousStore);
   }
@@ -356,6 +365,22 @@ class HeadAssemblyTest {
       assertEquals(200, exchange.statusCode);
       assertEquals("application/json; charset=utf-8", exchange.getResponseHeaders().getFirst("Content-Type"));
       assertEquals("{\"features\":[\"one\"]}", exchange.body());
+    }
+  }
+
+  @Test
+  void productionModeIgnoresFileBackedCapabilitiesOverride() throws Exception {
+    Path payload = tempDir.resolve("caps.json");
+    Files.writeString(payload, "{\"features\":[\"fake-production-capability\"]}", StandardCharsets.UTF_8);
+    System.setProperty("app.api.fake_capabilities", payload.toString());
+    System.setProperty("justsearch.prod", "true");
+    TestResolvedConfigHelper.storeFromEnvironment();
+
+    try (HeadAssembly bootstrap = new HeadAssembly(new NoopTelemetry(), new ConfigManagerBootstrap(), null, new io.justsearch.app.services.settings.UiSettingsStore(io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY), null)) {
+      FakeHttpExchange exchange = fakeExchange("GET", URI.create("http://localhost/infra/capabilities"));
+      bootstrap.capabilitiesHandler().handle(exchange);
+      assertEquals(200, exchange.statusCode);
+      assertFalse(exchange.body().contains("fake-production-capability"));
     }
   }
 
