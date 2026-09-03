@@ -1144,6 +1144,380 @@ Re-run in full after O14; every line below is from that run. The integration-tes
    (`adapters-lucene-batchupdate-rmw-coordinator-load-flake`), as is the `OnnxEmbeddingEncoder`
    long-doc forensic case. No pin is needed and none was added.
 
+## Phase 2 — pre-implementation pass and design
+
+Written on `worktree-lane-D2` at base `56e75cd7` (stacked on PR #620 = Phase 1). Reading and design
+only: no build, no test run, no dev stack (lane E owns the machine). Every `file:line` below was
+opened on THIS worktree. Phase 1's §B.2 already verified D1-D7; those are reused, not redone, and
+§B's WRONG list (1c, 2a, 2c, 6b, D3, D4) is not re-litigated here.
+
+### §P2.B Pre-implementation verification
+
+Verdict counts: **17 verified · 2 moved · 3 wrong · 1 not-applicable · 6 new facts the brief does
+not state**.
+
+#### The identity write path
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P1 | `doc_id` = absolute path, `IndexingDocumentOps.java` ~143-149 | **moved (`:145`)** | `fields.put(SchemaFields.DOC_ID, absolutePath)` at `:145`; the value is `PathNormalizer.normalizePath(filePath.toAbsolutePath().toString())` at `:135`. Phase 1's §B recorded `:144` against base `39d38f73`; the file drifted by one line. |
+| P2 | `doc_uid` = `UUID.randomUUID()` per write (parent) | **moved (`:146`)** | `fields.put(SchemaFields.DOC_UID, java.util.UUID.randomUUID().toString())` at `IndexingDocumentOps.java:146` (§B said `:145`). |
+| P3 | `doc_uid` = `UUID.randomUUID()` per write (chunk), `ChunkDocumentWriter.java:132` | **verified** | `ChunkDocumentWriter.java:132`. |
+| P4 | (not in the brief) a chunk's `doc_id` is **not** a path | **new fact** | `ChunkDocumentWriter.java:130-131` uses `ChunkIds.newChunkDocId()`; `ChunkIds.java:30` `CHUNK_PREFIX = "chunk:"`, `:51-53` returns `"chunk:" + UUID`. The class carries a `PERMANENT COMPAT` marker (`:21`). So "`doc_id` is the absolute path" is true of parents only. |
+| P5 | Rename rewrites parent + up to 10,000 chunks, `WritePathOps.java:536-583` | **verified (span is `:536-592`)** | `updateDocumentPaths` at `:536`; `searcher.search(chunkQuery, 10_000)` at `:569`; loop `:574-583`; return `:591`. |
+| P6 | (not in the brief) rename does **not** touch `doc_uid` | **new fact** | `updateDocumentPaths` updates only `DOC_ID`/`PATH`/`FILENAME` on the parent (`:551-553`) and `PARENT_DOC_ID`/`PATH` on chunks (`:580-581`). Both go through `readModifyWrite`, which reconstructs the document from its stored fields (`:325-347`) — so a **stored** `doc_uid` survives a rename with no code change at all. |
+
+#### Feedback / GPL keying
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P7 | Feedback/LambdaMART/GPL key on `docId` = path | **verified** | `FeatureSnapshot.java:25` (`HitFeatures.docId`); `LabelProjection.java:64` (`byDoc.putIfAbsent(h.docId(), h)`), `:73`, `:89`, `:94`; `AgentDispositionWiring.java:106` (`str(f.get("docId"))`); `GplTrainingTripleStore.java:362`, `:370` (`node.put("doc_id", docId)`). |
+| P8 | (extends the brief) where the path enters | **new fact** | Three producers, **none granted to this lane**: `SearchTool.java:388` `f.put("docId", hit.fields().getOrDefault("parent_doc_id", hit.id()))`; `FeatureSnapshots.java:43` `hit.id()`; `KnowledgeSearchController.java:171` takes `docId` verbatim from the FE POST body, and the FE posts `hit.id` (`modules/ui-web/src/shell-v0/state/searchState.ts:169-183`, callers `ResultsCard.ts:281`, `UnifiedChatView.ts:4528`). |
+
+#### The path store, `jobs.db`, and ADR-0028
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P9 | `SqlitePathResolutionStore` / `PathResolutionStore` schema | **verified** | Interface `modules/worker-core/.../path/PathResolutionStore.java:28-77` (`record`/`markRemoved`/`lookup`/`pruneByRootPrefix`/`pruneOldRemoved`, `Resolution` record at `:76-77`). DDL `SqliteSchema.java:162-183`: `path_resolution(path_hash, normalized_path, last_seen_at, removed_at)` + indexes on `normalized_path` and `removed_at`. Impl opens **its own** connection to the same file (`SqlitePathResolutionStore.java:62-79`), UPSERT at `:92-106`. |
+| P10 | `jobs.db` already holds the plain path | **verified** | `path_resolution.normalized_path` (`SqliteSchema.java:162-168`) plus the `jobs` rows themselves — `governance/store-recoverability.v1.json` `jobs-db.encryptionNote`: "Indexing-job rows are keyed on the user's absolute file paths … in the clear". |
+| P11 | (new) `jobs.db` survives blue/green | **new fact** | `KnowledgeServer.java:452` `Path dbPath = dataDir.resolve("jobs.db")` — at the dataDir root. Index generations live under `index/*/…` (`index-generations` row `ownedPaths`). A generation swap cannot touch it. |
+| P12 | ADR-0028 constraints | **verified** | `docs/decisions/0028-scoped-reverse-path-hash-lookup.md:65-71` — `path_resolution` is "the only persistent place where raw paths are stored after admission"; `:86-91` ArchUnit `LibraryResolveHashOnlyCallerPin`; `:93-112` retention (90 days after `removed_at`, **immediate** prune on unwatch); `:225-230` `MIGRATE_V6_TO_V7_ADD_PATH_RESOLUTION`. **Consequence:** a uid stored *inside* `path_resolution` would be destroyed by that retention and by prune-on-unwatch — the uid map must be a separate table with its own lifecycle. |
+| P13 | (new) the register's `jobs-db` version is stale | **wrong (register)** | `SqliteSchema.java:34` `TARGET_VERSION = 10` (ladder runs to `MIGRATE_V9_TO_V10_ADD_FIRST_FAILED_AT`, `:283`), but `governance/store-recoverability.v1.json` `jobs-db` says `"format": "SQLite WAL schema v7"`, `"currentVersion": 7`, `readableLegacyVersions: [0..6]`. |
+| P14 | (new) `jobs.db` corruption is quarantine-then-restore, not delete | **new fact** | `KnowledgeServer.java:476-489` catches SQLite code 11 → `handleCorruptDatabase` (`:2576-2606`): moves the file to `.corrupt` (preserved), quarantines the WAL, then restores from `.bak` if one exists. `corruptionPolicy: FAIL_OR_REBUILD_DERIVED_QUEUE` is accurate. |
+
+#### The migration enumerator
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P15 | Green re-ingests from **source files**, not from Blue's stored fields | **verified** | `KnowledgeServerMigrationOps.enqueueAllFilesUnderRoots` `:904-1008`: `Files.walk(root)` `:934`, `.filter(Files::isRegularFile).filter(Files::isReadable)` `:935`, `batch.add(JobQueue.EnqueueEntry.stat(path))` `:974`, `jobQueue.enqueueEntries(batch)` `:976`/`:986`. Corroborated by `docs/explanation/11-index-schema-migration.md:392` ("the migration enumerator (which walks the filesystem and enqueues jobs)"). **Consequence: uids do NOT survive a rebuild for free. The store is load-bearing, exactly as the brief assumed.** |
+| P16 | (new) Green resolves through the same in-process seam | **new fact** | The enqueued jobs are drained by the same `IndexingLoop` → `JobBatchExtractor` → `JobBatchWriter` → `IndexingDocumentOps.buildDocument` (`JobBatchWriter.java:111-124`) in the same Worker JVM, against the same `jobs.db`. Combined with P11, "Green writes the same uids Blue had" is true **by construction**, not by a copy step. |
+
+#### Every reader of `doc_uid`, every writer of `doc_id`, chunk identity
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P17 | Readers of `doc_uid` today | **verified — Java + two docs only** | Production: `FieldMapper.java:323-327` (`validatePrimaryKeySupport` — missing ⇒ "Field catalog missing doc_uid tiebreaker"; non-docValues ⇒ throw), `:576-578` (`resolveDocUid`); `RuntimeSession.java:132,280,320` (`uidField`); `ReadPathOps.java:141` (always in the stored allowlist), `:365` (id fallback), `:377-378` (stripped from the response unless explicitly projected); `ChunkSearchOps.java:480`; `FolderBrowseEngine.java:211`; `IndexingCoordinator.java:247-256` (`MISSING_UID_FIELD` validation). Docs: `docs/explanation/04-storage-engine.md:52`, `docs/explanation/18-adapters-lucene-deep-dive.md:500`. Catalog: `SSOT/catalogs/fields.v1.json:15-24` + the byte-identical `modules/adapters-lucene/src/main/resources/SSOT/catalogs/fields.v1.json:16`. **Zero** hits in any `.proto`, in `modules/ui-web/**`, in `scripts/jseval/**`, in the MCP surface (`McpToolSurface.java` exposes `path`, `:998`), and `governance/execution-surfaces.v1.json` contains the string zero times. |
+| P18 | `doc_uid` must be made `stored`/docValues so RMW preserves it (F-021/F-032 `rmwPolicy`) | **wrong as stated — already satisfied, and a policy would be REJECTED** | `fields.v1.json:15-24`: `doc_uid` is already `"stored": true, "docValues": true`, roles `["sort","tiebreak"]`. `FieldMapper.validateRmwPolicies` (`:198-245`) throws for a stored/docValues field that declares one: `:239-243` "declares rmwPolicy … but is stored or docValues-backed (RMW preserves it already) — remove the policy". Only the three genuinely fragile fields carry a policy (`fields.v1.json:180`, `:193`, `:433`). So Phase 2 must **not** add an `rmwPolicy` to `doc_uid`; the preservation the brief wants is already structural (P6). |
+| P19 | Writers of `doc_id` | **verified — three production sites** | `IndexingDocumentOps.java:145` (parent, path); `ChunkDocumentWriter.java:131` (chunk, `chunk:<uuid>`); `WritePathOps.java:551` (rename). `ChunkSearchOps.java:356` and `FolderBrowseEngine.java:445` write it into *response* maps, not into the index. |
+| P20 | Chunk identity fields and their joins | **verified** | `parent_doc_id` (`fields.v1.json:280-286`, keyword, stored+docValues, role `filter`), `chunk_index` (`:287-293`, long, stored+docValues), `is_chunk` (`:273-279`), `chunk_total` (`:294-300`). Joined by `TermQuery`/`termInSetFilter` on `parent_doc_id` at `ChunkSearchOps.java:122,189,516,704` and `WritePathOps.java:186,215,563`; surfaced to the agent at `SearchTool.java:357-362`. |
+| P21 | `chunk_uid` exists anywhere | **verified absent** | Zero hits for `chunk_uid`/`CHUNK_UID` across `--include=*.{java,json,ts,py,proto,md,mjs,cjs}`, node_modules excluded. |
+| P22 | Citations (`AgentCitationResolver`, `parentDocId`/`chunkIndex`, F-049) | **verified** | `AgentCitationResolver.java:15-16` (agent hits carry `parentDocId`+`chunkIndex`), `:85` (a RETRIEVED source matches on that pair), `:102`, `:120` (the old positional re-derivation is gone). `docs/reference/search-quality-register.md:1235-1260` (F-049): the wire field was renamed `chunk_index` → `source_index` on `CitationMatchEntry` with the field number unchanged, and "the *retrieval* citation shape still carries a genuine `chunkIndex` … the document-relative ordinal". **All of it is path- and ordinal-keyed and Phase 2 changes none of it.** |
+| P23 | Undo journal / agent-history transcripts keyed on `doc_id`/path | **not applicable** | `FileOperationLog.java:28` writes `{dataDir}/file-operations/{batchId}.json`; `:31`, `:35-38`, `:81-83` key undo on the real filesystem path plus a content digest, because an undo restores *files*. It is not an index concept and `doc_uid` is irrelevant to it. No transcript/history class in `modules/app-agent` keys on `doc_id`; agent sources are keyed by `path` (`AgentSession.java:644`). |
+| P24 | FE deep-link uses `doc_id`/path | **verified** | `SearchTool.java:340` (`path`), `:357-362` (`parentDocId`, `chunkIndex`, `startLine`/`endLine`); the FE posts `hit.id` for dispositions (`searchState.ts:173,182,191`) and sends `docIds` filters built from the same id space (`unifiedChatRequest.ts:98`). |
+
+#### Governance: what a new store actually costs
+
+| # | Claim | Verdict | Evidence |
+|---|---|---|---|
+| P25 | "a new SQLite table/file needs … the floor ratchet advanced" | **wrong** | `governance/store-corruption-policies.v1.json` `ratchet.note`: "`durableStoreRows` is a **FLOOR**, not an equality: rows are meant to be added". `scripts/ci/check-store-recoverability.mjs:653-657` fails only when `rows < durableStoreRows`. The register holds **42** rows today against a floor of **36**. Adding a row requires no ratchet edit; *removing* one does. |
+| P26 | (new) adding a durable-store **row** is an upgrade hazard | **new fact** | `scripts/release/app-release-assets.mjs:77-100` generates the release descriptor's `compatibility` table 1:1 from the register (`ownerId`←`id`, `role`←`recoverability`, `formatVersion`←`currentVersion`, `readableSourceVersions`←legacy ∪ current), refusing any non-`READY` row (`:78-80`). `modules/shell/src-tauri/src/updater.rs:32` embeds the register with `include_str!` **at the installed build's build time**, and `validate_store_compatibility:874-876` refuses when `release_owners.len() != local.durable_stores.len()` — "Release compatibility table is not a closed set". So a release that **adds a row** is refused by every already-installed build. `:884-892` likewise refuses any change to a row's `owner`, `recoverability` or `reconciliation`; `:893-901` requires the new release's `readableSourceVersions` to contain the installed `currentVersion`. Latent today (pre-v0.1.0, no installed base) — routed as Q5. |
+| P27 | `UpgradeReconciliationProbe`'s closed owner set | **verified** | `loadOwnerRegister` (`:197-226`) reads `/governance/store-recoverability.v1.json` from the classpath, and **any** row whose `status` is not `READY` collapses the whole register to an error (`:209-211`) — the probe then refuses to attest the upgrade. It exposes `(id, currentVersion, owner)` per row (`:212-216`) and rejects duplicate ids (`:219-221`). A new row must therefore be `READY` in the same commit it appears. |
+| P28 | (new) a new store class is auto-discovered by the gate | **new fact** | `scripts/governance/lib/persistence-write-scan.mjs:14` matches `DriverManager.getConnection` as a write-creating idiom; `check-store-recoverability.mjs:741` feeds the scan into the register check. A new `Sqlite…Store` opening its own connection (the `SqlitePathResolutionStore.java:70` pattern) must appear in some row's `implementationSources`. |
+| P29 | Fingerprint physical projection | **verified** | `IndexFingerprint.java:38-59` (the in-list) and `:61-73` (the out-list, which explicitly excludes `rmwPolicy`); the per-field projection is exactly `id, type, stored, docValues, multiValued, analyzer, roles` + vector `dimension`/`similarity` — `SsotCommitMetadataSource.projectFields:206-238`, `IndexFingerprint.java:282-288`. Pinned by `CatalogPhysicalProjectionTest.java:83-160` (`aStoredFlagFlipIsAReindex:110`, `aRoleChangeIsAReindex:119`, `aDeletedFieldIsAReindex:128`, `theProjectionDropsRmwPolicyEntirely:92`). |
+
+---
+
+### §P2.C Design, tightened
+
+#### (1) The uid
+
+**Format.** A v4 UUID rendered canonically (`java.util.UUID.randomUUID().toString()`, 36 chars) —
+122 random bits, **content-independent by construction**, which is what makes "two files with the
+same content get different uids" a property rather than a test. Explicitly *not* a content hash and
+not a path hash: both would collide on duplicate content and both would change when the file
+changes. Reusing `UUID.randomUUID()` also means the value shape in the index is unchanged from
+today, so nothing downstream that already tolerates a `doc_uid` string has to learn a new format.
+
+**Where minted.** At **admission**, immediately beside the existing ADR-0028 record call —
+`JobBatchExtractor.java:192-193` already has `envelope.pathHash()`, `envelope.normalizedPath()` and
+`envelope.observedAtMs()` in hand. One call, `identityStore.resolve(pathHash, nowMs)`, returns the
+existing uid or mints one, in a single `INSERT … ON CONFLICT DO NOTHING` + `SELECT` under the
+store's `ReentrantLock` (the `SqlitePathResolutionStore.java:90-111` pattern). Minting at admission
+rather than at document build means the uid exists before any extraction or embedding work, and one
+resolve serves both the parent write and the chunk writes.
+
+**Persistence.** A new table in **`jobs.db`** (not a new file — see (6)):
+
+```sql
+CREATE TABLE IF NOT EXISTS document_identity (
+  path_hash     TEXT PRIMARY KEY,
+  doc_uid       TEXT NOT NULL UNIQUE,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_identity_uid ON document_identity(doc_uid);
+```
+
+Added by `MIGRATE_V10_TO_V11_ADD_DOCUMENT_IDENTITY` in `SqliteSchema.java`, `TARGET_VERSION` 10 → 11
+(P13 also corrects the register's stale `7`). **Hash-keyed, and it holds no raw path** — that is the
+ADR-0028 alignment: `path_resolution` remains literally "the only persistent place where raw paths
+are stored after admission" (ADR-0028 `:65-71`), and the identity table cannot leak a path even if a
+diagnostic export ever reached it, so it does not enlarge the `LibraryResolveHashOnlyCallerPin`
+hazard class. It is a *separate* table, not a column on `path_resolution`, precisely because
+`path_resolution` is pruned by retention and wiped on unwatch (ADR-0028 `:93-112`) and a uid must
+outlive both (P12).
+
+**Lookups.** path → uid: `sha256Hex(normalizedPath)` (the same digest the envelope already carries)
+→ primary-key hit. uid → path: `document_identity` by the unique uid index → `path_hash` →
+`PathResolutionStore.lookup(path_hash)` → path, subject to ADR-0028's caller rules. The deliberate
+two hops keep the uid store path-free.
+
+**Rename.** `identityStore.rekey(oldPathHash, newPathHash, nowMs)` — an UPDATE of the primary key.
+The uid is **not** re-minted. Nothing changes in Lucene for the uid: RMW reconstructs from stored
+fields, so the stored `doc_uid` rides through `updateDocumentPaths` untouched (P6).
+
+**Delete-and-reindex, and retention.** The row is kept and `last_seen_at` bumped on every sighting;
+there is **no `removed_at`, and no GC**. Justification: the row is two hex strings and two longs
+(~120 bytes); ADR-0028's own sizing (`:134-137`) puts a 100K-document corpus at 10-20 MB *including*
+the path column, so identity is a fraction of an already-accepted cost. Against that, any GC window
+is exactly the window in which the label store silently orphans — the brief's survival requirement
+is unconditional, so the retention must be too. The privacy argument that justifies pruning
+`path_resolution` does not transfer: this table holds no path and a random uid discloses nothing. If
+growth ever matters, the only correct GC is "no row for a path outside every watched root **and**
+with no label referencing its uid" — a two-authority condition spanning Head and Worker, which is
+why v1 does not attempt it (open question Q7).
+
+**Chunk uid.** `chunkUid = parentUid + "#" + chunkIndex`, deterministic, written into the chunk
+document's own `doc_uid` field at `ChunkDocumentWriter.java:132`. **No `chunk_uid` catalog field is
+added** (P21 confirmed none exists to reuse; adding one would be the only thing in Phase 2 that
+moves the fingerprint — see (3)). Uniqueness for the tiebreak role holds: a parent uid is a UUID and
+never contains `#`, so no chunk uid can collide with a parent uid or with another chunk's. The shape
+is not novel — existing fixtures already use `"doc-0#0"` (`BatchUpdateIntegrationTest.java:42`,
+`ChunkSearchIntegrationTest.java:826`).
+
+#### (2) Index fields
+
+- `doc_uid`: **no catalog change**. It is already `stored:true, docValues:true` with roles
+  `["sort","tiebreak"]` (P18). It must **not** gain an `rmwPolicy` — `FieldMapper:239-243` rejects
+  one on a stored/docValues field. Only its *value semantics* change.
+- `chunk_uid`: **not added**. The chunk's identity is its own `doc_uid` (above).
+- **`doc_id` stays the Lucene primary key.** Recommended for Phase 2, with reasons: `idField` is
+  resolved from the catalog role `id` (`FieldMapper.java:169-173`, `resolvePrimaryKey:569-573`) and
+  drives `readModifyWrite`'s `updateDocument(new Term(idField, docId), …)` (`WritePathOps.java:317`,
+  `:373`), six `DocumentFieldOps` term queries (`:81,123,182,255,304,358`), `ChunkSearchOps`
+  (`:461,565,735`), the `docIds` filter surface the FE sends (`unifiedChatRequest.ts:98`,
+  `searchState.scope.test.ts:124`), and the MCP/deep-link id space. Re-keying it buys nothing in
+  Phase 2 — the whole point of `doc_uid` is that identity no longer *needs* to be the primary key —
+  and costs a user-visible id change. Phase 3 or never.
+- **What rename still rewrites.** Unchanged: parent `doc_id`/`path`/`filename`
+  (`WritePathOps.java:551-553`) and, for up to 10,000 chunks, `parent_doc_id`/`path` (`:580-581`).
+- **Can the 10,000-chunk rewrite drop to a docValues-only update?** **No, not in Phase 2.**
+  `parent_doc_id` and `path` are *indexed* keyword fields that the chunk joins match by `TermQuery`
+  (`ChunkSearchOps.java:122,189,516,704`; `WritePathOps.java:186,215,563`). `IndexWriter`'s
+  docValues-only update rewrites the column, not the postings, so the join would keep matching the
+  old path — a silent wrong-result bug, not a slow one. The rewrite can only shrink after the joins
+  are re-keyed onto a `parent_doc_uid`, which is a Phase-3-or-later change with its own fingerprint
+  cost. Stated here so a later reader does not rediscover it as an easy win.
+
+#### (3) Fingerprint impact
+
+**`index_fingerprint` does not move in Phase 2.** The physical projection is exactly
+`id, type, stored, docValues, multiValued, analyzer, roles` (+ vector `dimension`/`similarity`) —
+`IndexFingerprint.java:38-59`, `SsotCommitMetadataSource.projectFields:206-238`, pinned by
+`CatalogPhysicalProjectionTest.java:92-160`. Phase 2 adds no field, deletes none, and changes no
+attribute of `doc_uid`, so **no projected key changes**; `catalog_schema_version` moves only if
+`fields.v1.json`'s `"version": "1.0.0"` (`:3`) is bumped, and it is not. This contradicts the
+brief's assumption that "`doc_uid`/`chunk_uid` catalog changes are physical-shape changes" — they
+would have been, had a `chunk_uid` field been added; the design avoids that.
+
+**The ordering constraint this creates.** Without a fingerprint move there is no rebuild, so an
+existing index keeps its per-write random `doc_uid` values until each document is next written, while
+the store already holds the stable ones — a window in which a hit's `doc_uid` disagrees with the
+store. Two ways to close it, and the recommendation is the first:
+
+1. **Ship Phase 2 in the same release as Phase 3** (the programme's own wave-2 rule already merges
+   lanes D and E before one release). Phase 3's catalog edits — `vector.similarity`,
+   `chunk_content` `stored:false`, deleting `entity_*_text` — all move projected keys, and that one
+   rebuild converges every uid. Zero extra cost.
+2. If Phase 2 must ship alone, bump `IndexFingerprint.RENDERING_VERSION` `"1"` → `"2"` (`:94`, whose
+   Javadoc names exactly this case) and say so in the PR body — a full rebuild bought deliberately.
+
+#### (4) Feedback / GPL re-keying, and the backfill
+
+The insight that keeps this small: the **path is only a join key inside one interaction**, and it is
+the `FeatureSnapshot` — not the disposition — that has to carry durable identity. So:
+
+- `FeatureSnapshot.HitFeatures` (granted) gains a nullable `String docUid` component.
+- `FeatureSnapshots.capture` / `hitFeatures` (`:39-50`) and `SearchTool.feedbackFeatures` (`:385-395`)
+  populate it from the hit's field map. `ReadPathOps.buildStoredAllowlist:141` **already** fetches
+  `doc_uid` for every hit; `:377-378` only strips it when the caller did not project it, so the Head
+  simply asks for it in a projection it already controls. No new retrieval work.
+- `LabelProjection` (granted) writes `hf.docUid()` when present and falls back to `d.docId()`.
+- `GplTrainingTripleStore.appendWithFeatures` (granted, `:360-370`) keeps its `doc_id` JSON key —
+  renaming it would break the trainer's format for no gain — and documents it as "uid when known,
+  path for pre-Phase-2 rows".
+- `AgentDispositionWiring` (granted, `:101-119`) reads `docUid` off the feedback-features map.
+- **No FE change, no disposition-wire change**: the FE keeps posting `hit.id`
+  (`searchState.ts:173`), which still joins the snapshot; only the durable triple key changes.
+
+**Backfill — the honest answer.** There is no sound path→uid backfill for pre-Phase-2 rows: their
+snapshots never carried a uid, and the Head cannot resolve path→uid without a new Worker RPC
+(head-never-touches-Lucene, and the store is Worker-side). Recommendation: **no backfill.** The
+derived `real-feedback-triples.ndjson` is already declared "a rebuildable projection of these two
+inputs" (`StoreCatalog.java:22-23`), so it is simply re-projected; pre-Phase-2 rows keep their path
+key and exactly the survival they have today (none across a rebuild) — Phase 2 makes new labels
+durable without pretending to rescue old ones. If the owner wants a real backfill anyway, the
+minimal honest shape is a `ResolveDocUids(paths[])` Worker RPC, run once at Head boot when a
+`feedback/.uid-backfill-v1` marker file is absent, writing the marker only after a clean pass;
+idempotent by the marker and by re-projection being a pure function of its inputs. Recorded as Q3
+rather than silently dropped.
+
+#### (5) The migration enumerator — Green writes the same uids
+
+Green re-ingests from **source files** (P15), so the uids cannot survive in the index; they survive
+in the store. They are the *same* uids by construction, and the construction has three legs, each
+verified: the enumerator enqueues into the same `JobQueue` (`KnowledgeServerMigrationOps.java:976`);
+the same `IndexingLoop`/`JobBatchExtractor`/`JobBatchWriter` drains it in the same Worker JVM
+(`JobBatchWriter.java:111`); and the store lives in `jobs.db` at the dataDir root, which no
+generation swap touches (P11). The `resolve(pathHash)` for a path already seen returns the existing
+row — Green mints nothing.
+
+**The seam:** `DocumentIdentityStore` is injected exactly like `PathResolutionStore` —
+`IndexingLoopOptions.java:39-45` (nullable, defaults to a NOOP), `IndexingLoop.java:136-139,341`,
+supplier handed to the batch classes at `:419`. Interface in `worker-core` (so `worker-services` and
+`indexer-worker` share it without inverting module direction, the reason given at
+`PathResolutionStore.java:14-16`), SQLite impl in `indexer-worker/queue`.
+
+**Named test:** `MigrationPreservesDocUidTest` — index a document, capture its `doc_uid`, drive a
+blue/green cutover, assert the Green document carries the identical uid **and** that the store row's
+`first_seen_at` is unchanged (so a green cannot come from a coincidental re-mint).
+
+#### (6) Store-recoverability
+
+**No new register row.** Phase 1's §B.2 D6 already established that the `jobs-db` row's `ownedPaths`
+cover the file and that `SqlitePathResolutionStore.java` is listed in its `implementationSources`;
+P26 turns that from a convenience into a design constraint (a row added after v0.1.0 refuses the
+in-app update for every existing install). Row edits, all safe under `updater.rs:884-901`:
+
+- `currentVersion` 7 → 11, `readableLegacyVersions` `[0..10]`, `format` `"SQLite WAL schema v11"`
+  — this both carries the new migration and fixes the pre-existing drift (P13).
+- `implementationSources` += `modules/indexer-worker/.../queue/SqliteDocumentIdentityStore.java`
+  (required by the write-site scan, P28); `tests` += its unit test.
+- `encryptionNote` / a new `corruptionNote` extended to state what the identity table holds (a
+  path *hash* and a content-independent random uid — no raw path, nothing path-derived).
+
+**Unchanged, and must stay unchanged** (`updater.rs:884-892` refuses a release that alters them):
+`owner: WORKER`, `recoverability: DERIVED`, `reconciliation`, and
+`corruptionPolicy: FAIL_OR_REBUILD_DERIVED_QUEUE`.
+
+**Why `DERIVED` stays honest, and why the existing policy fits.** A random uid is not derivable from
+the source file — but it *is* recoverable from the live index, which stores `doc_uid` and `doc_id`
+per document (`fields.v1.json:5-24`, both `stored:true`). So the store's recovery ladder is:
+`.bak` restore (`KnowledgeServer.java:2602-2606`) → else rebuild `document_identity` by walking the
+active index's non-chunk documents → else re-mint. That is exactly
+`FAIL_OR_REBUILD_DERIVED_QUEUE`'s stated meaning ("either fails loudly or is rebuilt from the
+durable source it derives from"), so **no vocabulary value needs coining** — which is the right
+outcome, because `store-corruption-policies.v1.json`'s `extensionProcedure` warns that "26 values
+for 36 rows is already close to one-per-row" and a near-synonym is drift. Both authorities lost at
+once is a total-data-loss scenario in which orphaned labels are not the interesting damage; that
+limit is documented, not hidden.
+
+**Floor ratchet: no change** (P25 — 36 is a floor, 42 rows exist).
+
+**`UpgradeReconciliationProbe`:** unaffected beyond reporting `jobs-db`'s new `currentVersion`. Its
+closed owner set is the row list, which does not change. Every row must remain `READY` (`:209-211`)
+— trivially satisfied since no row is added or downgraded.
+
+**The rejected alternative,** recorded so it is not re-proposed: a separate `document_identity.db`
+classified `AUTHORED` would pull it into the encrypted backup (a genuine benefit — uids would
+survive a restore) but requires a new register row (P26 upgrade refusal), a new `StoreCatalog` enum
+entry, and an `AUTHORED` **SQLite** store, a combination with no precedent (every sealed store today
+is ndjson/json — `StoreCatalog.java:16-26`, `Framing` at `:29-38`). Not worth it for Phase 2.
+
+#### (7) Tests
+
+The brief's four, plus the ones this design implies:
+
+| Test | Asserts | Precision note |
+|---|---|---|
+| `DocumentIdentityStoreTest` | mint-once idempotency; `resolve` after reopen returns the same uid; `rekey` moves the uid to the new hash and leaves `first_seen_at` alone | the uid must be read back from a **reopened** connection, or the test passes on an in-memory cache |
+| `DocumentIdentityStoreTest.sameContentDifferentUids` | two paths with byte-identical content get different uids | the brief's requirement; a property of the mint, not of the corpus |
+| `RenamePreservesDocUidTest` (adapters-lucene) | after `updateDocumentPaths`, the parent's `doc_uid` is byte-identical **and** `doc_id`/`path`/`parent_doc_id` did move | asserting only "uid unchanged" would pass if the rename silently did nothing |
+| `DeleteAndReindexPreservesDocUidTest` | delete by path, re-ingest, uid identical | exercises the store, not the index — delete must not remove the identity row |
+| `MigrationPreservesDocUidTest` | full blue/green cutover; Green's uid == Blue's (see (5)) | the `first_seen_at` assertion distinguishes "preserved" from "re-minted identically by luck" |
+| `ChunkUidDeterminismTest` | every chunk's `doc_uid` == `parentUid + "#" + chunk_index`; regenerating chunks yields identical uids | `regenerateChunks` deletes and rewrites (`ChunkDocumentWriter.java:102`), so this is a real re-derivation |
+| `LabelStoreSurvivesRebuildTest` | labels written before a rebuild still resolve to live documents after it, by uid | the B6 headline; must run the projection, not just compare strings |
+| `JobQueueMigrationTest` (extend) | the V10→V11 ladder applies; a V11 database refuses to open under a V10 build | the refusal path already exists (`SqliteQueueMigrationOps.java:60-65`, `:107-112`) |
+| `DocumentIdentityCorruptionTest` | `.bak` restore keeps the identity table; **and** the no-`.bak` branch rebuilds from the index rather than throwing | `green-masked-destructive`: test the adverse precondition, not only the happy one |
+| `DocumentIdentityAdr0028Test` | `document_identity` declares no path-shaped column, and the store is not reachable from the diagnostic-export call tree | sibling of `LibraryResolveHashOnlyCallerPin` (ADR-0028 `:86-91`) |
+
+#### (8) Docs, catalogs, gates
+
+- `docs/explanation/04-storage-engine.md:52` — the `doc_uid` row currently ends "not stable across
+  full reindex"; it becomes stable, and the sentence must name the store that makes it so. Add a
+  short "Document identity" subsection under §Schema Management (`:44`).
+- `docs/explanation/11-index-schema-migration.md` — near `:392`, state that uids are carried across
+  a rebuild by the identity store and **not** by the index, because Green re-ingests from source.
+- `docs/explanation/18-adapters-lucene-deep-dive.md:500` — `doc_uid` is "Tiebreaker for search-after"
+  **and** the stable document identity.
+- `docs/decisions/0028-*.md` — a short amendment: a second hash-keyed table now shares `jobs.db`,
+  holds no raw path, and is deliberately outside `path_resolution`'s retention. Editing
+  `docs/decisions/**` triggers `--gate adr-coverage`.
+- **SSOT catalogs: no edit.** Both copies stay byte-identical (SHA-256 `ef8291…f18aa4`, re-verified
+  on this worktree), so the `/ssot-catalog` dual-copy step has nothing to do. `check-language-agnostic-analysis`
+  still runs because its subject list includes `adapters-lucene/**`, which PR-A edits.
+- `check-store-recoverability` for the register row; `node scripts/ci/check-store-recoverability.mjs`.
+- **`--gate wire`: not required.** No `.proto` carries `doc_uid` (P17) and none gains it.
+- **Wire visibility recommendation: internal only in Phase 2.** `doc_uid` stays off the search
+  response, off MCP, and off the FE. F-016's schema-bloat argument applies directly: a uid is
+  meaningless to an agent that already has `path` and cannot do anything with it, so exposing it
+  buys nothing and costs every consumer a field to ignore. The single crossing is Head-internal —
+  `FeatureSnapshots` reading `doc_uid` out of the projected field map (see (4)) — which is a
+  projection request, not a schema change.
+
+#### (9) PR plan — two PRs
+
+- **PR-A — store, mint, index write, migration (B1-B4, six of the ten tests).**
+  `SqliteSchema` V10→V11, `DocumentIdentityStore` (worker-core) + `SqliteDocumentIdentityStore`
+  (indexer-worker), wiring through `IndexingLoopOptions`/`IndexingLoop`/`JobBatchExtractor`/
+  `JobBatchWriter`/`DefaultWorkerAppServices`, the uid write in `IndexingDocumentOps` and
+  `ChunkDocumentWriter`, the rename re-key, the `jobs-db` register row, docs 04/11/18 + the ADR
+  amendment.
+- **PR-B — feedback/GPL re-keying (B5, the label-survives-rebuild test).**
+  `FeatureSnapshot`, `FeatureSnapshots`, `SearchTool`, `LabelProjection`, `AgentDispositionWiring`,
+  `GplTrainingTripleStore`.
+
+Reasons for splitting rather than one PR: PR-A is Worker-side and carries a SQLite migration, which
+is the part that wants an unmixed diff and its own review; PR-B is Head-side feedback plumbing and
+is **blocked on a scope extension that does not exist yet** (Q1) — bundling them would hold the
+migration hostage to a grant decision. PR-B is also the only half that can be deferred without
+leaving anything half-built: PR-A alone is complete and correct, it just does not yet spend the uid.
+
+#### (10) Risks and open questions
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q1 | B5 needs `FeatureSnapshots.java`, `SearchTool.java` and `KnowledgeSearchController.java`, none granted to lane D and none claimed by another lane. | **Grant them.** Three small, feedback-only edits. Without them B5 cannot be implemented honestly at all — the uid never reaches the Head. |
+| Q2 | `SqliteSchema.java`, `JobBatchExtractor.java`, `JobBatchWriter.java`, `IndexingLoop.java`, `IndexingLoopOptions.java`, `DefaultWorkerAppServices.java` fall under lane C's wholesale `modules/worker-services/**` + `modules/indexer-worker/**` grant (lane-C brief, Files-this-lane-owns). | **Explicit carve-out for lane D**, agreed with lane C before PR-A opens. The edits are additive wiring (one new injected store, one resolve call), not pacing or extraction — the boundary lane C's brief actually protects. |
+| Q3 | No honest path→uid backfill exists for pre-Phase-2 feedback rows. | **No backfill**; re-project the derived triples and let pre-Phase-2 rows keep their path key. The RPC-plus-marker shape is specified in (4) if the owner disagrees. |
+| Q4 | Phase 2 alone does not move the fingerprint, so index uids stay stale until each document is rewritten. | **Ship Phase 2 with Phase 3 in one release** (the wave-2 rule already requires it). If Phase 2 must ship alone, bump `RENDERING_VERSION` to `"2"`. |
+| Q5 | Adding **any** durable-store row after v0.1.0 makes `updater.rs:874-876` refuse the in-app update for every installed build (P26). Latent now, permanent later. | **Route to lane B (governance)** as its own item. Lane D's design sidesteps it; the defect is real and gets worse the day a release ships. |
+| Q6 | `jobs-db.currentVersion` is 7 against `TARGET_VERSION = 10` (P13) — the register has been wrong for three migrations. | **Fix it in PR-A**, which edits that row anyway. Bumping to 11 without first correcting the base would compound a wrong number rather than replace it. |
+| Q7 | Identity rows are never GC'd. | **Accept.** ~120 bytes/document against a store ADR-0028 already sized at 10-20 MB per 100K documents. Revisit only on a measured table size, never on a schedule. |
+| Q8 | `IndexingCoordinator.validate:247-256` fails a document with a blank `doc_uid`. If the identity store is NOOP (deferred boot, tests), the resolve must still return something. | The mint falls back to a fresh `UUID.randomUUID()` when the store is NOOP — today's exact behaviour, so a NOOP store degrades to the status quo instead of failing writes. Assert it in `DocumentIdentityStoreTest`. |
+
+---
+
+### §P2.D Cross-lane
+
+- **Lane E (`ChunkDocumentWriter.java`).** Lane D changes exactly one line in it — the `doc_uid`
+  write at `:132`. It does **not** touch `CHUNK_TARGET_TOKENS` / `CHUNK_OVERLAP_TOKENS` /
+  `CHUNK_THRESHOLD_CHARS` (read at `:107` and `:115`), which are lane E's. The conflict surface is
+  the file, not the semantics: coordinate merge order, and whichever lands second rebases.
+- **Lane C.** Q2's six files, plus `KnowledgeServer.java`, which both lanes touch (lane C: sandbox
+  wiring; lane D: the migration block and, now, the identity-store construction beside the existing
+  `PathResolutionStore` construction at `:865`).
+- **UI lane / frontend (out of scope for the whole programme).** **No FE change is required** under
+  this design. Deep links stay path-keyed (`SearchTool.java:357-362`), the disposition POST keeps
+  sending `hit.id` (`searchState.ts:173`), and `doc_uid` never reaches the wire. If the owner
+  overrides (8) and makes `doc_uid` wire-visible, that becomes an FE change and needs its own grant.
+- **Lane B (governance).** Two items: Q5 (the updater's closed-set refusal, a real latent defect) and
+  — only if the owner rejects (6) in favour of a separate `document_identity.db` — the fact that an
+  `AUTHORED` SQLite store has no precedent in `StoreCatalog`'s `Framing` vocabulary. Under the
+  recommended design the `corruptionPolicy` vocabulary needs **no** new value.
+
+---
+
 ## Report-back
 
 See the PR body and §F/§G. Extended by Phases 2 and 3.
