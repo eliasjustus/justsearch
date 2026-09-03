@@ -677,7 +677,7 @@ backend+frontend diagnostic path because privacy is end-to-end, and never assign
 issues concurrently. Shared-stack operation, outward GitHub actions, publication, and founder-only
 succession values remain with the coordinating agent/founder.
 
-#### Confidence and implementation recommendation
+#### Pre-implementation confidence and recommendation (historical)
 
 | Chunk | Confidence | Difficulty / recommended effort |
 |---|---:|---|
@@ -688,15 +688,15 @@ succession values remain with the coordinating agent/founder.
 | SDK contract projection S1 | 7/10 | Medium-high; six routes, canonical schemas, sanitized failures, enforcement-derived security, and both projection and executable-handler closure. |
 | Generated runtime client S2 | 7/10 plan / 3/10 ship-now readiness | Medium after S1; generator bakeoff, Node 20 runtime proof, package and live smokes remain. |
 
-**Overall confidence for the remaining authorized implementation remains 7/10.** The SDK is no
-longer an unbounded unknown: S1 can begin at 7/10 confidence, while S2 remains conditional rather
-than pretending absent schemas are implementation-ready. Use an Opus-class /
+**At design time, overall confidence for the then-remaining authorized implementation was 7/10.**
+The SDK was no longer an unbounded unknown: S1 could begin at 7/10 confidence, while S2 remained
+conditional rather than pretending absent schemas were implementation-ready. Use an Opus-class /
 high-reasoning implementation pass (for Codex: `gpt-5.6-sol` at high or xhigh) for the lifecycle
 and diagnostic PRs; the docs/intake PRs fit a Sonnet-class / medium-effort pass. Keep the six
 immediate PRs separate so the container proof, contract projection, founder-input skeleton, and
 privacy surface can each be reviewed and reverted independently.
 
-#### Closeout evidence
+#### Takeover closeout evidence (historical; before SDK implementation)
 
 - `git diff --check`: passed before commit.
 - `node scripts/ci/check-tempdoc-numbers.mjs`: passed across 624 distinct tempdoc numbers and 21
@@ -722,3 +722,33 @@ privacy surface can each be reviewed and reverted independently.
 - Takeover investigation, external research, corrected design, design-reach judgment, and derisk
   pass are complete. No feature implementation, GitHub mutation, SDK generation, or dev-stack
   takeover occurred.
+
+#### SDK implementation closeout (2026-09-03)
+
+- D6 S1 and S2 are implemented, independently reviewed twice, fully verified by the focused Java,
+  Gradle, Node 24, Node 20, generation, package, governance, and documentation checks enumerated in
+  the focused evidence ledger, and live-verified by owned run
+  `663985c3-c434-4b19-b30f-edc4a060f921`.
+- The owned stack was stopped with both ports closed. The disposable accepted worktree and temporary
+  JDK resolver junction were removed; the existing JDK target was preserved.
+- The owned-live-evidence commit is `4187d452` (`docs(899): record owned SDK live proof`). At closeout,
+  `node scripts/agent-analytics/world-state.mjs` reported the feature worktree clean and unpushed. No
+  push, pull request, merge, or npm publication was authorized or performed.
+- `node scripts/dev/agent-spawn-sweep.cjs --occasion session-closeout --session-id
+  01a06822-4e63-73c2-be47-5f74ef402868` reaped nothing. It retained two `ui-shot` processes attributed
+  to unknown other sessions as contention and reported the expected ownerless `otlp-sink`; none was
+  owned by this work.
+
+**BLOCKED ON YOU**
+
+- Nothing remains for the SDK implementation or verification. Publishing the branch, opening or
+  merging a pull request, and publishing the npm package each require explicit founder action or
+  authorization.
+- The broader 899 charter still needs founder-only succession values and outward GitHub issue
+  creation when those separate workstreams are implemented.
+
+**PROCEEDING / DONE**
+
+- The focused SDK D6 S1+S2 scope is complete and ready for publication review.
+- Contributor-container/onramp, community intake, HTTP/MCP lifecycle, succession, and diagnostic-
+  clipboard work remain separate 899 implementation changes and are not part of this SDK branch.
