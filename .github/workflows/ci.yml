@@ -210,9 +210,6 @@ jobs:
       - name: Test v2 squash-message projection
         run: node scripts/ci/test-squash-message-projection.mjs
 
-      - name: Test asynchronous squash-queue transport
-        run: node scripts/ci/test-enqueue-squash-message.mjs
-
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
       # of it. A loosened collision rule fails silently -- the regression is the case that STOPS

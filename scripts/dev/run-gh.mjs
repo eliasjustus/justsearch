@@ -130,7 +130,7 @@ export function buildChecksArgs(prNumber, requiredOnly) {
   return args;
 }
 
-export async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
+async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
   const deadline = Date.now() + timeoutSec * 1000;
   const checksArgs = buildChecksArgs(prNumber, requiredOnly);
 

@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "PUBLICATION AUTHORIZED (2026-09-03) — inert queue-proof substrate caught up and fully verified; preparing the fresh live proof PR"
+status: "PUBLICATION IN PROGRESS (2026-09-03) — live proof refuted custom queue messages; unsafe transport deleted and projection-only evidence retained"
 created: 2026-09-03
 updated: 2026-09-03
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -1261,13 +1261,15 @@ proof, PR creation/update, push, merge, branch-protection changes, and repositor
 changes remain blocked on separate explicit authorization. Nothing else is blocked on the
 user: implementation and local verification continue autonomously.
 
-## 17. Local implementation evidence — 2026-09-03
+## 17. Superseded local implementation evidence — 2026-09-03
 
-The inert parts of Slices A and B are implemented in this worktree. No GitHub write endpoint was invoked,
-no branch was pushed, no PR was created or edited, and no repository/ruleset setting was
-changed.
+This section records the pre-proof implementation milestone. It is dated evidence, not
+the current shipped design: §19's authorized live request refuted the transport, and the
+async client, snapshot adapter, enqueue command, tests, and `checksWait` export described
+below were deleted before merge. The v2 parser/projection and its focused CI test are the
+only implementation retained from this milestone.
 
-### 17.1 Implemented seams
+### 17.1 Superseded implementation snapshot
 
 - `scripts/ci/lib/squash-message-projection.mjs` owns the v2 Markdown projection. It
   normalizes GitHub CRLF input to LF, trims only blank boundary lines, preserves interior
@@ -1316,11 +1318,11 @@ The bounded read-only subagent review found and the implementation corrected:
 
 The remaining review warning was resolved before publication preparation: the supported
 v1 preview and its tests were restored, the GraphQL snapshot moved to a queue-client
-library, and the v2 projection retained its own focused test. This branch therefore ships
-only inert proof substrate; template/workflow/skill/ADR activation remains deferred until
-the live proof passes.
+library, and the v2 projection retained its own focused test. The later live refutation
+means the queue-client library and command do not ship; only the parser/projection remains
+as inert evidence. Template/workflow/skill/ADR activation remains deferred.
 
-### 17.3 Verification
+### 17.3 Historical pre-proof verification
 
 - `npm ci` — passed from the lockfile.
 - `node scripts/dev/run-gh.test.mjs` — all 24 checks passed.
@@ -1348,7 +1350,7 @@ Repository CI triage identified the actual `scripts/dev/run-gh.test.mjs`, and th
 was rerun with `rg -g`. The corrected commands and all intended checks passed. Neither
 incident was a suppressed test failure.
 
-### 17.4 Closeout state
+### 17.4 Historical closeout state
 
 Local implementation commit: `610311e2 feat(921): implement fail-closed queue publication
 client`. It is intentionally unpushed because implementation authorization did not grant
@@ -1372,11 +1374,10 @@ deliberately deferred until the live proof passes.
 
 ## 18. Publication preparation — 2026-09-03
 
-The user explicitly authorized publication. The candidate remains the inert proof
-substrate: it does not change the PR template, publish skills, repository merge default,
-branch protection, or ADR-0045's shipped contract. The existing v1 preview and its test
-are byte-identical to `origin/main`; v2 is exercised by the queue client's dry-run and a
-separate focused test.
+The user explicitly authorized publication. The candidate remains inert proof evidence:
+it does not change the PR template, publish skills, repository merge default, branch
+protection, or ADR-0045's shipped contract. The existing v1 preview and its test are
+byte-identical to `origin/main`; the retained v2 parser/projection has a focused test.
 
 `git fetch origin` found the candidate zero commits behind `origin/main`. Before the first
 push, the caught-up candidate passed:
@@ -1397,3 +1398,49 @@ dated session observations whose one-off API output is not a canonical metric.
 The first Gradle attempt correctly stopped before starting because other worktrees held
 the shared build slot. Verification resumed only after the wrapper-process check reported
 the slot free; no foreign process was interrupted.
+
+## 19. Authorized live proof result — 2026-09-03
+
+PR #627 supplied distinct public/review sentinels and passed all required PR checks. The
+v1 preview reported zero warnings; the v2 dry-run produced:
+
+- head `d3df1b097756e3a35e8695ef14389c9af0ce4324`;
+- body SHA-256 `ef0ad6b6147f8a1759cb3e173f19ee59ea594a26fcdfe790934d67e664510ca8`;
+- request SHA-256 `c8fd40bb33b4a0677bd56ef952345d930b9e8a602abaa44b38b816797afdcc7a`.
+
+After the required-check watcher passed, the command recomputed the same snapshot and sent
+one authorized request. GitHub returned HTTP `422` with:
+
+> Custom merge params (merge_method, commit_title, commit_message) are not supported with
+> the merge_queue merge action.
+
+The command stopped exactly as designed. No queue entry, merge, retry, or direct-merge
+fallback occurred. This refutes §14.3's central hypothesis despite the versioned API
+schema accepting all of those request fields individually. The asynchronous custom-message
+transport must be deleted rather than published as dormant production code.
+
+### 19.1 Unsafe temporal swap rejected; permanent separation selected
+
+A refute-first review rejected the proposed archive/swap/restore client. GitHub exposes no
+conditional PR-body update, so a fresh read followed by `PATCH` cannot prevent overwriting
+a concurrent edit. Queue membership can also disappear transiently before the PR reports
+`MERGED`; interpreting one absent snapshot as rejection could restore the rich body while
+the queue is still constructing the commit. A nonzero local `gh pr merge` result is not
+proof that no remote enqueue occurred. Crash recovery would additionally require a durable
+transaction journal, exact archive verification, queue timeline evidence, guarded resume,
+and conflict handling. That machinery would only make a temporary dual-use field less
+unsafe; it would not remove the underlying race.
+
+The normal design is therefore §14.4's permanent storage separation:
+
+- the PR title/body are commit-safe from the point they become publication inputs;
+- rich verification and review state live in a durable PR comment or check summary;
+- the ordinary merge queue remains the sole publication path;
+- no automation restores rich review text to `PR_BODY` after enqueue or merge.
+
+For PR #627 itself, the already-reviewed rich body will be preserved once as a PR comment,
+then the PR body will be replaced permanently by its validated public projection before
+ordinary guarded enqueue. This is a one-way migration of the proof PR, not the rejected
+temporal-swap mechanism. The branch ships only the parser/projection and historical
+evidence; workflow/template/skill/ADR activation requires a separate design and proof of
+the permanent review-record surface.
