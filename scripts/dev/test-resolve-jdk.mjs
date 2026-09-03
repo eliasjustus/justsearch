@@ -3,8 +3,9 @@
  * Tempdoc 696 — unit test for the dev JDK resolver (scripts/dev/lib/resolve-jdk.cjs).
  *
  * Pins the pure logic that must not silently regress: `java -version` major-version
- * parsing (legacy 1.8 and modern 25 formats) and the "pick the first candidate whose
- * java is >= MIN_MAJOR" selection. No real JDK is launched — the probe is injected.
+ * parsing (legacy 1.8 and modern 25 formats), PATH candidate discovery, and the
+ * "pick the first candidate whose java is >= MIN_MAJOR" selection. The unit cases
+ * do not launch a real JDK — filesystem and version probes are injected.
  */
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -13,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { parseJavaMajor, selectFromCandidates, MIN_MAJOR } = require(
+const { parseJavaMajor, selectFromCandidates, javaHomesFromPath, MIN_MAJOR } = require(
   path.join(__dirname, 'lib', 'resolve-jdk.cjs'),
 ).__test;
 
@@ -88,6 +89,40 @@ check('selection: empty/falsey candidates skipped, empty list → null', () => {
 // Sanity: the real selectFromCandidates rejects a non-existent home without throwing.
 check('selectFromCandidates: non-existent home → null (no throw)', () => {
   assert.equal(selectFromCandidates([path.join(__dirname, 'no-such-jdk-xyz')]), null);
+});
+
+// --- javaHomesFromPath ---
+check('javaHomesFromPath: scans past an obsolete Windows shim to a JDK bin', () => {
+  const pathValue = 'C:\\Oracle\\java8path;"D:\\tools\\jdk-25\\bin"';
+  const existing = new Set([
+    'C:\\Oracle\\java8path\\java.exe',
+    'D:\\tools\\jdk-25\\bin\\java.exe',
+  ]);
+  assert.deepEqual(
+    javaHomesFromPath(
+      pathValue,
+      'win32',
+      (candidate) => existing.has(candidate),
+      (candidate) => candidate,
+    ),
+    ['C:\\Oracle', 'D:\\tools\\jdk-25'],
+  );
+});
+
+check('javaHomesFromPath: resolves a launcher symlink to its real JDK home', () => {
+  assert.deepEqual(
+    javaHomesFromPath(
+      '/usr/bin:/missing',
+      'linux',
+      (candidate) => candidate === '/usr/bin/java',
+      () => '/opt/jdk-25/bin/java',
+    ),
+    ['/opt/jdk-25'],
+  );
+});
+
+check('javaHomesFromPath: empty PATH → no candidates', () => {
+  assert.deepEqual(javaHomesFromPath('', 'win32'), []);
 });
 
 console.log(`\nresolve-jdk: ${passed} checks passed`);

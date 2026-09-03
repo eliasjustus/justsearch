@@ -2,13 +2,13 @@
 /**
  * Tempdoc 696 — single JDK resolver for dev tooling.
  *
- * The Gradle wrapper and every dev JVM launcher (`ui.bat`, worker, hot-swap,
- * installDist) use whatever `JAVA_HOME` points at, with NO version check. When a
- * stale JDK 8 lands on `JAVA_HOME` (e.g. a scoop temurin8 install rewrote the
- * user env — see observations), `dev_start`/hot-swap/prepare-worktree fail with
- * an opaque "Gradle assemble failed" or a 15s port timeout, because Gradle 9.6.1
- * needs 17+ and the build's `-XX:+UseCompactObjectHeaders` /
- * `--sun-misc-unsafe-memory-access=warn` need 24+.
+ * The checked-in Gradle Daemon JVM criteria pins the build daemon to JDK 25, but
+ * dev JVM launchers (`ui.bat`, worker, hot-swap, installDist) still use whatever
+ * `JAVA_HOME` points at. When a stale JDK 8 lands on `JAVA_HOME` (e.g. a scoop
+ * temurin8 install rewrote the user env — see observations), those launchers can
+ * fail with an opaque assemble error, UnsupportedClassVersionError, or a 15s port
+ * timeout. Their JVM flags also require 24+ (`-XX:+UseCompactObjectHeaders` and
+ * `--sun-misc-unsafe-memory-access=warn`).
  *
  * This module resolves a JDK whose `java` is >= 24 (canonical target: Temurin 25)
  * and is consumed by dev-runner.cjs, justsearch-dev-mcp/server.mjs (hot-swap) and
@@ -76,6 +76,51 @@ function selectFromCandidates(candidates, probe = probeJavaMajor) {
   return null;
 }
 
+/**
+ * Derive candidate JDK homes from java executables visible on PATH.
+ *
+ * Resolving the executable first handles Unix alternatives and Windows junctions.
+ * Non-JDK shims are harmless: selectFromCandidates subsequently requires
+ * <candidate>/bin/java and probes its version.
+ */
+function javaHomesFromPath(
+  pathValue = process.env.PATH,
+  platform = process.platform,
+  exists = fs.existsSync,
+  realpath = fs.realpathSync,
+) {
+  if (!pathValue) return [];
+
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const delimiter = platform === 'win32' ? ';' : ':';
+  const executableName = platform === 'win32' ? 'java.exe' : 'java';
+  const homes = [];
+  const seen = new Set();
+
+  for (const rawEntry of pathValue.split(delimiter)) {
+    const entry = rawEntry.trim().replace(/^"(.*)"$/, '$1');
+    if (!entry) continue;
+
+    const executable = pathApi.join(entry, executableName);
+    if (!exists(executable)) continue;
+
+    let resolvedExecutable = executable;
+    try {
+      resolvedExecutable = realpath(executable);
+    } catch {
+      // A runnable path entry can still be useful when canonicalization is unavailable.
+    }
+    const home = pathApi.dirname(pathApi.dirname(resolvedExecutable));
+    const key = platform === 'win32' ? home.toLowerCase() : home;
+    if (!seen.has(key)) {
+      seen.add(key);
+      homes.push(home);
+    }
+  }
+
+  return homes;
+}
+
 /** Enumerate candidate JDK homes in priority order (existence checked later). */
 function candidateHomes() {
   const c = [];
@@ -84,16 +129,19 @@ function candidateHomes() {
   if (process.env.JAVA_HOME) c.push(process.env.JAVA_HOME);
   // 2. Explicit override — the portable escape hatch (documented in the throw).
   if (process.env.JUSTSEARCH_DEV_JDK_HOME) c.push(process.env.JUSTSEARCH_DEV_JDK_HOME);
-  // 3. Gradle's foojay auto-download cache — the least machine-specific root; if a
+  // 3. PATH — GUI hosts can inherit PATH while omitting JAVA_HOME/SCOOP. Inspect
+  //    every visible java, because an obsolete system shim may precede a valid JDK.
+  c.push(...javaHomesFromPath());
+  // 4. Gradle's foojay auto-download cache — the least machine-specific root; if a
   //    prior build provisioned the 25 toolchain, it lives here.
   const gradleJdks = path.join(os.homedir(), '.gradle', 'jdks');
   try {
     for (const d of fs.readdirSync(gradleJdks)) c.push(path.join(gradleJdks, d));
   } catch { /* no cache */ }
-  // 4. scoop (this repo's common Windows setup) — SCOOP may be on any drive.
+  // 5. scoop (this repo's common Windows setup) — SCOOP may be on any drive.
   const scoopRoots = [process.env.SCOOP, path.join(os.homedir(), 'scoop')].filter(Boolean);
   for (const root of scoopRoots) c.push(path.join(root, 'apps', 'temurin25-jdk', 'current'));
-  // 5. Standard OS install locations (best-effort; the env override covers the rest).
+  // 6. Standard OS install locations (best-effort; the env override covers the rest).
   if (process.platform === 'win32') {
     const adoptium = 'C:\\Program Files\\Eclipse Adoptium';
     try {
@@ -144,5 +192,5 @@ module.exports = {
   resolveJdkHome,
   resolveJavaExe,
   javaExeIn,
-  __test: { parseJavaMajor, selectFromCandidates, candidateHomes, MIN_MAJOR },
+  __test: { parseJavaMajor, selectFromCandidates, javaHomesFromPath, candidateHomes, MIN_MAJOR },
 };
