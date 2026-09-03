@@ -670,7 +670,7 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
-### F-056: aggregate-then-cut parent collapse is PARKED at λ=0.3 on a split (legal +0.0050 R@10 / −0.0050 leak, enron −0.0067 R@10) — but the campaign's durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (so no λ can rescue a bottom-ranked parent), and that σ on clean arms is 0.0000, not F-055's 0.0034 (2026-09-03, tempdoc 916 Part 2, lane E)
+### F-056: aggregate-then-cut parent collapse is PARKED and now REFUTED as a shipped default — lambda=0.3 split the two chunked corpora, then the whole lambda in {0.05,0.10,0.15} x multiplier axis swept clean and moved legal not at all while costing enron -0.0033 R@10 at every point; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma on clean arms is 0.0000 rather than F-055's 0.0034, and that a degraded-ce arm on legal is biased UPWARD (2026-09-03, tempdoc 916 Part 2 + section I, lane E)
 
 - **What shipped:** `SearchExecutor.collapseChunkHitsToParents` no longer stops scanning the fused
   chunk list the instant it has enough distinct parents. It scans
@@ -716,12 +716,38 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   `enrich_docs_s` are absent (`None`) in *both* arms and the OFF arm trips an engine-set mismatch
   against the perf baseline, i.e. a property of `--skip-ingest` runs, present in the control. The
   meaningful query-path checks pass on ON: `ce_p50_ms: ok`, `retrieval_p50_ms: ok`.
-- **Open, for the owner:** λ=0.3 came from the brief, not from evidence, and the clean λ response on
-  legal is flat between 0.2 and 0.3 with the one attractive point (0.1) void. The keys exist as the
-  A/B instrument; tempdoc 916's changeset committed to **removing them if parked** unless a
-  follow-up arm is wanted. A clean λ∈{0.05,0.1,0.15} sweep on *both* chunked corpora is the arm that
-  would settle it. Evidence: `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/` (gitignored — this
-  entry and tempdoc 916 §G are the durable record).
+- **The λ axis was then swept, and it PARKS AGAIN — this is a refutation, not missing evidence**
+  (owner-authorised follow-up, 2026-09-03, 916 §I; rule committed before the run in `96a088f5`).
+  18 arms over both chunked corpora, 17 admissible, **40 machine signatures with 0 game processes
+  and GPU flat at 754-755 MiB**, replicate spread **0.0000 on every arm**:
+
+  | arm | legal Δ R@10 | enron Δ R@10 | legal Δ leak | enron Δ leak |
+  | :--- | ---: | ---: | ---: | ---: |
+  | λ0.05 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+  | λ0.10 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+  | λ0.15 m5 | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+  | λ0.10 **m3** | +0.0000 | −0.0033 | +0.0000 | +0.0033 |
+
+  **On legal, low λ does nothing at all** (R@10/leak/nDCG identical to OFF to 4 dp across the whole
+  axis); **on enron every λ costs the same −0.0033 R@10 / +0.0033 leak**, flat, so the cost is not
+  λ-proportional in this range. The **multiplier axis is inert too** (m3 ≡ m5 at λ=0.10 on both
+  corpora), so the earlier arms were not multiplier-starved. With §G's λ=0.3 (legal +0.0050, enron
+  −0.0067) the axis now reads: **the lever never helps enron at any λ, and helps legal only at
+  λ=0.3 by less than the 0.0068 noise floor.** Keys **stay** (owner: reachable code, not dead code);
+  defaults stay `(1, 0.0)`; nothing ships; no baseline row moves. Scifact control not run and not
+  required — §I.3 condition 2 is gated on a winning λ, and §G already measured scifact
+  bit-identical at the *stronger* λ=0.3.
+- **Finding 4 — a `degraded-ce` arm on legal is biased UPWARD, so it is never safe to average over.**
+  Three of three void arms in this campaign (§G.2 legal OFF, §G.5 λ=0.1, §I.6 λ=0.05 r1) looked
+  **better** than their clean siblings — the last by 0.6176/0.8350/0.1000 against 0.5778/0.8150/0.1200.
+  Three for three in one direction is a bias with a known mechanism: F-055 measured that on legal,
+  delivering **fusion order instead of the cross-encoder's is worth +0.131 nDCG@10**, so a
+  `degraded-ce` arm is a partial CE-off arm and scores high. **Any campaign that treats CE drops as
+  random noise to be averaged will get a wrong answer with a plausible-looking mean on this corpus.**
+- **Evidence:** `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/`, `tmp/916-sweep/` (gitignored —
+  this entry and tempdoc 916 §G/§I are the durable record). **No throughput or latency number from
+  any of these campaigns is cited as evidence anywhere**: §G's index build was contended, so those
+  numbers are void by construction.
 
 ### F-055: the 854 W2 depth levers are BOTH PARKED by the pre-registered rule, and each exposed a coupling defect — the recall-complete pool `top_n` is splice-coupled to the shared `limit` (raising it alone DISCARDS the fused prefix: legal −0.263, enron −0.421, leak 4-11× with legs unchanged), and `JUSTSEARCH_RERANK_TOP_K` impurely moves retrieval depth for every mode (2026-08-19, 854 W2 campaign)
 

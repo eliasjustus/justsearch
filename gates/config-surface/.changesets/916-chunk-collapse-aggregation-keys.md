@@ -66,6 +66,31 @@ sweep across *both* chunked corpora, or say no — in which case this PR's mecha
 should be reverted together, as one sweep, not left parked indefinitely. "Parked forever" is not
 one of the options this changeset offers.
 
+## The sweep was authorised, run, and it parks again — keys stay (2026-09-03)
+
+The owner authorised the sweep; the rule was committed before it ran (`96a088f5`) and the arms are
+in 916 §I.4. 18 arms, 17 admissible, 40 machine signatures with zero game processes, replicate
+spread 0.0000 throughout.
+
+**No λ passes.** On `legal-clerc-200` every λ ∈ {0.05, 0.10, 0.15} is identical to OFF to four
+decimals — R@10, leak and nDCG@10 all unmoved. On `enron-qa` every λ costs the same −0.0033 R@10 and
++0.0033 leak, flat across the axis. The multiplier probe is inert too (m3 ≡ m5 at λ=0.10 on both
+corpora), so the earlier arms were not multiplier-starved. With §G's λ=0.3 the axis reads: the lever
+never helps enron at any λ, and helps legal only at λ=0.3 by less than the noise floor.
+
+**So the two keys stay, and this is now a decided state rather than a pending one.** The owner
+accepted the reachable-code-not-dead-code argument explicitly: deleting the keys would pin the
+aggregate-then-cut path to `(1, 0.0)` and make it unreachable. Defaults are unchanged, nothing
+ships, and no baseline row moves — the ratchet advance in this changeset accounts for two keys that
+exist as a measured-and-parked instrument, not as an aspiration.
+
+**What would reopen it:** not another λ point — that axis is swept. Only a *different* aggregation
+shape (the §D.4 / F-056 pool-floor bound is the reason low-λ arithmetic cannot reach the parents
+this was meant to rescue) or a corpus whose evidence really is spread across many mid-ranked
+passages, which neither chunked corpus in the register turns out to be. If neither materialises, the
+honest end state is reverting the mechanism and both keys together, and this changeset stands as the
+record of why.
+
 ## Baseline advance (same commit, tempdoc 883 rule)
 
 `gates/config-surface/baseline.txt` moves in this commit, alongside the keys it accounts for:

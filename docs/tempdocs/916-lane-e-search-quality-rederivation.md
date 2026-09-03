@@ -1,7 +1,7 @@
 ---
 title: "Lane E — search-quality re-derivation: chunking, small-to-big, parameter sweeps (Part 2 shipped, Parts 1/3/4 designed)"
 type: tempdocs
-status: "IN PROGRESS (2026-09-03) — Part 2 (aggregate-then-cut parent collapse) implemented, falsified and measured; Parts 1/3/4 have a pre-implementation pass and a campaign plan but are NOT executed. Part 3 is blocked on lane A."
+status: "IN PROGRESS (2026-09-03) — Part 2 (aggregate-then-cut parent collapse) implemented, falsified, measured, and its lambda axis swept: PARKED at the shipped defaults, which reproduce pre-916 behaviour bit-for-bit. The two config keys stay as a measured-and-parked instrument by owner decision. Parts 1/3/4 have a pre-implementation pass and a campaign plan but are NOT executed; Part 3 is blocked on lane A."
 created: 2026-09-03
 updated: 2026-09-03
 lane: E (decision re-examination programme, wave 2)
@@ -57,6 +57,8 @@ and Part 1 costs machine-days. Campaign plan in §C.
 - [x] Same-index A/B on the chunked corpora + a short-corpus control, ratchets green (§G).
 - [x] Pre-registered ship/park rule written before the measurement ran (§D.7).
 - [x] Register finding `F-056` (§H).
+- [x] **Owner-authorised λ sweep (§I)** — rule committed before running (`96a088f5`); 18 arms,
+      17 admissible; parks again, keys stay.
 
 ### Part 3 — small-to-big retrieval (BLOCKED on lane A)
 
@@ -899,7 +901,78 @@ game process or elevated GPU is re-run.
 
 ### I.4 Sweep results
 
-*(filled in after the run)*
+Ran 2026-09-03 04:09-04:44 (`tmp/916-lambda-sweep.py`, analysed by `tmp/916-sweep-analyze.py`, which
+applies §I.3 mechanically). **40 machine signatures, 0 with a game process, GPU 754-755 MiB flat** —
+the whole sweep ran on a quiet machine, unlike §G's index builds.
+
+18 arms, **17 admissible**, 1 void.
+
+| corpus | arm | run id | `ce_cov` | adm | nDCG@10 | R@10 | leak |
+| :-- | :-- | :-- | :-- | :-- | --: | --: | --: |
+| legal | OFF | `20260903T015459_…legal-clerc-200` | ok | YES | 0.5795 | 0.8150 | 0.1200 |
+| legal | λ0.05 m5 r0 | `20260903T015646_…` | ok | YES | 0.5778 | 0.8150 | 0.1200 |
+| legal | λ0.05 m5 r1 | `20260903T015846_…` | **degraded-ce** | **VOID** | *0.6176* | *0.8350* | *0.1000* |
+| legal | λ0.10 m5 r0/r1 | `20260903T020109_…` / `020250_…` | ok | YES | 0.5795 | 0.8150 | 0.1200 |
+| legal | λ0.15 m5 r0/r1 | `20260903T020434_…` / `020614_…` | ok | YES | 0.5796 | 0.8150 | 0.1200 |
+| legal | λ0.10 **m3** r0/r1 | `20260903T020753_…` / `020935_…` | ok | YES | 0.5795 | 0.8150 | 0.1200 |
+| enron | OFF | `20260903T022732_mixed_enron-qa` | ok | YES | 0.8010 | 0.9200 | 0.0433 |
+| enron | λ0.05 m5 r0/r1 | `20260903T022932_…` / `023129_…` | ok | YES | 0.7976 | 0.9167 | 0.0467 |
+| enron | λ0.10 m5 r0/r1 | `20260903T023442_…` / `023643_…` | ok | YES | 0.7969/0.7976 | 0.9167 | 0.0467 |
+| enron | λ0.15 m5 r0/r1 | `20260903T023843_…` / `024039_…` | ok | YES | 0.7977 | 0.9167 | 0.0467 |
+| enron | λ0.10 **m3** r0/r1 | `20260903T024234_…` / `024439_…` | ok | YES | 0.7976 | 0.9167 | 0.0467 |
+
+Admissible means vs OFF (replicate spread **0.0000 on every arm**, so the noise reference is the
+0.0068 floor in every row — the measured spread never tightened it):
+
+| arm | legal Δ R@10 | enron Δ R@10 | legal Δ leak | enron Δ leak | beats noise? |
+| :-- | --: | --: | --: | --: | :-- |
+| λ0.05 m5 | **+0.0000** | **−0.0033** | +0.0000 | +0.0033 | no |
+| λ0.10 m5 | **+0.0000** | **−0.0033** | +0.0000 | +0.0033 | no |
+| λ0.15 m5 | **+0.0000** | **−0.0033** | +0.0000 | +0.0033 | no |
+| λ0.10 m3 | **+0.0000** | **−0.0033** | +0.0000 | +0.0033 | no |
+
+### I.5 Verdict — PARK, and the axis is now swept rather than unmeasured
+
+**No λ satisfies the rule.** Condition 1 (R@10 beats the noise reference on both chunked corpora)
+fails on every arm, and condition 3 (leak not worse) fails on enron on every arm.
+
+The shape is not a split this time — it is **inertness plus a small consistent cost**:
+
+- **On legal, low λ does nothing at all.** R@10, leak and nDCG@10 are identical to OFF to four
+  decimals across λ ∈ {0.05, 0.10, 0.15}. The +0.0050 R@10 that λ=0.3 produced in §G was the whole
+  effect, and it sat below the 0.0068 noise floor anyway.
+- **On enron, every λ costs the same −0.0033 R@10 / +0.0033 leak** — flat across the axis, i.e. the
+  cost is not λ-proportional in this range; a single reordering flips at any λ > 0 and stays flipped.
+- **The multiplier axis is inert too.** m3 and m5 at λ=0.10 are identical on both corpora, so the
+  earlier arms were not multiplier-starved.
+
+Together with §G (λ=0.3: legal +0.0050, enron −0.0067) the axis now reads: **the lever never helps
+enron at any λ, and helps legal only at λ=0.3 by less than the noise floor.** That is a refutation of
+λ as a shipped default, not an absence of evidence — which is exactly what this arm was authorised to
+establish. **Per §I.3 the keys STAY** (owner accepted reachable-code-not-dead-code); defaults remain
+`(1, 0.0)`, no baseline row moves, and nothing ships.
+
+**Scifact control not run, and this is not a skipped condition.** §I.3 condition 2 is gated on there
+being a winning λ; there is none. It would also be uninformative: §G measured scifact **bit-identical
+at λ=0.3**, and the aggregate at λ ≤ 0.15 is strictly closer to the max-only baseline than at 0.3, so
+a weaker λ cannot produce a difference the stronger one did not. Recorded rather than quietly
+omitted.
+
+### I.6 A third void arm, and the reason it is not bad luck
+
+`legal λ0.05 m5 r1` is the **third** `degraded-ce` arm in this tempdoc, and — like the other two
+(§G.2's legal OFF, §G.5's λ=0.1) — it looks **better** than its clean sibling: 0.6176 / 0.8350 /
+0.1000 against 0.5778 / 0.8150 / 0.1200. Three for three in the same direction is a bias, not noise,
+and F-055 already supplies the mechanism: on legal, *delivering fusion order instead of the
+cross-encoder's* is worth **+0.131 nDCG@10** ("on legal the best cross-encoder may be no
+cross-encoder"). A `degraded-ce` arm is a partial CE-off arm, so on legal it is **systematically
+inflated**.
+
+The consequence generalises beyond this tempdoc: **on legal, admitting a `degraded-ce` arm biases the
+result toward whichever arm happened to degrade.** Any future campaign that treats CE drops as random
+noise to be averaged over will get a wrong answer with a plausible-looking mean. The `ce_coverage`
+guard is not a hygiene nicety here; it is load-bearing, and it changed this tempdoc's headline once
+already (§G.2).
 
 ---
 
@@ -955,15 +1028,21 @@ game process or elevated GPU is re-run.
 7. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
    observed). The first campaign attempt lost three arms to it before the cause was clear. Either
    raise the default or have `backend.py` distinguish "still starting" from "failed".
-8. **The λ=0.1 arm is unmeasured, not negative.** It produced the campaign's best numbers and was
-   discarded for `degraded-ce`. A clean λ∈{0.05, 0.1, 0.15} sweep on **both** chunked corpora is the
-   arm that would settle whether the keys stay or come out (see the changeset's commitment).
+8. **CLOSED by §I.** The λ axis is now swept clean: legal is unmoved at every λ, enron costs
+   −0.0033 at every λ, and the multiplier axis is inert. The keys stay by owner decision. What would
+   reopen the question is **not** another λ point but a different aggregation shape — the §D.4 pool
+   floor is why low-λ arithmetic cannot reach the parents this was meant to rescue — or a corpus
+   whose evidence really is spread over many mid-ranked passages, which neither chunked corpus in
+   the register turns out to be.
+9. **`ce_coverage` degradation on legal is an UPWARD bias, not noise** (§I.6, F-056 finding 4).
+   Three of three void arms beat their clean siblings, and F-055 supplies the mechanism. Any future
+   campaign on legal that averages over CE drops will get a wrong answer with a plausible mean.
 
 ## Report-back
 
 - **PRs:** one, open, green-and-ready, **not merged** —
   `feat(916): aggregate-then-cut parent collapse for the chunk branch (lane E part 2)`.
-- **Items:** Part 2 **12/12 done**. Parts 1/3/4 **not started** (Part 3 blocked on lane A; Parts 1
+- **Items:** Part 2 **13/13 done** (12 + the owner-authorised λ sweep, §I). Parts 1/3/4 **not started** (Part 3 blocked on lane A; Parts 1
   and 4 are machine-time, planned in §C). Three deviations, each with its reason in §D:
   (1) tie-break is first-seen fused order, not parent docId — it is the only tie-break under which
   λ=0 reproduces today bit-for-bit, and the brief's goal was determinism, which it delivers;
@@ -975,10 +1054,12 @@ game process or elevated GPU is re-run.
 - **Evidence:** 17 new tests, every one broken once and observed failing (§F table). Run ids in
   §G.4. Drivers and artefacts under `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/` (gitignored;
   §G and F-056 are the durable record).
-- **Measurements:** legal-clerc-200 **+0.0010 nDCG / +0.0050 R@10 / −0.0050 leak**; enron-qa
-  **−0.0053 / −0.0067 / +0.0033**; scifact control **0.0000 on every metric**. `leg_union_recall`
-  unchanged everywhere. **PARK** by the pre-registered split-result clause; no default changed, no
-  baseline row moved.
+- **Measurements:** §G at λ=0.3 — legal **+0.0010 nDCG / +0.0050 R@10 / −0.0050 leak**, enron
+  **−0.0053 / −0.0067 / +0.0033**, scifact control **0.0000 on every metric**, `leg_union_recall`
+  unchanged everywhere → PARK on the split clause. §I swept λ ∈ {0.05, 0.10, 0.15} × multiplier
+  {3, 5}: legal **unmoved to 4 dp at every point**, enron **−0.0033 R@10 / +0.0033 leak at every
+  point** → PARK again, and the axis is now refuted rather than unmeasured. No default changed, no
+  baseline row moved, nothing shipped.
 - **Cross-lane requests raised:** lane D — chunker version string + the Part 1 triple (neither ready;
   Part 2 needs nothing from D and changes no index shape); 854 — Part 4's fusion sweep is lane E's
   only if 854 is still idle, and §D.4 records that branch fusion min-max normalizes so this change
