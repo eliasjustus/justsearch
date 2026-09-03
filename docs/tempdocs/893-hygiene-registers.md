@@ -1,7 +1,7 @@
 ---
 title: "Hygiene authorities and auditable projections"
 type: tempdocs
-status: IMPLEMENTED (2026-09-03) — local and live-Head verification green; hosted-CI proof pending
+status: IMPLEMENTED (2026-09-03) — local, live-Head, and hosted PR verification green; publication PR #630
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L14
@@ -664,11 +664,16 @@ Evidence:
   recovery. Re-review then found malformed owner metadata and PID reuse could leave a permanent lock;
   schema validation with directory-time fallback and a bounded maximum lease now cover both cases.
   The focused test and all 33 governance test files passed after the repairs.
+- Hosted PR verification: [PR #630](https://github.com/justsearch-app/justsearch/pull/630) run
+  [33800010524](https://github.com/justsearch-app/justsearch/actions/runs/33800010524) passed all 11
+  checks at commit `1a3f9821`. Its Public claims job uploaded the promised
+  [`governance-health-33800010524-1`](https://github.com/justsearch-app/justsearch/actions/runs/33800010524/artifacts/9910795137)
+  artifact (artifact id `9910795137`, 1,526 bytes at upload). The hosted gate also exposed and drove
+  the P.9 store-write classification, test-to-code declaration/repin, and ADR-probe repairs before this
+  green run.
 
-Unverified or deferred evidence:
+Deferred evidence:
 
-- CI wiring is locally policy-checked, but no hosted run or uploaded governance-history artifact exists
-  for this unpushed branch yet.
 - The Governance capture still reports two unrelated global shell-console errors: an unnamed
   `jf-control` and a boot-transition timeout. The Governance surface itself has direct visual,
   accessibility, overflow, unit, and typecheck evidence; this slice does not widen into those global
