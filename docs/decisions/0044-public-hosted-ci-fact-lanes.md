@@ -6,7 +6,7 @@ description: "The public repository runs standard GitHub-hosted CI on push and p
 date: 2026-06-27
 probes:
   - adr-0044-fact-lane-triggers-checked
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0044: Public hosted CI fact lanes
@@ -53,8 +53,11 @@ The CI workflow is organized as stable **fact lanes**:
 - no-model build and unit tests are separate Windows-hosted lanes.
 
 Each lane name describes the fact it proves. Main branch protection requires the current stable
-check names declared in `scripts/ci/workflow-signal-policy.v1.json`, with strict up-to-date
-branches enabled.
+check names declared in `scripts/ci/workflow-signal-policy.v1.json`. The same policy file declares
+whether GitHub must require each pull-request branch to be up to date before merging. That setting
+is `false` while the native merge queue is active: the queue creates and tests a merge group
+against current `main`, so forcing every PR branch through a separate update-and-retest cycle
+would duplicate the queue's integration check and restore the serial re-CI tax.
 
 Self-hosted, benchmark, installer, and other specialty workflows remain manually dispatched
 unless a later ADR explicitly changes their trigger posture.

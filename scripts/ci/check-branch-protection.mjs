@@ -45,7 +45,7 @@ function usage() {
     'Usage: node scripts/ci/check-branch-protection.mjs [--repo owner/repo] [--branch main] [--json|--md]',
     '',
     'Checks that GitHub branch protection requires exactly the status checks declared in',
-    'scripts/ci/workflow-signal-policy.v1.json, with strict up-to-date branches enabled.',
+    'scripts/ci/workflow-signal-policy.v1.json, including its declared up-to-date-branch policy.',
   ].join('\n');
 }
 
@@ -116,16 +116,33 @@ export function protectedStatusChecksFromProtection(protection) {
   };
 }
 
+export function requiredStatusChecksStrictFromPolicy(policy) {
+  const value = policy?.branchProtection?.requireBranchesUpToDateBeforeMerging;
+  if (typeof value !== 'boolean') {
+    return {
+      strict: null,
+      errors: ['policy must declare branchProtection.requireBranchesUpToDateBeforeMerging as a boolean'],
+    };
+  }
+  return { strict: value, errors: [] };
+}
+
 export function validateBranchProtection({ policy, protection, branch = 'main' }) {
   const expected = requiredStatusChecksFromPolicy(policy);
+  const expectedStrict = requiredStatusChecksStrictFromPolicy(policy);
   const actual = protectedStatusChecksFromProtection(protection);
-  const errors = [...expected.errors];
+  const errors = [...expected.errors, ...expectedStrict.errors];
   const expectedSet = new Set(expected.checks);
   const actualSet = new Set(actual.contexts);
 
   if (expected.checks.length === 0) errors.push('policy declares no required status checks');
   if (!actual.configured) errors.push(`branch ${branch} has no required status checks configured`);
-  if (actual.configured && !actual.strict) errors.push(`branch ${branch} required status checks are not strict`);
+  if (actual.configured && expectedStrict.strict !== null && actual.strict !== expectedStrict.strict) {
+    errors.push(
+      `branch ${branch} required status checks strict setting is ${actual.strict}, ` +
+      `but policy requires ${expectedStrict.strict}`
+    );
+  }
 
   for (const check of expected.checks) {
     if (!actualSet.has(check)) errors.push(`branch ${branch} is missing required status check: ${check}`);
@@ -138,6 +155,8 @@ export function validateBranchProtection({ policy, protection, branch = 'main' }
     ok: errors.length === 0,
     branch,
     strict: actual.strict,
+    expectedStrict: expectedStrict.strict,
+    actualStrict: actual.strict,
     expectedChecks: [...expected.checks].sort((a, b) => a.localeCompare(b)),
     actualChecks: actual.contexts,
     errors,
@@ -149,7 +168,8 @@ export function renderMarkdown(report) {
     '# Branch Protection Required Checks',
     '',
     `Branch: ${report.branch}`,
-    `Strict: ${report.strict ? 'yes' : 'no'}`,
+    `Require up-to-date branches (policy): ${report.expectedStrict == null ? 'invalid' : report.expectedStrict ? 'yes' : 'no'}`,
+    `Require up-to-date branches (GitHub): ${report.actualStrict ? 'yes' : 'no'}`,
     `Result: ${report.ok ? 'pass' : 'fail'}`,
     '',
     '| Check | Required by policy | Protected on branch |',
