@@ -142,12 +142,13 @@ Never commit a credential, `.pfx`, vendor token, or owner-supplied signing-budge
 The redesigned release-hardening slices and package-scoped, write-free model-promotion planner are
 implemented in `codex/905-release-unblock`. Local verification is green; the independent
 refute-first implementation re-review and the subsequent tempdoc-fit correction review are closed.
-No paid signing,
-GitHub Environment/secret mutation, Release mutation, upstream WinGet submission, model publication,
-commit, or PR was performed. Production secret relocation, provider-budget confirmation, the live
-repository-descriptor variable change, protected-Environment dispatches, WinGet Sandbox install,
-and any real model promotion remain owner actions. Tempdoc 617 remains open pending exact published
-installer N→N+1 normal/interruption/reconciliation evidence.
+The implementation was committed as `a3cf0c4a`, pushed, and opened as
+<https://github.com/justsearch-app/justsearch/pull/629>; hosted CI run `33795605667` and its CLA
+check passed. No paid signing, GitHub Environment/secret mutation, Release mutation, upstream WinGet
+submission, or model publication was performed. Production secret relocation, provider-budget
+confirmation, the live repository-descriptor variable change, protected-Environment dispatches,
+WinGet Sandbox install, and any real model promotion remain owner actions. Tempdoc 617 remains open
+pending exact published installer N→N+1 normal/interruption/reconciliation evidence.
 
 ## Takeover and research pass (2026-09-03)
 
@@ -700,6 +701,9 @@ Verification evidence:
   canonical check, and runtime-config matrix: **passed**.
 - `./gradlew.bat build -x test`: **BUILD SUCCESSFUL**. Notice/license regeneration checks passed
   using the installed stable Rust toolchain. `git diff --check`: **passed** (line-ending notices only).
+- After replaying the single 905 commit onto refreshed `origin/main`, GitHub PR **#629** CI run
+  **33795605667** passed all public-claims, license/notices, build, unit-test, Windows-native, Rust,
+  integration, secret-scan, and wall-clock-report lanes; CLA run **33795605735** also passed.
 - Independent refute-first review initially found four blockers: tag/version identity, mode-specific
   credential admission, success-only spend accounting, and unenforced model-candidate shape. All
   four were fixed and the re-review reported no remaining release-safety or signing-spend blocker.
