@@ -1,9 +1,9 @@
 ---
 title: "Full auto-update (374 G1 deep-dive): decisions before design"
 type: tempdocs
-status: implemented and green at unattended tiers; release qualification pending
+status: implemented and green at unattended tiers; v0.2.0 published signed; exact published-installer and in-app N→N+1 qualification still pending
 created: 2026-06-20
-updated: 2026-07-31
+updated: 2026-09-03
 author: agent analysis (production-readiness pass), filed by agent
 category: production-readiness / packaging / distribution / desktop-shell / migration
 parent: 374
@@ -787,3 +787,15 @@ sessions; those ride along by design and are reconciled by the periodic fold.
 
 What actually gates publication is therefore **only** the independent review and
 the qualification round — not sibling-branch entanglement.
+
+### 10.16 v0.2.0 publication does not close updater qualification (2026-09-03)
+
+The release and signing facts in §§1-4 are dated history. v0.2.0 was published on 2026-08-13;
+its installer is Authenticode-signed by Elias Justus and `/releases/latest` is live. Code signing
+is therefore no longer deferred or unbought, and the release feed is no longer “no cut.”
+
+That production milestone does **not** supply this tempdoc's missing evidence. The exact published
+previous installer still has to be exercised through the installer-over-release lane, and the
+in-app N→N+1 path still needs both the normal commit and interruption/reconciliation observations
+listed in §9. Until those artifacts exist, the accurate status remains “implementation green at
+unattended tiers; release qualification pending.”

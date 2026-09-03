@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://justsearch.app/schemas/model-promotion-candidate.v1.json",
+  "title": "JustSearch model promotion candidate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "packageId", "stagedRoot", "proposedPackage", "provenance", "remoteVerification", "evidence", "projections"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageId": { "enum": ["embedding", "splade", "ner", "reranker", "citation-scorer", "chat", "chat-compact"] },
+    "stagedRoot": { "type": "string", "minLength": 1 },
+    "proposedPackage": {
+      "type": "object",
+      "required": ["id", "termsUrl", "license", "variants", "supportingFiles"],
+      "properties": {
+        "id": { "type": "string" },
+        "termsUrl": { "type": "string", "format": "uri" },
+        "license": { "type": "string", "minLength": 1 },
+        "variants": { "type": "array", "items": { "$ref": "#/$defs/variant" } },
+        "supportingFiles": { "type": "array", "items": { "$ref": "#/$defs/artifact" } }
+      }
+    },
+    "provenance": {
+      "oneOf": [
+        { "$ref": "#/$defs/onnxProvenance" },
+        { "$ref": "#/$defs/ggufProvenance" }
+      ]
+    },
+    "remoteVerification": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/remoteProof" }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/evidence" }
+    },
+    "projections": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/projection" }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["filename", "sha256", "sizeBytes", "downloadUrl"],
+      "properties": {
+        "filename": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "downloadUrl": { "type": "string", "format": "uri" }
+      }
+    },
+    "variant": {
+      "allOf": [
+        { "$ref": "#/$defs/artifact" },
+        {
+          "type": "object",
+          "required": ["precision", "targetEP"],
+          "properties": {
+            "precision": { "type": "string", "minLength": 1 },
+            "targetEP": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": ["repository", "revision"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "pattern": "^[A-Fa-f0-9]{40}$" }
+      }
+    },
+    "onnxProvenance": {
+      "type": "object",
+      "required": ["kind", "source", "buildCommand", "toolVersions", "outputs"],
+      "properties": {
+        "kind": { "const": "onnx-build" },
+        "source": { "$ref": "#/$defs/source" },
+        "buildCommand": { "type": "string", "minLength": 1 },
+        "toolVersions": { "type": "object", "minProperties": 1 },
+        "outputs": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "ggufProvenance": {
+      "type": "object",
+      "required": ["kind", "sources", "quantization", "toolVersions"],
+      "properties": {
+        "kind": { "const": "gguf-source" },
+        "sources": { "type": "object", "minProperties": 1 },
+        "quantization": {
+          "type": "object",
+          "required": ["tool", "format"],
+          "properties": {
+            "tool": { "type": "string", "minLength": 1 },
+            "format": { "type": "string", "minLength": 1 }
+          }
+        },
+        "toolVersions": { "type": "object", "minProperties": 1 }
+      }
+    },
+    "remoteProof": {
+      "type": "object",
+      "required": ["status", "url", "sha256", "sizeBytes"],
+      "properties": {
+        "status": { "const": "pass" },
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["status", "ref"],
+      "properties": {
+        "status": { "enum": ["pass", "no-change"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "required": ["status", "ref", "result", "diff"],
+      "properties": {
+        "status": { "enum": ["pass", "no-change"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "minLength": 1 },
+        "diff": { "type": "string" }
+      }
+    }
+  }
+}

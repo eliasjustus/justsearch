@@ -31,19 +31,26 @@ on:
           scripts/release/regen-tesseract-manifest.mjs.
         type: boolean
         default: true
+      providerRemainingSignatures:
+        description: >-
+          Provider-portal remaining signing allocation immediately before this run.
+          Must cover the combined pre-sign MZ census across selected payloads.
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 # Two concurrent runs would spend double the metered signings for the same pins.
 concurrency:
-  group: sign-vendored-mirrors
+  group: release-signing-spend
   cancel-in-progress: false
 
 jobs:
   sign-mirrors:
     name: Sign vendored payload mirrors
     runs-on: windows-latest
+    environment: release-signing
     # ~93 signatures at ~9-12 s each (docs/how-to/cut-a-release.md) is ~15-20 min of signing alone,
     # plus downloads, extraction and re-zipping of a 21 MB NSIS installer and a 39 MB zip.
     timeout-minutes: 120
@@ -54,10 +61,18 @@ jobs:
 
       - name: Validate dispatch inputs
         shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_LEDGER_PATH: ${{ runner.temp }}\justsearch-mirror-signing-ledger.jsonl
         run: |
           if ('${{ inputs.signLlama }}' -ne 'true' -and '${{ inputs.signTesseract }}' -ne 'true') {
             throw "Nothing to do: both signLlama and signTesseract are false. Select at least one payload."
           }
+          $remaining = 0
+          if (-not [int]::TryParse('${{ inputs.providerRemainingSignatures }}', [ref]$remaining) -or $remaining -lt 1) {
+            throw "providerRemainingSignatures must be a positive integer copied from the provider portal."
+          }
+          Remove-Item -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath ($env:JUSTSEARCH_CODESIGN_LEDGER_PATH + '.attempts.jsonl') -Force -ErrorAction SilentlyContinue
           Write-Host ('signLlama=${{ inputs.signLlama }} signTesseract=${{ inputs.signTesseract }}')
 
       # Fail BEFORE downloading ~60 MB if no credential can possibly sign. sign-vendored-payload.ps1
@@ -68,20 +83,26 @@ jobs:
         env:
           JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
           JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
+          JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+          PROVIDER_REMAINING_SIGNATURES: ${{ inputs.providerRemainingSignatures }}
         run: |
-          $mode = if ($env:JUSTSEARCH_CODESIGN_MODE) { $env:JUSTSEARCH_CODESIGN_MODE.Trim().ToLowerInvariant() } else { 'pfx' }
-          $configured = switch ($mode) {
-            'pfx'     { [bool]($env:JUSTSEARCH_CODESIGN_PFX_B64    -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) }
-            'store'   { [bool]($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) }
-            'command' { [bool]($env:JUSTSEARCH_CODESIGN_COMMAND    -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim()) }
-            default   { $false }
-          }
-          if (-not $configured) {
-            throw "No signing credential configured for JUSTSEARCH_CODESIGN_MODE='$mode'. This workflow exists to SIGN; it must not produce an unsigned 'mirror'. Configure the mode's secret (see docs/how-to/cut-a-release.md 'Code signing')."
-          }
-          Write-Host "Signing credential present for mode '$mode'."
+          $allowUntrustedRaw = if ($env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED) { $env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED.Trim().ToLowerInvariant() } else { '' }
+          ./scripts/ci/resolve-release-signing.ps1 `
+            -GitRef refs/heads/mirror-signing -SignInput `
+            -Mode $env:JUSTSEARCH_CODESIGN_MODE `
+            -PfxBase64 $env:JUSTSEARCH_CODESIGN_PFX_B64 `
+            -PfxPassword $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD `
+            -TimestampUrl $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL `
+            -Thumbprint $env:JUSTSEARCH_CODESIGN_THUMBPRINT `
+            -CommandTemplate $env:JUSTSEARCH_CODESIGN_COMMAND `
+            -AllowUntrusted:($allowUntrustedRaw -in @('1', 'true', 'yes')) `
+            -ProviderRemainingSignatures $env:PROVIDER_REMAINING_SIGNATURES `
+            -SignatureMaximum 1 | Out-Null
+          Write-Host "Mode-specific signing inputs are complete."
 
       # Pins are PROJECTED from their existing authorities, never restated here: a second copy of a
       # pinned URL/sha in this workflow would silently sign the wrong bytes after an upstream bump.
@@ -200,11 +221,7 @@ jobs:
           Write-Host ("Repacked to {0} ({1:N0} bytes)" -f (Split-Path -Leaf $zip), (Get-Item $zip).Length)
           "TESSERACT_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # Adapted verbatim in intent from build-installer.yml's bootstrap: download SSL.com's
-      # CodeSignTool (ships its own JRE + production endpoint config) into $RUNNER_TEMP\CodeSignTool
-      # so a `command`-mode template referencing it can run. Secrets-absent or non-CodeSignTool
-      # templates skip this entirely.
-      - name: Install eSigner CodeSignTool (command mode only)
+      - name: Install verified eSigner CodeSignTool (command mode only)
         shell: pwsh
         env:
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
@@ -213,18 +230,7 @@ jobs:
             Write-Host "CodeSignTool not referenced by the signing command template - skipping."
             exit 0
           }
-          $dest = Join-Path $env:RUNNER_TEMP "CodeSignTool"
-          $zip = Join-Path $env:RUNNER_TEMP "CodeSignTool.zip"
-          Invoke-WebRequest -Uri "https://www.ssl.com/download/codesigntool-for-windows/" -OutFile $zip
-          Write-Host ("CodeSignTool.zip sha256: " + (Get-FileHash -Algorithm SHA256 $zip).Hash)
-          Expand-Archive -Path $zip -DestinationPath $dest -Force
-          # The zip may nest a single top-level folder; normalize so CodeSignTool.bat sits at $dest.
-          $bat = Get-ChildItem -Path $dest -Recurse -Filter "CodeSignTool.bat" | Select-Object -First 1
-          if (-not $bat) { throw "CodeSignTool.bat not found after extraction" }
-          if ($bat.DirectoryName -ne $dest) {
-            Get-ChildItem -Path $bat.DirectoryName | Move-Item -Destination $dest -Force
-          }
-          Write-Host ("CodeSignTool ready at " + (Join-Path $dest "CodeSignTool.bat"))
+          ./scripts/ci/install-codesign-tool.ps1 -Destination (Join-Path $env:RUNNER_TEMP "CodeSignTool")
 
       # `shell: powershell` (Windows PowerShell 5.1), NOT pwsh: sign-vendored-payload.ps1 is
       # `#Requires -Version 5.1` and calls Get-AuthenticodeSignature directly. Spawning 5.1 from a
@@ -250,9 +256,12 @@ jobs:
           # This workflow exists to sign, so the child signer must fail closed rather than skip.
           JUSTSEARCH_REQUIRE_SIGNING: "true"
           JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+          JUSTSEARCH_CODESIGN_LEDGER_PATH: ${{ runner.temp }}\justsearch-mirror-signing-ledger.jsonl
+          PROVIDER_REMAINING_SIGNATURES: ${{ inputs.providerRemainingSignatures }}
         run: |
           $archive = Join-Path $env:GITHUB_WORKSPACE ('dist/vendored-input/' + $env:LLAMA_ASSET)
-          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $archive -OutDir dist/signed-mirrors
+          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $archive -OutDir dist/signed-mirrors `
+            -ProviderRemainingSignatures ([int]$env:PROVIDER_REMAINING_SIGNATURES)
           if ($LASTEXITCODE -ne 0) { throw "sign-vendored-payload.ps1 failed for the llama.cpp prebuilt (exit=$LASTEXITCODE)" }
 
       - name: Sign Tesseract runtime
@@ -268,8 +277,11 @@ jobs:
           CODE_SIGN_TOOL_PATH: ${{ runner.temp }}\CodeSignTool
           JUSTSEARCH_REQUIRE_SIGNING: "true"
           JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+          JUSTSEARCH_CODESIGN_LEDGER_PATH: ${{ runner.temp }}\justsearch-mirror-signing-ledger.jsonl
+          PROVIDER_REMAINING_SIGNATURES: ${{ inputs.providerRemainingSignatures }}
         run: |
-          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $env:TESSERACT_ZIP -OutDir dist/signed-mirrors
+          & .\scripts\release\sign-vendored-payload.ps1 -ArchivePath $env:TESSERACT_ZIP -OutDir dist/signed-mirrors `
+            -ProviderRemainingSignatures ([int]$env:PROVIDER_REMAINING_SIGNATURES)
           if ($LASTEXITCODE -ne 0) { throw "sign-vendored-payload.ps1 failed for the Tesseract runtime (exit=$LASTEXITCODE)" }
 
       # Post-condition on the produced mirrors: the consumption paths resolve files out of the
@@ -297,7 +309,21 @@ jobs:
       # them in the log too - no secret material is involved.
       - name: Print mirror pins for signed-mirrors.v1.json
         shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_LEDGER_PATH: ${{ runner.temp }}\justsearch-mirror-signing-ledger.jsonl
         run: |
+          $ledger = @(Get-Content -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH -ErrorAction Stop |
+            Where-Object { $_ -and $_.Trim() })
+          if ($ledger.Count -lt 1) { throw "Signing ledger is empty after mirror production." }
+          $attempts = @(
+            Get-Content -LiteralPath ($env:JUSTSEARCH_CODESIGN_LEDGER_PATH + '.attempts.jsonl') -ErrorAction Stop |
+              Where-Object { $_ -and $_.Trim() } |
+              ForEach-Object { $_ | ConvertFrom-Json } |
+              Where-Object { $_.event -eq 'attempt-start' }
+          )
+          "### Signing spend`n`nProvider attempts reserved by this run: **$($attempts.Count)**. Verified signatures: **$($ledger.Count)**." |
+            Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          Write-Host "Provider attempts reserved: $($attempts.Count); verified signatures: $($ledger.Count)"
           Write-Host "Paste into packaging/signed-mirrors.v1.json after uploading to justsearch-releases:"
           Get-ChildItem -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'dist/signed-mirrors') -Filter '*.sha256' |
             ForEach-Object { Write-Host ("  " + (Get-Content -Raw -LiteralPath $_.FullName).Trim()) }
