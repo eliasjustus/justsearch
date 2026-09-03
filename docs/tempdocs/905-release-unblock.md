@@ -1,9 +1,9 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: MERGED (2026-09-03) — release hardening is on main; protected installer signing proven; packaged-verifier cleanup fix pending; WinGet review, 617 updater evidence, and real model promotion remain open
+status: MERGED (2026-09-03) — release hardening is on main; protected installer signing proven; packaged-verifier cleanup fix pending; WinGet submission withdrawn; 617 updater evidence and real model promotion remain open
 created: 2026-09-02
-updated: 2026-09-03
+updated: 2026-09-04
 lane: 887 L16
 model: gpt-5.6-sol (takeover, design, derisk, implementation)
 parent: 887-improvement-landscape-register
@@ -787,10 +787,10 @@ Residual owner actions:
   and pre-submission `winget list --id` cannot map a local-manifest identity back to the ARP record.
 - The upstream-ready bundle was submitted from `eliasjustus/winget-pkgs` as
   `microsoft/winget-pkgs#429017`. Local duplicate checks found no existing package or open PR before
-  submission. The first six Microsoft validation stages passed; installer scanning and the remaining
-  automated stages were still running when this note was recorded. Microsoft's policy bot requires
-  the owner to personally accept its CLA before merge; no agent accepted that legal agreement on the
-  owner's behalf. Microsoft validation/review and that one-time CLA ceremony remain external.
+  submission. All ten Microsoft validation stages passed. The owner then decided not to pursue WinGet
+  distribution and explicitly requested withdrawal, so pull request `#429017` was closed on
+  2026-09-04 before merge. No CLA was accepted and no package was published to WinGet. The local
+  deterministic manifest projection remains available if that distribution choice changes later.
 - With explicit owner authorization, non-release `build-installer.yml` run `33807983478` used the
   protected `release-signing` Environment with a reviewed provider balance of 240 and a hard ceiling
   of 12. The signing/build job passed: the attempt journal reserved exactly **8/12** provider calls,
@@ -819,8 +819,8 @@ Residual owner actions:
 Residual owner-dependent work is now limited to validation of the mirror signer during its next
 natural upstream refresh before deleting repository-scoped credential copies, a fresh
 provider-authoritative remaining-signature read before every later paid dispatch, tempdoc 617's exact
-N→N+1 updater lanes, the external WinGet review/CLA, and a future model candidate with approved
-immutable assets, provenance, license, quality, and publication authority. Re-signing unchanged
+N→N+1 updater lanes, and a future model candidate with approved immutable assets, provenance,
+license, quality, and publication authority. Re-signing unchanged
 mirrors solely to exercise the same Environment would waste roughly 120 metered signatures, so the
 repository-scoped rollback copies remain until the next necessary mirror refresh. Scoop remains
 deliberately deferred.
