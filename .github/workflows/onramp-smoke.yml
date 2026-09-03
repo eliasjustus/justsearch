@@ -21,6 +21,72 @@ env:
   JAVA_VERSION: "25"
 
 jobs:
+  onramp-devcontainer-smoke:
+    name: Devcontainer first-success (Tier 0, model-less)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DEVCONTAINER_ID_LABEL: justsearch.onramp-smoke=${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install pinned Dev Container CLI
+        run: npm install --global @devcontainers/cli@0.89.0
+
+      - name: Start dev container
+        run: >-
+          devcontainer up --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
+          --gpu-availability none
+
+      - name: Verify container toolchains
+        run: |
+          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL" bash -lc '
+            set -euo pipefail
+            java_version="$(java -version 2>&1)"
+            node_version="$(node --version)"
+            python_version="$(python3 --version)"
+            rust_version="$(rustc --version)"
+            rust_toolchain="$(rustup show active-toolchain)"
+
+            printf "%s\n" "$java_version" "$node_version" "$python_version" "$rust_version" "$rust_toolchain"
+            grep -Eq '\''version "25([.]|")'\'' <<< "$java_version"
+            grep -Eq '\''^v24[.]'\'' <<< "$node_version"
+            grep -Eq '\''^Python 3[.]13[.]'\'' <<< "$python_version"
+            grep -Eq '\''^rustc [0-9]+[.]'\'' <<< "$rust_version"
+            grep -Eq '\''^stable-'\'' <<< "$rust_toolchain"
+          '
+
+      - name: Build required distributions
+        run: >-
+          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
+          ./gradlew assemble :modules:ui:installDist :modules:indexer-worker:installDist
+          -PskipWebBuild=true
+
+      - name: Onramp first-success smoke (Tier 0)
+        run: |
+          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL" bash -lc '
+            set -euo pipefail
+            empty_models="$(mktemp -d)"
+            trap '\''rm -rf "$empty_models"'\'' EXIT
+            test -z "$(find "$empty_models" -mindepth 1 -print -quit)"
+            JUSTSEARCH_MODELS_DIR="$empty_models" node scripts/dev/test-onramp-first-success.mjs
+          '
+
+      - name: Remove dev container
+        if: always()
+        run: |
+          mapfile -t containers < <(docker ps --all --quiet --filter "label=$DEVCONTAINER_ID_LABEL")
+          if [ "${#containers[@]}" -gt 0 ]; then
+            docker rm --force "${containers[@]}"
+          fi
+
   onramp-tier0-smoke:
     name: Onramp first-success (Tier 0, model-less)
     runs-on: windows-latest
