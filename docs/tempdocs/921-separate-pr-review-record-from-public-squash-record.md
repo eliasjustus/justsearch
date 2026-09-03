@@ -1339,3 +1339,26 @@ used a Unix-style wildcard that Windows rejected after the syntax checks passed.
 Repository CI triage identified the actual `scripts/dev/run-gh.test.mjs`, and the search
 was rerun with `rg -g`. The corrected commands and all intended checks passed. Neither
 incident was a suppressed test failure.
+
+### 17.4 Closeout state
+
+Local implementation commit: `610311e2 feat(921): implement fail-closed queue publication
+client`. It is intentionally unpushed because implementation authorization did not grant
+publication authorization. World-state at `2026-09-03T18:02:49Z` reported this worktree
+clean, four commits ahead of `origin/main`, zero behind, and not pushed; this closeout
+note is the fifth local commit.
+
+The session-closeout helper sweep deleted nothing. It left another session's live
+`ui-shot` lease as contention and reported the ownerless `otlp-sink` singleton, whose
+purpose is to outlive sessions. Neither process belonged to this worktree, so both were
+correctly left alone.
+
+**BLOCKED ON YOU:** authorize the specific push/PR/live-proof actions when you want the
+§16.3 experiment to proceed. A fresh queued merge is irreversible and is the only
+remaining way to prove GitHub preserves the explicit body.
+
+**PROCEEDING / DONE:** the local v2 projection, preview, fail-closed enqueue client,
+required-check preflight, response parser/state machine, process boundary, CI wiring,
+tests, and implementation evidence are complete. Template/workflow/skill/ADR activation,
+repository-default changes, required-check registration, and the 30-merge audit remain
+deliberately deferred until the live proof passes.
