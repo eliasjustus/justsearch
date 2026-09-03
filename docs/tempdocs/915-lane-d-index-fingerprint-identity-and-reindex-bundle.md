@@ -1006,3 +1006,200 @@ Re-run in full after the round-4 review (B4/B5/S14-S17); every line below is fro
 ## Report-back
 
 See the PR body and §F/§G. Extended by Phases 2 and 3.
+
+## Live product validation (2026-09-03)
+
+Independent live validation of PR #620 at head `12955fe9` (round 5), by a validator who is not the
+implementer. Seven arms from the round-4 reviewer's written procedure, run against the **already
+built** Head + Worker dists in this worktree — no rebuild, no production-code edit. Artefacts and
+per-arm logs under `tmp/915-live/` (gitignored): `logs/<tag>-env.txt` (the exact env each arm
+booted with), `logs/<tag>-worker.log`, `artefacts/<tag>-*.json`.
+
+### Arm table
+
+| Arm | Purpose | Verdict | Evidence pointer |
+|---|---|---|---|
+| 0 | Build Blue at a synthetic old fingerprint (`JUSTSEARCH_INDEX_VECTOR_HNSW_M=32`, prod) | **PASS** | `logs/arm0-worker.log`, `artefacts/arm0-api_status.json`; 205 docs, `indexSchemaFpStored = indexSchemaFpCurrent = 9814df37…`, `COMPATIBLE`, `state.json` IDLE with no `auto_rebuild_*` |
+| 1 | Blue/green cutover as the prod default; the O7 headline | **PASS (6/8), 1 FAIL, 1 not verifiable** | `logs/arm1-worker-migration.log`; see D1 and D4 below |
+| 2 | `FAIL_CLOSED` refuses without destroying anything | **PASS** | `logs/arm2-*`; `state.json` byte-identical (SHA-256 `E3BF2686…` before and after), 26 index files identical by name+size |
+| 3 | Rebuild brake, read-only serving, `core.rebuild-index` recovery | **PASS (7/7)** | `logs/arm3-driver.log`, `logs/arm3-b4-recovery-worker.log`; two side findings D2, D3 |
+| 4 | O7 deferred-open regression plus the negative re-boot | **PASS** | `logs/arm4b-worker.log` (PRE-OPEN on the 2nd boot), `logs/arm4c-worker.log` (0 PRE-OPEN, 0 PARITY_DIFF, 0 migrations) |
+| 5 | Legacy (`39d38f73`) index upgrade: migrate once, clean 2nd boot | **PASS** | `logs/arm5-upgrade-worker.log` (`stored=<missing>`), `logs/arm5-second-worker.log` (0 PRE-OPEN) |
+| 6 | B4 corrupt index (round-5 expectations) | **PASS** | `logs/arm6-corrupt-worker.log`; the Worker self-heals and starts — B4 is fixed live |
+
+**Headline.** O7 is real on the boot path installs actually take. On an index **with segments** — the
+`openDeferred()` path that pre-O7 swallowed the mismatch on — the pre-open detection fires and starts
+the migration, in three independent shapes: a changed shape (arm 1, arm 4), a legacy index with no
+recorded fingerprint (arm 5), and a refusal under `FAIL_CLOSED` (arm 2). The detector is not
+trigger-happy: with the shape unchanged it emits nothing (arm 4c, arm 5 second boot).
+
+Verbatim, arm 1 (`logs/arm1-worker-migration.log`), the O7 evidence line **before** the handler:
+
+```
+07:26:06.436 WARN PRE-OPEN PARITY_DIFF key=index_fingerprint stored=9814df37…3a3 expected=02353ae7…23b hint="The effective index shape changed (…). Reindex or run schema migration."
+07:26:06.578 WARN Schema mismatch detected on active generation …\indices\g-20260903-052152. Starting Blue/Green migration (policy=BLUE_GREEN_MIGRATE, attempt 1 of 3)...
+```
+
+`FAIL_CLOSED` is refused from the **pre-open** site, not the open-time guard — the S14 distinction,
+observed live (`logs/arm2-worker.log`): the stack is
+`IndexMetadataParityGuard.schemaMismatch(IndexMetadataParityGuard.java:120)` under
+`KnowledgeServer.start(KnowledgeServer.java:656)`, which is the pre-open throw, and the index is left
+byte-identical.
+
+**B4 and B5 are fixed, verified live.** Arm 6: an 8-junk-byte `segments_5` no longer kills the
+Worker. `inspectCommittedParity` logs the non-fatal WARN and hands the question to the open, which
+recovers:
+
+```
+07:48:07.282 WARN Could not read committed parity metadata at …\g-20260903-054724 (IndexFormatTooOldException: …)
+07:48:07.344 WARN Corrupted index detected at …. Auto-recovery enabled, attempting backup-first rebuild...
+07:48:07.453 WARN Index at … was recovered to empty (reason=corrupt_index). Rebuilding from source via blue/green...
+```
+
+`/api/health` reachable, no `worker-fatal-reason`, and the doc count returns to its pre-corruption
+value (55) with search restored (`totalHits` 55 to 55). B5: the brake ladder (arm 3) produced
+`auto_rebuild_count` 1, 2, 3 on three **live** Workers, none of which died; boot 4 hit the brake and
+kept serving. No boot in the campaign wrote a `worker-fatal-reason` marker — not even the deliberate
+`FAIL_CLOSED` arm.
+
+**Fingerprint determinism.** The same config produced the same fingerprint across five independent
+index builds and three data dirs: default → `02353ae765fd…`, `HNSW_M=32` → `9814df378e0e…`. The two
+swap symmetrically depending on which side of the lever the index was built on.
+
+### Defects
+
+1. **D1 — mid-migration, `/api/status` reports `COMPATIBLE` / `reindex_required=false` where the
+   procedure asserts `BLOCKED_MISMATCH` / `schema_mismatch` / `true`** (arm 1 assertion 5; the one
+   FAIL). Observed twice, independently:
+   - arm 1, 07:26:26, `migration.state=MIGRATING`, `buildingGenerationId=g-20260903-052606`:
+     `indexSchemaFpStored=02353ae7…` (Green's, equal to current), `indexSchemaCompatState=COMPATIBLE`,
+     `reindexRequired=false`, `embeddingCompatReason=NEW_INDEX_NO_FINGERPRINT`.
+   - arm 4b, 07:40:54, mid-migration: `fpStored=9814df378e0e…` (again the current runtime's own
+     fingerprint), `compat=COMPATIBLE`, `reindexRequired=False`.
+
+   Cause, read at source: `IndexStatusOps.safeSchemaFingerprintStored()` (`IndexStatusOps.java:1120-1137`)
+   reads the **ingest** runtime's commit user data. During a blue/green migration the ingest runtime
+   is GREEN, freshly created and stamped with the CURRENT fingerprint, so `current.equals(stored)` at
+   `:1162` yields `COMPATIBLE` and `isReindexRequired()` (`:1186-1194`) is false. Consequence: while
+   the user's searches are answered from the stale-shape Blue, the compat surface says the index is
+   compatible and needs no reindex; only `migration.state` / `migrationSource=schema_mismatch` carries
+   the story. §C does not pin the mid-migration value, so this may be intended — but §C.13's argument
+   for *not* propagating the deferred-upgrade mismatch rests on "the status surface already reports
+   `BLOCKED_MISMATCH` with `reindex_required` from the same fingerprint comparison", and that sentence
+   holds only while no migration is in flight. Either the assertion or that sentence needs correcting.
+
+2. **D2 — in the exhausted-brake state, `/api/status` reports `worker.core.indexedDocuments = 5`
+   while `searchableDocuments = 205` and `migration.activeIndexedDocuments = 205`** (arm 3). Stable,
+   not a warm-up transient: 3 reads over 21 s and 8 further reads over 90 s, all `indexed=5
+   searchable=205`. In the brake branch `ingestLifecycle == searchLifecycle == blue`, and
+   `KnowledgeStatusView.java:87` fills `indexedDocuments` from `ks.docCount()`, i.e.
+   `IndexCountOps.java:81` `searcher.getIndexReader().numDocs()`, which for Blue is 205. After the
+   `core.rebuild-index` recovery the two agree again (206 == 206), so the disagreement is specific to
+   the brake state. A surface that headlines "documents indexed" tells a braked user 5 when 205 are
+   searchable.
+
+3. **D3 — in the exhausted-brake state, `indexSchemaFpStored` is reported as the empty string**
+   (arm 3), although the same boot's own PRE-OPEN line proves Blue's last commit carries
+   `9814df37…`. It is on the wire in two places: `compatibility.indexSchemaFpStored` and
+   `schema.fpStored`. The user-visible verdict is still right for the right reason —
+   `safeSchemaCompatState()` (`IndexStatusOps.java:1139-1170`) tests the brake at `:1147` before it
+   reaches the stored-fingerprint branches — but the empty value would drive the `stored.isEmpty()`
+   to `BLOCKED_LEGACY` branch at `:1153-1160` if the brake check were ever reordered, or if the
+   budget were cleared by hand, which the brake's own ERROR message tells users to do. A read-only
+   open of Blue appears not to populate `openTimeCommitUserData`.
+
+4. **D4 — arm 1 assertion 7 is not verifiable by the instrument it names.** `commit_by_reason` never
+   contains `migration/cutover` for a fast migration. The worker metric snapshot cadence is 60 s
+   (observed 05:22:52 / 05:23:52 / 05:24:52 in `telemetry/metrics-worker.ndjson`) and the cutover
+   restarts the Worker about 20 s after the migration starts (`Migration cutover complete. Restarting
+   worker to open new active generation...`), so the migration session's counters are discarded
+   before any snapshot is written. `migration/switch-buffer-replay` is additionally not expected in
+   this arm — `switchBufferDepth` was 0 throughout. Both emit sites are live production code
+   (`KnowledgeServerMigrationOps.java:229` and `:793`); what is missing is a flush on the cutover
+   restart, or a different instrument for the assertion.
+
+### Observations (not defects, routed here for the owner)
+
+- **The `FAIL_CLOSED` refusal does not reach the user as a schema mismatch.** Arm 2's Head reports
+  `knowledgeServerStartError: "Worker process crashed (exit code 1) before writing port to signal
+  file"` and readiness `workerControlPlane: worker.spawn_recovery_exhausted` /
+  `indexServing: index.not_healthy`; `/api/health` is unreachable entirely. The `index_fingerprint`
+  mismatch exists only in `worker.log`. `FAIL_CLOSED` is not the prod default, so this is a
+  non-default path — but it is the path an operator who sets the policy lands on.
+- **The braked ingest queue is unbounded and silent.** Arm 3: with ingestion stopped, the watcher
+  re-enqueued the whole corpus (`pendingJobs = 200`), and one newly created file took it to 201,
+  where it stayed for 90 s with `searchableDocuments` pinned at 205. No cap and no backpressure on
+  the status surface. After recovery all 201 drained and the new file became searchable.
+- **The cutover's own Worker restart is recorded as an unclean shutdown.** The next boot logs
+  `Unclean previous shutdown detected at …\<green> — running FULL integrity verification`, so every
+  blue/green cutover buys a full integrity verification on the following boot.
+- **Duplicate WARN on the corrupt path.** `Could not read committed parity metadata …` is logged
+  twice per boot (07:48:07.282 pre-open, 07:48:07.343 open-time guard) — one condition, two lines.
+- **Pre-existing, NOT lane D:** every deferred-open boot over an existing index logs 6-8 of
+  `Lucene health check failed: SearcherManager not available (runtime closed?)` (arm 4c, arm 5
+  second boot); fresh-index boots log none (arm 0, arm 5 base). `SearcherBridge.java` is identical
+  between `39d38f73` and `12955fe9`, so this predates the PR.
+
+### Deviations from the written procedure
+
+1. **Backend launcher.** The procedure specified jseval. `scripts/jseval/jseval/backend.py:260-262`
+   boots `:modules:ui:runHeadlessEval` through Gradle, which would rebuild (contradicting the
+   no-rebuild constraint) and, worse, pins the **eval** contract —
+   `justsearch.ui.settings.mode=IN_MEMORY`, `justsearch.eval.mode=true`, and
+   `JUSTSEARCH_CONFIG=modules/ui/src/main/resources/headless-config/application.yaml` — i.e. not the
+   production config that carries `index.auto_recovery: true` and the prod schema-mismatch default
+   this validation is about. Every arm therefore launched the already-built dist directly:
+   `modules/ui/build/install/ui/bin/ui.bat` with `JAVA_OPTS=-Djustsearch.prod=true`,
+   `JUSTSEARCH_PROD=true`, `JUSTSEARCH_CONFIG` **unset** (so `config/application.yaml` applies),
+   models from the main checkout, ORT CUDA from the shared `tmp/ort-variant-test/cuda-12.4-v1.24.3`.
+   Harness: `tmp/915-live/{boot,boot-base,stop,probe,api,arm3}.ps1`.
+2. **Config reached the Worker JVM, proved per arm** (the [R1] discipline). Head side,
+   `GET /api/debug/effective-config`: `justsearch.prod = true (source jvm_arg)`,
+   `index.vector.hnsw.m = 32 (source env_var, detail JUSTSEARCH_INDEX_VECTOR_HNSW_M)`,
+   `index.schema_mismatch.policy` unset so the prod default `BLUE_GREEN_MIGRATE` applies
+   (`ResolvedConfigBuilder.java:1016`). Worker side, `worker-config-snapshot.json` plus
+   `worker.log`: `Config: index.vector.hnsw.m=32 (worker_snapshot:…, ordinal=450)` and
+   `Config: justsearch.prod=true (worker_snapshot…)`.
+3. **The `justsearch_dev_*` MCP tools were not used** — they drive the dev-runner stack, not a dist
+   boot. Hygiene was checked directly (`netstat` for 33221, `Win32_Process` for Head/Worker JVMs,
+   `nvidia-smi`, game processes) before the campaign and after every arm.
+4. **Arms 2 and 3 restored a byte copy of the arm-0 data dir** (`tmp/915-live/data-arm0-snapshot`)
+   instead of re-running the arm-0 ingest. Deterministic and faster; the restored generation was
+   verified identical by file name plus size.
+5. **Arm 1 assertion 4 (search served from Blue mid-migration) was captured in arm 4b, not arm 1.**
+   Arm 1's migration cut over in about 20 s and my query landed in the Worker-restart window
+   (`Worker capability unavailable / worker.lost`). Arm 4b is the same code path under the same
+   policy and gave the assertion cleanly: `servingSearchGenerationId = g-20260903-053945` (the
+   pre-mismatch generation), `activeIndexedDocuments = 206`, `searchTotalHits = 147` — identical to
+   the pre-migration baseline.
+6. **Arm 3 assertion 6: the UI render was NOT exercised.** The Head dist was built with
+   `-PskipWebBuild`. What was asserted is the API reason code that selects the string —
+   `readiness.components.indexServing = { state: DEGRADED, reasonCode: index.rebuild_brake_exhausted }`
+   — and that `readinessNotice.ts:399-404` carries the procedure's quoted wording verbatim, severity
+   `warn`, remedy `operationId: 'core.rebuild-index'`.
+7. **Arm 6 assertions were rewritten for round 5**, as instructed: the expectation is no longer "the
+   Worker fails to start and writes `worker-fatal-reason`" but "the pre-open inspection warns
+   non-fatally and the open's recovery runs". That is what happened.
+8. **`core.rebuild-index` needs a two-phase confirm the procedure does not mention.**
+   `POST /api/operations/core.rebuild-index/invoke` returns `CONFIRMATION_REQUIRED` (gate
+   `TYPED_CONFIRM`, risk `HIGH`) with a `pendingId`; the recovery arm therefore ran
+   `POST /api/authorizations/approve {pendingId}` and re-invoked with `confirmationToken`. Under prod
+   every mutating call also needs `X-JustSearch-Session`, obtained from `GET /api/mcp/token`.
+9. **The arm-5 base is legacy for the key under test, not "pre-fingerprint" in general.** `39d38f73`
+   stamps `index_schema_fp` (`SsotCommitMetadataSource.java:93` at that commit) and its own
+   `/api/status` reported `indexSchemaFpStored = 79566bb5…`. It carries no `index_fingerprint`, which
+   is exactly what the PR's key needs, and the head's PRE-OPEN line confirmed it: `stored=<missing>`.
+
+### Machine signature
+
+`nvidia-smi`: NVIDIA GeForce RTX 4070, 12282 MiB total. **Before:** 819 MiB used, 0 % util, port
+33221 free, 0 Head/Worker JVMs (2 Gradle daemons plus 20 compiler daemons from sibling worktrees),
+0 game processes. **After:** 805 MiB used, 1 % util, port 33221 free, 0 Head/Worker JVMs, 0 game
+processes. Every arm ran alone; the port was confirmed free between arms.
+
+Timings (local, 2026-09-03): arm 0 ingest 07:21:52 to 07:23:03 (205 docs) · arm 1 boot to PRE-OPEN
+07:26:06.436, cutover complete 07:26:25.924, new Worker up 07:26:59 · arm 2 boot to refusal
+07:30:39.750 (sub-second) · arm 3 four-boot ladder 07:32:44 to 07:32:58, brake at 07:32:57.976,
+recovery invoked 07:38:15 and cutover 07:39:13 · arm 4 seed 07:39:45 to 07:40:00, mismatch boot
+07:40:30, cutover 07:40:58 · arm 5 base ingest 07:44:24 to 07:44:50, upgrade PRE-OPEN 07:45:17 ·
+arm 6 corrupt boot 07:48:06, recovery 07:48:07.45, rebuilt 07:49:10.
