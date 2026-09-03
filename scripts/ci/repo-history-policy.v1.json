@@ -17,7 +17,7 @@
   },
   "notes": [
     "Public main is a projected history surface: ordinary PRs land as curated squash commits.",
-    "The PR title/body are the public commit title/body source; branch commit transcripts stay off main.",
+    "The complete PR title/body are the commit-safe public title/body source; mutable review evidence lives in one managed PR comment.",
     "Rare non-squash publication requires an explicit maintainer settings change and reason."
   ]
 }

@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+
 import MarkdownIt from 'markdown-it';
 
 import {
@@ -6,9 +8,11 @@ import {
   SESSION_ID_KEY,
 } from '../../agent-analytics/merge-links.mjs';
 
-export const PROJECTION_KIND = 'justsearch-squash-message-projection.v2';
+export const PROJECTION_KIND = 'justsearch-publication-record.v3';
+export const REVIEW_MARKER_KIND = 'justsearch-review-record:v1';
 export const AUTHORSHIP_CLASSES = new Set(['agent', 'human', 'mixed', 'trusted-bot']);
 export const TRUSTED_BOT_LOGINS = new Set(['dependabot[bot]']);
+export const TRUSTED_REVIEW_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 const REQUIRED_REVIEW_HEADINGS = ['Scope and risk', 'Verification evidence', 'Review state'];
 const PROCESS_MARKER_RE = /\b(?:wip|work in progress|do not publish|review round \d+|base\/stack state)\b/i;
@@ -18,6 +22,10 @@ const INTERNAL_LINE_RE = /^(?:Stack|Base):\s+\S/im;
 const INTERNAL_FENCE_RE = /^```(?:stack|base|stack-log|base-log)\s*$/im;
 const SESSION_DECLARATION_LINE_RE = /^Session-Id:[^\r\n]*$/i;
 const OPAQUE_SESSION_DECLARATION_RE = /^\s*(?:>\s*|[-*+]\s+)?Session-Id:[^\r\n]*$/i;
+const MARKER_RE = /^<!-- justsearch-review-record:v1 pr=(\d+) head=([0-9a-f]{40}) public-body-sha256=([0-9a-f]{64}) -->$/;
+const REVIEW_RESIDUE_RE = /^(?:#{2,3}\s+(?:Review record|Scope and risk|Verification evidence|Review state|Testing)\s*|(?:Authorship|Testing|Tests|Verification):\s*\S.*)$/im;
+const TEMPLATE_RESIDUE_RE = /(?:Explain why this durable change was needed|Describe one observable outcome|Describe verification or `Not run: <reason>`|<session-uuid>)/i;
+const REVIEW_TEMPLATE_RESIDUE_RE = /(?:agent \| human \| mixed \| trusted-bot|Describe the affected surface|List reproducible checks and results|State unresolved findings and decisions)/i;
 
 const md = new MarkdownIt({ html: true });
 
@@ -25,8 +33,12 @@ function finding(id, message) {
   return { id, message };
 }
 
-function normalizeLf(value) {
+export function normalizeLf(value) {
   return String(value ?? '').replace(/\r\n?/g, '\n');
+}
+
+export function sha256(value) {
+  return crypto.createHash('sha256').update(normalizeLf(value), 'utf8').digest('hex');
 }
 
 function headingTokens(markdown, tokens = md.parse(markdown, {})) {
@@ -36,12 +48,7 @@ function headingTokens(markdown, tokens = md.parse(markdown, {})) {
     if (token.type !== 'heading_open' || token.level !== 0 || !token.map) continue;
     const inline = tokens[i + 1];
     if (!inline || inline.type !== 'inline') continue;
-    headings.push({
-      tag: token.tag,
-      name: inline.content.trim(),
-      start: token.map[0],
-      end: token.map[1],
-    });
+    headings.push({ tag: token.tag, name: inline.content.trim(), start: token.map[0], end: token.map[1] });
   }
   return headings;
 }
@@ -67,14 +74,6 @@ function trimBoundaryBlankLines(lines) {
   return lines.slice(start, end);
 }
 
-function sectionText(lines, heading, nextHeading) {
-  return trimBoundaryBlankLines(lines.slice(heading.end, nextHeading?.start ?? lines.length)).join('\n');
-}
-
-function namedTopLevelHeadings(headings, name) {
-  return headings.filter((heading) => heading.tag === 'h2' && heading.name === name);
-}
-
 function subsectionContent(lines, headings, heading, boundary) {
   const next = headings.find((candidate) => candidate.start > heading.start && candidate.start < boundary && candidate.tag === 'h3');
   return trimBoundaryBlankLines(lines.slice(heading.end, next?.start ?? boundary)).join('\n');
@@ -98,22 +97,18 @@ function rootSessionDeclarations(body, errors) {
     declarations.push(lines[line]);
   }
   const values = findSessionIdValues(declarations.join('\n'));
-  if (declarations.length !== values.length) {
-    errors.push(finding('malformed-session-id', `Every ${SESSION_ID_KEY}: declaration must have a non-empty value.`));
-  }
+  if (declarations.length !== values.length) errors.push(finding('malformed-session-id', `Every ${SESSION_ID_KEY}: declaration must have a non-empty value.`));
   return { declarations, values };
 }
 
 function validateSessionDeclarations(body, authorship, errors) {
   const { declarations, values } = rootSessionDeclarations(body, errors);
   for (const value of values) {
-    if (!isPlausibleSessionId(value)) {
-      errors.push(finding('malformed-session-id', `Invalid ${SESSION_ID_KEY} value: ${JSON.stringify(value)}.`));
-    }
+    if (!isPlausibleSessionId(value)) errors.push(finding('malformed-session-id', `Invalid ${SESSION_ID_KEY} value: ${JSON.stringify(value)}.`));
   }
   const valid = [...new Set(values.filter(isPlausibleSessionId))];
   if ((authorship === 'agent' || authorship === 'mixed') && valid.length === 0) {
-    errors.push(finding('missing-session-id', `${authorship} work requires at least one valid ${SESSION_ID_KEY}: declaration in Public commit.`));
+    errors.push(finding('missing-session-id', `${authorship} work requires at least one valid ${SESSION_ID_KEY}: declaration in the public PR body.`));
   }
   if ((authorship === 'human' || authorship === 'trusted-bot') && declarations.length > 0) {
     errors.push(finding('unexpected-session-id', `${authorship} work must omit ${SESSION_ID_KEY}: declarations; use mixed when an agent materially contributed.`));
@@ -122,130 +117,154 @@ function validateSessionDeclarations(body, authorship, errors) {
 }
 
 function normalizePullRequest(pr) {
+  const number = Number(pr?.number);
+  const title = String(pr?.title ?? '').trim();
   return {
-    number: pr?.number ?? null,
-    title: String(pr?.title ?? '').trim(),
+    number: Number.isInteger(number) && number > 0 ? number : null,
+    title,
     body: normalizeLf(pr?.body),
-    url: pr?.url ?? null,
-    headRefName: pr?.headRefName ?? null,
-    headSha: pr?.headSha ?? pr?.headRefOid ?? null,
-    updatedAt: pr?.updatedAt ?? null,
-    baseRefName: pr?.baseRefName ?? null,
-    isDraft: Boolean(pr?.isDraft),
-    state: pr?.state ?? null,
-    mergeStateStatus: pr?.mergeStateStatus ?? null,
-    isInMergeQueue: Boolean(pr?.isInMergeQueue),
-    mergeQueueEntry: pr?.mergeQueueEntry ?? null,
-    autoMergeRequest: pr?.autoMergeRequest ?? null,
-    authorLogin: pr?.authorLogin ?? pr?.author?.login ?? null,
-    expectedLandedSubject: String(pr?.expectedLandedSubject ?? pr?.viewerMergeHeadlineText ?? '').trim(),
+    url: pr?.url ?? pr?.html_url ?? null,
+    headSha: pr?.headSha ?? pr?.headRefOid ?? pr?.head?.sha ?? null,
+    updatedAt: pr?.updatedAt ?? pr?.updated_at ?? null,
+    authorLogin: pr?.authorLogin ?? pr?.author?.login ?? pr?.user?.login ?? null,
+    expectedLandedSubject: String(pr?.expectedLandedSubject ?? pr?.viewerMergeHeadlineText ?? (number ? `${title} (#${number})` : title)).trim(),
   };
 }
 
-export function buildSquashMessageProjection({ repoSlug = null, pr }) {
+export function reviewMarker({ prNumber, headSha, publicBodySha256 }) {
+  return `<!-- ${REVIEW_MARKER_KIND} pr=${prNumber} head=${headSha} public-body-sha256=${publicBodySha256} -->`;
+}
+
+export function buildManagedReviewBody({ pr, reviewBody }) {
   const pullRequest = normalizePullRequest(pr);
-  const lines = pullRequest.body.split('\n');
-  const headings = headingTokens(pullRequest.body);
-  const publicHeadings = namedTopLevelHeadings(headings, 'Public commit');
-  const reviewHeadings = namedTopLevelHeadings(headings, 'Review record');
-  const errors = [];
-  const warnings = [];
+  return `${reviewMarker({ prNumber: pullRequest.number, headSha: pullRequest.headSha, publicBodySha256: sha256(pullRequest.body) })}\n${normalizeLf(reviewBody).trim()}\n`;
+}
 
-  if (!pullRequest.expectedLandedSubject) {
-    errors.push(finding('missing-projected-subject', 'GitHub did not provide viewerMergeHeadlineText(SQUASH); refusing to guess the landed subject.'));
-  } else {
-    if (pullRequest.expectedLandedSubject.length > 72) {
-      errors.push(finding('subject-too-long', `Projected subject is ${pullRequest.expectedLandedSubject.length} characters; maximum is 72.`));
-    }
-    if (PROCESS_MARKER_RE.test(pullRequest.expectedLandedSubject)) {
-      errors.push(finding('subject-process-marker', 'Projected subject contains a WIP, review-round, or stack-state marker.'));
-    }
-  }
-  if (pullRequest.title.length > 60) {
-    warnings.push(finding('title-above-target', `PR title is ${pullRequest.title.length} characters; the publication target is 60 before GitHub's suffix.`));
-  }
+export function findManagedReviewComments(comments) {
+  return (comments ?? []).filter((comment) => normalizeLf(comment?.body).includes(`<!-- ${REVIEW_MARKER_KIND} `));
+}
 
-  if (publicHeadings.length !== 1) {
-    errors.push(finding('public-section-cardinality', `Expected exactly one top-level ## Public commit section; found ${publicHeadings.length}.`));
+function validatePublicBody(pullRequest, errors, warnings) {
+  const body = pullRequest.body;
+  const nonblankLines = body === '' ? 0 : body.split('\n').filter((line) => line.trim() !== '').length;
+  if (!pullRequest.title) errors.push(finding('missing-title', 'PR title is empty.'));
+  if (!body.trim()) errors.push(finding('missing-public-body', 'PR body is empty.'));
+  if (!pullRequest.headSha || !/^[0-9a-f]{40}$/i.test(pullRequest.headSha)) errors.push(finding('invalid-head-sha', 'PR head SHA must be a 40-character hexadecimal object ID.'));
+  if (pullRequest.expectedLandedSubject.length > 72) errors.push(finding('subject-too-long', `Projected subject is ${pullRequest.expectedLandedSubject.length} characters; maximum is 72.`));
+  if (pullRequest.title.length > 60) warnings.push(finding('title-above-target', `PR title is ${pullRequest.title.length} characters; the publication target is 60 before GitHub's suffix.`));
+  if (body.length > 2000 || nonblankLines > 32) errors.push(finding('public-body-too-large', `Public PR body is ${body.length} characters / ${nonblankLines} nonblank lines; limits are 2000 / 32.`));
+  else if (body.length > 1200 || nonblankLines > 20) warnings.push(finding('public-body-large', `Public PR body is ${body.length} characters / ${nonblankLines} nonblank lines; review above 1200 / 20.`));
+  if (TASK_BOX_RE.test(body)) errors.push(finding('public-checklist', 'Public PR body contains a visible Markdown task box.'));
+  if (/<!--/.test(body)) errors.push(finding('public-html-comment', 'Public PR body contains an HTML comment.'));
+  if (/<details\b/i.test(body)) errors.push(finding('public-details', 'Public PR body contains an HTML <details> block.'));
+  if (PROCESS_MARKER_RE.test(`${pullRequest.expectedLandedSubject}\n${body}`)) errors.push(finding('public-process-marker', 'Public title/body contains a WIP, review-round, or stack-state marker.'));
+  if (INTERNAL_LINE_RE.test(body) || INTERNAL_FENCE_RE.test(body)) errors.push(finding('public-stack-base-log', 'Public PR body contains a reserved stack/base log marker.'));
+  if (/Generated with Claude Code|claude\.ai\/code\/session/i.test(body)) errors.push(finding('public-provider-banner', 'Public PR body contains a provider banner or provider session URL.'));
+  if (REVIEW_RESIDUE_RE.test(body)) errors.push(finding('public-review-residue', 'Public PR body contains review-record structure.'));
+  if (TEMPLATE_RESIDUE_RE.test(body)) errors.push(finding('public-template-residue', 'Public PR body still contains pull-request template placeholders.'));
+  if (SHA_RE.test(body)) warnings.push(finding('public-raw-sha', 'Public PR body contains a raw 40-character SHA; confirm it is durable context.'));
+  return { body, nonblankLines };
+}
+
+function validateReviewComment(pullRequest, reviewComment, errors) {
+  if (!reviewComment) {
+    errors.push(finding('missing-review-record', 'Expected exactly one managed review-record comment; found 0.'));
+    return { authorship: null, marker: null, association: null };
   }
+  const body = normalizeLf(reviewComment.body);
+  if (body.length > 12_000) errors.push(finding('review-record-too-large', `Managed review record is ${body.length} characters; maximum is 12000.`));
+  if (REVIEW_TEMPLATE_RESIDUE_RE.test(body)) errors.push(finding('review-template-residue', 'Managed review record still contains template choices or placeholder prose.'));
+  const association = reviewComment.author_association ?? reviewComment.authorAssociation ?? null;
+  if (reviewComment.id != null && !TRUSTED_REVIEW_ASSOCIATIONS.has(association)) {
+    errors.push(finding('untrusted-review-owner', `Managed review record author association must be one of: ${[...TRUSTED_REVIEW_ASSOCIATIONS].join(', ')}.`));
+  }
+  const lines = body.split('\n');
+  const markerMatch = MARKER_RE.exec(lines[0] ?? '');
+  if (!markerMatch) {
+    errors.push(finding('invalid-review-marker', 'Managed review record must begin with the exact versioned metadata marker.'));
+    return { authorship: null, marker: null, association };
+  }
+  const marker = { prNumber: Number(markerMatch[1]), headSha: markerMatch[2], publicBodySha256: markerMatch[3] };
+  if (marker.prNumber !== pullRequest.number) errors.push(finding('review-pr-mismatch', `Review record covers PR #${marker.prNumber}, not #${pullRequest.number}.`));
+  if (marker.headSha !== pullRequest.headSha) errors.push(finding('review-head-stale', `Review record covers head ${marker.headSha}, not ${pullRequest.headSha}.`));
+  if (marker.publicBodySha256 !== sha256(pullRequest.body)) errors.push(finding('review-public-body-stale', 'Review record public-body fingerprint does not match the current PR body.'));
+  if ((body.match(/<!-- justsearch-review-record:v1 /g) ?? []).length !== 1) errors.push(finding('review-marker-cardinality', 'Managed review record must contain exactly one versioned marker.'));
+
+  const reviewText = lines.slice(1).join('\n');
+  const headings = headingTokens(reviewText);
+  const reviewHeadings = headings.filter((heading) => heading.tag === 'h2' && heading.name === 'Review record');
   if (reviewHeadings.length !== 1) {
     errors.push(finding('review-section-cardinality', `Expected exactly one top-level ## Review record section; found ${reviewHeadings.length}.`));
+    return { authorship: null, marker, association };
   }
-  if (publicHeadings.length === 1 && reviewHeadings.length === 1 && publicHeadings[0].start > reviewHeadings[0].start) {
-    errors.push(finding('section-order', '## Public commit must precede ## Review record.'));
+  const reviewHeading = reviewHeadings[0];
+  const nextH2 = headings.find((heading) => heading.tag === 'h2' && heading.start > reviewHeading.start);
+  const boundary = nextH2?.start ?? reviewText.split('\n').length;
+  const reviewLines = reviewText.split('\n');
+  if (trimBoundaryBlankLines(reviewLines.slice(0, reviewHeading.start)).length > 0) {
+    errors.push(finding('unexpected-review-preamble', 'Managed review record must place ## Review record immediately after its marker.'));
   }
-
-  const publicHeading = publicHeadings[0] ?? null;
-  const nextH2 = publicHeading
-    ? headings.find((heading) => heading.tag === 'h2' && heading.start > publicHeading.start)
-    : null;
-  const body = publicHeading ? sectionText(lines, publicHeading, nextH2) : '';
-  const nonblankLines = body === '' ? 0 : body.split('\n').filter((line) => line.trim() !== '').length;
-
-  if (body.length > 2000 || nonblankLines > 32) {
-    errors.push(finding('public-body-too-large', `Public commit body is ${body.length} characters / ${nonblankLines} nonblank lines; limits are 2000 / 32.`));
-  } else if (body.length > 1200 || nonblankLines > 20) {
-    warnings.push(finding('public-body-large', `Public commit body is ${body.length} characters / ${nonblankLines} nonblank lines; review above 1200 / 20.`));
-  }
-  if (TASK_BOX_RE.test(body)) errors.push(finding('public-checklist', 'Public commit contains a visible Markdown task box.'));
-  if (/<!--/.test(body)) errors.push(finding('public-html-comment', 'Public commit contains an HTML comment.'));
-  if (/<details\b/i.test(body)) errors.push(finding('public-details', 'Public commit contains an HTML <details> block.'));
-  if (PROCESS_MARKER_RE.test(body)) errors.push(finding('public-process-marker', 'Public commit contains a WIP, review-round, or stack-state marker.'));
-  if (INTERNAL_LINE_RE.test(body) || INTERNAL_FENCE_RE.test(body)) {
-    errors.push(finding('public-stack-base-log', 'Public commit contains a reserved stack/base log marker.'));
-  }
-  if (/Generated with Claude Code|claude\.ai\/code\/session/i.test(body)) {
-    errors.push(finding('public-provider-banner', 'Public commit contains a provider banner or provider session URL.'));
-  }
-  if (SHA_RE.test(body)) warnings.push(finding('public-raw-sha', 'Public commit contains a raw 40-character SHA; confirm it is durable context.'));
-
+  if (nextH2) errors.push(finding('unexpected-review-section', `Unexpected top-level section after Review record: ${nextH2.name}.`));
+  const reviewSectionText = reviewLines.slice(reviewHeading.end, boundary).join('\n');
+  const declarations = topLevelAuthorshipDeclarations(reviewSectionText);
   let authorship = null;
-  const reviewHeading = reviewHeadings[0] ?? null;
-  if (reviewHeading) {
-    const nextReviewH2 = headings.find((heading) => heading.tag === 'h2' && heading.start > reviewHeading.start);
-    const boundary = nextReviewH2?.start ?? lines.length;
-    const reviewText = trimBoundaryBlankLines(lines.slice(reviewHeading.end, boundary)).join('\n');
-    const declarations = topLevelAuthorshipDeclarations(reviewText);
-    if (declarations.length !== 1) {
-      errors.push(finding('authorship-cardinality', `Expected exactly one Authorship declaration in Review record; found ${declarations.length}.`));
-    } else {
-      authorship = declarations[0].toLowerCase();
-      if (!AUTHORSHIP_CLASSES.has(authorship)) {
-        errors.push(finding('invalid-authorship', `Authorship must be one of: ${[...AUTHORSHIP_CLASSES].join(', ')}.`));
-      }
-    }
-
-    for (const name of REQUIRED_REVIEW_HEADINGS) {
-      const matches = headings.filter((heading) => heading.tag === 'h3' && heading.name === name && heading.start > reviewHeading.start && heading.start < boundary);
-      if (matches.length !== 1) {
-        errors.push(finding('review-heading-cardinality', `Expected exactly one ### ${name} under Review record; found ${matches.length}.`));
-      } else if (!subsectionContent(lines, headings, matches[0], boundary).trim()) {
-        errors.push(finding('empty-review-section', `### ${name} must contain current evidence or an explicit none/not-run statement.`));
-      }
-    }
+  if (declarations.length !== 1) errors.push(finding('authorship-cardinality', `Expected exactly one Authorship declaration in Review record; found ${declarations.length}.`));
+  else {
+    authorship = declarations[0].toLowerCase();
+    if (!AUTHORSHIP_CLASSES.has(authorship)) errors.push(finding('invalid-authorship', `Authorship must be one of: ${[...AUTHORSHIP_CLASSES].join(', ')}.`));
   }
-
-  const sessionIds = AUTHORSHIP_CLASSES.has(authorship)
-    ? validateSessionDeclarations(body, authorship, errors)
-    : [];
-  if (authorship === 'trusted-bot' && !TRUSTED_BOT_LOGINS.has(pullRequest.authorLogin)) {
-    errors.push(finding('untrusted-bot-actor', `trusted-bot is limited to: ${[...TRUSTED_BOT_LOGINS].join(', ')}.`));
+  for (const name of REQUIRED_REVIEW_HEADINGS) {
+    const matches = headings.filter((heading) => heading.tag === 'h3' && heading.name === name && heading.start > reviewHeading.start && heading.start < boundary);
+    if (matches.length !== 1) errors.push(finding('review-heading-cardinality', `Expected exactly one ### ${name} under Review record; found ${matches.length}.`));
+    else if (!subsectionContent(reviewLines, headings, matches[0], boundary).trim()) errors.push(finding('empty-review-section', `### ${name} must contain current evidence or an explicit none/not-run statement.`));
   }
+  return { authorship, marker, association };
+}
 
-  const { body: _richReviewBody, ...prSummary } = pullRequest;
+export function buildSquashMessageProjection({ repoSlug = null, pr, reviewComment = null }) {
+  const pullRequest = normalizePullRequest(pr);
+  const errors = [];
+  const warnings = [];
+  const { body, nonblankLines } = validatePublicBody(pullRequest, errors, warnings);
+  const { authorship, marker, association } = validateReviewComment(pullRequest, reviewComment, errors);
+  const sessionIds = AUTHORSHIP_CLASSES.has(authorship) ? validateSessionDeclarations(body, authorship, errors) : [];
+  if (authorship === 'trusted-bot' && !TRUSTED_BOT_LOGINS.has(pullRequest.authorLogin)) errors.push(finding('untrusted-bot-actor', `trusted-bot is limited to PRs authored by: ${[...TRUSTED_BOT_LOGINS].join(', ')}.`));
   return {
     kind: PROJECTION_KIND,
     repo: repoSlug,
-    source: {
-      prNumber: pullRequest.number,
-      headSha: pullRequest.headSha,
-      updatedAt: pullRequest.updatedAt,
-    },
-    pr: prSummary,
+    source: { prNumber: pullRequest.number, headSha: pullRequest.headSha, updatedAt: pullRequest.updatedAt },
     authorship,
     sessionIds,
     expectedLandedSubject: pullRequest.expectedLandedSubject,
     body,
+    publicBodySha256: sha256(body),
+    bodyChars: body.length,
+    bodyLines: body === '' ? 0 : body.split('\n').length,
+    bodyNonblankLines: nonblankLines,
+    review: reviewComment ? {
+      id: reviewComment.id ?? null,
+      url: reviewComment.html_url ?? reviewComment.url ?? null,
+      authorLogin: reviewComment.user?.login ?? reviewComment.authorLogin ?? null,
+      authorAssociation: association,
+      marker,
+    } : null,
+    warnings,
+    errors,
+  };
+}
+
+export function buildPublicSquashRecord({ repoSlug = null, pr }) {
+  const pullRequest = normalizePullRequest(pr);
+  const errors = [];
+  const warnings = [];
+  const { body, nonblankLines } = validatePublicBody(pullRequest, errors, warnings);
+  return {
+    kind: 'justsearch-public-squash-record.v1',
+    repo: repoSlug,
+    source: { prNumber: pullRequest.number, headSha: pullRequest.headSha, updatedAt: pullRequest.updatedAt },
+    expectedLandedSubject: pullRequest.expectedLandedSubject,
+    body,
+    publicBodySha256: sha256(body),
     bodyChars: body.length,
     bodyLines: body === '' ? 0 : body.split('\n').length,
     bodyNonblankLines: nonblankLines,

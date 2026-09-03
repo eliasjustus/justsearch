@@ -76,10 +76,11 @@ review happens in pull requests, and the merge result on `main` is one edited
 squash commit.
 
 Before merging a PR, make the PR title and body suitable as the public commit
-title and body. Keep the summary focused on the durable project change and put
-verification in the testing section. Branch checkpoint commits, investigation
-commits, and retry commits should stay in branch/PR history rather than landing
-as separate `main` commits.
+title and body. Keep that body focused on the durable reason and observable
+outcomes. Put mutable scope/risk, verification evidence, and review state in one
+managed PR comment created from `.github/pr-review-record-template.md`. Branch
+checkpoint commits, investigation commits, retry commits, and review transcripts
+stay out of the public commit.
 
 Use the default publication path for ordinary work, grouped Dependabot updates,
 and tempdoc-heavy agent work:
@@ -87,15 +88,34 @@ and tempdoc-heavy agent work:
 1. Work on a branch or isolated worktree.
 2. Open a PR and let the public CI fact lanes report.
 3. Edit the PR title/body into the intended public commit message.
-4. Squash merge the PR after the required checks are green.
-5. Let GitHub delete the source branch after merge.
+4. Dry-run and then confirm one exact managed review-comment upsert:
 
-For noisy or dependency PRs, preview the default public squash message before
-merge:
+   ```powershell
+   node scripts/ci/pr-review-record.mjs upsert --pr <number> --file <review-file>
+   node scripts/ci/pr-review-record.mjs upsert --pr <number> --file <review-file> --execute --confirm <fresh-sha256>
+   ```
 
-```powershell
-node scripts/ci/preview-squash-message.mjs --repo justsearch-app/justsearch --pr <number>
-```
+5. After the final push and review update, run the strict comment check and the
+   public squash preview:
+
+   ```powershell
+   node scripts/ci/pr-review-record.mjs check --pr <number>
+   node scripts/ci/preview-squash-message.mjs --repo justsearch-app/justsearch --pr <number>
+   ```
+
+6. Enter the squash merge queue after the required checks are green.
+7. Let GitHub delete the source branch after merge.
+
+The review-record command owns its hidden PR/head/body marker, paginates the PR
+conversation, refuses duplicate or foreign-owned managed comments, and is a
+dry-run unless `--execute` carries the current fingerprint. Run the upsert again
+after any head or public-body change. GitHub comment updates have no conditional
+compare-and-swap, so the authenticated comment owner must be the sole writer
+from dry-run through exact read-back; do not edit the managed comment concurrently.
+Never place rich review text temporarily in the PR body or restore it after
+enqueue. When checking the landed commit, compare durable content and absence of
+review-only material; GitHub may reflow long lines or append its own co-author
+material.
 
 Rare non-squash publication is a maintainer exception, not a standing lane. Use
 it only when the intermediate commits are themselves durable public review units

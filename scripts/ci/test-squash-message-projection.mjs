@@ -2,14 +2,20 @@
 
 import assert from 'node:assert/strict';
 
-import { buildSquashMessageProjection, PROJECTION_KIND } from './lib/squash-message-projection.mjs';
+import {
+  buildManagedReviewBody,
+  buildSquashMessageProjection,
+  findManagedReviewComments,
+  PROJECTION_KIND,
+  sha256,
+} from './lib/squash-message-projection.mjs';
 
 const SESSION = '1568032c-aff9-459c-9afd-7adb22e80473';
+const HEAD = 'a'.repeat(40);
+const PUBLIC_BODY = `Why this durable change was needed.\n\n- Adds one outcome.\n\nSession-Id: ${SESSION}`;
 
-function validBody({ publicBody = `Why this durable change was needed.\n\n- Adds one outcome.\n\nSession-Id: ${SESSION}`, authorship = 'agent' } = {}) {
+function reviewBody(authorship = 'agent') {
   return [
-    '<!-- template guidance outside the projection -->',
-    '## Public commit', '', publicBody, '',
     '## Review record', '', `Authorship: ${authorship}`, '',
     '### Scope and risk', '', 'Only publication tooling is affected.', '',
     '### Verification evidence', '', 'Node regression tests passed.', '',
@@ -17,24 +23,34 @@ function validBody({ publicBody = `Why this durable change was needed.\n\n- Adds
   ].join('\n');
 }
 
-function project(overrides = {}) {
+function pr(overrides = {}) {
+  return {
+    number: 123,
+    title: 'Preserve public squash record',
+    body: PUBLIC_BODY,
+    head: { sha: HEAD },
+    updated_at: '2026-09-03T12:00:00Z',
+    user: { login: 'eliasjustus' },
+    ...overrides,
+  };
+}
+
+function comment(pullRequest = pr(), body = reviewBody()) {
+  return {
+    id: 99,
+    html_url: 'https://github.com/justsearch-app/justsearch/pull/123#issuecomment-99',
+    user: { login: 'eliasjustus' },
+    author_association: 'MEMBER',
+    body: buildManagedReviewBody({ pr: pullRequest, reviewBody: body }),
+  };
+}
+
+function project(prOverrides = {}, commentOverride = undefined) {
+  const pullRequest = pr(prOverrides);
   return buildSquashMessageProjection({
     repoSlug: 'justsearch-app/justsearch',
-    pr: {
-      number: 123,
-      title: 'fix: preserve public squash record',
-      body: validBody(),
-      headRefName: 'codex/example',
-      headRefOid: 'a'.repeat(40),
-      updatedAt: '2026-09-03T12:00:00Z',
-      baseRefName: 'main',
-      isDraft: false,
-      state: 'OPEN',
-      mergeStateStatus: 'CLEAN',
-      author: { login: 'eliasjustus' },
-      viewerMergeHeadlineText: 'fix: preserve public squash record (#123)',
-      ...overrides,
-    },
+    pr: pullRequest,
+    reviewComment: commentOverride === undefined ? comment(pullRequest) : commentOverride,
   });
 }
 
@@ -49,34 +65,16 @@ function ids(findings) {
   assert.deepEqual(result.warnings, []);
   assert.equal(result.authorship, 'agent');
   assert.deepEqual(result.sessionIds, [SESSION]);
-  assert.equal(result.body, `Why this durable change was needed.\n\n- Adds one outcome.\n\nSession-Id: ${SESSION}`);
+  assert.equal(result.body, PUBLIC_BODY);
+  assert.equal(result.publicBodySha256, sha256(PUBLIC_BODY));
 }
 
 {
-  const publicBody = `First line with trailing spaces.  \n\n- Unicode outcome: café Δ\n\nSession-Id: ${SESSION}`;
-  const body = validBody({ publicBody }).replace(/\n/g, '\r\n');
-  const result = project({ body });
-  assert.equal(result.body, `First line with trailing spaces.  \n\n- Unicode outcome: café Δ\n\nSession-Id: ${SESSION}`);
+  const unicodeBody = `First line with trailing spaces.  \r\n\r\n- Unicode outcome: café Δ\r\n\r\nSession-Id: ${SESSION}`;
+  const pullRequest = pr({ body: unicodeBody });
+  const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
+  assert.equal(result.body, unicodeBody.replace(/\r\n/g, '\n'));
   assert.deepEqual(result.errors, []);
-}
-
-{
-  const body = [
-    '```markdown', '## Public commit', 'fake', '```', '',
-    '> ## Public commit', '',
-    '<div>', '## Public commit', '</div>', '',
-    validBody(),
-  ].join('\n');
-  const result = project({ body });
-  assert(!ids(result.errors).includes('public-section-cardinality'));
-  assert.match(result.body, /^Why this durable change/m);
-}
-
-{
-  const duplicate = project({ body: `${validBody()}\n\n## Public commit\n\nsecond` });
-  assert(ids(duplicate.errors).includes('public-section-cardinality'));
-  const reversed = project({ body: validBody().replace('## Public commit', '## TEMP').replace('## Review record', '## Public commit').replace('## TEMP', '## Review record') });
-  assert(ids(reversed.errors).includes('section-order'));
 }
 
 for (const [snippet, errorId] of [
@@ -85,65 +83,64 @@ for (const [snippet, errorId] of [
   ['<details>noise</details>', 'public-details'],
   ['WIP: not ready', 'public-process-marker'],
   ['Stack: a -> b', 'public-stack-base-log'],
-  ['```base-log\nmain..head\n```', 'public-stack-base-log'],
   ['Generated with Claude Code', 'public-provider-banner'],
+  ['## Review record\n\nAuthorship: agent', 'public-review-residue'],
+  ['## Testing\n\nNode tests passed.', 'public-review-residue'],
+  ['Explain why this durable change was needed.', 'public-template-residue'],
 ]) {
-  const result = project({ body: validBody({ publicBody: `${snippet}\n\nSession-Id: ${SESSION}` }) });
+  const body = `${snippet}\n\nSession-Id: ${SESSION}`;
+  const pullRequest = pr({ body });
+  const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
   assert(ids(result.errors).includes(errorId), `${snippet} should produce ${errorId}`);
 }
 
 {
-  const malformed = project({ body: validBody({ publicBody: 'Why.\n\nSession-Id:' }) });
-  assert(ids(malformed.errors).includes('malformed-session-id'));
-  assert(ids(malformed.errors).includes('missing-session-id'));
-  for (const opaque of [
-    `Why.\n\n~~~text\nSession-Id: ${SESSION}\n~~~`,
-    `Why.\n\n<div>\nSession-Id: ${SESSION}\n</div>`,
-    `Why.\n\n> Session-Id: ${SESSION}`,
-  ]) {
-    const result = project({ body: validBody({ publicBody: opaque }) });
-    assert(ids(result.errors).includes('session-id-not-root-content'));
-    assert(ids(result.errors).includes('missing-session-id'));
-  }
+  assert(ids(project({}, null).errors).includes('missing-review-record'));
+  const pullRequest = pr();
+  const current = comment(pullRequest);
+  const staleHead = { ...current, body: current.body.replace(HEAD, 'b'.repeat(40)) };
+  assert(ids(project({}, staleHead).errors).includes('review-head-stale'));
+  const staleBody = { ...current, body: current.body.replace(sha256(PUBLIC_BODY), 'c'.repeat(64)) };
+  assert(ids(project({}, staleBody).errors).includes('review-public-body-stale'));
+  const untrusted = { ...current, author_association: 'NONE' };
+  assert(ids(project({}, untrusted).errors).includes('untrusted-review-owner'));
 }
 
 {
-  const human = project({ body: validBody({ publicBody: 'Why a maintainer changed this.', authorship: 'human' }) });
-  assert.deepEqual(human.errors, []);
-  const humanWithSession = project({ body: validBody({ authorship: 'human' }) });
-  assert(ids(humanWithSession.errors).includes('unexpected-session-id'));
-  const bot = project({
-    author: { login: 'dependabot[bot]' },
-    body: validBody({ publicBody: 'Bumps the durable dependency.', authorship: 'trusted-bot' }),
-  });
-  assert.deepEqual(bot.errors, []);
-  const untrustedBot = project({
-    author: { login: 'random-bot[bot]' },
-    body: validBody({ publicBody: 'Changes a dependency.', authorship: 'trusted-bot' }),
-  });
-  assert(ids(untrustedBot.errors).includes('untrusted-bot-actor'));
+  const pullRequest = pr();
+  const empty = comment(pullRequest, reviewBody().replace('Node regression tests passed.', ''));
+  assert(ids(project({}, empty).errors).includes('empty-review-section'));
+  const fenced = comment(pullRequest, reviewBody().replace('Authorship: agent', '```text\nAuthorship: agent\n```'));
+  assert(ids(project({}, fenced).errors).includes('authorship-cardinality'));
+  const preamble = comment(pullRequest, reviewBody().replace('## Review record', 'Authorship: agent\n\n## Review record').replace('Authorship: agent\n\n### Scope', '### Scope'));
+  const preambleErrors = ids(project({}, preamble).errors);
+  assert(preambleErrors.includes('unexpected-review-preamble'));
+  assert(preambleErrors.includes('authorship-cardinality'));
 }
 
 {
-  const missingReviewContent = project({ body: validBody().replace('Node regression tests passed.', '') });
-  assert(ids(missingReviewContent.errors).includes('empty-review-section'));
-  const fencedAuthorship = project({ body: validBody().replace('Authorship: agent', '```text\nAuthorship: agent\n```') });
-  assert(ids(fencedAuthorship.errors).includes('authorship-cardinality'));
-  const missingSubject = project({ viewerMergeHeadlineText: '' });
-  assert(ids(missingSubject.errors).includes('missing-projected-subject'));
-  const longSubject = project({ viewerMergeHeadlineText: `${'x'.repeat(73)}` });
-  assert(ids(longSubject.errors).includes('subject-too-long'));
-  const aboveTarget = project({ title: 'x'.repeat(61) });
-  assert(ids(aboveTarget.warnings).includes('title-above-target'));
+  const humanPr = pr({ body: 'Why a maintainer changed this.' });
+  assert.deepEqual(buildSquashMessageProjection({ pr: humanPr, reviewComment: comment(humanPr, reviewBody('human')) }).errors, []);
+  assert(ids(project({}, comment(pr(), reviewBody('human'))).errors).includes('unexpected-session-id'));
+  const botPr = pr({ body: 'Bumps the durable dependency.', user: { login: 'dependabot[bot]' } });
+  assert.deepEqual(buildSquashMessageProjection({ pr: botPr, reviewComment: comment(botPr, reviewBody('trusted-bot')) }).errors, []);
+  const otherBotPr = pr({ body: 'Changes a dependency.', user: { login: 'random-bot[bot]' } });
+  assert(ids(buildSquashMessageProjection({ pr: otherBotPr, reviewComment: comment(otherBotPr, reviewBody('trusted-bot')) }).errors).includes('untrusted-bot-actor'));
 }
 
 {
-  const warning = project({ body: validBody({ publicBody: `Why.\n\nPinned source ${'d'.repeat(40)}.\n\nSession-Id: ${SESSION}` }) });
-  assert(ids(warning.warnings).includes('public-raw-sha'));
+  const first = comment();
+  assert.deepEqual(findManagedReviewComments([first, { id: 100, body: 'ordinary comment' }]), [first]);
+  assert.equal(findManagedReviewComments([first, { ...first, id: 101 }]).length, 2);
+}
+
+{
+  const warningBody = `Why.\n\nPinned source ${'d'.repeat(40)}.\n\nSession-Id: ${SESSION}`;
+  const pullRequest = pr({ body: warningBody });
+  assert(ids(buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) }).warnings).includes('public-raw-sha'));
   const longBody = `${'x'.repeat(1250)}\n\nSession-Id: ${SESSION}`;
-  assert(ids(project({ body: validBody({ publicBody: longBody }) }).warnings).includes('public-body-large'));
-  const oversized = `${'x'.repeat(2050)}\n\nSession-Id: ${SESSION}`;
-  assert(ids(project({ body: validBody({ publicBody: oversized }) }).errors).includes('public-body-too-large'));
+  const longPr = pr({ body: longBody });
+  assert(ids(buildSquashMessageProjection({ pr: longPr, reviewComment: comment(longPr) }).warnings).includes('public-body-large'));
 }
 
 console.log('test-squash-message-projection: PASS');

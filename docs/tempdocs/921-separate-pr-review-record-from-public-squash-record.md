@@ -1,9 +1,9 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "PUBLICATION IN PROGRESS (2026-09-03) — live proof refuted custom queue messages; unsafe transport deleted and projection-only evidence retained"
+status: "IMPLEMENTED LOCALLY (2026-09-04) — commit-safe PR body plus one managed review-record comment; publication remains separately authorized"
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-04
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
 supersedes: "ADR-0045 / tempdoc 653 only where they make the whole PR body the commit body; preserves squash-only publication and docs ride-along"
 related:
@@ -18,13 +18,12 @@ related:
 ## Briefing for the implementing agent
 
 Read this file, then ADR-0045, tempdoc 653 from §Long-term design settlement onward,
-tempdoc 856 §3/§6, `.claude/skills/publish/SKILL.md`,
-`scripts/ci/preview-squash-message.mjs` and its tests, and the history-publication
-section of `docs/reference/contributing/agent-guide.md`. Treat §§0–11 as the candidate
-design that existed before the failed PR #625 proof, then read §§14–15 before planning any
-implementation. Do not retry `gh pr merge --body-file`, change the repository
-squash-body default, or start PRs 1–3. The next gate is a separately authorized live
-proof of the REST asynchronous queue transport described in §14.5.
+tempdoc 856 §3/§6, both publish skills, `scripts/ci/preview-squash-message.mjs`, and
+the history-publication section of `docs/reference/contributing/agent-guide.md`.
+Sections 0–18 are historical design and proof evidence. Sections 19–23 are the current
+authority: do not retry either custom queue transport, do not temporarily swap and restore
+the PR body, and do not implement the co-located `## Public commit` / `## Review record`
+schema described earlier in this file.
 
 This is a forward-only design. Do not rewrite existing `main` history. Preserve the
 useful `Session-Id:` authority until tempdoc 856's measured retirement condition is
@@ -1444,3 +1443,191 @@ ordinary guarded enqueue. This is a one-way migration of the proof PR, not the r
 temporal-swap mechanism. The branch ships only the parser/projection and historical
 evidence; workflow/template/skill/ADR activation requires a separate design and proof of
 the permanent review-record surface.
+
+## 20. Publication outcome and landed-shape correction — 2026-09-03
+
+PR [#627](https://github.com/justsearch-app/justsearch/pull/627) preserved its reviewed
+body in a durable issue comment, permanently replaced the PR body with the commit-safe
+projection, and entered the ordinary protected merge queue. Merge-group run
+`33792087109` and post-merge `main` run `33792401990` passed. The queue landed commit
+`6f097583e199e01f4ede82cf303f1d715bb17ca4`; the public sentinel is present and the
+review sentinel is absent.
+
+The landed message is semantically the public PR body, but GitHub hard-wrapped long
+Markdown lines. Therefore raw byte equality is not a valid publication promise. The
+durable contract is canonical content and meaning: no review-record fields, provider
+banners, task state, or operational logs may cross the boundary, while GitHub-owned line
+reflow and co-author material are allowed. Public bodies should avoid tables and deeply
+nested structures whose meaning depends on exact wrapping.
+
+## 21. Permanent review-record design — 2026-09-03
+
+### 21.1 Decision
+
+The PR title and complete PR body are commit-safe from creation through merge. One managed
+PR issue comment is the current rich review record. It uses a unique versioned marker,
+records the PR number, covered head SHA, and public-body SHA-256, and contains exactly one
+`## Review record` with:
+
+- one `Authorship: agent | human | mixed | trusted-bot` declaration;
+- one non-empty `### Scope and risk` section;
+- one non-empty `### Verification evidence` section;
+- one non-empty `### Review state` section.
+
+The comment is a bounded current-state index, not an append-only transcript. Bulky logs
+remain in reproducible checks or explicitly retained artifacts and may be linked from the
+comment. The command updates only a comment authored by the authenticated actor, fails on
+duplicate markers or ownership mismatch, and verifies the exact returned/read-back body.
+The GitHub update endpoint has no compare-and-swap precondition, so the authenticated
+owner must be the sole writer from dry-run through exact read-back. The command detects
+changes visible at final preflight or read-back, but does not claim atomic exclusion of a
+same-owner manual edit between those operations.
+PR bodies do not carry a review-comment URL: the PR Conversation already exposes the
+comment, the squash commit links back to its PR, and copying the URL into every public
+body would add review-process metadata to the durable history.
+
+The ordinary merge queue and repository `PR_TITLE` / `PR_BODY` setting remain unchanged.
+No automation restores review text to the body. A check summary may later project
+freshness plus the stable comment URL, but it is never the evidence authority.
+
+### 21.2 Evidence and rejected alternatives
+
+- GitHub issue comments have stable PR-timeline URLs, a create/update API, visible edit
+  history, and no documented scheduled expiry. PR comments cannot be pinned.
+- Check runs are tied to a commit SHA and are archived after 400 days, then deleted ten
+  days later. They are unsuitable as the only durable review record and add Checks-write,
+  fork-association, and merge-group behavior.
+- A future required `Publication record` check would need a proven trusted-base event path
+  for comment edits plus a same-name `merge_group` result. That proof does not exist, so
+  this slice does not add a workflow or broaden CI permissions.
+- PR #627 already proves that a member-authored review comment survives the one-way body
+  migration and remains readable after merge.
+
+General principle: when one host field is projected into a durable public artifact, keep
+that field permanently safe for the projection and move mutable operational evidence to a
+separate host object. Do not simulate atomicity with reversible mutations across objects
+when the host exposes no transaction or compare-and-swap primitive.
+
+This repository-local representation earns its keep while one managed comment stays
+current and substantially richer review evidence remains discoverable without polluting
+commit history. Retire or redesign it if duplicate/stale-comment repair becomes more
+expensive than the history defects it prevents, or if GitHub introduces a durable native
+review-evidence object with atomic merge-queue projection controls.
+
+## 22. Implementation and verification plan
+
+### 22.1 Contract and tooling
+
+- [x] Replace the inert co-located v2 projection with a split-input parser: the whole PR
+  body is public input and the managed comment is review input. Retain Markdown-token
+  parsing, body bounds, provider/process rejection, authorship, trusted-bot, and
+  `Session-Id:` validation.
+- [x] Add a fail-closed `pr-review-record` CLI over the REST issue-comment endpoints.
+  Default to dry-run; require a fingerprint confirmation for create/update; paginate all
+  comments; bind the operation to PR number, head SHA, public-body hash, actor, and review
+  file; reconcile an ambiguous mutation once by read-back and never retry blindly.
+- [x] Cover parsing, duplicate/ownership failures, Unicode standard-input transport,
+  create/update/read-back, moved head/body, malformed responses, and ambiguous outcomes
+  with injected-boundary tests. Register every focused test in CI.
+- [x] Replace the PR template with public-only durable prose and add a separate copyable
+  review-record template. Update the preview to reject review/template/process residue and
+  report the concise public record without requiring verification detail in the commit.
+
+### 22.2 Workflow and documentation activation
+
+- [x] Update both hand-authored publish skills so publishers maintain the comment, run the
+  strict check, preview the public body, then use the ordinary merge queue. Preserve each
+  harness's native interaction instructions.
+- [x] Amend ADR-0045, its decision index, the agent guide, `MAINTAINING.md`,
+  `CONTRIBUTING.md`, `CLAUDE.md`, and the history-policy note. State semantic rather than
+  byte-exact landed-message verification.
+- [x] Add forward supersession notes where canonical-looking historical tempdocs still
+  prescribe the whole rich PR body or custom transport. Do not rewrite dated evidence.
+- [x] Do not add a comment-writing workflow, Checks writer, required context, or new CI
+  permission in this slice. Reconsider only after a live event/SHA proof.
+
+### 22.3 Teardown, publication, and measured follow-up
+
+- [x] Delete the co-located `## Public commit` / `## Review record` extraction contract and
+  its obsolete fixtures in the same change. Do not recreate the rejected async or
+  temporal-swap clients.
+- [x] Run focused Node tests, workflow/policy checks, skill/doc regeneration checks, the
+  complete governance and agent-analytics suites, compilation/tests, UI verification,
+  diff checks, and a public-content/secret scan before publication.
+- [x] Critically review the implementation against this plan and obtain an independent
+  refute-first review before fixing any findings.
+- [ ] Publish only with explicit publication authorization. After activation lands, audit
+  the next 30 squash merges for public-body hygiene, managed-comment freshness, duplicate
+  markers, and semantic landed projection. This item is time-gated, not implementable from
+  the pre-activation sample; schedule it rather than pretending it has run.
+
+### 22.4 Derisk result
+
+Read-only REST inspection confirmed the existing PR #627 archive comment's stable ID/URL,
+member authorship, exact body, and post-merge readability. The authenticated CLI has the
+repository scope needed for an eventual authorized comment mutation. Official GitHub
+documentation confirms issue-comment update semantics and check-run retention; local
+workflow policy confirms that adding a required check now would also require an explicit
+merge-group contract. The main remaining risk is ambiguous network completion around a
+comment mutation or an overlapping same-owner edit. It is contained by fingerprint
+locking, actor ownership, a documented sole-writer window, one read-back reconciliation,
+and no automatic retry; GitHub does not expose a conditional comment update.
+
+Implementation confidence: **8/10**. Difficulty is moderate: use the balanced agentic
+coding class with high reasoning (the active `gpt-5.6-terra` class is sufficient). The
+design does not need the strongest-capability tier unless live GitHub behavior contradicts
+the tested REST model.
+
+## 23. Implementation and critical review — 2026-09-04
+
+The split publication contract is implemented in the isolated
+`codex/921-permanent-review-record` worktree, based exactly on `origin/main` at
+`f783dd0868b1e04b21129c01b396fbf46e8a7092`. The branch has not been pushed and no
+new PR, issue comment, workflow, check, or merge-queue mutation has been created.
+
+The implementation:
+
+- treats the complete PR body as the public squash input and rejects review/template,
+  provider, task-state, HTML-detail, stack/base, and process residue;
+- manages one marker-owned review comment through a dry-run/fingerprint/execute CLI,
+  with complete pagination, repository-permission validation, explicit repository
+  resolution, exact read-back, and no blind retry after an ambiguous mutation;
+- exposes GitHub's unconditional comment-update limitation in each update plan and in
+  canonical/publisher documentation, requiring the authenticated owner to remain the sole
+  writer through the short dry-run-to-read-back window;
+- keeps the ordinary merge queue and existing `PR_TITLE` / `PR_BODY` repository setting,
+  while adding only local/hosted regression invocation and no write-capable workflow;
+- updates the PR and review templates, both publisher skills, canonical maintainer and
+  agent guidance, ADR-0045 plus two premise-specific probes, and historical supersession
+  notes.
+
+The independent refute-first review initially found six issues: a fail-open preview exit,
+a production-repository fallback, missing pre-mutation actor authorization, ambiguous
+success/read-back reporting, an overclaimed compare-and-swap guarantee, and an ADR probe
+that combined two independently breakable premises. All six were corrected. A second pass
+found that pagination and actor-permission transport tests could pass without exercising
+their required arguments; those tests now pin the exact calls. The final independent pass
+reported no remaining actionable issue.
+
+Post-fix verification passed:
+
+- all three focused publication-record suites, including CLI exit behavior, paginated and
+  malformed comment responses, unauthorized creation, moved head/body, create/update
+  ambiguity, success plus failed read-back, and sole-writer disclosure;
+- repository history policy, workflow-trigger policy, ADR coverage, canonical links,
+  module-dependency canonical state, runtime-config matrix, generated `llms.txt`, generated
+  skill sections, and prompt-surface inventory;
+- 33/33 governance and 65/65 agent-analytics test files;
+- the earlier full verification on the same implementation worktree: Gradle compile and
+  tests, UI typecheck, and 468/468 UI test files (6,269/6,269 tests).
+
+A live read-only check against merged PR #627 exercised the real paginated GitHub
+transport. It correctly failed because that historical proof predates the new `:v1`
+managed marker and its body still contains the now-forbidden `Testing:` review residue;
+the strict preview also exited nonzero. The repository-wide secret scan found only an
+ignored generated protobuf build artifact false positive; review of the tracked diff found
+no credential, machine-local path, or internal-only URL.
+
+The implementation is ready for a local commit. Publication and the 30-merge post-land
+audit remain open because they require separate authorization and elapsed production data,
+respectively.
