@@ -1,7 +1,7 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: MERGED (2026-09-03) — release hardening is on main; protected signing environment and release URL configured; WinGet submission open; SSL.com credential recovery/validation, provider budget, 617 updater evidence, and real model promotion remain open
+status: MERGED (2026-09-03) — release hardening is on main; protected signing credentials and release URL configured; WinGet submission open; paid signing validation, 617 updater evidence, and real model promotion remain open
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L16
@@ -765,6 +765,17 @@ Residual owner actions:
   error, SSL.com's error reference says support must re-enable it. Its public eSigner documentation
   does not publish a three-attempt threshold, so retain the literal error for support and recover the
   PIN/QR/TOTP enrollment path rather than rotating repository state.
+- The owner recovered the eSigner factors and re-enabled the existing credential. A second live portal
+  inspection confirmed the credential is `enabled`, the certificate remains `issued`, the current
+  plan is **Personal ID Code Signing Tier 1 Annual**, and the provider-authoritative balance is
+  **240 unused signings**. No provider-side no-overage switch was exposed; the published plan charges
+  for additional signings, so JustSearch's reviewed per-run admission value and hard signature ceiling
+  remain the no-overage enforcement. The credential-safe helper then wrote
+  `JUSTSEARCH_CODESIGN_MODE` and `JUSTSEARCH_CODESIGN_COMMAND` into the protected `release-signing`
+  Environment without echoing or persisting the owner-entered password/TOTP secret. Secret-name and
+  timestamp metadata verified both Environment entries. The temporary helper was deleted. The older
+  repository-scoped copies remain only as rollback until a real signed build validates the migrated
+  values; no signing workflow was dispatched and no signing credit was consumed during migration.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
@@ -781,8 +792,8 @@ Residual owner actions:
   the owner to personally accept its CLA before merge; no agent accepted that legal agreement on the
   owner's behalf. Microsoft validation/review and that one-time CLA ceremony remain external.
 
-Residual owner-dependent work is now limited to eSigner factor recovery followed by successful
-Environment credential entry, a provider-authoritative remaining-signature count before
-any paid dispatch, validation of both signing workflows before deleting repository-scoped copies,
-tempdoc 617's exact N→N+1 updater lanes, and a future model candidate with approved immutable assets,
-provenance, license, quality, and publication authority. Scoop remains deliberately deferred.
+Residual owner-dependent work is now limited to an explicit paid-dispatch decision, validation of
+both signing workflows before deleting repository-scoped copies, a fresh provider-authoritative
+remaining-signature read before every later paid dispatch, tempdoc 617's exact N→N+1 updater lanes,
+and a future model candidate with approved immutable assets, provenance, license, quality, and
+publication authority. Scoop remains deliberately deferred.
