@@ -53,6 +53,7 @@ async function main() {
       `Run regeneration before committing:`,
       `  node scripts/docs/llmstxt-generate.mjs`,
       `  node scripts/docs/skills-sync.mjs`,
+      `If shared skill behavior/source changed, manually review .agents/skills.`,
       `Load /docs-maintenance for full checklist.`,
     ].join('\n');
 

@@ -6,10 +6,6 @@ description: >-
   sandbox validation, or model distribution. Loads installer architecture and
   known issues.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Installer & Packaging Context
 
 Reference for desktop packaging, installer architecture, and sandbox validation.
@@ -38,7 +34,7 @@ across three build systems. Load this before working in any of these areas.
 
 See ADR-0024 for the full decision record: NSIS over MSI/WiX, per-user install, download-on-demand.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/explanation/12-desktop-installer-and-sandbox-setup.md -->
 
@@ -311,9 +307,9 @@ See: `modules/shell/src-tauri/nsis/installer-hooks.nsh`
 Script: `scripts/sandbox/sandbox-launch.py`
 
 Current behavior:
-- Stages the newest NSIS installer, project docs, sandbox `CLAUDE.md`, and a sanitized `.claude/` config into `tmp/sandbox/share/`.
+- Stages the newest NSIS installer and project documentation into `tmp/sandbox/share/`. Before using the sandbox for Codex validation, also stage `AGENTS.md`, `.agents/`, and the credential-free `.codex/` project configuration from the candidate checkout.
 - Generates a `.wsb` file with **16 GB RAM** allocation that maps `tmp/sandbox/share/` to `Desktop\JustSearchTest` inside the sandbox and (optionally) maps the host `models/` directory to `Desktop\JustSearchModels`.
-- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically — Git, Claude Code, and JustSearch are installed manually by the user inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` for the exact commands).
+- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically. Install Git, Codex CLI, and JustSearch manually inside the sandbox, then verify that the checkout is trusted and that repository skills, hooks, and the `justsearch-dev` MCP server are visible before treating the sandbox as a Codex validation environment.
 - Drop any host-pre-staged installers (e.g. Git for Windows) into `tmp/sandbox/share/tools/` before launch; they appear inside the sandbox at `Desktop\JustSearchTest\tools\`.
 - `--upgrade-from <installer>` stages the exact previous published installer
   for an installer-over-release arrival test.
@@ -365,4 +361,4 @@ The Sandbox is used as a clean, ephemeral environment to validate:
 - **Worker config snapshot invalidation:** If `runtime/worker-config-snapshot.json` persists from a previous run with different model paths, the Worker uses stale config on first boot. This can cause GPU session failures and quality regressions. Fix: clean the data directory before a fresh install, or invalidate the snapshot on version change. (374 G26)
 - **`isProd` gate fix:** `resolveWorkerLibDir()` now checks the bundled layout unconditionally (not gated on `isProd`), fixing Worker spawn failures on installed apps where Tauri passes `isProd=false`. (375 G27)
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

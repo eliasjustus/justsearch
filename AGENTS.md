@@ -59,9 +59,8 @@ instruction in Codex; use the equivalent Codex capability.
   do not defer it behind an invented recurrence threshold.
 - When replacing a feature or workflow, sweep its code, configuration, gates,
   baselines, ignore entries, and docs in the same change.
-- Load the relevant repository skill before domain work. Codex skills live in
-  `.agents/skills`; Claude skills live in `.claude/skills`. The Codex tree is a
-  generated projection and must not be edited by hand.
+- Load the relevant skill. `.agents/skills` and `.claude/skills` are the manual
+  Codex and Claude authorities. Review both when shared behavior changes.
 
 ## Worktrees and git safety
 
@@ -137,8 +136,8 @@ reason.
 
 - `AGENTS.md`: shared, compact project policy.
 - `CLAUDE.md` and `.claude/rules`: Claude-specific delivery and legacy routing.
-- `.agents/skills`: generated Codex project skills.
-- `.claude/skills`: Claude project skills and current skill-authoring source.
+- `.agents/skills`: manually maintained Codex project skills.
+- `.claude/skills`: manually maintained Claude Code project skills.
 - `governance/agent-hooks.v1.json`: single hook policy and binding authority.
 - `.codex/hooks.json`: generated Codex hook projection; review and trust changes
   with `/hooks` before they run.

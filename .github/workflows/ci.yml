@@ -470,7 +470,7 @@ jobs:
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 
-      - name: Verify synced skills are up to date
+      - name: Verify Claude skill doc sections are up to date
         run: node scripts/docs/skills-sync.mjs --check
 
   license-and-notices:
