@@ -574,12 +574,12 @@
       "adr": "0048",
       "premise": "on_demand was REJECTED by its own measurement and ships opt-in. If the default flips to on_demand without a clean re-measure, the ADR's cadence decision has been reversed silently.",
       "kind": "grep-present",
-      "pattern": "INDEX_NRT_MODE\\(\"index\\.nrt\\.mode\", \"JUSTSEARCH_INDEX_NRT_MODE\", \"continuous\"\\)",
+      "pattern": "INDEX_NRT_MODE\\(\"index\\.nrt\\.mode\", \"JUSTSEARCH_INDEX_NRT_MODE\", \"continuous\"",
       "paths": [
         "modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java"
       ],
       "expect": 1,
-      "note": "expect 1 is the population: one enum declaration. The literal default is part of the pattern precisely so a flip fails the probe."
+      "note": "expect 1 is the population: one enum declaration. The pattern pins the three policy-bearing leading arguments, including the literal default, while allowing orthogonal declaration metadata after them; a default flip still fails the probe."
     }
   ]
 }

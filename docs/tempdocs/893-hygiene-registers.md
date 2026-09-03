@@ -619,6 +619,9 @@ six were fixed and the same reviewer confirmed no residual actionable defect in 
 - [x] Declare and repin the UI module's 913-to-912 test-to-code ratio movement after hosted CI exercised
   the full kernel. The module gained focused renderer/exporter tests; the one-point decrease reflects
   the larger production projection rather than missing coverage or removed tests.
+- [x] Repair ADR-0048's NRT-default premise probe after lifecycle metadata added a fourth enum argument.
+  The probe still pins `continuous` as the third, policy-bearing argument but no longer assumes that no
+  orthogonal declaration metadata can follow it.
 
 ## V. Implementation and verification record (2026-09-03)
 
