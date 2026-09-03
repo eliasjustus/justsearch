@@ -46,6 +46,10 @@ final class InvariantSuiteIT {
     seedIndex(tempDir, stableMetadata());
     Logger logger = (Logger) LoggerFactory.getLogger(IndexMetadataParityGuard.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     logger.addAppender(appender);
     try {
@@ -110,6 +114,10 @@ final class InvariantSuiteIT {
     seedIndex(tempDir, legacyMetadata());
     Logger logger = (Logger) LoggerFactory.getLogger(IndexMetadataParityGuard.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     logger.addAppender(appender);
     try {
@@ -181,6 +189,10 @@ final class InvariantSuiteIT {
     seedIndex(tempDir, stableMetadata());
     Logger logger = (Logger) LoggerFactory.getLogger(IndexMetadataParityGuard.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     logger.addAppender(appender);
     try {

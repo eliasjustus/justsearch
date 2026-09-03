@@ -88,6 +88,10 @@ final class PreOpenSchemaMismatchBootTest {
     ch.qos.logback.classic.Logger root =
         (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     root.addAppender(appender);
     try {
@@ -196,6 +200,10 @@ final class PreOpenSchemaMismatchBootTest {
     ch.qos.logback.classic.Logger root =
         (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     root.addAppender(appender);
     try {
@@ -271,6 +279,10 @@ final class PreOpenSchemaMismatchBootTest {
     ch.qos.logback.classic.Logger root =
         (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     root.addAppender(appender);
     try {
@@ -341,6 +353,10 @@ final class PreOpenSchemaMismatchBootTest {
     ch.qos.logback.classic.Logger logger =
         (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(KnowledgeServer.class);
     ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    // A started KnowledgeServer keeps background threads logging while the assertions below
+    // stream this list, and ListAppender.list is a plain ArrayList: CI caught the
+    // ConcurrentModificationException the local runs did not. Snapshot-on-iterate instead.
+    appender.list = new java.util.concurrent.CopyOnWriteArrayList<>();
     appender.start();
     logger.addAppender(appender);
     try {
