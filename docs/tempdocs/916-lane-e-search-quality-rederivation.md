@@ -616,7 +616,27 @@ caller and the one existing test were updated to pass the explicit control value
 the control arm visible at the call site. No retiree to sweep: nothing was replaced by name, the
 method's body changed.
 
-### E.5 Remaining known gap
+### E.5 Post-campaign additions to the critical pass
+
+- **The saturation retry still behaves.** `mergeChunkResults` retries when
+  `parentResult().hits().size() < limit && anyLegSaturated()`. With over-fetch the scan finds *more*
+  distinct parents, so the output size is unchanged or larger, and the retry fires no more often than
+  before. No regression; slightly fewer retries at ON. Checked because a wider scan changing a
+  retry predicate is exactly the kind of second-order effect a diff review misses.
+- **The ON arm merges more siblings.** At `overfetch > 1` a parent absorbs chunks the pre-916 loop
+  never reached, so its `fields` / `debugScores` (max evidence score, best positive rank) are richer.
+  That is §D.1's loss #2 being fixed, and it is ON-only — at defaults the merge set is identical.
+- **Integer overflow on `scanCap`** would need `collapseLimit × multiplier > 2³¹`; `collapseLimit` is
+  bounded by `candidate_limit_max` (100) × the collapse multiplier, so this is unreachable in
+  practice. Left unguarded rather than adding a check with no reachable trigger.
+- **I extrapolated a rate linearly across a phase change and was wrong.** Mid-campaign I measured
+  chunk-embedding backfill at 102/min and projected 2.8 h remaining for enron. It finished in ~25
+  min: the rate accelerated sharply once doc-embedding and SPLADE freed the GPU. The measurement was
+  correct, the extrapolation was not — a straight line through one phase of a multi-stage pipeline.
+  Recorded because the near-miss decision it fed was "abandon the corpus", which would have been
+  wrong.
+
+### E.6 Remaining known gap
 
 The integration test drives the production chunk leg and the production CC fusion, then calls the
 collapse directly, because `mergeChunkResults` is private and reaching it needs a `PipelineConfig`
@@ -657,13 +677,163 @@ a `finally` block). **17 of 17 failed as expected; 0 did-not-fail.**
 
 ## §G Measurements
 
-*(filled in after the campaign — see the same-index A/B protocol in §D.7)*
+### G.1 Protocol as executed
+
+Per corpus, one index, three sequential jseval runs: a `--clean --pipeline` **build** arm (its own
+query pass discarded — a pass taken straight after ingest is not comparable to one after a cold
+restart), then **OFF** and **ON** as `--skip-ingest --start-backend` restarts. `--modes
+lexical,vector,splade,hybrid` throughout, so `staged_recall_accounting` and the union/leak
+projections populate. Driver `tmp/916-ab-driver.py` (detached `Start-Process`, `.done` marker,
+per-arm machine signatures), extractor `tmp/916-extract.py`.
+
+**Machine signature — the honest version.** A game client (League of Legends) was launched by the
+machine's owner during the enron **build** arm and closed before it finished. Signatures per arm
+(`tmp/916-ab/machine-signatures.jsonl`):
+
+| arm | GPU | games |
+| :-- | :-- | :-- |
+| enron pre | 2730 MiB, 46 % | LeagueClient + Riot |
+| enron post-build / post-off / post-on | 936 / 952 / 959 MiB, 4 / 3 / 6 % | **none** |
+| legal pre → post-on | 949-959 MiB, 5-8 % | **none** |
+| scifact pre → post-on | 871-949 MiB, 3-5 % | **none** |
+
+So **all six measured arms ran on a quiet machine**; the contamination is confined to one index
+build, whose only output is the index both arms then share. Its cost is visible and is reported,
+not hidden: enron `primary_docs_s` **56.8** against 885's 112.6 baseline and `ingest_docs_s` **3.6**
+against 18.2. No throughput number from this campaign is comparable to 885's, and none is used.
+
+### G.2 The first legal pair was void, and the guard is what said so
+
+| corpus | arm | `ce_coverage` | detail |
+| :-- | :-- | :-- | :-- |
+| legal-clerc-200 | OFF | **degraded-ce** | CE applied to 186/200, **13 silent `DEADLINE_EXCEEDED` drops**, silent-drop rate 0.0650 > 0.02 tolerance |
+| legal-clerc-200 | ON | ok | CE applied to 198/200, 1 silent drop, rate 0.0050 |
+
+The harness states the consequence itself: *"these queries were delivered in pure fusion order with
+no deterministic reason, so this run's ranking is a blend of two pipelines and its metrics are not
+comparable"*. The first legal delta (−0.0132 nDCG@10) was therefore **not a measurement of this
+change** — it compared a degraded OFF against a clean ON. It is reported here because discarding it
+silently would be the more dangerous habit. Legal was rebuilt and re-run with 3 replicates per arm
+(`tmp/916-legal/`, driver `tmp/916-legal-replicates.py`).
+
+### G.3 Replicate spread — the pipeline is deterministic
+
+| arm | nDCG@10 (n=3) | R@10 | P@1 | leak | guards |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| legal OFF | 0.5816, 0.5816, 0.5816 — **sd 0.00000** | 0.8100 ×3 | 0.3600 ×3 | 0.1300 ×3 | 3/3 `ok`, comparable |
+| legal ON (λ=0.3) | 0.5826, *0.5888*, 0.5826 | 0.815, *0.810*, 0.815 | 0.3600, *0.3700*, 0.3600 | 0.1250, *0.1300*, 0.1250 | 2/3 `ok`; *replicate 1 `degraded-ce`* |
+
+**σ on this machine, at fixed configuration, is 0.** Three identical OFF runs produced bit-identical
+metrics. The only variance observed anywhere in the campaign came from cross-encoder deadline drops,
+which `ce_coverage` flags and excludes. This **supersedes the σ ≈ 0.0034 borrowed from F-055 in
+§D.7** — that figure was measured on a contended machine and is an upper bound, not this cohort's
+noise. Consequence for the rule: a "> 2σ" test degenerates when σ = 0, so the deltas below are
+**real, not noise** — they are simply very small, and far inside the relevance ratchet's 0.02 band.
+Reading σ=0 as "every nonzero delta is significant, therefore ship" would be exactly the
+opportunistic re-reading the pre-registration exists to prevent.
+
+### G.4 The A/B table (mode `hybrid`; OFF = shipped defaults 1 / 0.0, ON = 5 / 0.3)
+
+| corpus | arm | run id | nDCG@10 | P@1 | R@10 | union | leak | CE p50 | comparable | ce_cov | chunk_compl |
+| :-- | :-- | :-- | --: | --: | --: | --: | --: | --: | :-- | :-- | :-- |
+| enron-qa | OFF | `20260903T003601_mixed_enron-qa` | 0.8034 | 0.6733 | 0.9200 | 0.9633 | 0.0500 | 151 ms | True | ok | ok |
+| enron-qa | ON | `20260903T003814_mixed_enron-qa` | 0.7981 | 0.6700 | 0.9133 | 0.9633 | 0.0533 | 153 ms | True | ok | ok |
+| legal-clerc-200 | OFF | `tmp/916-legal/off-{0,1,2}` | 0.5816 | 0.3600 | 0.8100 | 0.9250 | 0.1300 | — | True | ok ×3 | ok |
+| legal-clerc-200 | ON | `tmp/916-legal/on-{0,2}` (clean) | 0.5826 | 0.3600 | 0.8150 | 0.9250 | 0.1250 | — | True | ok | ok |
+| scifact (control) | OFF | `20260903T005443_scifact` | 0.7591 | 0.6300 | 0.8942 | 0.9333 | 0.0267 | 148 ms | True | ok | chunk-free |
+| scifact (control) | ON | `20260903T005634_scifact` | 0.7591 | 0.6300 | 0.8942 | 0.9333 | 0.0267 | 147 ms | True | ok | chunk-free |
+
+Deltas (ON − OFF):
+
+| corpus | Δ nDCG@10 | Δ P@1 | Δ R@10 | Δ union | Δ leak |
+| :-- | --: | --: | --: | --: | --: |
+| **enron-qa** | −0.0053 | −0.0033 | **−0.0067** | 0.0000 | +0.0033 |
+| **legal-clerc-200** | +0.0010 | 0.0000 | **+0.0050** | 0.0000 | −0.0050 |
+| scifact (control) | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+
+Three facts worth more than the deltas themselves:
+
+1. **`leg_union_recall` is unchanged on every corpus** (0.9633 / 0.9250 / 0.9333). The retrieval legs
+   are byte-identical across arms; only the collapse moved. That is the causal isolation the
+   experiment needed, and it is what makes these deltas attributable.
+2. **scifact is bit-identical across arms** — every metric to 4 dp. scifact is `chunk-free` (short
+   corpus, chunk merge skipped), so the lever is *provably inert exactly where it should be*. This is
+   both the negative control passing and a second, independent refutation of a wrong-gate mistake.
+3. **The numbers moved at all on the chunked corpora**, and `summary.json.env_overrides` records
+   `{OVERFETCH_MULTIPLIER: "5", AGGREGATION_LAMBDA: "0.3"}` on every ON arm. Together with §E.2 this
+   closes the wrong-gate question empirically: the lever reaches the Worker.
+
+### G.5 λ response on legal (supporting evidence; does NOT change the verdict)
+
+| λ | nDCG@10 | R@10 | leak | `ce_coverage` | usable |
+| --: | --: | --: | --: | :-- | :-- |
+| 0.0 (OFF) | 0.5816 | 0.8100 | 0.1300 | ok | yes |
+| 0.1 | 0.5918 | 0.8250 | 0.1150 | **degraded-ce** | **no** |
+| 0.2 | 0.5827 | 0.8150 | 0.1250 | ok | yes |
+| 0.3 | 0.5826 | 0.8150 | 0.1250 | ok | yes |
+
+λ=0.1 is the most attractive row in this whole tempdoc and it is **discarded**: its arm carries the
+same degraded-CE defect that voided the first legal pair. Accepting it because it says what the
+change would like it to say is precisely the failure the guard exists to prevent, and it is recorded
+here so the next agent re-runs it rather than citing it. On the two usable rows the response is flat
+between 0.2 and 0.3.
+
+### G.6 Verdict against the pre-registered rule (§D.7)
+
+| criterion | result |
+| :-- | :-- |
+| 1. R@10 improves > 2σ on **both** chunked corpora | **FAIL** — legal +0.0050, enron **−0.0067** |
+| 2. scifact within ±2σ | **PASS** — exactly 0.0000 on every metric |
+| 3. ratchets + guards green on ON | **PASS** for the applicable ones (§G.7) |
+
+**PARK.** The rule's split-result clause is explicit and was written before any number existed:
+*"A split result — one chunked corpus up, the other down — is a park, not a 'mixed but promising':
+F-055 parked on exactly that shape and the reason has not changed."* That is this result exactly.
+Shipped defaults stay `(1, 0.0)`, which is the pre-916 behaviour bit-for-bit.
+
+The mechanism is not refuted — legal gains recall *and* drops leak, scifact is provably inert, and
+the effect is causally isolated. What is refuted is **λ=0.3 as a shipped default**, on one point of a
+one-dimensional axis whose starting value came from the brief rather than from evidence.
+
+### G.7 Ratchets
+
+Run against the ON arms (`python -m jseval <gate> --dataset <ds> --run-dir <arm>`):
+
+| gate | enron ON | scifact ON |
+| :-- | :-- | :-- |
+| `relevance-gate` (`ndcg10-no-regression`) | **ok** | **ok** |
+| `leak-gate` (`leak-rate-no-regression`) | **ok** | **ok** |
+| `union-recall-gate` (`union-recall-no-regression`) | **ok** | **ok** |
+| `perf-gate` | **not applicable** — see below | not applicable |
+
+`perf-gate` is **not evaluable on this A/B's arms, and not because of this change**: the OFF/ON arms
+are `--skip-ingest` query-only runs, so `primary_docs_s` and `enrich_docs_s` are literally absent
+(`None` in both arms' `summary.json`, verified) and their checks cannot pass. The two checks that
+*are* meaningful for a query-path change both pass on the ON arm: **`ce_p50_ms: ok`,
+`retrieval_p50_ms: ok`**. The OFF arm additionally exits 2 on an engine-set mismatch against the perf
+baseline (`realized ['reranker']` vs baseline `['dense','reranker','splade']`) — a property of
+query-only arms, present in the control as well, i.e. not attributable here. Claiming "perf-gate
+green" would have been false; claiming a regression would also have been false.
+
+### G.8 Cadence (RECORDED, NOT ACTED ON)
+
+`commit_total` / `reopen_total`: enron 261 / 1132 (identical in both arms), legal 42 / 202
+(identical), scifact 56 / 215 (identical). Identical across arms, as expected for a query-only
+difference. Per 912 §E-live the floor is `BackfillScheduler.CYCLE_BUDGET_MS = 5_000`; the fix is 912
+open items 8/9 and is **not** this lane's.
 
 ---
 
 ## §H Register updates made
 
-*(filled in after §G)*
+- **`F-056`** added to `docs/reference/search-quality-register.md` — the Part 2 result: the
+  aggregate-then-cut collapse is PARKED at λ=0.3 by the pre-registered rule on a split
+  (legal +0.0050 R@10 / −0.0050 leak, enron −0.0067 R@10), with the two structural findings that
+  outlast the verdict (the CC normalization floor; σ=0 on clean arms).
+- **No baseline row changed.** The verdict is PARK, so every shipped default is unchanged and no
+  canonical number moved. This is the register's own rule working as intended: numbers change only
+  with a run id and a σ statement, and here the σ statement says do not change them.
+- Skill mirror regenerated with `node scripts/docs/skills-sync.mjs`.
 
 ---
 
@@ -698,7 +868,55 @@ a `finally` block). **17 of 17 failed as expected; 0 did-not-fail.**
    swept by Part 1's PR or they become false authority.
 5. **Commit/reopen cadence numbers recorded in §G are not acted on** — the floor is
    `BackfillScheduler.CYCLE_BUDGET_MS`, chartered as 912 open items 8/9.
+6. **`prepare-worktree.cjs` does not make `datasets/` available in a worktree** (lane 0's file, so
+   not edited here). `jseval` resolves `<repo-root>/datasets/mixed/<name>/corpus.jsonl`, which only
+   exists in the main checkout, so every `mixed/*` corpus fails in a worktree. Fix: seed a junction
+   the way models and the cuda runtime already are (`node scripts/dev/prepare-worktree.cjs` already
+   resolves both from the main checkout — this is the same pattern, one more path).
+7. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
+   observed). The first campaign attempt lost three arms to it before the cause was clear. Either
+   raise the default or have `backend.py` distinguish "still starting" from "failed".
+8. **The λ=0.1 arm is unmeasured, not negative.** It produced the campaign's best numbers and was
+   discarded for `degraded-ce`. A clean λ∈{0.05, 0.1, 0.15} sweep on **both** chunked corpora is the
+   arm that would settle whether the keys stay or come out (see the changeset's commitment).
 
 ## Report-back
 
-*(completed after §G/§H)*
+- **PRs:** one, open, green-and-ready, **not merged** —
+  `feat(916): aggregate-then-cut parent collapse for the chunk branch (lane E part 2)`.
+- **Items:** Part 2 **12/12 done**. Parts 1/3/4 **not started** (Part 3 blocked on lane A; Parts 1
+  and 4 are machine-time, planned in §C). Three deviations, each with its reason in §D:
+  (1) tie-break is first-seen fused order, not parent docId — it is the only tie-break under which
+  λ=0 reproduces today bit-for-bit, and the brief's goal was determinism, which it delivers;
+  (2) key names use the neighbouring `index.hybrid.chunk_collapse_*` namespace rather than the
+  brief's `index.chunk.collapse.*`, so adjacent knobs share one convention;
+  (3) the decay ratio is a constant, not a third key.
+  One brief premise is **wrong and was not implemented as written**: over-fetching the chunk *hits*
+  already existed at ×10 (§B.12); the starved stage was the collapse scan.
+- **Evidence:** 17 new tests, every one broken once and observed failing (§F table). Run ids in
+  §G.4. Drivers and artefacts under `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/` (gitignored;
+  §G and F-056 are the durable record).
+- **Measurements:** legal-clerc-200 **+0.0010 nDCG / +0.0050 R@10 / −0.0050 leak**; enron-qa
+  **−0.0053 / −0.0067 / +0.0033**; scifact control **0.0000 on every metric**. `leg_union_recall`
+  unchanged everywhere. **PARK** by the pre-registered split-result clause; no default changed, no
+  baseline row moved.
+- **Cross-lane requests raised:** lane D — chunker version string + the Part 1 triple (neither ready;
+  Part 2 needs nothing from D and changes no index shape); 854 — Part 4's fusion sweep is lane E's
+  only if 854 is still idle, and §D.4 records that branch fusion min-max normalizes so this change
+  cannot leak scale into the blend; owner — two decisions in §C (build a RAG question-set fixture?
+  temporary EnvRegistry keys for the chunk sweep?) plus whether to keep or remove the two parked keys.
+- **Residue found outside scope and where it was routed:**
+  1. **`prepare-worktree.cjs` does not provide `datasets/`.** Every `mixed/*` corpus lives only in
+     the main checkout, so any worktree running jseval fails with
+     `FileNotFoundError: corpus.jsonl not found at <worktree>/datasets/mixed/<name>/corpus.jsonl`.
+     Worked around here with a gitignored junction. Routed to this tempdoc's open items as item 6
+     with the concrete fix, since `prepare-worktree.cjs` is lane 0's file, not lane E's.
+  2. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s, which is too short for a cold worktree boot**
+     (observed ~150 s; the first campaign lost three arms to it). Open item 7.
+  3. Both are the same shape — a worktree-only eval gap — and neither is a defect in the product.
+- **What the next lane must know:** (a) **check `ce_coverage` before believing any delta on this
+  machine** — it voided two arms here and one of them would have reversed the sign of the headline;
+  (b) **σ is 0 on clean arms**, so F-055's 0.0034 is an upper bound, not this cohort's noise;
+  (c) the **CC pool floor is exactly 0.0**, which bounds every "aggregate the passage evidence"
+  design, not just this one; (d) scifact is `chunk-free` and therefore a genuine inert control for
+  any chunk-branch change — use it.

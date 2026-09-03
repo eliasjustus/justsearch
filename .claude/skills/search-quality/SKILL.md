@@ -679,6 +679,59 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-056: aggregate-then-cut parent collapse is PARKED at λ=0.3 on a split (legal +0.0050 R@10 / −0.0050 leak, enron −0.0067 R@10) — but the campaign's durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (so no λ can rescue a bottom-ranked parent), and that σ on clean arms is 0.0000, not F-055's 0.0034 (2026-09-03, tempdoc 916 Part 2, lane E)
+
+- **What shipped:** `SearchExecutor.collapseChunkHitsToParents` no longer stops scanning the fused
+  chunk list the instant it has enough distinct parents. It scans
+  `collapse cap × chunk_collapse_overfetch_multiplier` parents, scores each as
+  `max + λ·Σ 0.5^(i-1)·scoreᵢ`, and cuts last. **Defaults `(1, 0.0)` are the pre-916 behaviour
+  bit-for-bit** — asserted against a reimplementation of the old loop as an oracle at every limit
+  1..5 (`SearchExecutorChunkCollapseAggregationTest.defaultsReproducePre916`), which is what makes
+  the OFF arm a true control rather than an assumption.
+- **Method:** one index per corpus, backend restarted per arm, OFF/ON both `--skip-ingest` so they
+  are symmetric; `--modes lexical,vector,splade,hybrid`. All six measured arms ran with **no game
+  process and GPU 871-959 MiB / 3-8 %** (per-arm signatures recorded). A game client *was* running
+  during the enron index **build**, which cost `primary_docs_s` 56.8 vs 885's 112.6 — so **no
+  throughput number here is comparable to 885's, and none is used**.
+- **Result (ON = ×5 / λ=0.3):** legal-clerc-200 **nDCG +0.0010, R@10 +0.0050, leak −0.0050**;
+  enron-qa **nDCG −0.0053, R@10 −0.0067, leak +0.0033**; scifact (short-corpus control, chunk merge
+  skipped) **bit-identical to 4 dp on every metric**. `leg_union_recall` **unchanged on all three**
+  — the legs are identical and only the collapse moved, which is what makes the deltas attributable.
+  **PARK** by the pre-registered split-result clause (written and committed before the run): one
+  chunked corpus up, the other down is a park, not "mixed but promising" — the same shape F-055
+  parked on. Shipped defaults unchanged; **no baseline row moves.**
+- **Finding 1 — the CC pool floor is a hard bound on this class of fix.** `fuseWithCC3` min-max
+  normalizes, so the *worst* candidate in the chunk pool is exactly `0.0`. A parent whose every
+  chunk sits at that floor aggregates to `0 + λ·0 = 0` for any λ. The lever therefore reaches
+  parents in the middle of the score distribution, never the bottom of it. Found by a failing
+  integration test, not by review — the brief's design implicitly assumed raw comparable scores.
+  Any future "aggregate the passage evidence" proposal inherits this bound.
+- **Finding 2 — σ is 0.0000 on clean arms, and the real variance source is CE deadline drops.**
+  Three identical legal OFF replicates produced bit-identical metrics (nDCG 0.5816 ×3, sd 0.00000).
+  **This supersedes the σ ≈ 0.0034 borrowed from F-055** for clean-machine cohorts; that figure was
+  measured under contention and is an upper bound. The only variance seen anywhere in the campaign
+  came from `DEADLINE_EXCEEDED` drops, which `ce_coverage` flags.
+- **Finding 3 — two arms were voided by `ce_coverage`, and the guard is the reason the result is
+  not backwards.** The FIRST legal pair reported nDCG −0.0132 for ON; its OFF arm had **13 silent CE
+  drops (coverage 0.9300, `degraded-ce`)** against ON's 1. The harness's own words: *"this run's
+  ranking is a blend of two pipelines and its metrics are not comparable."* Re-run clean, legal
+  **reverses sign** to +0.0010/+0.0050. Separately, a λ=0.1 arm produced the best numbers in the
+  whole campaign (nDCG +0.0102, R@10 +0.0150, leak −0.0150) and is **discarded for the same
+  defect** — it is recorded so the next agent re-runs it rather than citing it. Practical rule:
+  on this machine a legal arm run immediately after an index build is at elevated risk of the CE
+  drop tail; check `ce_coverage` before reading any delta.
+- **Ratchets:** `relevance-gate`, `leak-gate`, `union-recall-gate` all **ok** on the enron and
+  scifact ON arms. `perf-gate` is **not evaluable** on query-only A/B arms — `primary_docs_s` /
+  `enrich_docs_s` are absent (`None`) in *both* arms and the OFF arm trips an engine-set mismatch
+  against the perf baseline, i.e. a property of `--skip-ingest` runs, present in the control. The
+  meaningful query-path checks pass on ON: `ce_p50_ms: ok`, `retrieval_p50_ms: ok`.
+- **Open, for the owner:** λ=0.3 came from the brief, not from evidence, and the clean λ response on
+  legal is flat between 0.2 and 0.3 with the one attractive point (0.1) void. The keys exist as the
+  A/B instrument; tempdoc 916's changeset committed to **removing them if parked** unless a
+  follow-up arm is wanted. A clean λ∈{0.05,0.1,0.15} sweep on *both* chunked corpora is the arm that
+  would settle it. Evidence: `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/` (gitignored — this
+  entry and tempdoc 916 §G are the durable record).
+
 ### F-055: the 854 W2 depth levers are BOTH PARKED by the pre-registered rule, and each exposed a coupling defect — the recall-complete pool `top_n` is splice-coupled to the shared `limit` (raising it alone DISCARDS the fused prefix: legal −0.263, enron −0.421, leak 4-11× with legs unchanged), and `JUSTSEARCH_RERANK_TOP_K` impurely moves retrieval depth for every mode (2026-08-19, 854 W2 campaign)
 
 - **Method:** shared-index per corpus (legal-clerc-200 / enron-qa / scifact), backend restarted
