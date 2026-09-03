@@ -515,11 +515,14 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   drift. After the repository assemble, it switches to Node 20 and runs package build/tests plus
   packed-file inspection. The app-ui unit lane independently closes Java route-source → OpenAPI
   snapshot drift.
-- Verification: full `:modules:ui:test` passed (938 tests, one skipped before the final two added
+- Verification: `./gradlew.bat :modules:ui:test` passed (938 tests, one skipped before the final two
   HTTP assertions; the full rerun after those assertions also passed), launcher
-  `UnreferencedCodeTest` passed, repository `build -x test` passed (251 tasks), package regen/tests/
-  pack passed, direct Node 20 tests passed 4/4, docs regeneration/checks passed, workflow policy
-  tests passed, and `git diff --check` passed before final closeout.
+  `UnreferencedCodeTest` passed, and `./gradlew.bat build -x test` passed (251 tasks). In
+  `packages/runtime-client`, `npm run generate`, `npm run check:regen`, `npm test`, and
+  `npm run check:pack` passed; `npx --yes node@20 --test test/runtime-client.test.mjs` passed 4/4.
+  The `llmstxt --check`, `skills-sync --check`, canonical-link, module-dependency, runtime-config,
+  workflow-trigger, and workflow-policy checks passed, as did `git diff --check` before final
+  closeout.
 - Outside-plan live evidence: the built package called all six operations against the active local
   JustSearch Runtime Contract `0.2.0` process and passed with readiness `503` and health `200`. That
   process was a live jseval backend owned by worktree 893, so this is honest cross-worktree contract
@@ -530,10 +533,14 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   extension and its test reads that same extension; and the factory rejects path-prefixed base URLs
   while generated absolute paths resolve from the loopback origin.
 - Remaining proof before publication: run the same six-operation smoke against an owned stack built
-  from this worktree. The neighboring jseval run released the shared port, but the dev-runner then
-  rejected this Codex sibling worktree path as `INVALID_DIST_FROM` because it currently accepts only
-  main or worktrees beneath `.claude/worktrees`. Repository policy forbids bypassing that runner with
-  a manual backend launch.
+  from this worktree. After the neighboring jseval run released the shared port, the dev-runner
+  rejected this Codex sibling worktree path as `INVALID_DIST_FROM`. A clean detached worktree at the
+  same commit was then created beneath `.claude/worktrees`, preflighted, and removed after the runner
+  failed before launch: `justsearch-dev preflight` accepted that checkout, but `justsearch-dev start`
+  reported that its long-lived MCP process could not resolve a JDK >=24, although `java -XshowSettings`
+  in the shell proved PATH Java is JDK 25 at `F:\scoop\apps\temurin25-jdk\current`. No backend was started.
+  Repository policy forbids bypassing the runner, and mutating machine-wide environment or disposable
+  tooling would not be valid product evidence.
 
 ### Design reach
 
