@@ -41,6 +41,7 @@ try {
     hooks: {
       good: { file: 'good.mjs', role: 'advisory' },
       broken: { file: 'broken.mjs', role: 'advisory' },
+      adapter: { file: 'adapter.mjs', role: 'advisory', wiring: 'codex-adapter' },
     },
     bindings: {
       PreToolUse: [
@@ -60,6 +61,7 @@ try {
     },
   }));
   w('scripts/agent-analytics/hooks/good.mjs', 'process.exit(0);\n');
+  w('scripts/agent-analytics/hooks/adapter.mjs', 'process.exit(0);\n');
   // Valid syntax, unresolved import → crashes at module load (ERR_MODULE_NOT_FOUND).
   w('scripts/agent-analytics/hooks/broken.mjs', "import './nonexistent-module.mjs';\nprocess.exit(0);\n");
 
@@ -69,6 +71,8 @@ try {
   const loadFails = res.findings.filter((f) => f.ruleId === 'hook-integrity/hook-load-failure');
   ok('broken-import hook is flagged as a load failure', loadFails.some((f) => f.message.includes("'broken'")));
   ok('valid hook is NOT flagged as a load failure', !loadFails.some((f) => f.message.includes("'good'")));
+  ok('Codex adapter is accepted without a Claude binding', !res.findings.some((f) =>
+    (f.ruleId === 'hook-integrity/orphan-catalog-hook' || f.ruleId === 'hook-integrity/unwired-hook') && f.message.includes("'adapter'")));
   ok('overall verdict is fail when a hook crashes on load', res.verdict === 'fail');
 } finally {
   rmSync(root, { recursive: true, force: true });

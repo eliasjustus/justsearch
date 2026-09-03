@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+/**
+ * Fail-closed parity gate for the repository's Codex CLI/Desktop projection.
+ *
+ * AGENTS.md, the Claude skill sources, and governance/agent-hooks.v1.json are
+ * the human-edited authorities. This check proves that Codex's generated and
+ * native surfaces still expose the intended instructions, skills, hooks, MCP
+ * server, and bounded subagent roles without embedding credentials.
+ */
+
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function read(rel) {
+  return readFileSync(resolve(ROOT, rel), 'utf8');
+}
+
+function run(rel, args = []) {
+  const result = spawnSync(process.execPath, [resolve(ROOT, rel), ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    process.stderr.write(result.stdout ?? '');
+    process.stderr.write(result.stderr ?? '');
+    throw new Error(`${rel} ${args.join(' ')} failed with exit ${result.status}`);
+  }
+}
+
+const checks = [
+  ['AGENTS → CLAUDE invariant projection is current', () =>
+    run('scripts/docs/agent-instructions-sync.mjs', ['--check'])],
+  ['Claude skills → Codex skills projection is current', () =>
+    run('scripts/docs/skills-sync.mjs', ['--check'])],
+  ['shared hook manifest → Codex hooks projection is current', () =>
+    run('scripts/codegen/gen-codex-hooks.mjs', ['--check'])],
+  ['Codex hook adapter contract tests pass', () =>
+    run('scripts/agent-analytics/hooks/codex-hook-adapter.test.mjs')],
+  ['hard-invariant parser and projection tests pass', () =>
+    run('scripts/agent-analytics/lib/hard-invariants.test.mjs')],
+  ['project MCP config is present, bounded, and credential-free', () => {
+    const config = read('.codex/config.toml');
+    assert.match(config, /\[mcp_servers\.justsearch-dev\]/);
+    assert.match(config, /command\s*=\s*"node"/);
+    assert.match(config, /p\.join\(r,'scripts','dev','justsearch-dev-mcp\.mjs'\)/);
+    assert.match(config, /git.*rev-parse.*--show-toplevel/);
+    assert.match(config, /required\s*=\s*true/);
+    assert.match(config, /startup_timeout_sec\s*=\s*\d+/);
+    assert.match(config, /tool_timeout_sec\s*=\s*\d+/);
+    assert.doesNotMatch(config, /^cwd\s*=/m, 'project MCP must inherit Codex repository cwd; cwd=".." starts outside worktrees');
+    assert.doesNotMatch(config, /(token|password|secret|pat)\s*=/i);
+  }],
+  ['native Codex agent roles are complete and explicitly sandboxed', () => {
+    const dir = resolve(ROOT, '.codex', 'agents');
+    const names = readdirSync(dir).filter((name) => name.endsWith('.toml')).sort();
+    assert.deepEqual(names, ['explorer.toml', 'reviewer.toml', 'worker.toml']);
+    for (const name of names) {
+      const role = read(`.codex/agents/${name}`);
+      assert.match(role, /^name\s*=\s*"[^"]+"/m);
+      assert.match(role, /^description\s*=\s*"[^"]+"/m);
+      assert.match(role, /^sandbox_mode\s*=\s*"(?:read-only|workspace-write)"/m);
+      assert.match(role, /^developer_instructions\s*=\s*"""/m);
+    }
+  }],
+  ['Codex hooks contain only events supported by the current hook API', () => {
+    const hookConfig = JSON.parse(read('.codex/hooks.json'));
+    const supported = new Set([
+      'SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PreCompact',
+      'SubagentStart', 'SubagentStop', 'UserPromptSubmit', 'Stop', 'Interrupt',
+      'PermissionRequest', 'PostCompact',
+    ]);
+    for (const event of Object.keys(hookConfig.hooks ?? {})) {
+      assert.ok(supported.has(event), `unsupported Codex hook event: ${event}`);
+    }
+    for (const unsupported of ['PostToolUseFailure', 'CwdChanged', 'InstructionsLoaded']) {
+      assert.equal(hookConfig.hooks?.[unsupported], undefined, `${unsupported} must not be projected`);
+    }
+  }],
+  ['generated Codex skills are committed rather than ignored', () => {
+    const ignore = read('.gitignore');
+    assert.doesNotMatch(ignore, /^\s*\.agents\/?\s*$/m);
+    const probe = spawnSync('git', ['check-ignore', '.agents/skills/dev-stack/SKILL.md'], {
+      cwd: ROOT, encoding: 'utf8', windowsHide: true,
+    });
+    assert.equal(probe.status, 1, `.agents projection is ignored by: ${(probe.stdout ?? '').trim()}`);
+  }],
+];
+
+let failed = 0;
+for (const [label, check] of checks) {
+  try {
+    check();
+    console.log(`  PASS  ${label}`);
+  } catch (error) {
+    failed += 1;
+    console.error(`  FAIL  ${label}: ${error.message}`);
+  }
+}
+
+if (failed > 0) {
+  console.error(`check-codex-agent-parity: FAIL (${failed}/${checks.length})`);
+  process.exit(1);
+}
+console.log(`check-codex-agent-parity: OK (${checks.length} checks)`);

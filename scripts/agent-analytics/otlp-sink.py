@@ -86,10 +86,19 @@ def decode_metrics(req):
                 dps = list(getattr(data, "data_points", [])) if data else []
                 for dp in dps:
                     val = None
-                    if dp.HasField("as_int") if hasattr(dp, "as_int") else False:
-                        val = dp.as_int
-                    elif hasattr(dp, "as_double") and dp.HasField("as_double"):
-                        val = dp.as_double
+                    if kind in ("histogram", "exponential_histogram"):
+                        # Current Codex exports token usage as a histogram with
+                        # one point per token_type; its value is the optional
+                        # HistogramDataPoint.sum, not a NumberDataPoint oneof.
+                        try:
+                            if dp.HasField("sum"):
+                                val = dp.sum
+                        except ValueError:
+                            pass
+                    else:
+                        value_kind = dp.WhichOneof("value") if hasattr(dp, "WhichOneof") else None
+                        if value_kind in ("as_int", "as_double"):
+                            val = getattr(dp, value_kind)
                     points.append({"attributes": _attrs(dp.attributes),
                                    "value": val,
                                    "time_unix_nano": getattr(dp, "time_unix_nano", 0)})
@@ -142,6 +151,7 @@ GENAI_TOKEN_MAP = {
         "kinds": {
             "input": "input",
             "cached_input": "cache_read",
+            "cache_write_input": "cache_creation",
             "output": "output",
             "reasoning_output": "reasoning",
             # "total" is deliberately absent from this table: it is

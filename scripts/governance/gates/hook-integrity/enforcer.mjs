@@ -161,7 +161,11 @@ export async function enforceHookIntegrity(options) {
     }
   }
   for (const hookId of Object.keys(catalog)) {
-    push(verdictForCatalogBound({ hookId, bound: bound.has(hookId) }), manifestUri);
+    push(verdictForCatalogBound({
+      hookId,
+      bound: bound.has(hookId),
+      codexAdapter: catalog[hookId]?.wiring === 'codex-adapter',
+    }), manifestUri);
   }
 
   // 2. cwd-invariant commands — scan the LIVE settings (catches a hand-edit bypassing the manifest).
@@ -188,6 +192,7 @@ export async function enforceHookIntegrity(options) {
           hookId,
           live: liveText.includes(file),
           optIn: meta?.wiring === 'opt-in',
+          codexAdapter: meta?.wiring === 'codex-adapter',
         }), '.claude/settings.local.json');
       }
     } catch (e) {

@@ -122,6 +122,9 @@ jobs:
       - name: Test agent-analytics instrument (node)
         run: node scripts/agent-analytics/run-all-tests.mjs
 
+      - name: Verify Codex agent parity
+        run: node scripts/ci/check-codex-agent-parity.mjs
+
       - name: Test OTLP telemetry sink (Python)
         # otlp-sink.py hard-imports opentelemetry.proto.* to decode OTLP protobuf,
         # so the test cannot run without it. Same reasoning as the pillow install

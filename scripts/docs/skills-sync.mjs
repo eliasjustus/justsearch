@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
+import { syncCodexSkills } from "./codex-skills-projection.mjs";
 
 const MARKER_START =
   "<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->";
@@ -161,10 +162,24 @@ function main() {
     }
   }
 
+  // Every Claude skill, including hand-authored skills not listed in SKILLS,
+  // has a checked-in Codex projection. Run this after canonical-doc expansion
+  // so both harnesses receive the same generated body in one command.
+  try {
+    const codex = syncCodexSkills({ root, check: isCheck });
+    console.log(
+      `codex skill projection ${isCheck ? "check" : "write"}: ` +
+      `${codex.skillCount} skills, ${codex.fileCount} files`,
+    );
+  } catch (error) {
+    console.error(error.message);
+    allOk = false;
+  }
+
   if (isCheck) {
     if (allOk) {
       console.log(
-        `skills-sync --check: OK (${SKILLS.length} skills, ${totalSources} sources)`
+        `skills-sync --check: OK (${SKILLS.length} generated skills, ${totalSources} sources)`
       );
     } else {
       console.error(
@@ -174,7 +189,7 @@ function main() {
     }
   } else {
     console.log(
-      `skills-sync: wrote ${SKILLS.length} skills (${totalSources} sources synced)`
+      `skills-sync: wrote ${SKILLS.length} generated skills (${totalSources} sources synced)`
     );
   }
 }

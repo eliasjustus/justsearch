@@ -21,6 +21,7 @@ function buildGuidance(input = {}) {
   const platformLine = process.platform === 'win32'
     ? 'Windows Git Bash. Use forward slashes and /dev/null, not NUL.'
     : `${process.platform}.`;
+  const isCodex = process.env.JUSTSEARCH_AGENT_HARNESS === 'codex-cli';
 
   // Inheritance is AGENT-TYPE-DEPENDENT (re-verified 2026-07-16, tempdoc 743 Phase-2
   // probes — supersedes the tempdoc 423 §14.16 "no inheritance" finding, which the
@@ -35,14 +36,18 @@ function buildGuidance(input = {}) {
 
   const sections = [];
 
-  sections.push('## JustSearch — subagent baseline brief (injected for every agent type; if the full CLAUDE.md also appears in your context, that copy governs — this is the guaranteed-minimum subset for agent types that do not inherit it)');
+  sections.push(
+    isCodex
+      ? '## JustSearch — Codex subagent baseline brief (AGENTS.md remains the project authority; this is the guaranteed minimum for the spawned role)'
+      : '## JustSearch — subagent baseline brief (injected for every agent type; if the full CLAUDE.md also appears in your context, that copy governs — this is the guaranteed-minimum subset for agent types that do not inherit it)',
+  );
 
   // Projected LIVE from CLAUDE.md's Hard Invariants (single authority — never
   // hand-copy; a hand-copy silently drifted to 4-of-6 before tempdoc 620 Part V).
   const invariants = hardInvariants();
   if (invariants.length) {
     sections.push(
-      '### Hard invariants (do not violate) — projected from CLAUDE.md',
+      '### Hard invariants (do not violate) — projected from AGENTS.md',
       ...invariants.map((t, i) => `${i + 1}. ${t}`),
     );
   } else {
@@ -67,13 +72,22 @@ function buildGuidance(input = {}) {
     '- Execute synchronously end-to-end within your turns: use bounded in-turn condition-polls for waits; NEVER stop your turn to "wait for" an external event or monitor — a stopped agent receives no events and stalls until manually resumed.',
   );
 
-  sections.push(
-    '### Subagent-specific risk profile',
-    '- **No hooks fire in your context.** The parent\'s bash-guard, repeat-guard, intervene, build-counter, and ssot/docs/lockfile/ui-shot hints DO NOT protect you.',
-    '- You can run destructive git commands (e.g., `git reset --hard`) in the main worktree without the bash-guard intercepting. Don\'t.',
-    '- You don\'t get auto-Read-limit injection. Be explicit with offset/limit on files >8KB; large files include modules/ui-web/src/shell-v0/views/UnifiedChatView.ts (~5,400 lines), SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs.',
-    '- You don\'t get repeat-guard. If you find yourself reading the same file 3 times, stop and reconsider.',
-  );
+  if (isCodex) {
+    sections.push(
+      '### Codex subagent risk profile',
+      '- Do not assume parent conversation details were inherited; the parent brief and AGENTS.md are the contract.',
+      '- Repository hooks are guardrails, not an enforcement boundary. Never use destructive git even if a tool path bypasses a hook.',
+      '- Stay in the assigned worktree and within the role sandbox. Do not merge, publish, or take over the shared dev stack.',
+    );
+  } else {
+    sections.push(
+      '### Subagent-specific risk profile',
+      '- **No hooks fire in your context.** The parent\'s bash-guard, repeat-guard, intervene, build-counter, and ssot/docs/lockfile/ui-shot hints DO NOT protect you.',
+      '- You can run destructive git commands (e.g., `git reset --hard`) in the main worktree without the bash-guard intercepting. Don\'t.',
+      '- You don\'t get auto-Read-limit injection. Be explicit with offset/limit on files >8KB; large files include modules/ui-web/src/shell-v0/views/UnifiedChatView.ts (~5,400 lines), SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs.',
+      '- You don\'t get repeat-guard. If you find yourself reading the same file 3 times, stop and reconsider.',
+    );
+  }
 
   sections.push(
     '### Out-of-scope findings protocol (tempdoc 872 — there is no inbox)',

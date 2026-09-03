@@ -27,7 +27,10 @@ export function verdictForBinding({ event, hookId, resolved }) {
 }
 
 /** Every catalog hook is wired (bound) at least once — no orphan declaration. */
-export function verdictForCatalogBound({ hookId, bound }) {
+export function verdictForCatalogBound({ hookId, bound, codexAdapter = false }) {
+  if (codexAdapter) {
+    return { ruleId: `${ID}/catalog-bound`, status: 'pass', reason: `'${hookId}' is the declared Codex projection adapter` };
+  }
   if (!bound) {
     return {
       ruleId: `${ID}/orphan-catalog-hook`,
@@ -48,7 +51,10 @@ export function verdictForCatalogBound({ hookId, bound }) {
  * `optIn` = the catalog declares `"wiring": "opt-in"` — a deliberate, documented
  * decision not to wire it. Those pass; everything else must be live.
  */
-export function verdictForLiveWiring({ hookId, live, optIn }) {
+export function verdictForLiveWiring({ hookId, live, optIn, codexAdapter = false }) {
+  if (codexAdapter) {
+    return { ruleId: `${ID}/live-wiring`, status: 'pass', reason: `'${hookId}' is wired by generated .codex/hooks.json` };
+  }
   if (optIn) {
     return { ruleId: `${ID}/live-wiring`, status: 'pass', reason: `'${hookId}' is declared opt-in (deliberately unwired)` };
   }

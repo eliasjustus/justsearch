@@ -47,6 +47,8 @@ const LOCAL_REPRO_COMMANDS = new Map([
       'node scripts/ci/check-workflow-triggers.mjs',
       'node scripts/ci/verify-test-evidence-policy.mjs',
       'node scripts/ci/check-root-readme.mjs',
+      'node scripts/ci/check-codex-agent-parity.mjs',
+      'node scripts/ci/check-always-loaded-budget.mjs',
       'node scripts/ci/check-readme-benchmark-numbers.mjs',
       'node scripts/docs/check-frontend-stack-claims.mjs',
       'node scripts/docs/check-model-freshness.mjs',
