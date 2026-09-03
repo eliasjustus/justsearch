@@ -850,6 +850,22 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
 
+### Round 6 — the live-validation defects
+
+Driver `tmp/falsify5.mjs` (deleted before commit), same contract as round 5.
+
+| ID | Break | Test that caught it | Observed failure |
+|---|---|---|---|
+| G41 | D1: read the stored commit metadata off the INGEST runtime again | `MidMigrationCompatSurfaceTest`, `BrakeExhaustedWorkerServesReadOnlyTest` | `the stored shape reported is the one the user's searches reach ==> expected: <bbbb…> but was: <a4a0b1e6…>` (Green's own fingerprint, which is the live defect verbatim); `the stored fingerprint is Blue's, not the empty string … ==> expected: <64> but was: <0>`; `the braked worker reports the shape Blue actually carries ==> expected: <ffff…> but was: <>` |
+| G42 | D2: fall back to `jobQueue.completedCount()` again when nothing is being written | `BrakeExhaustedWorkerServesReadOnlyTest` | `Blue holds documents, so the braked worker must not report zero ==> expected: <true> but was: <false>` |
+| G43 | D2 the other way: report the SERVING count even while a Green is being built | `MidMigrationCompatSurfaceTest` | `documents indexed still counts GREEN while one is being built … ==> expected: <1> but was: <2>`. Both directions are pinned, so the fix cannot drift into hiding a rebuild's progress |
+| G44 | stop writing the fatal-reason marker for a refused schema mismatch | `PreOpenSchemaMismatchBootTest` | `the dying worker must say WHY it refused, in the channel the Head reads ==> expected: <index_schema_mismatch> but was: <null>` |
+| G45 | stop writing the clean-shutdown marker before the cutover restart | `CutoverRestartEvidenceTest` | `the promoted generation has just been committed and verified — the next boot must not pay a FULL integrity scan for it ==> expected: <true> but was: <false>` (both cases) |
+| G46 | stop flushing telemetry before the cutover restart | `CutoverRestartEvidenceTest` | `and the cutover's own counters are written before they are lost ==> expected: <true> but was: <false>` |
+| G47 | log the unreadable-commit WARN unlatched again | `PreOpenSchemaMismatchBootTest` | `… and say it ONCE: the pre-open check and the open-time guard ask the same question of the same bytes …` |
+| G48 | anti-fixture: make the brake never latch | `BrakeExhaustedWorkerServesReadOnlyTest` | `precondition: the boot actually took the exhausted-brake path ==> expected: <true> but was: <false>` and `precondition: the brake is spent` — i.e. every count and fingerprint assertion in that file is guarded by a precondition that the state under test was actually reached |
+| G49 | drop the Head's marker→reason-code mapping | `KnowledgeServerWorkerDownCodeTest` | **First run: NO FAILURE OBSERVED — nothing observed the Head half.** The Worker's write and the vocabulary were pinned; the mapping that turns the marker into `worker.index_schema_mismatch` was not, which is the `substrate-without-consumer` shape. A case was added, and the same break now reds it: `expected: <worker.index_schema_mismatch> but was: <worker.spawn.failed>` — the exact string the live validator saw |
+
 ### Round 5 — B4, B5 and the round-4 review items
 
 Driver `tmp/falsify4.mjs` (deleted before commit), rebuilt on postmortem #29's remedy: byte
@@ -978,13 +994,13 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Re-run in full after the round-4 review (B4/B5/S14-S17); every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
+Re-run in full after the live-validation round (D1/D2/D3, the FAIL_CLOSED marker, the cutover evidence write); every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
 
 | Command | Result |
 |---|---|
 | `spotlessApply -PskipWebBuild=true` | exit 0 |
 | `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
-| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 5m 2s — **1457 suites, 8903 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: `RecoveryIntegrationTest` caught a real consequence of B4 that no targeted run would have (§F G40) — the same value the O7 round got from G30 |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 33s — **1459 suites, 8909 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: `RecoveryIntegrationTest` caught a real consequence of B4 that no targeted run would have (§F G40) — the same value the O7 round got from G30 |
 | `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` **9 tests**, 0 failures. Forced: an unforced attempt reports `UP-TO-DATE`, which is a replay, not a run |
 | `:modules:indexer-worker:test --tests "*PreOpenSchemaMismatchBootTest*"` | BUILD SUCCESSFUL — **10** boot-level cases now (a-e, the classifier, and the four added this round: the FAIL_CLOSED `PRE-OPEN` WARN, `REBUILD_BACKUP_FIRST` backup-before-empty, an unrecognised policy, a corrupt index self-healing). Boot-level because every one of them passes at unit level against the defect it pins |
 | `:modules:indexer-worker:test --tests "*ResumedMigrationMismatchBootTest*"` | BUILD SUCCESSFUL — B5 at a FRESH budget, the boot the brake test structurally cannot reach |
@@ -992,13 +1008,15 @@ Re-run in full after the round-4 review (B4/B5/S14-S17); every line below is fro
 | `:modules:worker-core:test` (named explicitly — the brake tests live there) | BUILD SUCCESSFUL — included in the full-suite totals above; run standalone as well |
 | `:modules:indexer-worker:test --tests "*BrakeExhaustedWorkerServesReadOnlyTest*"` | BUILD SUCCESSFUL — the emit-chain test boots a real `KnowledgeServer`, so this is the first tier in this tempdoc above "compiles and unit-tests" |
 | Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 35 gates evaluated, 34 pass, 1 fail (`test-efficacy` skipped) — `ts-any`, **inherited**. (Two gates went red during this round and were FIXED, not baselined: `prose-tier-register` wanted a register row for the new `falsify-restore-from-backup` rule anchor — row 47 added; `config-surface` correctly reported `vectorHnswM` / `vectorHnswEfConstruction` as accessors no production code calls, because the bench nit moved its last two callers to the effective accessors — the effective accessors now call them.) All `ts-any` findings are `silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
-| `check-readiness-reason-codes` | OK — 55 emittable codes, 49 worded rows (was 54/48: the new code is wired on both sides) |
+| `check-readiness-reason-codes` | OK — **56 emittable codes, 50 worded rows** (was 55/49: `worker.index_schema_mismatch` is wired on both sides, and the producer direction confirms an emit site exists) |
 | `check-live-witness` · `check-store-recoverability` · `check-search-degradation-reason-codes` · `check-language-agnostic-analysis` · `check-tempdoc-numbers` · `check-premerge-table` | all OK |
 | `docs/verify-canonical-doc-links.mjs` · `llmstxt-generate --check` · `skills-sync --check` · `verify-runtime-config-matrix` | OK (156 files) · OK (115 docs) · OK (5 skills) · OK (yaml=111, pairs=250, rows=306) |
 | `docs-validate.mjs` | exit 1, **inherited** — repo-wide `heading-case` advisories, pinned as `docs-validate-heading-case-repo-wide`; no finding names a heading this branch touched |
-| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed** (delta-review round). Neither the O7 round nor this one changed any `modules/ui-web/src/**` file — `git diff 183a7145 --name-only` over that path is empty — so the recipe's trigger did not fire and the 40/40 stands |
+| `run-ui-web-gates.mjs` (the `ui-web-gates` recipe) | **40/40 passed**, re-run this round: `readinessNotice.ts` gained the `worker.index_schema_mismatch` row, so the trigger fired and the recipe was run rather than carried forward |
 | `cd modules/ui-web && npm run typecheck` | exit 0 |
 | `cd modules/ui-web && npm run test:unit:run` | 468 files, **6267 tests passed** |
+| `:modules:worker-services:test --tests "*MidMigrationCompatSurfaceTest*"` | BUILD SUCCESSFUL — the D1 wiring test, driving a real `GrpcIngestService` over two different runtimes |
+| `:modules:indexer-worker:test --tests "*CutoverRestartEvidenceTest*"` | BUILD SUCCESSFUL — 2 cases, including the independence of the two facts when the flush throws |
 | Diff hygiene | NUL bytes in the diff: 0. Every added non-ASCII line is an intended em-dash / `§` / `→`; no `Ã` / `â€` / `Â` mojibake. No whole-file CRLF rewrite — `--numstat` shows large adds only for genuinely new files. |
 
 **Not run, and why.** No live-stack verification: the brief forbids starting the dev stack, the eval backend, or any JVM on the shared ports, and the orchestrator owns those resources. The blue/green loop is therefore verified at the state-machine and policy-branch level only — recorded as open item O3, not as a passed tier.
