@@ -1323,3 +1323,189 @@ Timings (local, 2026-09-03): arm 0 ingest 07:21:52 to 07:23:03 (205 docs) · arm
 recovery invoked 07:38:15 and cutover 07:39:13 · arm 4 seed 07:39:45 to 07:40:00, mismatch boot
 07:40:30, cutover 07:40:58 · arm 5 base ingest 07:44:24 to 07:44:50, upgrade PRE-OPEN 07:45:17 ·
 arm 6 corrupt boot 07:48:06, recovery 07:48:07.45, rebuilt 07:49:10.
+
+### Re-validation on `403f4b30`
+
+Second independent live pass, same validator, after lane D fixed D1-D4, the FAIL_CLOSED marker, the
+cutover clean-shutdown marker, the duplicate WARN and O14. Dists were confirmed to carry the
+round-6/7 code before any arm ran: `WorkerFatalReasonMarker.INDEX_SCHEMA_MISMATCH =
+"index_schema_mismatch"` and the `CleanShutdownMarker.wasClean` / `consume` split are both present
+in the shipped `indexer-worker` jars (`javap` on the installed dist, not on the source tree).
+Fingerprint determinism held across heads: the same two values as round 1 — defaults
+`02353ae765fd…`, `HNSW_M=32` `9814df378e0e…`.
+
+| Arm | What this head had to prove | Verdict | Evidence |
+|---|---|---|---|
+| 1 | D1 (stored fp = **Blue's**, `BLOCKED_MISMATCH`), D4 (`commit_by_reason`), and no unclean/full-scan on the cutover restart | **PASS** | `logs/r2arm1b-driver.log`, `artefacts/r2arm1-midmigration.json` |
+| 2 | FAIL_CLOSED surfaces as `worker.index_schema_mismatch` + a `worker-fatal-reason` marker | **FAIL (Head half)** — marker half PASS | `logs/r2arm2-driver.log`, `logs/r2arm2b-driver.log` (arm 2c), defect **R1** |
+| 3 | D2 (`indexedDocuments == searchableDocuments`), D3 (`fpStored` = Blue's), budget-cleared-by-hand, O14 five read-only boots | **PASS** | `logs/r2arm3-driver.log`, `logs/r2arm3b-driver.log`, `artefacts/r2arm3b-braked.json` |
+| 4 | O7 on the deferred-open path, the negative re-boot, and search served from Blue mid-migration | **PASS** | `logs/r2arm4-driver.log` |
+| 5 | Legacy `39d38f73` index: `stored=<missing>`, migrate once, silent second boot | **PASS** | `logs/r2arm56-driver.log`, `logs/r2arm5b-driver.log` |
+| 6 | The unreadable-commit WARN is latched to ONE line (D.48) | **PASS** | `logs/r2arm56-driver.log`, `data-arm6/logs/worker.log.1` |
+
+**D1 — fixed, confirmed twice in opposite directions.** Mid-migration, the compat surface now reports
+the generation the user's searches actually reach. Arm 1 (09:08:39, Blue built at `HNSW_M=32`):
+
+```
+migrationState=MIGRATING  servingSearchGenerationId=g-20260903-070331  servingIngestGenerationId=g-20260903-070817
+indexSchemaFpStored=9814df378e0e…   <- BLUE's, not Green's
+indexSchemaFpCurrent=02353ae765fd…
+indexSchemaCompatState=BLOCKED_MISMATCH  reindexRequired=True  reindexRequiredReason=schema_mismatch
+readiness.indexServing = DEGRADED / index.schema_mismatch
+indexedDocuments=768  buildingIndexedDocuments=768  searchableDocuments=1005
+```
+
+Arm 4b (09:21:49) is the same surface with the fingerprints swapped (Blue built at defaults), and it
+also carries the assertion round 1 kept losing to the cutover-restart window — **search is served
+from Blue throughout**: `servingSearch = g-20260903-072031` (= the pre-mismatch generation),
+`activeIndexedDocuments = 1005` = N0, `searchHits = 100` = the pre-migration baseline. The
+`indexedDocuments` / `searchableDocuments` split (768 vs 1005) is the intended one — "documents
+indexed" counts the generation being written, "searchable" counts what a query can reach — which is
+what §F G43 pins in the other direction.
+
+**D4 — fixed.** `commit_by_reason` read from `<dataDir>/telemetry/` after arm 1 now contains
+`"migration/cutover": 1`. `migration/switch-buffer-replay` is absent and correctly so:
+`switchBufferDepth` was 0 for the whole cutover, so that reason never fired.
+
+**Cutover restart — fixed.** The worker the cutover restarts logs `unclean=0 fullscan=0` in arm 1 and
+again in arm 4b. Round 1's `Unclean previous shutdown detected at …\<green> — running FULL integrity
+verification` is gone.
+
+**D2 / D3 — fixed.** Braked state (arm 3b, worker connected, stable at t+20 s):
+
+```
+indexedDocuments=1005  searchableDocuments=1005  activeIndexedDocuments=1005   (round 1: 5 vs 205)
+indexSchemaFpStored=9814df378e0e…                                             (round 1: "")
+indexSchemaFpCurrent=02353ae765fd…  indexSchemaCompatState=BLOCKED_REBUILD_BRAKE
+reindexRequired=True  reindexRequiredReason=rebuild_brake_exhausted
+readiness.indexServing = DEGRADED / index.rebuild_brake_exhausted
+servingSearchGenerationId=g-20260903-070331  migrationState=IDLE  buildingGenerationId=
+worker.log: brakeLine=1  ingestStopped=1
+```
+
+The four-boot ladder itself was run for real first and produced `auto_rebuild_count` 1 → 2 → 3 on
+three live Workers, then the brake on boot 4 with `count=4`, `migration_state IDLE`, no building
+generation.
+
+**Budget cleared by hand — PASS.** With `auto_rebuild_*` removed from `state.json`, the next boot
+migrates as a MISMATCH, not as a legacy index — the PRE-OPEN line carries `stored=9814df378e0e…` and
+the *changed-shape* hint (`"The effective index shape changed (field catalog, analyzers, vector
+format/dimension, HNSW build params, chunking, or an embedding/SPLADE model)…"`), not
+`index-without-fingerprint`, and it restarts at `attempt 1 of 3` with `auto_rebuild_count: 1`.
+
+**O14 — PASS.** Five consecutive read-only (braked) boots of the same Blue: `unclean=0 fullscan=0` on
+every one, and `g-20260903-070331.clean-shutdown` still present on disk after the fifth. This is only
+testable because the harness now stops the product the way a user does (see deviation 1).
+
+**Arm 5 — PASS.** `PRE-OPEN PARITY_DIFF key=index_fingerprint stored=<missing> expected=02353ae765fd…
+hint="index-without-fingerprint: this index carries no recorded index_fingerprint, so its physical
+shape cannot be verified. Rebuilding once records it."` then `attempt 1 of 3`; one cutover
+(`active g-20260903-072854 → g-20260903-072938`); second boot `preOpen=0 parityDiff=0 blueGreen=0
+unclean=0 fullscan=0`, `COMPATIBLE`, `reindexRequired=False`, 205 docs.
+
+**Arm 6 — PASS, single WARN.** `unreadableCommitWarns=1` (round 1: 2), then
+`Corrupted index detected … attempting backup-first rebuild` → `recovered to empty (reason=corrupt_index).
+Rebuilding from source via blue/green`. Worker starts, no `worker-fatal-reason`, doc count back to 55
+and search back to 55 hits.
+
+#### Defect
+
+**R1 — `worker.index_schema_mismatch` never reaches Head readiness under FAIL_CLOSED. The Worker
+half of D.46 works; the Head half does not.**
+
+*Worker half PASS.* `<dataDir>/worker-fatal-reason` is written and contains exactly
+`index_schema_mismatch` — read off disk at 09:10:02.007 (arm 2) and again at 09:14:13.301 (arm 2c).
+
+*Head half FAIL.* The complete `readiness.components.workerControlPlane.reasonCode` sequence across
+the whole supervision arc (boot 09:13:39, watched to a terminal state that then held unchanged for
+85 s):
+
+```
+09:13:41.361  NOT_READY  worker.spawn.failed
+09:13:52.132  DEGRADED   worker.recovering
+09:16:06.475  NOT_READY  worker.spawn_recovery_exhausted     <- terminal, stable through 09:17:31
+```
+
+`worker.index_schema_mismatch` never appears, in any component, at any point. `/api/health` returns
+503 throughout and `knowledgeServerStartError` stays
+`"Worker process crashed (exit code 1) before writing port to signal file"` — the exact string
+D.46's own test comment quotes as the thing it set out to replace. The first narrated verdict already
+carried the generic code: `HeadlessApp.java:548` logged
+`Knowledge Server failed to start: … (worker reason: worker.spawn.failed) — boot recovery armed` at
+09:13:41.256, while the marker was on disk.
+
+*Mechanism, from source — the implementer's to pin with a test, not asserted here.*
+`KnowledgeServerBootstrap.transitionWorkerDown` (`:787-809`) calls `workerDownCode` at `:788`, which
+calls `WorkerFatalReasonMarker.readAndClear` at `:759` — consuming the one-shot marker — and then
+returns early **without applying the verdict** at `:798` (`narrationSuppressed()`, true while "a retry
+or recovery arc owns it", i.e. for the whole boot-recovery ladder) or at `:805`
+(`supervisionVerdictHeld()`, whose carve-out at `:800` reads
+`down.code() != LifecycleReasonCode.WORKER_INDEX_CORRUPT` — `WORKER_INDEX_SCHEMA_MISMATCH` is not
+carved out). Once the marker is consumed no later call can recover the cause, which is precisely the
+hazard the corruption axis has a latch for.
+
+*Why the round-6 test is green.* `KnowledgeServerWorkerDownCodeTest` has
+`corruptCauseSurvivesTheSupervisionSequence` — an end-to-end latch case over restart-then-give-up —
+for the corruption axis, but `schemaMismatchMarkerOverridesTheGenericCode` calls
+`transitionWorkerDown` exactly once on a fresh bootstrap, so it meets neither guard. This is the same
+`substrate-without-consumer` shape §F G49 was added to catch, one level further down: G49 pinned the
+*mapping*, nothing pins the *arc*. `HeadlessApp.java:540-542`'s own comment corroborates the missed
+sweep — it still enumerates the reachable codes as "worker.spawn.failed, worker.index_corrupt, or
+supervision's terminal worker.restart_exhausted", with the round-6 addition absent.
+
+*What arm 2 did pass:* `state.json` byte-identical across the arm (SHA-256 `F84DDB07…` before and
+after), only the Blue generation on disk, `preOpen=1`, `failedStart=1` — FAIL_CLOSED still refuses
+without touching anything, exactly as in round 1. The `readinessNotice.ts:282-285` wording row for
+`worker.index_schema_mismatch` exists; it is simply unreachable.
+
+#### Deviations from the round-1 harness and the written procedure
+
+1. **`stop.ps1` now uses the product's ordered shutdown** (`POST /api/lifecycle/shutdown`,
+   `LifecycleApiModule`) with `taskkill` only as `-Hard`. Round 1 used `taskkill` throughout, which is
+   a crash by definition: it left every generation dirty, which made round 1's "the post-cutover
+   reboot logs unclean" observation un-interpretable and would have made O14 untestable — the clean
+   marker never exists after a kill. Arms that want an unclean stop (arm 2, and the sweeps between
+   arms) pass `-Hard` explicitly.
+2. **Arms 1 and 4 use a new deterministic 1000-file corpus** (`tmp/915-live/corpus1000`). At 200 files
+   the migration completes in 20-40 s while `/api/status` first answers at ~55 s, so the
+   mid-migration surface — the entire object of the D1 assertion — is not observable. Arms 2 and 3
+   reuse that 1000-doc Blue through a byte snapshot; arms 5 and 6 keep the 200- and 50-file corpora.
+3. **Arm 1's mid-migration capture was taken by hand from the session** at 09:08:39, after the
+   driver's own readiness check proved too loose (it accepted an `/api/status` that answers before the
+   worker payload exists). Arm 4b then captured the same surface unattended at 09:21:49, so D1 rests
+   on two independent observations rather than one hand-taken sample.
+4. **Arm 3's braked compat capture was re-taken** (`r2arm3b`) by seeding `auto_rebuild_count: 4`
+   directly into `state.json` — the same fixture `BrakeExhaustedWorkerServesReadOnlyTest` uses —
+   because the first capture landed before the worker was connected and read all zeros. The
+   four-boot ladder itself was still run for real, and its counts are the ones reported.
+5. **Arm 5's `stored=<missing>` line was re-captured** (`r2arm5b`) by tailing `worker.log` while the
+   migration ran. The first pass lost it: the cutover-restarted Worker truncates `worker.log` before
+   the driver copies it.
+6. **Arm 2 needed the full supervision arc.** The first two passes sampled readiness at t+2 s and
+   t+60 s and would have reported a transient (`worker.spawn.failed`, `worker.recovering`) as the
+   verdict. Only the third pass, watching to a terminal code that then held for 85 s, is the evidence
+   quoted above.
+7. **The UI render is still not exercised** (`-PskipWebBuild`). Reason codes are asserted on the API;
+   wording is read from `readinessNotice.ts`.
+8. **Machine contention, disclosed rather than hidden.** A Riot Client / League / TFT / Overwolf stack
+   started at 09:26:39, overlapping arm 6 (09:26:49-09:28:44) and the arm-5 re-capture
+   (09:28:52-09:30:55). Every assertion in those two arms is a log string, a document count or a
+   `state.json` field — none is a throughput measurement — so the contention does not bear on their
+   verdicts.
+9. **The Head's own log is not in the arm's data dir.** `logback.xml:29` resolves the log path from
+   the **sysprop** `justsearch.data.dir`, which this harness does not set (it sets the env var), so
+   Head logs land in `build/headless-data/logs/headless-backend.log` at the worktree root. That file
+   is where the `HeadlessApp.java:548` line quoted in R1 was read.
+
+#### Machine signature
+
+`nvidia-smi`: NVIDIA GeForce RTX 4070, 12282 MiB total. **Before (09:03):** 902 MiB used, port 33221
+free, 0 Head/Worker JVMs, 0 game processes. **After (09:31):** 2180 MiB used, 23 % util, port 33221
+free, 0 Head/Worker JVMs, 3 game-client processes (deviation 8). Arms ran one at a time; the port was
+confirmed free between arms.
+
+Timings: arm 0'' ingest 09:03:29 → 09:08:08 (1005 docs) · arm 1 PRE-OPEN 09:08:17.651, mid-migration
+capture 09:08:39, cutover 09:08:33 → settled 09:09:32 · arm 2 boot 09:13:39 → terminal readiness
+09:16:06 · arm 3 ladder 09:18:15 → brake 09:18:27, O14 boots 09:18:59 → 09:20:10, cleared-budget boot
+09:20:14 · arm 3b 09:23:36 → 09:24:20 · arm 4 09:20:29 → 09:23:16 · arm 5 09:24:31 → 09:26:42, arm 5b
+09:28:52 → 09:30:55 · arm 6 09:26:49 → 09:28:44.
