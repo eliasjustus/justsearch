@@ -148,6 +148,16 @@ jobs:
       - name: Screenshot-step coverage matches the reachable UI catalog
         run: node scripts/ci/check-ui-step-coverage.mjs
 
+      - name: Release metadata projection tests
+        run: |
+          node --test scripts/release/release-changelog.test.mjs
+          node scripts/release/release-changelog.mjs check
+          node --test scripts/release/winget-manifests.test.mjs
+          node scripts/release/winget-manifests.mjs check --metadata packaging/winget/package.v1.json --release packaging/winget/releases/v0.2.0.json --output packaging/winget/manifests/e/eliasjustus/JustSearch/0.2.0
+
+      - name: Model-promotion planner tests
+        run: python -m unittest discover -s scripts/models/tests -p "test_*.py" -v
+
       - name: Unit-test shard policy guard
         run: node scripts/ci/verify-unit-test-shard-policy.mjs
 
@@ -774,6 +784,15 @@ jobs:
 
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
+
+      - name: Release signing contract tests
+        shell: pwsh
+        run: |
+          ./scripts/ci/test-install-codesign-tool.ps1
+          ./scripts/ci/test-resolve-release-signing.ps1
+          ./scripts/ci/test-sign-windows.ps1
+          ./scripts/ci/test-verify-pe-signatures.ps1
+          ./scripts/release/test-sign-vendored-payload.ps1
 
   # The `shell` crate ran in NO lane until now. The only `cargo` invocation anywhere in CI was
   # `dump-cargo-licenses.mjs` (this file, "License and notices"), which compiles nothing. So

@@ -11,7 +11,7 @@
   `justsearch-releases`, so subsequent release builds see already-Valid signatures and skip them
   (mirror of Tauri's should_sign). Collapses per-release signings from ~101 to ~8.
 
-  Flow: archive in -> extract (7z) -> for each PE matching -Include: if Authenticode already
+  Flow: archive in -> extract (7z) -> for every MZ-bearing file: if Authenticode already
   Valid, SKIP (do not re-sign vendor-signed files); else sign it by invoking the existing
   scripts/ci/sign-windows.ps1 as a child (so all JUSTSEARCH_CODESIGN_MODE credential modes work
   here for free) -> re-zip preserving the archive's internal directory layout exactly ->
@@ -19,8 +19,8 @@
 
   Credential modes / secrets are the child sign-windows.ps1's contract (JUSTSEARCH_CODESIGN_*
   env). This script sets JUSTSEARCH_REQUIRE_SIGNING=true for the child (its whole purpose is to
-  sign) UNLESS -AllowUnsigned is passed, and independently re-verifies each PE's Authenticode
-  status after the child returns (defense in depth: child exit code + independent re-verify).
+  sign) UNLESS -AllowUnsigned is passed, and independently verifies the complete extracted tree
+  plus a second extraction of the repacked archive (defense in depth against skips and repack drift).
 
   Fail-closed: any PE that should be signed but is still not Valid after the signing attempt
   fails the run and lists the offending files -- UNLESS -AllowUnsigned (rehearsal only) is set.
@@ -31,18 +31,22 @@
 .PARAMETER OutDir
   Output directory for the signed mirror + sha256. Default: dist/signed-mirrors.
 
-.PARAMETER Include
-  Glob(s) selecting which archive members to treat as signable PEs. Default: *.exe,*.dll.
-
 .PARAMETER AllowUnsigned
   REHEARSAL ONLY. Do not fail closed when a PE remains unsigned after the signing attempt
   (e.g. no credentials configured). Never use for a real mirror -- it produces an unsigned
   archive that defeats the whole purpose.
 
+.PARAMETER MaxSignatures
+  Reviewed maximum number of newly signed PEs permitted for this payload.
+
+.PARAMETER ProviderRemainingSignatures
+  Provider-portal remaining allocation captured before the run. Required for a production signing
+  run and checked against the cumulative shared-ledger count plus this payload's pre-sign census.
+
 .EXAMPLE
   # Real pin-bump run (PFX mode):
   $env:JUSTSEARCH_CODESIGN_MODE='pfx'; $env:JUSTSEARCH_CODESIGN_PFX_PATH='C:\keys\cs.pfx'; $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD='***'; $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL='http://timestamp.digicert.com'
-  scripts\release\sign-vendored-payload.ps1 -ArchivePath build\llama-b8571-bin-win-cpu-x64.zip
+  scripts\release\sign-vendored-payload.ps1 -ArchivePath build\llama-b8571-bin-win-cpu-x64.zip -ProviderRemainingSignatures 100
 #>
 [CmdletBinding()]
 param(
@@ -51,7 +55,9 @@ param(
 
   [string]$OutDir = "dist/signed-mirrors",
 
-  [string[]]$Include = @('*.exe', '*.dll'),
+  [int]$MaxSignatures = 100,
+
+  [int]$ProviderRemainingSignatures = 0,
 
   [switch]$AllowUnsigned
 )
@@ -95,13 +101,6 @@ function Test-IsPE([string]$Path) {
   } catch { return $false }
 }
 
-function Test-MatchesInclude([string]$Name, [string[]]$Globs) {
-  foreach ($g in $Globs) {
-    if ($Name -like $g) { return $true }
-  }
-  return $false
-}
-
 # --- Resolve inputs ------------------------------------------------------------------------
 $resolvedArchive = if ([System.IO.Path]::IsPathRooted($ArchivePath)) { $ArchivePath } else { (Resolve-Path -LiteralPath $ArchivePath -ErrorAction SilentlyContinue).Path }
 if (-not $resolvedArchive -or -not (Test-Path -LiteralPath $resolvedArchive)) {
@@ -119,6 +118,11 @@ if (-not (Test-Path -LiteralPath $signWindows)) {
   Fail "sign-windows.ps1 not found at expected path: $signWindows"
 }
 $signWindows = (Resolve-Path -LiteralPath $signWindows).Path
+$verifyPeSignatures = Join-Path $scriptDir "..\ci\verify-pe-signatures.ps1"
+if (-not (Test-Path -LiteralPath $verifyPeSignatures)) {
+  Fail "verify-pe-signatures.ps1 not found at expected path: $verifyPeSignatures"
+}
+$verifyPeSignatures = (Resolve-Path -LiteralPath $verifyPeSignatures).Path
 
 if (-not (Test-Path -LiteralPath $OutDir)) {
   New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
@@ -131,7 +135,6 @@ $outputSha = $outputZip + ".sha256"
 
 Info "sign-vendored-payload: input   = $resolvedArchive"
 Info "                       output  = $outputZip"
-Info "                       include = $($Include -join ', ')"
 Info "                       7z      = $sevenZip"
 if ($AllowUnsigned) { Info "                       MODE    = REHEARSAL (-AllowUnsigned; unsigned PEs tolerated)" }
 
@@ -139,6 +142,8 @@ if ($AllowUnsigned) { Info "                       MODE    = REHEARSAL (-AllowUn
 $workRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("svp-" + [guid]::NewGuid().ToString("N"))
 $extractDir = Join-Path $workRoot "extract"
 New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+$previousLedgerPath = $env:JUSTSEARCH_CODESIGN_LEDGER_PATH
+$previousLedgerMax = $env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES
 
 try {
   Info ""
@@ -150,19 +155,36 @@ try {
   $signed = 0
   $skipped = 0
   $nonPe = 0
-  $unsignable = New-Object System.Collections.Generic.List[string]
+  $allFiles = @(Get-ChildItem -LiteralPath $extractDir -Recurse -File)
+  $peFiles = @($allFiles | Where-Object { Test-IsPE $_.FullName })
+  $nonPe = $allFiles.Count - $peFiles.Count
+  $unsignedBefore = @($peFiles | Where-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne 'Valid' }).Count
+  if ($MaxSignatures -lt 1) { Fail "MaxSignatures must be positive." }
+  if ($unsignedBefore -gt $MaxSignatures) {
+    Fail "Pre-sign MZ census requires $unsignedBefore signature(s), exceeding reviewed maximum $MaxSignatures."
+  }
+  $ledgerPath = if ($previousLedgerPath) { [System.IO.Path]::GetFullPath($previousLedgerPath) } else { Join-Path $workRoot "signing-ledger.jsonl" }
+  $attemptLedgerPath = $ledgerPath + ".attempts.jsonl"
+  $alreadySpent = if (Test-Path -LiteralPath $attemptLedgerPath) {
+    @(
+      Get-Content -LiteralPath $attemptLedgerPath |
+        Where-Object { $_ -and $_.Trim() } |
+        ForEach-Object { $_ | ConvertFrom-Json } |
+        Where-Object { $_.event -eq "attempt-start" }
+    ).Count
+  } else { 0 }
+  $requiredTotal = $alreadySpent + $unsignedBefore
+  if (-not $AllowUnsigned -and $ProviderRemainingSignatures -lt $requiredTotal) {
+    Fail "Provider-authoritative remaining budget ($ProviderRemainingSignatures) is below the run total after this census ($requiredTotal)."
+  }
+  if ($unsignedBefore -gt 0) {
+    $env:JUSTSEARCH_CODESIGN_LEDGER_PATH = $ledgerPath
+    $env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES = [string]$(if ($AllowUnsigned) { $requiredTotal } else { $ProviderRemainingSignatures })
+  }
+  Info "Pre-sign MZ census: $($peFiles.Count) PE(s), $unsignedBefore require signing, run total $requiredTotal, reviewed per-payload max $MaxSignatures."
 
-  $allFiles = Get-ChildItem -LiteralPath $extractDir -Recurse -File
-  foreach ($f in $allFiles) {
-    if (-not (Test-MatchesInclude $f.Name $Include)) { continue }
-
+  foreach ($f in $peFiles) {
     $rel = $f.FullName.Substring($extractDir.Length).TrimStart('\', '/')
-
-    if (-not (Test-IsPE $f.FullName)) {
-      Info "  non-PE (skip): $rel"
-      $nonPe++
-      continue
-    }
 
     $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
     if ($sig.Status -eq 'Valid') {
@@ -186,28 +208,12 @@ try {
       Fail "sign-windows.ps1 failed (exit=$childExit) for $rel"
     }
 
-    # Independent re-verification: the child exiting 0 is necessary but not sufficient (it exits
-    # 0 when it deliberately SKIPS signing). Confirm the PE is actually Valid now.
-    $post = Get-AuthenticodeSignature -LiteralPath $f.FullName
-    if ($post.Status -eq 'Valid') {
-      Info "    -> signed OK"
-      $signed++
-    } else {
-      if ($AllowUnsigned) {
-        Info "    -> STILL UNSIGNED ($($post.Status)) -- tolerated (rehearsal)"
-        $unsignable.Add($rel)
-      } else {
-        # Collect all before failing so the operator sees the full list.
-        $unsignable.Add($rel)
-      }
-    }
+    if ($childExit -eq 0) { $signed++ }
   }
 
-  if ($unsignable.Count -gt 0 -and -not $AllowUnsigned) {
-    Info ""
-    Info "Unsigned-and-unsignable PEs (no valid signature after signing attempt):"
-    foreach ($u in $unsignable) { Info "  - $u" }
-    Fail "Fail-closed: $($unsignable.Count) PE(s) could not be signed. Configure JUSTSEARCH_CODESIGN_* credentials, or pass -AllowUnsigned for a rehearsal."
+  if (-not $AllowUnsigned) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyPeSignatures -Path $extractDir
+    if ($LASTEXITCODE -ne 0) { Fail "Extracted mirror PE verification failed (exit=$LASTEXITCODE): $resolvedArchive" }
   }
 
   # --- Re-zip preserving internal layout exactly -------------------------------------------
@@ -226,11 +232,25 @@ try {
   if ($zipExit -ne 0) { Fail "7z re-zip failed (exit=$zipExit)" }
   if (-not (Test-Path -LiteralPath $outputZip)) { Fail "Re-zip produced no output: $outputZip" }
 
+  if (-not $AllowUnsigned) {
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $verifyPeSignatures -Path $outputZip -Extract
+    if ($LASTEXITCODE -ne 0) { Fail "Repacked mirror PE verification failed (exit=$LASTEXITCODE): $outputZip" }
+  } else {
+    Info "Post-repack strict PE verification skipped for rehearsal (-AllowUnsigned)."
+  }
+
   # --- SHA256 sidecar (uppercase hex; sha256sum line format: hash + two spaces + basename) ---
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputZip).Hash.ToUpperInvariant()
   $outBase = [System.IO.Path]::GetFileName($outputZip)
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllText($outputSha, "$hash  $outBase`n", $utf8NoBom)
+  $ledgerSource = $ledgerPath
+  if (Test-Path -LiteralPath $ledgerSource) {
+    Copy-Item -LiteralPath $ledgerSource -Destination ($outputZip + ".signing-ledger.jsonl") -Force
+  }
+  if (Test-Path -LiteralPath $attemptLedgerPath) {
+    Copy-Item -LiteralPath $attemptLedgerPath -Destination ($outputZip + ".signing-attempts.jsonl") -Force
+  }
 
   # --- Summary -----------------------------------------------------------------------------
   Info ""
@@ -238,15 +258,17 @@ try {
   Info ("  signed (newly):          {0}" -f $signed)
   Info ("  skipped (already-signed): {0}" -f $skipped)
   Info ("  non-PE (unmodified):      {0}" -f $nonPe)
-  if ($AllowUnsigned -and $unsignable.Count -gt 0) {
-    Info ("  UNSIGNED (rehearsal):     {0}" -f $unsignable.Count)
-  }
+  if ($AllowUnsigned) { Info "  verification:            skipped (rehearsal; unsigned PEs tolerated)" }
   Info ("  output:  {0}" -f $outputZip)
   Info ("  sha256:  {0}  {1}" -f $hash, $outBase)
   Info ("  sidecar: {0}" -f $outputSha)
   Info "======================================================================="
 }
 finally {
+  if ($null -eq $previousLedgerPath) { Remove-Item Env:JUSTSEARCH_CODESIGN_LEDGER_PATH -ErrorAction SilentlyContinue }
+  else { $env:JUSTSEARCH_CODESIGN_LEDGER_PATH = $previousLedgerPath }
+  if ($null -eq $previousLedgerMax) { Remove-Item Env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES -ErrorAction SilentlyContinue }
+  else { $env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES = $previousLedgerMax }
   if (Test-Path -LiteralPath $workRoot) {
     Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
   }

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://justsearch.app/schemas/model-promotion-plan.v1.json",
+  "title": "JustSearch model promotion plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "packageId", "status", "indexMigration", "adapter", "changes", "currentPackage", "proposedPackage", "provenance", "remoteVerification", "evidence", "projections", "artifacts", "requirements", "blockers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageId": { "type": "string" },
+    "status": { "enum": ["ready", "blocked", "no-op"] },
+    "indexMigration": { "enum": ["required", "not-required"] },
+    "adapter": {
+      "type": "object",
+      "required": ["format", "builder", "preparation", "requiredVariants", "requiredSupportingFiles", "requiredEvidence", "requiredProjections", "licenseApprovalRequired", "indexAffecting"]
+    },
+    "changes": {
+      "type": "object",
+      "required": ["packageRecordChanged", "identityChanged", "licenseChanged", "noticeFieldsChanged", "noticeProjection"]
+    },
+    "currentPackage": { "type": "object" },
+    "proposedPackage": { "type": "object" },
+    "provenance": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "enum": ["onnx-build", "gguf-source"] } }
+    },
+    "remoteVerification": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/remoteProof" }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/evidence" }
+    },
+    "projections": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/projection" }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "filename", "path", "declaredSha256", "declaredSizeBytes", "observedSha256", "observedSizeBytes", "changed", "downloadUrl", "immutableUrl"]
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "status", "message"],
+        "properties": {
+          "id": { "type": "string" },
+          "category": { "type": "string" },
+          "status": { "enum": ["pass", "block"] },
+          "message": { "type": "string" }
+        }
+      }
+    },
+    "blockers": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "remoteProof": {
+      "type": "object",
+      "required": ["status", "url", "sha256", "sizeBytes"],
+      "properties": {
+        "status": { "const": "pass" },
+        "url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["status", "ref"],
+      "properties": {
+        "status": { "enum": ["pass", "no-change"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "required": ["status", "ref", "result", "diff"],
+      "properties": {
+        "status": { "enum": ["pass", "no-change"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "minLength": 1 },
+        "diff": { "type": "string" }
+      }
+    }
+  }
+}

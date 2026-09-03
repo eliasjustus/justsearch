@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 2,
+  "packages": [
+    {
+      "id": "embedding",
+      "necessity": "required",
+      "label": "Embedding model",
+      "description": "Fixture",
+      "targetDir": "onnx/fixture",
+      "termsUrl": "https://huggingface.co/example/old-embedding",
+      "license": "Apache-2.0",
+      "tier": "retrieval-core",
+      "minVramBytes": 0,
+      "variants": [
+        { "filename": "cpu.bytes", "precision": "FP32", "targetEP": "CPU", "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "sizeBytes": 10, "downloadUrl": "https://example.invalid/releases/download/models-old/cpu.bytes" },
+        { "filename": "gpu.bytes", "precision": "FP16", "targetEP": "CUDA", "sha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "sizeBytes": 10, "downloadUrl": "https://example.invalid/releases/download/models-old/gpu.bytes" }
+      ],
+      "supportingFiles": [
+        { "filename": "tokenizer.json", "sha256": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "sizeBytes": 10, "downloadUrl": "https://example.invalid/releases/download/models-old/tokenizer.json" },
+        { "filename": "pooling_config.json", "sha256": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", "sizeBytes": 10, "downloadUrl": "https://example.invalid/releases/download/models-old/pooling_config.json" },
+        { "filename": "model_manifest.json", "sha256": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", "sizeBytes": 10, "downloadUrl": "https://example.invalid/releases/download/models-old/model_manifest.json" }
+      ]
+    },
+    { "id": "splade" },
+    { "id": "ner" },
+    { "id": "reranker" },
+    { "id": "citation-scorer" },
+    { "id": "chat" },
+    { "id": "chat-compact" },
+    { "id": "cuda-runtime" }
+  ]
+}

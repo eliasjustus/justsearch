@@ -223,7 +223,7 @@ Design choices in the current inference runtime, with rationale.
 
 ### D-003: gte-multilingual-base as default embedding model — SHIPPED (supersedes EmbeddingGemma-300M)
 
-- **Choice:** Replace EmbeddingGemma-300M with `Alibaba-NLP/gte-multilingual-base` as the production ONNX embedding model. `EmbeddingOnnxModelDiscovery` hardcodes `MODEL_NAME = "gte-multilingual-base"`, falls back to `embeddinggemma-300m/` then `embedding/` (nomic).
+- **Choice:** Replace EmbeddingGemma-300M with `Alibaba-NLP/gte-multilingual-base` as the production ONNX embedding model. `EmbeddingOnnxModelDiscovery` hardcodes `MODEL_NAME = "gte-multilingual-base"` and delegates to resolved model roots; it has no automatic EmbeddingGemma or nomic fallback.
 - **Rationale:** Equivalent quality (nDCG@10 0.7132 vs 0.7128 on SciFact). 39s faster pipeline (181s vs 220s). 70+ languages (vs English-only). Apache 2.0 license. Lazy CPU session design avoids 20+ GB RAM spike on GPU failure.
 - **Evidence:** tempdoc 358 (exhaustive model search, only 2 models pass all hard requirements H1–H9); tempdoc 312 items 23-24 (original EmbeddingGemma selection, now superseded)
 - **Previous default:** EmbeddingGemma-300M (Q4 GPU / INT8 CPU, tempdoc 312) — retained as legacy backup at `models/onnx/embeddinggemma-300m/`
@@ -245,12 +245,12 @@ Design choices in the current inference runtime, with rationale.
 - **Key class:** `ModelManifest` in `modules/worker-core/.../ort/ModelManifest.java`
 - **Revisit when:** settled.
 
-### D-006: Model build provenance (`build.json`) — SHIPPED
+### D-006: Model build provenance (`build.json`) — CONTRACT SHIPPED, PUBLIC COVERAGE PARTIAL
 
-- **Choice:** Each model directory contains a `build.json` recording source HF model ID + commit hash, transformations applied, output SHA-256, tool versions, and exact build command. Build scripts in `scripts/models/` auto-capture provenance.
+- **Choice:** Package-specific build scripts emit `build.json` with source identity/revision, transformations, output SHA-256, tool versions, and an exact build command. The public tree currently tracks this record only for SPLADE; the absence of `build.json` for another package is missing provenance, not a successful integrity check. GGUF candidates use an equivalent per-file immutable source/digest and quantization manifest rather than the ONNX build shape.
 - **Rationale:** Model files were opaque blobs with no recorded origin. Updating or debugging a model required reverse-engineering from commit messages and memory.
 - **Evidence:** tempdoc 348
-- **Integrity check:** `python scripts/models/check-integrity.py`
+- **Integrity check:** `python scripts/models/check-integrity.py` verifies only directories where `build.json` already exists. `python scripts/models/model_promotion_planner.py --registry <registry.json> --package <id> --candidate <candidate.json>` is the write-free, package-scoped readiness check. Its deterministic review bundle preserves canonical provenance, remote-verification facts, evidence references, projection results/diffs, and explicit approval tied to the proposed license while reporting missing publication/runtime/quality/migration evidence without changing assets or registry state.
 - **Revisit when:** settled.
 
 ### D-007: Single-entry session construction via `OrtSessionAssembler` — SHIPPED (tempdoc 397)
