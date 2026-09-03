@@ -18,6 +18,8 @@ import io.justsearch.core.util.DocumentTypeDetector;
 import io.justsearch.core.util.Strings;
 import io.justsearch.core.util.TokenEstimation;
 import io.justsearch.core.util.TokenEstimation.TruncationResult;
+import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.indexing.chunking.ChunkSplitter;
 import io.justsearch.indexing.rag.ContextBudgeter;
 import java.time.Duration;
@@ -848,8 +850,30 @@ public final class RAGContext implements ContextInjector {
         return v;
       }
     }
-    int affordable = budget.inputBudget() / ChunkSplitter.DEFAULT_CHUNK_TOKENS;
+    int affordable = budget.inputBudget() / activeChunkTargetTokens();
     return Math.max(1, Math.min(defaultTopK, affordable));
+  }
+
+  /**
+   * The chunk size actually in force (tempdoc 916 Part 1), not the shipped constant.
+   *
+   * <p>This runs on the HEAD, so it cannot call {@code ChunkDocumentWriter.activePolicy()} — that
+   * lives in {@code worker-services}. It reads the same resolved value from the same
+   * {@link ConfigStore} the Worker's snapshot is built from, which is the only way the two agree.
+   * Getting it wrong is not cosmetic: under a 128-token sweep arm, dividing the input budget by 500
+   * would under-fill the context roughly fourfold and silently corrupt the RAG-quality reading the
+   * campaign uses this path for.
+   */
+  private static int activeChunkTargetTokens() {
+    ConfigStore store = ConfigStore.globalOrNull();
+    if (store == null) {
+      return ChunkSplitter.DEFAULT_CHUNK_TOKENS;
+    }
+    ResolvedConfig resolved = store.get();
+    if (resolved == null || resolved.index() == null) {
+      return ChunkSplitter.DEFAULT_CHUNK_TOKENS;
+    }
+    return resolved.index().effectiveChunkTargetTokens();
   }
 
   private static String asString(Object o) {

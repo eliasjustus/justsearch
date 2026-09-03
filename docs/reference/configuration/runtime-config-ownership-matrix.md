@@ -144,6 +144,10 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | - | JUSTSEARCH_BGE_M3_MODEL_PATH | justsearch.bgem3.model_path | BGE_M3_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_BUILD_STAMP | justsearch.build.stamp | BUILD_STAMP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CHAT_PROFILE | justsearch.chat.profile | CHAT_PROFILE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_CHUNKING_SWEEP_MIN_TOKENS | justsearch.chunking.sweep.min_tokens | CHUNKING_SWEEP_MIN_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_CHUNKING_SWEEP_OVERLAP_TOKENS | justsearch.chunking.sweep.overlap_tokens | CHUNKING_SWEEP_OVERLAP_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_CHUNKING_SWEEP_TARGET_TOKENS | justsearch.chunking.sweep.target_tokens | CHUNKING_SWEEP_TARGET_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_CHUNKING_SWEEP_THRESHOLD_CHARS | justsearch.chunking.sweep.threshold_chars | CHUNKING_SWEEP_THRESHOLD_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_MATCH_THRESHOLD | justsearch.citation.match_threshold | CITATION_MATCH_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_SCORER_DEADLINE_MS | justsearch.citation.scorer.deadline_ms | CITATION_SCORER_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_CITATION_SCORER_ENABLED | justsearch.citation.scorer.enabled | CITATION_SCORER_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

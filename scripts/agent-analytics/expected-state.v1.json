@@ -195,10 +195,10 @@
       "match": [
         "python -m pytest"
       ],
-      "claim": "`python -m pytest -q` under scripts/jseval is RED on THIS machine only because three OPTIONAL test dependencies are not installed in the local interpreter: `inspect_ai` (the `agent` extra), `hypothesis` and `jsonschema` (the `dev` extra). Everything else passes (2661 passed / 3 collection errors observed 2026-09-02). Fix, do not remember: `python -m pip install -e \"scripts/jseval[dev,agent]\"`. `jsonschema` was missing from the `dev` extra entirely until tempdoc 885 chunk 2 added it (scripts/jseval/pyproject.toml:31), so an older install cannot have had it.",
-      "evidence": "tempdoc 885 lane C chunk 1 (2026-09-02): full `python -m pytest -q` run in scripts/jseval reported 2661 passed with the only failures being ModuleNotFoundError for inspect_ai / hypothesis / jsonschema at collection time. scripts/jseval/tests/test_corpus_inject.py:710 is the sole jsonschema importer.",
+      "claim": "`python -m pytest -q` under scripts/jseval is RED for TWO independent reasons, and they are different kinds of red. (1) LOCAL ENV: three OPTIONAL test dependencies are missing from this interpreter -- `inspect_ai` (the `agent` extra), `hypothesis` and `jsonschema` (the `dev` extra) -- which surface as COLLECTION ERRORS. Fix, do not remember: `python -m pip install -e \"scripts/jseval[dev,agent]\"`. `jsonschema` was missing from the `dev` extra entirely until tempdoc 885 chunk 2 added it (scripts/jseval/pyproject.toml:31), so an older install cannot have had it. (2) STALE TEST ON MAIN (added 2026-09-03): tests/test_run.py::test_execute_run_always_emits_a_cadence_block FAILS as an ASSERTION, not a collection error -- it asserts summary[\"cadence\"] equals an exact four-key dict (test_run.py:1004) while the emitter also writes commit_by_reason and commit_by_reason_total (jseval/cadence.py:197-198, shipped in 33ffc3bb, which did not update the test). FIX, do not just remember: extend the expected dict with the two keys; tracked as tempdoc 916 open item 11. Distinguish the two by SHAPE: a collection error is (1), an assertion inside a collected test is (2), and anything else is yours.",
+      "evidence": "(1) observations condition obs:jseval-pytest-missing-optional-deps-local-env; 2661 passed / 3 collection errors observed 2026-09-02. (2) tempdoc 916 Part 1 preparation window, 2026-09-03: 1 failed / 3073 passed / 10 skipped / 0 collection errors, and the one failure was verified pre-existing by removing every 916 Part 1 file and re-running that test alone.",
       "added": "2026-09-02",
-      "reviewBy": "2026-09-30",
+      "reviewBy": "2026-10-15",
       "exitProbe": "slow: python -m pytest -q scripts/jseval"
     },
     {

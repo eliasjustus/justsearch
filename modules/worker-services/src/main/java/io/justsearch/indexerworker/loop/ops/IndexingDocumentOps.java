@@ -26,7 +26,6 @@ import java.util.Map;
 import org.slf4j.Logger;
 
 public final class IndexingDocumentOps {
-  private static final int CHUNK_THRESHOLD_CHARS = ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS;
   private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
   private static final String DEFAULT_LANGUAGE = resolveDefaultLanguageTag();
 
@@ -402,7 +401,9 @@ public final class IndexingDocumentOps {
     String content = extraction.content();
     String parentDocId = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
 
-    if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
+    // Tempdoc 916 Part 1: the same policy the writer will use, so this pre-check and the writer's
+    // own threshold cannot disagree under a campaign override.
+    if (content == null || content.length() < ChunkDocumentWriter.activePolicy().thresholdChars()) {
       ChunkDocumentWriter.regenerateChunks(documentFieldOps, indexingCoordinator, parentDocId, "", null);
       return 0;
     }
@@ -463,7 +464,7 @@ public final class IndexingDocumentOps {
    * null/blank content.
    *
    * <p>Divisor 3 (not 4) is deliberate (tempdoc 717 review, Finding 2): the property that matters is
-   * that any document long enough to have been <em>chunked</em> (≥ {@link #CHUNK_THRESHOLD_CHARS} =
+   * that any document long enough to have been <em>chunked</em> (≥ {@code ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS} =
    * 2000 chars) estimates <em>above</em> the 512-token short threshold, so a chunked corpus is never
    * mis-classified short. 2000/3 ≈ 666 &gt; 512 with margin; 2000/4 = 500 would fall just under. The
    * estimate is language-uniform (a fixed chars/token ratio, not a per-language lever — invariant

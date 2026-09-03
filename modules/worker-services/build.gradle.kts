@@ -179,6 +179,9 @@ testing {
         runtimeOnly(libs.junit.platform.launcher)
         // Tempdoc 417 F8: TestMetricRegistry from telemetry's testFixtures.
         implementation(testFixtures(project(":modules:telemetry")))
+        // Tempdoc 916 Part 1: TestResolvedConfigHelper, so ChunkingPolicyResolutionTest can
+        // publish and restore a ConfigStore without starting HeadlessApp.
+        implementation(testFixtures(project(":modules:configuration")))
         // Phase 3b: MetricSurfaceContractTest reflectively validates surfacedAt fieldNames
         // against API records in app-api.
         implementation(project(":modules:app-api"))

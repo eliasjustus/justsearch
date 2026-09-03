@@ -1561,7 +1561,15 @@ public final class ResolvedConfigBuilder {
         // The safety-net commit timer's period. Same channel and same reason as the three above:
         // CommitOps runs in the Worker, so a raw sysprop read there would never see a Head-side
         // value. The default reproduces the constant it replaces exactly.
-        resolveInt("index.commit.timer_interval_ms", 10_000));
+        resolveInt("index.commit.timer_interval_ms", 10_000),
+        // Tempdoc 916 Part 1 — TEMPORARY chunk-size campaign instrument, DELETED by the PR that
+        // lands the chosen constants. Nullable on purpose: unset must be indistinguishable from
+        // the shipped constants, which Index.effectiveChunk*() supplies. Same ordinal-450 channel
+        // as the cadence keys above, because chunking runs in the Worker at index time.
+        resolveNullableInt("justsearch.chunking.sweep.target_tokens"),
+        resolveNullableInt("justsearch.chunking.sweep.overlap_tokens"),
+        resolveNullableInt("justsearch.chunking.sweep.min_tokens"),
+        resolveNullableInt("justsearch.chunking.sweep.threshold_chars"));
   }
 
   private ResolvedConfig.Collections buildCollections() {
