@@ -119,14 +119,20 @@ final class SchemaControllerTest {
     // reference this schema name.
     assertTrue(names.contains("timeseries-snapshot.v1.json"));
     // Tempdoc 583 §D.3a / §C review: three wire schemas the route-manifest responseSchema $refs point
-    // at — served here so the OpenAPI $refs resolve (RouteResponseSchemasCoverageTest enforces this).
+    // at — served here so the OpenAPI $refs resolve (RouteContractPolicyCoverageTest enforces this).
     assertTrue(names.contains("knowledge-search-response.v1.json"));
     assertTrue(names.contains("ai-runtime-status-response.v1.json"));
     assertTrue(names.contains("effective-policy.v1.json"));
-    // Tempdoc 911 (885 UL.9): the substrate failed-jobs response, referenced by RouteResponseSchemas
+    // Tempdoc 911 (885 UL.9): the substrate failed-jobs response, referenced by RouteContractPolicy
     // for both /api/indexing-jobs/failed routes — same reason as the three above.
     assertTrue(names.contains("failed-indexing-jobs-response.v1.json"));
-    assertEquals(12, names.size());
+    // Tempdoc 899 D6: canonical public response schemas embedded into the generated runtime SDK.
+    assertTrue(names.contains("api-error-response.v1.json"));
+    assertTrue(names.contains("lifecycle-snapshot.v1.json"));
+    assertTrue(names.contains("runtime-live-response.v1.json"));
+    assertTrue(names.contains("runtime-manifest-public.v1.json"));
+    assertTrue(names.contains("runtime-ready-response.v1.json"));
+    assertEquals(17, names.size());
     assertFalse(names.contains("nonexistent.v1.json"));
   }
 }
