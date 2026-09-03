@@ -6,6 +6,9 @@
     "doc": "docs"
   },
   "scripts": {
+    "bootstrap": "node scripts/setup/bootstrap.mjs",
+    "bootstrap:check": "node scripts/setup/bootstrap.mjs --check",
+    "test:bootstrap": "node --test scripts/setup/*.test.mjs",
     "doctor": "node scripts/dev/doctor.mjs",
     "test:agent-analytics": "node scripts/agent-analytics/run-all-tests.mjs",
     "test:governance": "node scripts/governance/run-all-tests.mjs",

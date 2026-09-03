@@ -752,3 +752,93 @@ privacy surface can each be reviewed and reverted independently.
 - The focused SDK D6 S1+S2 scope is complete and ready for publication review.
 - Contributor-container/onramp, community intake, HTTP/MCP lifecycle, succession, and diagnostic-
   clipboard work remain separate 899 implementation changes and are not part of this SDK branch.
+
+### Focused devcontainer/bootstrap derisk pass (2026-09-03)
+
+The remaining D1 design is implementable without inventing a second setup system. The existing
+seams divide cleanly: `resolve-jdk.cjs` owns JDK discovery and the >=24 floor;
+`prepare-worktree.cjs` demonstrates platform-correct wrapper selection and lockfile-preserving
+`npm ci`; `doctor.mjs` owns tier diagnosis; and `test-onramp-first-success.mjs` owns the real
+zero-model keyword-search proof. The new bootstrap is a thin post-Node coordinator over those
+authorities, not a replacement for any of them.
+
+Current upstream primary sources confirm the planned configuration shape: Ubuntu 24.04 is the
+Dev Containers `base:noble` line; the official Feature majors are Java `:1`, Node `:2`, Python
+`:1`, and Rust `:1`; Java's Temurin selector is `jdkDistro: "tem"`; and lifecycle commands support
+an explicit `waitFor: "postCreateCommand"`. Pin Feature majors and requested tool versions, but do
+not claim immutable image or Feature contents without digest pins.
+
+Confidence-building checks:
+
+- `node scripts/dev/test-resolve-jdk.mjs` passed all 11 resolver checks on this branch.
+- `node scripts/dev/doctor.mjs --json` returned a valid structured tier report.
+- The repository has five committed npm lock roots: root, `modules/ui-web`, `modules/shell`,
+  `packages/runtime-client`, and `scripts/wire-contract`. Bootstrap must use an explicit reviewed
+  list so a future fixture lockfile cannot silently become an installation target.
+- `gradlew` is already tracked executable with LF endings; bootstrap still checks it and repairs
+  the executable bit only outside `--check` mode.
+- This host has no Docker or Podman command and no installed WSL distribution. Installing a
+  container runtime would be a machine-level mutation outside this task. Therefore the actual
+  Ubuntu image build and in-container Tier-0 run cannot be produced locally; static configuration,
+  pure bootstrap tests, native `--check`, and normal repository checks can run here. A
+  container-capable host or explicitly authorized hosted workflow remains the final D1 proof.
+- Two bounded read-only subagents were started to challenge script reuse and CI parity, but neither
+  returned before the bounded wait and both were shut down without edits or usable evidence. Their
+  absence does not change the code-backed findings above.
+
+Main risks and controls:
+
+1. Preserve the native contributor floor (Node >=20, JDK >=24) while pinning Node 24 and JDK 25 in
+   the reproducible container; do not accidentally raise native Node to 24.
+2. Require Python 3.13 for the all-repository bootstrap, while treating Rust stable as advisory for
+   the core Java/web contribution path.
+3. Make `--check` structurally non-mutating: no dependency installation, chmod, download, profile
+   edit, or package-manager selection. Test this with injected command/filesystem seams.
+4. Fix the Windows pre-Node script's malformed patch-version regex and replace its silent network
+   fallback with an actionable failure. Exercise URL resolution against a local fixture rather than
+   depending on nodejs.org in tests.
+5. Keep container setup CPU-only and model-free. The proof must supply an empty models directory and
+   run the existing onramp smoke; no GPU, model mount, or Linux product-support promise is added.
+
+**Focused confidence: 8/10 for implementation, 6/10 for final proof on this host.** The code path is
+small and the ownership seams are known. The two-point proof deduction is entirely the unavailable
+container engine, not unresolved product design. Use a high-reasoning implementation pass for the
+cross-platform process/error semantics; the configuration and prose alone are medium effort.
+
+### Active devcontainer/bootstrap implementation plan (2026-09-03)
+
+This plan owns only D1. It extends the existing onramp and worktree setup authorities; it does not
+replace `prepare-worktree.cjs`, `doctor.mjs`, or `test-onramp-first-success.mjs`, and it keeps
+`bootstrap-node-win.ps1` as the Windows pre-Node entry point.
+
+- [ ] **Pin the contributor container.** Add a strict-JSON `.devcontainer/devcontainer.json` using
+  the Ubuntu 24.04/noble base, official major-pinned Java/Node/Python/Rust Features, Temurin 25,
+  Node 24, Python 3.13, and stable Rust. Run bootstrap then doctor in `postCreateCommand`, and make
+  `waitFor` cover that command. Add no GPU, model, Docker-in-Docker, host mount, or Linux product-
+  support claim.
+- [ ] **Build the post-Node coordinator behind pure seams.** Add `scripts/setup/bootstrap.mjs` with
+  a main guard and exported parsers/planners. Validate Node >=20, resolve and validate JDK >=24 via
+  `resolve-jdk.cjs`, require Python 3.13, report Rust without making it a core failure, verify the
+  Gradle wrapper, and run explicit lockfile-preserving installs for the five reviewed npm roots.
+  `--check` must execute no install, chmod, download, profile edit, or package-manager selection.
+- [ ] **Make bootstrap behavior executable evidence.** Add Node tests for version parsing, floor
+  rejection, explicit install-plan coverage, fail-fast command errors, advisory Rust, platform-
+  correct Gradle handling, and structural non-mutation in `--check`. Wire a root package command so
+  contributors and CI can run the suite directly.
+- [ ] **Repair the Windows pre-Node entry point.** Correct its patch-version regex, eliminate the
+  fictitious/silent fallback URL, provide actionable network/parse/download failures, and add a
+  resolve-only seam exercised against a local HTTP fixture. Preserve its existing default install
+  behavior and session-local PATH update.
+- [ ] **Make the container proof reproducible.** Extend the manual `onramp-smoke.yml` specialty
+  workflow with an Ubuntu job using an exact Dev Container CLI version. Build/up the container,
+  verify all four tool versions, build the two runtime distributions, force an empty models
+  directory, run the existing Tier-0 smoke inside the container, and always remove the container.
+  Do not dispatch the workflow without explicit publication/outward-action authorization.
+- [ ] **Update contributor truth.** Present native Windows and devcontainer routes side by side in
+  `CONTRIBUTING.md`; explain post-Node versus pre-Node bootstrap; use platform-neutral wrapper
+  notation where it is genuinely portable; preserve the Windows-only packaged-product boundary.
+- [ ] **Verify and review.** Run the pure bootstrap and PowerShell fixture tests, native
+  `bootstrap.mjs --check`, JSON/config validation, root README/docs/governance checks, and the
+  repository build required for the changed scripts. Record the unavailable local container proof
+  honestly, perform a refute-first review, fix findings, update this ledger, and commit explicit
+  paths without pushing, opening a PR, dispatching CI, or publishing.
