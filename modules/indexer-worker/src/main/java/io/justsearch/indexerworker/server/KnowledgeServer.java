@@ -23,6 +23,8 @@ import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
 import io.justsearch.indexerworker.splade.SpladeFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
+import io.justsearch.adapters.lucene.runtime.IndexMetadataParityGuard;
+import io.justsearch.adapters.lucene.runtime.ParityDiagnostics;
 import io.justsearch.indexerworker.embed.EmbeddingMetadataOverlay;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.loop.pacing.ForegroundLoad;
@@ -548,6 +550,12 @@ public final class KnowledgeServer implements Closeable {
                   io.justsearch.indexerworker.ner.NerFingerprint.modelPath().isPresent(),
                   io.justsearch.indexerworker.ner.NerFingerprint.get()));
 
+      // The effective vector dimension is the other input only this process knows, and it has to be
+      // installed HERE rather than inside buildIndexRuntime: pre-open detection (below) computes the
+      // expected fingerprint before any runtime is built, and a dimension installed later would make
+      // the boot-time comparison disagree with every later one under BGE-M3.
+      IndexFingerprint.installEffectiveVectorDimension(effectiveVectorDimensionSupplier());
+
       // 4. Initialize Lucene runtimes.
       // - searchLifecycle serves queries (Blue during migration)
       // - ingestLifecycle performs all writes (Green during migration; Active when not migrating)
@@ -571,6 +579,29 @@ public final class KnowledgeServer implements Closeable {
       // one, so a resumed migration whose Green was itself mismatched threw straight out of start()
       // — no policy branch, no brake, no read-only fall-through — which is the repeat-failure shape
       // the brake exists to bound (tempdoc 915 §C.8).
+      // Tempdoc 915 §C.12 (open item O7). Decide whether this index has the shape this runtime
+      // writes BEFORE choosing how to open it. The check used to live inside the open, where a
+      // deferred open arrives as read-only and ComponentsFactory only logs the mismatch — so on the
+      // boot path most installs take (an existing index WITH segments) the automatic migration was
+      // never triggered at all. Reading the last commit's user data needs no writer and no
+      // RuntimeSession, so it can happen here, where the policy handler below can act on it.
+      //
+      // Same predicate, same call: ParityDiagnostics via the guard's own inspection helper. The
+      // legacy-blank rule, the empty-index exclusion and the model tri-state therefore apply
+      // identically at both sites, by construction rather than by agreement.
+      boolean preOpenMismatch = false;
+      if (!inProgress) {
+        var preOpenDiffs =
+            IndexMetadataParityGuard.inspectCommittedParity(
+                activeIndexPath, expectedCommitMetadata(fpSupplier));
+        preOpenMismatch = ParityDiagnostics.requiresRebuild(preOpenDiffs);
+        if (preOpenMismatch) {
+          for (var diff : preOpenDiffs) {
+            log.warn("PRE-OPEN {}", diff.marker());
+          }
+        }
+      }
+
       try {
       if (inProgress) {
         // Serve search from active generation (Blue) while writing to building generation (Green).
@@ -589,7 +620,18 @@ public final class KnowledgeServer implements Closeable {
         // which returns a fresh RunningRuntime. KS reconstructs appServices and
         // swaps the gRPC wrappers via reconstructAppServicesAfterDeferredUpgrade()
         // so write methods become available without restarting the gRPC server.
-        boolean useDeferredWriter = hasLuceneSegments(activeIndexPath);
+        // A detected mismatch is raised here for the two policies whose handling lives in the
+        // catch below. REBUILD_BACKUP_FIRST is deliberately NOT raised: its backup-then-rebuild
+        // recovery lives inside RuntimeSession.openComponentsWithRecovery and is the one
+        // implementation of that policy — but it only runs on a WRITABLE open, so the pre-open
+        // detection's job there is to force one rather than to duplicate the recovery.
+        String policy = rc.index().schemaMismatchPolicy();
+        boolean policyHandledInCatch =
+            "blue_green_migrate".equalsIgnoreCase(policy) || "fail_closed".equalsIgnoreCase(policy);
+        if (preOpenMismatch && policyHandledInCatch) {
+          throw IndexMetadataParityGuard.schemaMismatch();
+        }
+        boolean useDeferredWriter = hasLuceneSegments(activeIndexPath) && !preOpenMismatch;
         {
           LuceneRuntimeBuilder builder =
               buildIndexRuntime(activeIndexPath, fpSupplier)
@@ -907,6 +949,53 @@ public final class KnowledgeServer implements Closeable {
       closeQuietly();
       throw new IOException("Failed to start KnowledgeServer", e);
     }
+  }
+
+  /**
+   * How a background-model-init failure is reported. Extracted so the one decision it makes is
+   * testable: a {@code SCHEMA_MISMATCH} arriving from {@code DeferredRuntime.upgradeWriter()} means
+   * ingestion has STOPPED — the index cannot accept writes under this runtime's shape — and filing
+   * that under the generic "non-fatal" background-init line is how it stayed invisible while the
+   * automatic migration silently never ran (tempdoc 915 §C.12, open item O7).
+   *
+   * <p>It is reported loudly rather than propagated: this runs on a background
+   * {@code CompletableFuture} with no caller left to receive it, {@code start()} having long
+   * returned. The durable handling is the NEXT boot's pre-open detection, which sees the same
+   * mismatch before it chooses an open mode and routes it into the policy handler; meanwhile the
+   * status surface already reports {@code BLOCKED_MISMATCH} with {@code reindex_required} from the
+   * same fingerprint comparison, so the user is not left waiting for a restart to be told.
+   */
+  static void logBackgroundInitFailure(Exception e) {
+    if (isSchemaMismatch(e)) {
+      log.error(
+          "Ingestion is STOPPED: the deferred writer upgrade found a schema mismatch"
+              + " (index_fingerprint). Search continues on the read-only runtime. This is NOT a"
+              + " degraded-capability warning - restart the Worker to run the schema-mismatch"
+              + " policy (index.schema_mismatch.policy), or run Rebuild index from the UI.",
+          e);
+      return;
+    }
+    log.error("Background model initialization failed (non-fatal)", e);
+  }
+
+  /**
+   * True if {@code t} or any cause in its chain is a {@code SCHEMA_MISMATCH}. Walks the chain
+   * because the deferred upgrade wraps: the guard's exception arrives inside whatever
+   * {@code upgradeWriter()} threw.
+   */
+  static boolean isSchemaMismatch(Throwable t) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (c instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
+          && ire.reason()
+              == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason
+                  .SCHEMA_MISMATCH) {
+        return true;
+      }
+      if (c == c.getCause()) {
+        break;
+      }
+    }
+    return false;
   }
 
   /** True if a startup failure was caused by an unrecoverable corrupt Lucene index (628 Stage D-part2). */
@@ -1414,7 +1503,7 @@ public final class KnowledgeServer implements Closeable {
           disambiguationService);
 
     } catch (Exception e) {
-      log.error("Background model initialization failed (non-fatal)", e);
+      logBackgroundInitFailure(e);
       long bgMs = (System.nanoTime() - bgStart) / 1_000_000;
       log.info("Background model init failed after ({}ms)", bgMs);
       return new ModelContext(
@@ -1629,16 +1718,6 @@ public final class KnowledgeServer implements Closeable {
       log.info("Field catalog: vector dimension overridden to 1024 (BGE-M3 active)");
     }
 
-    // The same dimension the FieldMapper above builds vector fields with, published process-wide
-    // so index_fingerprint records the dimension actually in force rather than the catalog's
-    // declared 768 (tempdoc 915 §C). This used to be an instance setter on one
-    // SsotCommitMetadataSource, so the status surface's own fresh instance computed a different
-    // fingerprint than the commit path did — a near-miss of exactly the kind this key exists to
-    // eliminate.
-    final int effectiveDimension = "bge-m3".equalsIgnoreCase(sparseModel) ? 1024 : 0;
-    IndexFingerprint.installEffectiveVectorDimension(
-        () -> effectiveDimension > 0 ? effectiveDimension : null);
-
     // Create runtime with embedding + SPLADE fingerprint overlays
     java.util.function.Supplier<io.justsearch.indexing.runtime.CommitMetadataSource>
         metadataSupplier =
@@ -1668,6 +1747,31 @@ public final class KnowledgeServer implements Closeable {
     // a predicate. Without this, enrichment-backfill document fetches reopened the searcher.
     builder.withForegroundActive(() -> foregroundLoad.inFlight() > 0);
     return builder;
+  }
+
+  /**
+   * The vector dimension the {@code FieldMapper} actually builds vector fields with, published
+   * process-wide so {@code index_fingerprint} records the dimension in force rather than the
+   * catalog's declared 768 (tempdoc 915 §C). It used to be an instance setter on one
+   * {@code SsotCommitMetadataSource}, so the status surface's own fresh instance computed a
+   * different fingerprint than the commit path did.
+   */
+  private static java.util.function.Supplier<Integer> effectiveVectorDimensionSupplier() {
+    boolean bgeM3 = "bge-m3".equalsIgnoreCase(EnvRegistry.SPARSE_MODEL.getString("splade"));
+    return () -> bgeM3 ? 1024 : null;
+  }
+
+  /**
+   * The metadata this runtime would commit — the "expected" side of every parity comparison. One
+   * builder, so the pre-open check, the open-time guard and the commit itself cannot disagree.
+   */
+  private java.util.Map<String, Object> expectedCommitMetadata(
+      java.util.function.Supplier<java.util.Optional<String>> fingerprintSupplier) {
+    return new EmbeddingMetadataOverlay(
+            new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource(),
+            fingerprintSupplier,
+            SpladeFingerprint::get)
+        .build();
   }
 
   private LuceneRuntimeBuilder buildReadOnlyRuntime(Path indexPath) {

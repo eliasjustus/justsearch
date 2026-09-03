@@ -51,56 +51,39 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
         Objects.requireNonNull(expectedMetadataSupplier, "expectedMetadataSupplier");
   }
 
-  @Override
-  public void checkOnOpen() {
-    Path indexPath = indexPathSupplier.get();
+  /**
+   * Reads the last commit's user data straight off the directory and diffs it against {@code
+   * expected}. No writer, no {@link RuntimeSession}, no open-mode choice — which is the point: the
+   * question "does this index have the shape this runtime writes?" is a property of the bytes on
+   * disk, and answering it inside the open path made the answer depend on HOW the index was being
+   * opened. A deferred open is a read-only open, so {@link
+   * io.justsearch.adapters.lucene.runtime.ComponentsFactory} logged the mismatch instead of raising
+   * it, and the automatic migration never started on the boot path most installs take (tempdoc 915
+   * §C.12, open item O7).
+   *
+   * <p>Returns an empty list when there is no index yet, so a first launch is silent.
+   *
+   * @param indexPath the generation directory to inspect
+   * @param expected the metadata this runtime would commit
+   * @return the parity diffs, empty when there are none
+   */
+  public static java.util.List<ParityDiagnostics.Diff> inspectCommittedParity(
+      Path indexPath, Map<String, Object> expected) {
     if (indexPath == null || !Files.exists(indexPath)) {
-      return;
+      return java.util.List.of();
     }
     try (Directory directory = FSDirectory.open(indexPath)) {
       if (!DirectoryReader.indexExists(directory)) {
-        return;
+        return java.util.List.of();
       }
       try (DirectoryReader reader = DirectoryReader.open(directory)) {
         Map<String, String> stored = reader.getIndexCommit().getUserData();
-        Map<String, Object> expected = expectedMetadataSupplier.get();
         warnIfFingerprintUncomputable(expected);
         // numDocs, not maxDoc: an index whose every document is deleted has nothing left whose
         // shape could be wrong, and migrating it would rebuild emptiness.
-        var diffs = ParityDiagnostics.diff(stored, expected, reader.numDocs());
-        if (diffs.isEmpty()) {
-          return;
-        }
-        for (var diff : diffs) {
-          log.warn(diff.marker());
-        }
-        if (allowMismatch()) {
-          // Operator escape hatch. Nothing sets this by default any more: the Head used to set it
-          // unconditionally at two sites, which is why the guard never enforced anything for its
-          // whole life (tempdoc 804, tempdoc 915 §C). It stays reachable so an operator can open a
-          // known-divergent index read-only for diagnosis, and nothing else.
-          log.warn("Parity mismatch detected but {}=true; continuing in WARN mode.", ALLOW_MISMATCH_PROP);
-          return;
-        }
-        // A mismatch on index_fingerprint means the bytes on disk were written under a different
-        // effective physical shape than this runtime produces. Surface it as SCHEMA_MISMATCH so the
-        // recovery path acts on it: under the production default BLUE_GREEN_MIGRATE the Worker
-        // builds a Green generation while Blue keeps serving reads (tempdoc 915 §C). boosts_fp is
-        // query-time config — it stays read-only until the config is realigned, never a reindex.
-        if (ParityDiagnostics.requiresRebuild(diffs)) {
-          throw new IndexRuntimeIOException(
-              IndexRuntimeIOException.Reason.SCHEMA_MISMATCH,
-              "Index was built with a different effective index shape than this runtime produces"
-                  + " (index_fingerprint mismatch). Triggering schema-mismatch recovery.",
-              null);
-        }
-        throw new IllegalStateException("Shard is read-only due to parity mismatch");
+        return ParityDiagnostics.diff(stored, expected, reader.numDocs());
       }
     } catch (IOException e) {
-      // Re-classify Lucene corruption (CorruptIndexException, IndexFormatTooOldException,
-      // IndexFormatTooNewException) as IndexRuntimeIOException(CORRUPT_INDEX). The recovery
-      // wrapper in RuntimeSession catches IndexRuntimeIOException and triggers backup-rebuild;
-      // raising ISE here would bypass recovery entirely (tempdoc 406 Gap D).
       if (isCorruption(e)) {
         throw new IndexRuntimeIOException(
             IndexRuntimeIOException.Reason.CORRUPT_INDEX,
@@ -109,6 +92,50 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       }
       throw new IllegalStateException("Failed to inspect index metadata for parity", e);
     }
+  }
+
+  /**
+   * The mismatch a rebuild-requiring diff means, as an exception. One message, whether it is raised
+   * before the open (pre-open detection) or during it (this guard) — a difference in wording would
+   * read as a difference in cause.
+   */
+  public static IndexRuntimeIOException schemaMismatch() {
+    return new IndexRuntimeIOException(
+        IndexRuntimeIOException.Reason.SCHEMA_MISMATCH,
+        "Index was built with a different effective index shape than this runtime produces"
+            + " (index_fingerprint mismatch). Triggering schema-mismatch recovery.",
+        null);
+  }
+
+  @Override
+  public void checkOnOpen() {
+    Path indexPath = indexPathSupplier.get();
+    Map<String, Object> expected = expectedMetadataSupplier.get();
+    var diffs = inspectCommittedParity(indexPath, expected);
+    if (diffs.isEmpty()) {
+      return;
+    }
+    for (var diff : diffs) {
+      log.warn(diff.marker());
+    }
+    if (allowMismatch()) {
+          // Operator escape hatch. Nothing sets this by default any more: the Head used to set it
+          // unconditionally at two sites, which is why the guard never enforced anything for its
+          // whole life (tempdoc 804, tempdoc 915 §C). It stays reachable so an operator can open a
+          // known-divergent index read-only for diagnosis, and nothing else.
+      log.warn("Parity mismatch detected but {}=true; continuing in WARN mode.", ALLOW_MISMATCH_PROP);
+      return;
+    }
+    // A mismatch on index_fingerprint means the bytes on disk were written under a different
+    // effective physical shape than this runtime produces. Surface it as SCHEMA_MISMATCH so the
+    // recovery path acts on it. This is the SECOND line of defence: KnowledgeServer decides before
+    // it chooses an open mode (tempdoc 915 §C.12), because a deferred open reaches here as
+    // readOnly and ComponentsFactory only logs then. boosts_fp is query-time config — it stays
+    // read-only until the config is realigned, never a reindex.
+    if (ParityDiagnostics.requiresRebuild(diffs)) {
+      throw schemaMismatch();
+    }
+    throw new IllegalStateException("Shard is read-only due to parity mismatch");
   }
 
   /**
