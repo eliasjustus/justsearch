@@ -34,9 +34,9 @@ export function assertRuntimeContractCompatible(manifest: {
   }
 }
 
-export function createRuntimeClient(options: RuntimeTransportOptions): RuntimeClient {
+export async function createRuntimeClient(options: RuntimeTransportOptions): Promise<RuntimeClient> {
   const transport = resolveRuntimeTransport(options);
-  return new Proxy(generated, {
+  const client = new Proxy(generated, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver) as unknown;
       if (typeof value !== 'function') return value;
@@ -46,4 +46,13 @@ export function createRuntimeClient(options: RuntimeTransportOptions): RuntimeCl
         );
     },
   }) as RuntimeClient;
+
+  const manifest = await withRuntimeTransport(transport, () => generated.getRuntimeManifest());
+  if (manifest.status !== 200) {
+    throw new Error(
+      `Cannot establish JustSearch runtime compatibility: manifest returned HTTP ${manifest.status}`,
+    );
+  }
+  assertRuntimeContractCompatible(manifest.data);
+  return client;
 }

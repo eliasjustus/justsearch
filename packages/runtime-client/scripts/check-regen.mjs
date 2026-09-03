@@ -11,7 +11,11 @@ const committedContract = join(root, 'src', 'generated', 'runtime-contract.ts');
 const candidateContract = join(root, 'src', 'generated', 'runtime-contract.check.ts');
 
 try {
-  const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'generate'], {
+  const npmExecPath = process.env.npm_execpath;
+  if (!npmExecPath) {
+    throw new Error('npm_execpath is unavailable; run this check through npm run check:regen');
+  }
+  const result = spawnSync(process.execPath, [npmExecPath, 'run', 'generate'], {
     cwd: root,
     env: {
       ...process.env,
@@ -20,6 +24,9 @@ try {
     },
     encoding: 'utf8',
   });
+  if (result.error) {
+    throw new Error(`failed to launch npm generate: ${result.error.message}`, { cause: result.error });
+  }
   if (result.status !== 0) {
     process.stdout.write(result.stdout ?? '');
     process.stderr.write(result.stderr ?? '');

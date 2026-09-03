@@ -84,6 +84,13 @@ Together: mutations and the MCP retrieval backend (`POST /mcp`) are token-protec
 reads are protected by the Host-allowlist; `/mcp` additionally enforces the MCP spec's Origin check
 on every method; remote access is barred by the loopback bind.
 
+The generated Node runtime client applies the same boundary in the outbound direction. Its async
+factory accepts only an `http://` loopback origin with no credentials, path, query, or fragment;
+every built-in Fetch request sets `redirect: "error"`, so a loopback server cannot redirect the SDK
+to a non-loopback destination. The factory also reads the public runtime manifest and verifies its
+Runtime Contract version before returning any operation methods. An injected Fetch implementation is
+a trusted host-integration seam and must honor the supplied redirect policy.
+
 **`GET /api/mcp/token` — the bootstrap, and why it is Origin-guarded too (reviewed 2026-08-13).**
 This route is token-**exempt** by construction: it is how a legitimate client obtains the token in
 the first place, so it cannot itself demand one. That makes it the softest point of the token

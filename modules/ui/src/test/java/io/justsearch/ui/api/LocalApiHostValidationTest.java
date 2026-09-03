@@ -1,8 +1,14 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.javalin.Javalin;
+import io.justsearch.ui.api.routes.RuntimeApiRoutes;
+import io.justsearch.ui.api.routes.StatusRoutes;
+import io.justsearch.ui.runtime.RuntimeManifestPublisher;
+import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,20 +63,28 @@ class LocalApiHostValidationTest {
   // restricts overriding Host, and its `allowRestrictedHeaders` property is read too early to toggle here.
 
   @Test
-  @DisplayName("Live: a token-exempt GET read with a foreign Host is rejected with 403")
-  void liveGetReadWithForeignHostIsForbidden() throws Exception {
+  @DisplayName("Live: every SDK GET route rejects a foreign Host with the declared 403 body")
+  void everySdkGetWithForeignHostIsForbidden() throws Exception {
     startHostGuardedServer();
-    RawResponse response = rawGet("evil.com", "/api/knowledge/search");
-    assertEquals(403, response.status(), "A foreign Host must be rejected even on a token-exempt GET read");
-    ContractSchemaAssertions.assertConforms(
-        "Host rejection status 403", "api-error-response.v1.json", response.body());
+    for (RouteContractPolicy.Contract contract : RouteContractPolicy.sdkContracts()) {
+      assertTrue(
+          contract.responseSchemas().containsKey(403),
+          () -> contract.key() + " must declare the global Host rejection");
+      RawResponse response = rawGet("evil.com", contract.path());
+      assertEquals(
+          403,
+          response.status(),
+          () -> contract.key() + " must reject a foreign Host before its handler runs");
+      ContractSchemaAssertions.assertConforms(
+          contract.key() + " status 403", "api-error-response.v1.json", response.body());
+    }
   }
 
   @Test
   @DisplayName("Live: the same GET read with the real loopback Host succeeds")
   void liveLoopbackHostSucceeds() throws Exception {
     startHostGuardedServer();
-    RawResponse response = rawGet("127.0.0.1:" + port, "/api/knowledge/search");
+    RawResponse response = rawGet("127.0.0.1:" + port, "/api/runtime/live");
     assertEquals(200, response.status(), "Legitimate loopback Host must pass the guard");
   }
 
@@ -101,10 +115,7 @@ class LocalApiHostValidationTest {
 
   private record RawResponse(int status, String body) {}
 
-  /**
-   * Minimal hermetic server that installs ONLY the Host-validation guard (the same predicate the
-   * production {@code install()} uses), plus a representative token-exempt GET read endpoint.
-   */
+  /** Hermetic SDK server using the production route registrars and security-filter installation. */
   private void startHostGuardedServer() {
     app = Javalin.create(cfg -> {
       cfg.showJavalinBanner = false;
@@ -113,16 +124,14 @@ class LocalApiHostValidationTest {
     // Production preserves a body already written by a filter while propagating its status.
     app.exception(io.javalin.http.HttpResponseException.class, (e, ctx) -> ctx.status(e.getStatus()));
 
-    app.before(
-        ctx -> {
-          if (!ApiSecurityFilters.isAllowedHost(ctx.header("Host"))) {
-            ctx.status(403);
-            ctx.json(Map.of("error", "Request Host is not a loopback host", "errorCode", "NON_LOOPBACK_HOST"));
-            throw new io.javalin.http.HttpResponseException(403, "Forbidden");
-          }
-        });
-
-    app.get("/api/knowledge/search", ctx -> ctx.json(Map.of("status", "ok", "results", java.util.List.of())));
+    RuntimeManifestPublisher publisher = mock(RuntimeManifestPublisher.class);
+    when(publisher.manifestPath()).thenReturn(Path.of("build", "host-validation", "manifest.json"));
+    new RuntimeApiRoutes(publisher).register(app);
+    StatusRoutes.registerLifecycleRoutes(
+        app,
+        ctx -> ctx.json(Map.of("status", "ok")),
+        ctx -> ctx.json(Map.of("status", "ok")));
+    new ApiSecurityFilters(false, null, mock(EventBuffer.class), null, null).install(app);
 
     app.start("127.0.0.1", 0);
     port = app.port();

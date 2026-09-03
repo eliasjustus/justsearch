@@ -48,7 +48,10 @@ export async function runtimeFetch<T>(url: string, init: RequestInit): Promise<T
   if (!transport) {
     throw new Error('Generated runtime operation called without createRuntimeClient()');
   }
-  const response = await transport.fetch(new URL(url, transport.baseUrl), init);
+  const response = await transport.fetch(new URL(url, transport.baseUrl), {
+    ...init,
+    redirect: 'error',
+  });
   const body = await response.text();
   const data = body.length === 0 ? undefined : JSON.parse(body);
   return { data, status: response.status, headers: response.headers } as T;

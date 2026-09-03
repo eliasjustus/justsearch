@@ -13,10 +13,17 @@ for (const legalFile of ['LICENSE', 'NOTICE']) {
     process.exit(1);
   }
 }
-const result = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['pack', '--dry-run', '--json'], {
+const npmExecPath = process.env.npm_execpath;
+if (!npmExecPath) {
+  throw new Error('npm_execpath is unavailable; run this check through npm run check:pack');
+}
+const result = spawnSync(process.execPath, [npmExecPath, 'pack', '--dry-run', '--json'], {
   cwd: root,
   encoding: 'utf8',
 });
+if (result.error) {
+  throw new Error(`failed to launch npm pack: ${result.error.message}`, { cause: result.error });
+}
 if (result.status !== 0) {
   process.stdout.write(result.stdout ?? '');
   process.stderr.write(result.stderr ?? '');

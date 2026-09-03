@@ -74,10 +74,11 @@ The policy also derives each route's security declaration from `ApiSecurityFilte
 metadata cannot silently relax the local API trust boundary.
 
 The package deliberately excludes mutations, MCP, token bootstrap, `HEAD` probe aliases, and the
-manifest SSE stream. MCP clients should use the official MCP TypeScript SDK. The generated client
-fails closed on non-loopback base URLs, and `assertRuntimeContractCompatible` accepts exactly
-Runtime Contract `0.2.0`. A new runtime-contract version therefore requires an explicit client
-compatibility decision rather than an optimistic range.
+manifest SSE stream. MCP clients should use the official MCP TypeScript SDK. The async client
+factory fails closed before returning a client: it rejects non-loopback base URLs, disables HTTP
+redirects, reads the runtime manifest, and requires an advertised Runtime Contract version accepted
+by `assertRuntimeContractCompatible` (currently exactly `0.2.0`). A new runtime-contract version
+therefore requires an explicit client compatibility decision rather than an optimistic range.
 
 Regenerate and verify from the repository root:
 

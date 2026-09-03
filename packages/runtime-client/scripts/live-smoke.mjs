@@ -8,7 +8,7 @@ if (!baseUrl) {
   throw new Error('Pass the JustSearch runtime base URL as the first argument');
 }
 
-const client = createRuntimeClient({ baseUrl });
+const client = await createRuntimeClient({ baseUrl });
 const manifest = await client.getRuntimeManifest();
 const mirror = await client.getWellKnownRuntimeManifest();
 const readiness = await client.getRuntimeReadiness();

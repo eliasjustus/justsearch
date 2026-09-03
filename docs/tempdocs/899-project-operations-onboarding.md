@@ -506,11 +506,11 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   API artifact or dependency remains. `orval@8.27.0` generated deterministic Fetch/ESM output and
   preserved the typed `200`/`403`/`500`/`503` unions, so it is pinned with TypeScript `5.9.3` and
   `@types/node@20.19.43`.
-- `@justsearch/runtime-client@0.1.0` is a pack-ready, ESM-only Node 20+ package. Only generated
-  endpoint methods/types plus a small loopback-only, injected-fetch, per-client transport and an
-  exact Runtime Contract `0.2.0` compatibility check are exposed. Package inputs/config/source are
-  excluded from the tarball; `LICENSE` and `NOTICE` are required and checked against repository
-  copies. npm publication was not performed.
+- `@justsearch/runtime-client@0.1.0` is a pack-ready, ESM-only Node 20+ package. Its async factory
+  validates the loopback origin, disables redirects, verifies the advertised Runtime Contract before
+  returning operation methods, and preserves injected-fetch isolation per client. Package inputs/
+  config/source are excluded from the tarball; `LICENSE` and `NOTICE` are required and checked
+  against repository copies. npm publication was not performed.
 - CI's existing Build lane installs the pinned generator under Node 24 and rejects generated-source
   drift. After the repository assemble, it switches to Node 20 and runs package build/tests plus
   packed-file inspection. The app-ui unit lane independently closes Java route-source → OpenAPI
@@ -518,20 +518,28 @@ clipboard workstreams remain separate changes because they do not gate the six-o
 - Verification: `./gradlew.bat :modules:ui:test` passed (938 tests, one skipped before the final two
   HTTP assertions; the full rerun after those assertions also passed), launcher
   `UnreferencedCodeTest` passed, and `./gradlew.bat build -x test` passed (251 tasks). In
-  `packages/runtime-client`, `npm run generate`, `npm run check:regen`, `npm test`, and
-  `npm run check:pack` passed; `npx --yes node@20 --test test/runtime-client.test.mjs` passed 4/4.
+  `packages/runtime-client`, `npm run generate`, the repaired Windows-safe `npm run check:regen`,
+  `npm test`, and `npm run check:pack` passed; the Node behavior suite now has seven cases, including
+  a real two-server redirect refusal and pre-operation compatibility failure, and passed 7/7 under
+  Node 20.
   The `llmstxt --check`, `skills-sync --check`, canonical-link, module-dependency, runtime-config,
   workflow-trigger, and workflow-policy checks passed, as did `git diff --check` before final
   closeout.
-- Outside-plan live evidence: the built package called all six operations against the active local
-  JustSearch Runtime Contract `0.2.0` process and passed with readiness `503` and health `200`. That
-  process was a live jseval backend owned by worktree 893, so this is honest cross-worktree contract
-  compatibility evidence, not a claim that this worktree's server distribution was launched.
+- Unverified historical context: the session observed the built package calling all six operations
+  against a local Runtime Contract `0.2.0` process owned by worktree 893, with readiness `503` and
+  health `200`. No durable run id, output artifact, or evidence bundle was retained, so this is not a
+  verification claim and does not substitute for the owned-stack proof below.
 - The independent refute-first review found three issues, all fixed before closeout: nested manifest
   objects now expose their actual typed public fields while retaining the contract's additive-field
   tolerance; the client compatibility constant is generated from the OpenAPI runtime-contract
   extension and its test reads that same extension; and the factory rejects path-prefixed base URLs
   while generated absolute paths resolve from the loopback origin.
+- A second refute-first review found four substantive gaps. Redirect-following could escape the
+  loopback origin; compatibility checking was optional; both npm subprocess gates failed silently on
+  native Windows/Node 24; and Host `403` coverage used a copied filter against an unrelated route.
+  The transport now forces `redirect: "error"`, the async factory verifies compatibility before it
+  returns a client, npm subprocesses run through the active npm CLI with launch errors surfaced, and
+  `LocalApiHostValidationTest` installs the production filter set and exercises all six SDK routes.
 - Remaining proof before publication: run the same six-operation smoke against an owned stack built
   from this worktree. After the neighboring jseval run released the shared port, the dev-runner
   rejected this Codex sibling worktree path as `INVALID_DIST_FROM`. A clean detached worktree at the
@@ -540,7 +548,8 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   reported that its long-lived MCP process could not resolve a JDK >=24, although `java -XshowSettings`
   in the shell proved PATH Java is JDK 25 at `F:\scoop\apps\temurin25-jdk\current`. No backend was started.
   Repository policy forbids bypassing the runner, and mutating machine-wide environment or disposable
-  tooling would not be valid product evidence.
+  tooling would not be valid product evidence. No durable runner output was retained, so reproduce the
+  JDK-resolution failure rather than treating this historical diagnosis as verified evidence.
 
 ### Design reach
 
