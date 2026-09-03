@@ -199,6 +199,30 @@ public final class KnowledgeServer implements Closeable {
    */
   private boolean corruptionRecoveryRebuildStarted;
 
+  /**
+   * Set when this boot found a schema mismatch it has already tried to rebuild away
+   * {@link IndexGenerationManager#MAX_AUTO_REBUILD_ATTEMPTS} times. The Worker then serves the
+   * existing index READ-ONLY and does not ingest: it must still finish starting, because a Worker
+   * that returns early from {@code start()} never binds gRPC, never writes its port, and exits with
+   * no explanation — the same silent dead-end the old FAIL_CLOSED default produced, which is the
+   * whole thing this brake exists to avoid (tempdoc 915 §C.8).
+   *
+   * <p>The durable form of this state is {@code auto_rebuild_*} in {@code state.json}; this field is
+   * only the in-process consequence for the remainder of {@code start()}.
+   */
+  private volatile boolean rebuildBrakeExhausted;
+
+  /**
+   * Whether this boot took the exhausted-brake path. A test seam, and a necessary one: every
+   * externally visible consequence of that path (a bound port, a served search, a status state
+   * read out of state.json) is ALSO true of an ordinary boot, so a test asserting only those
+   * passes whether or not the branch ran — which is exactly how the first version of
+   * BrakeExhaustedWorkerServesReadOnlyTest passed against a restored early return.
+   */
+  boolean rebuildBrakeExhaustedForTest() {
+    return rebuildBrakeExhausted;
+  }
+
   // Migration enumerator progress (best-effort observability)
   private final AtomicBoolean migrationEnumeratorRunning = new AtomicBoolean(false);
   private final AtomicLong migrationEnumeratorRootsTotal = new AtomicLong(0L);
@@ -543,6 +567,11 @@ public final class KnowledgeServer implements Closeable {
       java.util.function.Supplier<java.util.Optional<String>> fpSupplier =
           () -> embeddingFingerprintSupplier.get().get();
 
+      // The schema-mismatch handling below covers BOTH branches. It used to wrap only the normal
+      // one, so a resumed migration whose Green was itself mismatched threw straight out of start()
+      // — no policy branch, no brake, no read-only fall-through — which is the repeat-failure shape
+      // the brake exists to bound (tempdoc 915 §C.8).
+      try {
       if (inProgress) {
         // Serve search from active generation (Blue) while writing to building generation (Green).
         this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
@@ -561,7 +590,7 @@ public final class KnowledgeServer implements Closeable {
         // swaps the gRPC wrappers via reconstructAppServicesAfterDeferredUpgrade()
         // so write methods become available without restarting the gRPC server.
         boolean useDeferredWriter = hasLuceneSegments(activeIndexPath);
-        try {
+        {
           LuceneRuntimeBuilder builder =
               buildIndexRuntime(activeIndexPath, fpSupplier)
                   .withBuildState(LuceneRuntimeTypes.BuildState.COMPLETE);
@@ -651,8 +680,10 @@ public final class KnowledgeServer implements Closeable {
               }
             }
           }
-        } catch (IndexRuntimeIOException e) {
-          String schemaMismatchPolicy = rc.index().schemaMismatchPolicy();
+        }
+      }
+      } catch (IndexRuntimeIOException e) {
+        String schemaMismatchPolicy = rc.index().schemaMismatchPolicy();
           if (e.reason() == IndexRuntimeIOException.Reason.SCHEMA_MISMATCH
               && "blue_green_migrate".equalsIgnoreCase(schemaMismatchPolicy)) {
             // Repeat-rebuild brake. A green that never finishes leaves the same mismatch on the
@@ -674,49 +705,52 @@ public final class KnowledgeServer implements Closeable {
               log.error(
                   "Schema mismatch on active generation {}, but {} automatic rebuilds for the same"
                       + " target fingerprint have already been attempted. Serving the existing index"
-                      + " read-only instead of rebuilding again. Remedy: rebuild the index from the"
-                      + " UI, or clear the auto_rebuild_* fields in state.json to grant a fresh"
-                      + " budget.",
+                      + " read-only and STOPPING ingestion instead of rebuilding again. The Worker"
+                      + " still starts and search keeps working; status reports"
+                      + " index.rebuild_brake_exhausted. RECOVERY: run Rebuild index from the UI"
+                      + " (core.rebuild-index) - a successful rebuild promotes the new generation"
+                      + " and clears the brake. Clearing the auto_rebuild_* fields in state.json"
+                      + " grants a fresh automatic budget without rebuilding.",
                   activeIndexPath,
                   IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
                   e);
               this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
               this.ingestLifecycle = this.searchLifecycle;
               this.buildingIndexPath = null;
-              return;
+              this.rebuildBrakeExhausted = true;
+            } else {
+              // Auto-start Blue/Green migration on schema mismatch when enabled.
+              log.warn(
+                  "Schema mismatch detected on active generation {}. Starting Blue/Green migration"
+                      + " (policy={}, attempt {} of {})...",
+                  activeIndexPath,
+                  schemaMismatchPolicy,
+                  attempt,
+                  IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
+                  e);
+
+              // Blue: open existing index in read-only mode for serving search.
+              this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+
+              // Green: create a new generation and start a writable runtime.
+              IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
+              String greenGenId =
+                  migrated == null ? null : migrated.building_generation();
+              if (greenGenId == null || greenGenId.isBlank()) {
+                throw new IOException(
+                    "Failed to start migration: building_generation missing in state.json");
+              }
+              this.buildingIndexPath = genManager.resolveGenerationPathStrict(greenGenId);
+              this.ingestLifecycle =
+                  buildIndexRuntime(buildingIndexPath, fpSupplier)
+                      .withBuildState(LuceneRuntimeTypes.BuildState.BUILDING)
+                      .open();
+
+              // Kick off background enumeration to populate Green.
+              startMigrationEnumeratorBestEffort(rc);
             }
-            // Auto-start Blue/Green migration on schema mismatch when enabled.
-            log.warn(
-                "Schema mismatch detected on active generation {}. Starting Blue/Green migration"
-                    + " (policy={}, attempt {} of {})...",
-                activeIndexPath,
-                schemaMismatchPolicy,
-                attempt,
-                IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
-                e);
-
-            // Blue: open existing index in read-only mode for serving search.
-            this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
-
-            // Green: create a new generation and start a writable runtime.
-            IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
-            String greenGenId =
-                migrated == null ? null : migrated.building_generation();
-            if (greenGenId == null || greenGenId.isBlank()) {
-              throw new IOException(
-                  "Failed to start migration: building_generation missing in state.json");
-            }
-            this.buildingIndexPath = genManager.resolveGenerationPathStrict(greenGenId);
-            this.ingestLifecycle =
-                buildIndexRuntime(buildingIndexPath, fpSupplier)
-                    .withBuildState(LuceneRuntimeTypes.BuildState.BUILDING)
-                    .open();
-
-            // Kick off background enumeration to populate Green.
-            startMigrationEnumeratorBestEffort(rc);
-          } else {
-            throw e;
-          }
+        } else {
+          throw e;
         }
       }
 
@@ -733,7 +767,11 @@ public final class KnowledgeServer implements Closeable {
 
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
       // to the background task (after IndexWriter opens). In migration mode, run synchronously.
-      if (ingestLifecycle != null && !(ingestLifecycle instanceof DeferredRuntime)) {
+      // Skipped when the rebuild brake is exhausted: ingest is the READ-ONLY Blue runtime then, so
+      // there is no writer to drain into.
+      if (!rebuildBrakeExhausted
+          && ingestLifecycle != null
+          && !(ingestLifecycle instanceof DeferredRuntime)) {
         drainSwitchBufferBestEffort();
       }
 
@@ -822,7 +860,21 @@ public final class KnowledgeServer implements Closeable {
       tPrev = tPhase;
 
       // 6. Start indexing loop (runs immediately; null-gates embedding/SPLADE until wired)
-      appServices.startIndexingLoop();
+      // ...unless the rebuild brake is exhausted. The loop's whole job is to write into
+      // ingestLifecycle, which is the READ-ONLY Blue runtime in that state, so starting it would
+      // spend the machine turning every queued job into an exception. Search still serves, and the
+      // status surface says why ingestion stopped (BLOCKED_REBUILD_BRAKE ->
+      // index.rebuild_brake_exhausted). Recovery is an operator-initiated rebuild, which clears the
+      // brake at promotion (IndexGenerationManager.promoteBuildingGenerationToActive).
+      if (rebuildBrakeExhausted) {
+        log.error(
+            "Ingestion is STOPPED: the automatic-rebuild budget for this index shape is spent."
+                + " Search continues to serve the existing index read-only. To recover, run"
+                + " Rebuild index from the UI, which starts a fresh migration and restores the"
+                + " budget when it completes.");
+      } else {
+        appServices.startIndexingLoop();
+      }
 
       // 7. Start sentinel thread for liveness monitoring
       startSentinelThread();

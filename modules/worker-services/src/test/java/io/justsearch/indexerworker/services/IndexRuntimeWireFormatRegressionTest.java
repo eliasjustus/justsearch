@@ -39,6 +39,9 @@ import org.junit.jupiter.api.io.TempDir;
  */
 final class IndexRuntimeWireFormatRegressionTest {
 
+  private static final tools.jackson.databind.ObjectMapper JSON =
+      new tools.jackson.databind.ObjectMapper();
+
   @TempDir Path tmp;
 
   @Test
@@ -287,21 +290,20 @@ final class IndexRuntimeWireFormatRegressionTest {
           Files.readString(tmp.resolve("telemetry").resolve("metrics-migration-reasons.ndjson"));
     }
 
-    List<String> lines = anyLineWithName(ndjson, "index.runtime.commit_total");
-    assertTrue(
-        lines.stream()
-            .anyMatch(
-                l -> l.contains("\"reason\":\"migration/cutover\"") && l.contains("\"value\":1")),
+    // Parsed, not substring-matched: "value":1 can appear anywhere in a line (another tag, a
+    // bucket count), so a contains() pair proves the two fragments are on the same LINE and
+    // nothing more — it would pass on a line whose reason and value belong to different series.
+    Map<String, Long> byReason = commitTotalsByReason(ndjson);
+    assertEquals(
+        1L,
+        byReason.get("migration/cutover"),
         "the cutover commit must reach the wire under its own label; got:\n" + ndjson);
-    assertTrue(
-        lines.stream()
-            .anyMatch(
-                l ->
-                    l.contains("\"reason\":\"migration/switch-buffer-replay\"")
-                        && l.contains("\"value\":2")),
+    assertEquals(
+        2L,
+        byReason.get("migration/switch-buffer-replay"),
         "the switch-buffer replay must reach the wire under its own label; got:\n" + ndjson);
     assertFalse(
-        lines.stream().anyMatch(l -> l.contains("\"reason\":\"unknown\"")),
+        byReason.containsKey("unknown"),
         "neither migration commit may fall through to unknown; got:\n" + ndjson);
   }
 
@@ -320,6 +322,24 @@ final class IndexRuntimeWireFormatRegressionTest {
       if (line.contains("\"name\":\"" + name + "\"")) {
         out.add(line);
       }
+    }
+    return out;
+  }
+
+  /**
+   * Reads {@code index.runtime.commit_total} out of the NDJSON as a real map from the {@code reason}
+   * TAG to its value, so an assertion is about one series rather than about two substrings that
+   * happen to share a line.
+   */
+  private static Map<String, Long> commitTotalsByReason(String ndjson) {
+    Map<String, Long> out = new HashMap<>();
+    for (String line : anyLineWithName(ndjson, "index.runtime.commit_total")) {
+      tools.jackson.databind.JsonNode node = JSON.readTree(line);
+      tools.jackson.databind.JsonNode tags = node.path("tags");
+      if (tags.isMissingNode() || !tags.has("reason")) {
+        continue;
+      }
+      out.merge(tags.get("reason").asString(), node.path("value").asLong(), Long::sum);
     }
     return out;
   }

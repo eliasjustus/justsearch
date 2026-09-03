@@ -1,6 +1,7 @@
 package io.justsearch.adapters.lucene.commit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -61,4 +62,55 @@ final class FingerprintInputSourcesTest {
     assertTrue(lucene.matches("\\d+.*"), "Lucene version should start with a digit: " + lucene);
     assertTrue(icu.matches("\\d+.*"), "ICU version should start with a digit: " + icu);
   }
+
+  /**
+   * Tempdoc 915 §C.3 — the analysis libraries are hashed at {@code major.minor}, deliberately. A
+   * Lucene or ICU PATCH release does not change analysis output by either project's compatibility
+   * policy, and hashing it would hand every install a full reindex for a dependency bump nobody
+   * asked about. The residual risk is named there: a patch that DID change tokenisation goes
+   * undetected.
+   */
+  @Test
+  void aPatchLevelLibraryBumpDoesNotMoveTheFingerprint() {
+    assertEquals("10.3", SsotCommitMetadataSource.majorMinor("10.3.1"));
+    assertEquals(
+        SsotCommitMetadataSource.majorMinor("10.3.1"),
+        SsotCommitMetadataSource.majorMinor("10.3.9"),
+        "a patch bump must be invisible to the fingerprint");
+    assertNotEquals(
+        SsotCommitMetadataSource.majorMinor("10.3.1"),
+        SsotCommitMetadataSource.majorMinor("10.4.0"),
+        "a MINOR bump must still move it — that is the analysis change this input exists to catch");
+    assertEquals("77", SsotCommitMetadataSource.majorMinor("77"), "no minor part: keep what we have");
+    assertEquals("", SsotCommitMetadataSource.majorMinor(null));
+  }
+
+  /**
+   * Tempdoc 915 §C — the chunk constants have exactly one owner. They were briefly mirrored into
+   * this module with a drift test guarding the copy; a mirror plus a guard is still two values, and
+   * the guard only fails after someone has already changed one of them. {@code ChunkSplitter} lives
+   * in {@code modules:indexing}, which adapters-lucene depends on, so there is no reason for a copy.
+   */
+  @Test
+  void theChunkFingerprintInputsComeFromTheSplitterNotFromACopy() {
+    assertEquals(
+        2000,
+        io.justsearch.indexing.chunking.ChunkSplitter.CHUNK_THRESHOLD_CHARS,
+        "the splitter owns the threshold");
+    assertEquals(
+        4096,
+        io.justsearch.indexing.chunking.ChunkSplitter.CONTENT_PREVIEW_MAX_CHARS,
+        "the splitter owns the preview bound");
+    for (var f : SsotCommitMetadataSource.class.getDeclaredFields()) {
+      assertNotEquals(
+          "CHUNK_THRESHOLD_CHARS",
+          f.getName(),
+          "the mirror is gone: read the splitter's constant, do not re-copy it");
+      assertNotEquals(
+          "CONTENT_PREVIEW_MAX_CHARS",
+          f.getName(),
+          "the mirror is gone: read the splitter's constant, do not re-copy it");
+    }
+  }
+
 }

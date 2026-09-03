@@ -59,6 +59,19 @@ final class SchemaMismatchPolicyBranchTest {
     };
   }
 
+  /**
+   * The other way an index reaches these branches: not a DIFFERENT fingerprint but NO fingerprint.
+   * Every index built before the key existed looks like this, so it is the shape the whole installed
+   * base arrives in — and a policy branch that behaved differently for it would be discovered by
+   * users, not by tests (tempdoc 915 §C.5a).
+   */
+  private static CommitMetadataSource withoutFingerprint() {
+    Map<String, Object> base = new HashMap<>(new SsotCommitMetadataSource().build());
+    base.remove("index_fingerprint");
+    Map<String, Object> frozen = Map.copyOf(base);
+    return () -> frozen;
+  }
+
   private static final String STORED = "a".repeat(64);
   private static final String EXPECTED = "b".repeat(64);
 
@@ -74,6 +87,24 @@ final class SchemaMismatchPolicyBranchTest {
     r.indexingCoordinator()
         .indexSingle(
             new IndexDocument(Map.of(SchemaFields.DOC_ID, "seed", SchemaFields.DOC_UID, "seed#0")));
+    r.commitOps().commitAndTrack(CommitReason.DRAIN);
+    r.close();
+    return docCount(dir);
+  }
+
+  /** Seeds a committed index carrying NO {@code index_fingerprint}, and returns its doc count. */
+  private int seedLegacyIndex(Path dir) throws Exception {
+    RunningRuntime r =
+        IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(4),
+                withoutFingerprint(),
+                new JsonSchemaCommitMetadataValidator())
+            .atPath(dir)
+            .open();
+    r.indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(SchemaFields.DOC_ID, "legacy", SchemaFields.DOC_UID, "legacy#0")));
     r.commitOps().commitAndTrack(CommitReason.DRAIN);
     r.close();
     return docCount(dir);
@@ -203,6 +234,93 @@ final class SchemaMismatchPolicyBranchTest {
                     p -> p.getFileName().toString().startsWith(dir.getFileName() + ".bak-")),
                 "the old index must be moved aside to a .bak- sibling, not deleted, before the"
                     + " empty rebuild replaces it");
+          }
+        });
+  }
+
+  @Test
+  void aLegacyIndexUnderBlueGreenMigrateReachesSchemaMismatchAndKeepsEveryDocument()
+      throws Exception {
+    Path dir = tempDir.resolve("legacy-blue-green");
+    Files.createDirectories(dir);
+    int seeded = seedLegacyIndex(dir);
+    assertEquals(1, seeded, "the legacy index has a document to lose");
+
+    withPolicy(
+        "BLUE_GREEN_MIGRATE",
+        () -> {
+          IndexRuntimeIOException e =
+              assertThrows(
+                  IndexRuntimeIOException.class,
+                  () ->
+                      IndexSchema.fromCatalog(
+                              FieldCatalogDef.forTesting(4),
+                              withFingerprint(EXPECTED),
+                              new JsonSchemaCommitMetadataValidator())
+                          .atPath(dir)
+                          .open());
+          assertEquals(
+              IndexRuntimeIOException.Reason.SCHEMA_MISMATCH,
+              e.reason(),
+              "an index with no recorded shape must take the same route as one with a different"
+                  + " shape — this is the upgrade path the entire installed base walks");
+          assertEquals(
+              seeded, docCount(dir), "Blue must survive the migration that the absence triggers");
+        });
+  }
+
+  @Test
+  void aLegacyIndexUnderFailClosedRefusesAndKeepsEveryDocument() throws Exception {
+    Path dir = tempDir.resolve("legacy-fail-closed");
+    Files.createDirectories(dir);
+    int seeded = seedLegacyIndex(dir);
+
+    withPolicy(
+        "FAIL_CLOSED",
+        () -> {
+          IndexRuntimeIOException e =
+              assertThrows(
+                  IndexRuntimeIOException.class,
+                  () ->
+                      IndexSchema.fromCatalog(
+                              FieldCatalogDef.forTesting(4),
+                              withFingerprint(EXPECTED),
+                              new JsonSchemaCommitMetadataValidator())
+                          .atPath(dir)
+                          .open());
+          assertEquals(IndexRuntimeIOException.Reason.SCHEMA_MISMATCH, e.reason());
+          assertEquals(seeded, docCount(dir), "refusing must not cost the user a document");
+        });
+  }
+
+  /**
+   * The destructive branch, reached by an absence rather than a difference. Pinned because this is
+   * precisely the combination that would hurt most if it were ever made the production default: a
+   * legacy index is what every existing install has, and this branch empties it.
+   */
+  @Test
+  void aLegacyIndexUnderRebuildBackupFirstIsEmptiedInPlaceAfterBackingItUp() throws Exception {
+    Path dir = tempDir.resolve("legacy-rebuild-backup");
+    Files.createDirectories(dir);
+    assertEquals(1, seedLegacyIndex(dir));
+
+    withPolicy(
+        "REBUILD_BACKUP_FIRST",
+        () -> {
+          try (RunningRuntime r =
+              IndexSchema.fromCatalog(
+                      FieldCatalogDef.forTesting(4),
+                      withFingerprint(EXPECTED),
+                      new JsonSchemaCommitMetadataValidator())
+                  .atPath(dir)
+                  .open()) {
+            assertEquals(0, r.indexCountOps().docCount());
+          }
+          try (var siblings = Files.list(dir.getParent())) {
+            assertTrue(
+                siblings.anyMatch(
+                    p -> p.getFileName().toString().startsWith(dir.getFileName() + ".bak-")),
+                "even the destructive branch must move the old index aside, not delete it");
           }
         });
   }

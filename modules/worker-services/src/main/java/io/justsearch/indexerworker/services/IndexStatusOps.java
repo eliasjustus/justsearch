@@ -5,6 +5,7 @@ import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
+import io.justsearch.adapters.lucene.runtime.ParityDiagnostics;
 import io.justsearch.adapters.lucene.runtime.QueryFilterBuilder;
 import io.justsearch.adapters.lucene.runtime.VectorFormatDetector;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
@@ -425,7 +426,13 @@ final class IndexStatusOps {
             .setSearchableDocCount(searchableDocCount)
             .setIsHealthy(healthy)
             .setState(state)
-            .setLastCommitTimestamp(indexingLoop.getLastCommitTime())
+            // Null-tolerant on purpose: a Worker can legitimately have no indexing loop.
+            // Deferred-writer mode leaves it null until the writer upgrade reconstructs
+            // appServices (DefaultWorkerAppServices.startIndexingLoop already guards for
+            // that), and an exhausted rebuild brake never starts one at all. Dereferencing
+            // it here threw the whole status response into its ERROR fallback, which is how
+            // the reason code for the brake became unreachable (tempdoc 915 §C.8).
+            .setLastCommitTimestamp(indexingLoop == null ? 0L : indexingLoop.getLastCommitTime())
             // Tempdoc 885 item 3: signal_bus_activity_ts is no longer populated. The Worker no
             // longer reads the Head-written activity byte at all (foreground load is observed
             // in-process), so reporting it would be reporting a value nothing acts on. The proto
@@ -1144,10 +1151,14 @@ final class IndexStatusOps {
       return "BLOCKED_REBUILD_BRAKE";
     }
     if (stored.isEmpty()) {
-      // Legacy index without a fingerprint, or one committed while an input was indeterminate.
-      // Check if there are any docs - if so, it's a legacy index needing reindex
+      // No recorded shape: either the index predates the key or a commit was made while an
+      // input was indeterminate. Which one it is cannot be told from the commit, so the same
+      // predicate the open-time guard uses decides it here — one rule, two consumers, so a
+      // brand-new empty index is never reported as needing a rebuild by one and not the other.
       long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
-      return docCount > 0 ? "BLOCKED_LEGACY" : "COMPATIBLE";
+      return ParityDiagnostics.isIndexWithoutRecordedFingerprint(stored, docCount)
+          ? "BLOCKED_LEGACY"
+          : "COMPATIBLE";
     }
     return current.equals(stored) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
   }

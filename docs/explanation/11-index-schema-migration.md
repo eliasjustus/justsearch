@@ -195,14 +195,32 @@ the decision to an operator (`IndexGenerationManager`, tempdoc 915 §C):
   bucket would let three boots with an unreadable model file exhaust the budget for an unrelated real
   shape, so the index that genuinely needed a rebuild would never get one.
 
-**On exhaustion the Worker does not fail to start.** Refusing to open would be the same dead-end the
-old `FAIL_CLOSED` default produced, three boots later and with no explanation. Instead the existing
-index is opened **read-only**: search keeps serving everything already indexed, ingestion stops, and
-the status surface carries it explicitly —
-`indexSchemaCompatState = BLOCKED_REBUILD_BRAKE` → `reindexRequiredReason = rebuild_brake_exhausted`
-→ the `index.rebuild_brake_exhausted` readiness reason code, worded and given a rebuild remedy on the
-frontend. The operator remedies are to rebuild from the UI, or to clear the `auto_rebuild_*` fields in
-`state.json` to grant a fresh budget.
+**On exhaustion the Worker finishes starting.** Refusing to open would be the same dead-end the old
+`FAIL_CLOSED` default produced, three boots later and with no explanation. So the brake sets a state
+and `start()` continues through the rest of its sequence rather than returning: the gRPC server is
+created and bound, the port is written to the signal bus, `appServices` (and with it the status
+surface) is constructed, and the sentinel thread runs. Concretely, in that state:
+
+| Startup step | Behaviour with the brake exhausted |
+|---|---|
+| Lucene runtimes | the active generation opens **read-only**; ingest and search share it, and no Green is allocated |
+| switch-buffer drain | skipped — there is no writer to drain into |
+| `createGrpcServer` + `start` | runs; the Worker binds a real port |
+| `signalBus.writePort` | runs; the Head discovers the Worker normally |
+| indexing loop | **not started**, and the reason is logged at ERROR — its only job is to write into a read-only runtime |
+| sentinel thread | runs |
+
+Search therefore keeps serving everything already indexed, ingestion stops, and the status surface
+says so explicitly: `schemaCompatState = BLOCKED_REBUILD_BRAKE` →
+`reindexRequiredReason = rebuild_brake_exhausted` → the `index.rebuild_brake_exhausted` readiness
+reason code, worded and given a rebuild remedy on the frontend.
+
+**Recovery is a user-initiated rebuild.** `core.rebuild-index` (`RebuildIndexHandler` →
+`startMigration(user_requested_rebuild)`) allocates a Green generation beside the read-only Blue, and
+the cutover that completes it calls `promoteBuildingGenerationToActive()`, which clears
+`auto_rebuild_*` — so a successful rebuild both fixes the index and restores the automatic budget.
+Clearing `auto_rebuild_*` in `state.json` by hand grants a fresh automatic budget without rebuilding,
+which is the right move only when the cause of the repeated failures has been fixed some other way.
 
 ## Enforcement status (2026-09)
 
@@ -226,6 +244,31 @@ anything for its whole prior life (tempdoc 804 §D1).
   fires only when the on-disk index genuinely cannot accept writes under the current field mapping.
   That is the detector the “reindex did nothing” failure mode originally needed, and it is unaffected
   by the 915 change.
+
+### Known limitation: a deferred open does not raise the mismatch (2026-09)
+
+Where the guard is *consulted* it enforces. But on the boot path most installs take, the active
+generation is opened with `openDeferred()` (chosen whenever the index has segments), and
+`RuntimeSession` treats `Mode.DEFERRED` as a read-only open — so `ComponentsFactory` takes its
+`readOnly` branch and **logs** the mismatch instead of raising it:
+
+> `Index open guard reported a mismatch at {} but continuing in read-only mode: {}`
+
+The mismatch then reappears when the background writer upgrade runs
+(`DeferredRuntime.upgradeWriter()` inside `initDeferredModels()`), where it is caught as
+`Background model initialization failed (non-fatal)`.
+
+The observable consequence: on such a boot the index opens, **search keeps serving**, the status
+surface still reports `BLOCKED_MISMATCH` with `reindex_required`, and the *user* is told to reindex —
+but the automatic blue/green rebuild does **not** start by itself, because
+`KnowledgeServer.start()`'s `SCHEMA_MISMATCH` handler is never entered. Automatic migration is
+reached today from the other two paths: a resumed migration whose Green is mismatched, and an active
+generation opened non-deferred.
+
+This is a gap in reachability, not in the policy: `index.schema_mismatch.policy` does what this
+document describes wherever the exception is raised. Closing it is tracked as tempdoc 915 open item
+O7 — the choice is between distinguishing `DEFERRED` from `READ_ONLY` at the guard call site and
+routing `upgradeWriter()`'s `SCHEMA_MISMATCH` into the same handler.
 
 ## Blue/Green migration model (current MVP)
 

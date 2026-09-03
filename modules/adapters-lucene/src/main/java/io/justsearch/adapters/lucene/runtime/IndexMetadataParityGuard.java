@@ -24,9 +24,22 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
   private static final Logger log = LoggerFactory.getLogger(IndexMetadataParityGuard.class);
   private static final String ALLOW_MISMATCH_PROP = "justsearch.index.parity.allow_mismatch";
 
-  /** One WARN per process, not one per index open: the cause is process-wide. */
+  /**
+   * One WARN per process, not one per index open: the cause is process-wide, and repeating it on
+   * every generation open would bury it.
+   */
   private static final java.util.concurrent.atomic.AtomicBoolean uncomputableWarned =
       new java.util.concurrent.atomic.AtomicBoolean(false);
+
+  /**
+   * Resets the once-per-boot WARN latch. Test seam only: a process has exactly one boot, so no
+   * production path calls this. Public rather than package-private because the only test that can
+   * capture the log line lives in another module ({@code InvariantSuiteIT}, which has logback on
+   * its classpath).
+   */
+  public static void resetUncomputableWarnedForTest() {
+    uncomputableWarned.set(false);
+  }
 
   private final Supplier<Path> indexPathSupplier;
   private final Supplier<Map<String, Object>> expectedMetadataSupplier;
@@ -52,7 +65,9 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
         Map<String, String> stored = reader.getIndexCommit().getUserData();
         Map<String, Object> expected = expectedMetadataSupplier.get();
         warnIfFingerprintUncomputable(expected);
-        var diffs = ParityDiagnostics.diff(stored, expected);
+        // numDocs, not maxDoc: an index whose every document is deleted has nothing left whose
+        // shape could be wrong, and migrating it would rebuild emptiness.
+        var diffs = ParityDiagnostics.diff(stored, expected, reader.numDocs());
         if (diffs.isEmpty()) {
           return;
         }

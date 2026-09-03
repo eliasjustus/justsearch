@@ -735,13 +735,13 @@ public record ResolvedConfig(
      * full reindex for an edit that changes nothing (tempdoc 915 §C).
      */
     public int effectiveVectorHnswM() {
-      return vectorHnswM != null ? vectorHnswM : DEFAULT_VECTOR_HNSW_M;
+      return this.vectorHnswM() != null ? this.vectorHnswM() : DEFAULT_VECTOR_HNSW_M;
     }
 
     /** The HNSW beam width the graph is actually built with. See {@link #effectiveVectorHnswM}. */
     public int effectiveVectorHnswEfConstruction() {
-      return vectorHnswEfConstruction != null
-          ? vectorHnswEfConstruction
+      return this.vectorHnswEfConstruction() != null
+          ? this.vectorHnswEfConstruction()
           : DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION;
     }
 

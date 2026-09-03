@@ -39,18 +39,6 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
    */
   private static final String DEFAULT_VECTOR_SIMILARITY = "euclidean";
 
-  /**
-   * Mirrors {@code ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS} and
-   * {@code ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS}. Both decide what is written to disk (the
-   * first decides whether chunk documents exist at all, the second bounds a stored field), so both
-   * are index_fingerprint inputs. They are duplicated rather than imported because
-   * {@code ChunkDocumentWriter} lives in worker-services, which adapters-lucene must not depend on;
-   * {@code ChunkDocumentWriterFingerprintInputsTest} fails if the two ever drift.
-   */
-  public static final int CHUNK_THRESHOLD_CHARS = 2000;
-
-  public static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
-
   private final File repoRoot;
   private final SsotAnalyzerRegistry analyzerRegistry;
   private final SsotAnalyzerRegistry.AnalyzerFingerprintingService fingerprintingService;
@@ -132,6 +120,25 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
   private File file(String relative) { return new File(repoRoot, relative); }
 
   /** {@code float32} unless vector quantization is enabled. */
+  /**
+   * Reduces a library version to {@code major.minor}. The analysis libraries are fingerprint
+   * inputs because an upgrade can change the postings with every field descriptor unchanged, but
+   * hashing the full version would make a patch release — which by both projects' compatibility
+   * policy does not change analysis output — cost every install a full reindex. The residual
+   * risk is accepted and named in tempdoc 915 §C.3: a patch that did change tokenisation would
+   * go undetected.
+   */
+  static String majorMinor(String version) {
+    if (version == null || version.isBlank()) {
+      return "";
+    }
+    String[] parts = version.trim().split("\\.");
+    if (parts.length < 2) {
+      return version.trim();
+    }
+    return parts[0] + "." + parts[1];
+  }
+
   private static String vectorFormat() {
     try {
       ResolvedConfig rc = resolvedConfigOrFallback();
@@ -173,12 +180,12 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
                 ChunkSplitter.DEFAULT_CHUNK_TOKENS,
                 ChunkSplitter.DEFAULT_OVERLAP_TOKENS,
                 ChunkSplitter.MIN_CHUNK_TOKENS,
-                CHUNK_THRESHOLD_CHARS,
+                ChunkSplitter.CHUNK_THRESHOLD_CHARS,
                 ChunkSplitter.ALGORITHM_VERSION),
-            CONTENT_PREVIEW_MAX_CHARS,
+            ChunkSplitter.CONTENT_PREVIEW_MAX_CHARS,
             new IndexFingerprint.Analysis(
-                org.apache.lucene.util.Version.LATEST.toString(),
-                com.ibm.icu.util.VersionInfo.ICU_VERSION.toString()),
+                majorMinor(org.apache.lucene.util.Version.LATEST.toString()),
+                majorMinor(com.ibm.icu.util.VersionInfo.ICU_VERSION.toString())),
             IndexFingerprint.embeddingModel(),
             IndexFingerprint.spladeModel(),
             IndexFingerprint.nerModel()));

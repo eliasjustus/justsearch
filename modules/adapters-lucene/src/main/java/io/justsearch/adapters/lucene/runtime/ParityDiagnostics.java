@@ -51,13 +51,18 @@ public final class ParityDiagnostics {
   }
 
   /**
-   * Hint used when the index predates {@code index_fingerprint} entirely. Named rather than folded
+   * Hint used when the index carries no {@code index_fingerprint} at all. Named rather than folded
    * into the generic mismatch hint so the log line and the status surface can say WHY the migration
-   * started: not "your shape changed" but "this index was built before the shape was recorded".
+   * started: not "your shape changed" but "this index has no recorded shape to compare".
+   *
+   * <p>It deliberately does <em>not</em> assert that the index predates the key. The same absence
+   * is produced when a commit was made while a configured model digest was unresolvable, and the
+   * guard cannot tell the two apart from the commit alone — a hint that named a cause it cannot
+   * know would be a confident guess in an operator-facing string.
    */
   public static final String LEGACY_INDEX_HINT =
-      "legacy-index-without-fingerprint: this index predates index_fingerprint, so its physical"
-          + " shape cannot be verified. Rebuilding once records it.";
+      "index-without-fingerprint: this index carries no recorded index_fingerprint, so its"
+          + " physical shape cannot be verified. Rebuilding once records it.";
 
   private static final Map<String, String> PARITY_HINTS =
       Map.of(
@@ -67,7 +72,24 @@ public final class ParityDiagnostics {
                   + " schema migration.",
           "boosts_fp", "Align `index.boosts` configuration with committed SSOT metadata.");
 
-  public static List<Diff> diff(Map<String, String> stored, Map<String, Object> expected) {
+  /**
+   * The one predicate for "this index carries no recorded shape, and that matters". Both consumers
+   * call it — the open-time guard here and {@code IndexStatusOps}'s reported compatibility state —
+   * because two independently written versions of this rule is how a fresh install ends up being
+   * told to rebuild an index that has nothing in it yet.
+   *
+   * <p>The {@code docCount} term is what excludes that case. An index with zero documents has no
+   * content that could have been written under the wrong shape, so there is nothing to migrate:
+   * the next commit stamps the fingerprint and the question answers itself. Only an index that
+   * already holds documents whose shape was never recorded needs the one-time rebuild.
+   */
+  public static boolean isIndexWithoutRecordedFingerprint(
+      String storedFingerprint, long docCount) {
+    return isBlank(storedFingerprint) && docCount > 0;
+  }
+
+  public static List<Diff> diff(
+      Map<String, String> stored, Map<String, Object> expected, long docCount) {
     List<Diff> diffs = new ArrayList<>();
     for (String key : PARITY_KEYS) {
       String storedRaw = asString(stored == null ? null : stored.get(key));
@@ -85,9 +107,11 @@ public final class ParityDiagnostics {
       // meant to protect. An index whose physical shape was never recorded cannot be shown to match
       // this runtime, so it is treated as a mismatch and migrated once — the deliberate one-time
       // upgrade rebuild the wave-2 release is built around. Benign keys still skip: an unverifiable
-      // boosts_fp is not worth reporting, let alone acting on.
+      // boosts_fp is not worth reporting, let alone acting on. An EMPTY index is not migrated at
+      // all — see isIndexWithoutRecordedFingerprint.
       if (isBlank(storedRaw)) {
-        if (!REBUILD_REQUIRING_KEYS.contains(key)) {
+        if (!REBUILD_REQUIRING_KEYS.contains(key)
+            || !isIndexWithoutRecordedFingerprint(storedRaw, docCount)) {
           continue;
         }
         diffs.add(new Diff(key, stringify(storedRaw), stringify(expectedRaw), LEGACY_INDEX_HINT));

@@ -99,7 +99,8 @@ import org.slf4j.LoggerFactory;
 public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImplBase {
   private static final Logger log = LoggerFactory.getLogger(GrpcIngestService.class);
   /** Maximum chars stored in `content_preview` (result list snippet field). */
-  private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+  private static final int CONTENT_PREVIEW_MAX_CHARS =
+      io.justsearch.indexerworker.rag.ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
 
   /** Maximum files allowed in a single batch request. */
   private static final int MAX_BATCH_SIZE = 10_000;

@@ -1,6 +1,7 @@
 package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -108,4 +109,27 @@ class ParityGuardTest {
         "index_fingerprint mismatch must surface as SCHEMA_MISMATCH so recovery rebuilds,"
             + " not read-only");
   }
+
+  /**
+   * Tempdoc 915 §C.5a — the one predicate that decides "this index has no recorded shape, and that
+   * matters". Both the open-time guard and {@code IndexStatusOps}'s reported compatibility state
+   * call it, because two independently written versions of this rule is exactly how a brand-new
+   * install gets told to rebuild an index that has nothing in it yet.
+   */
+  @Test
+  void anEmptyIndexWithoutAFingerprintIsNotAMigrationCandidate() {
+    assertFalse(
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", 0L),
+        "an empty index has no content that could have been written under the wrong shape");
+    assertFalse(
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint(null, 0L),
+        "absent and blank are the same absence");
+    assertTrue(
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", 1L),
+        "an index already holding documents of unrecorded shape needs the one-time rebuild");
+    assertFalse(
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("recorded-shape", 1L),
+        "a recorded shape is compared, not migrated blind");
+  }
+
 }

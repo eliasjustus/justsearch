@@ -95,6 +95,31 @@ records what re-verification found. Phase 1 is implemented in this PR. Phases 2 
       restated (the allowlist did not shrink — the bypass was closed by making
       `CommitOps.commit()` package-private).
 
+### Delta review round (B3 blocker + S10-S13 + nits)
+
+- [x] R-B3. **Brake exhaustion exited the Worker.** The `return;` inside `start()` skipped gRPC bind,
+      the port write, the indexing loop, the sentinel and the `appServices` construction that builds
+      `IndexStatusOps` — so `getPort()` was -1, `blockUntilShutdown()` returned at once, and
+      `IndexerWorker.main` fell through to a silent exit 0. `start()` now sets `rebuildBrakeExhausted`
+      and falls through (§C.8, §D.24).
+- [x] R-S10. `BrakeExhaustedWorkerServesReadOnlyTest` boots a real `KnowledgeServer` into the
+      exhausted state and asserts the whole chain over gRPC: port bound + running, the status payload
+      carrying `BLOCKED_REBUILD_BRAKE`/`rebuild_brake_exhausted`, a search answered from Blue, and the
+      operator rebuild clearing the brake. It found a second defect on its first run (§D.24).
+- [x] R-S11. §C.8's "rethrows" and §C.10's "no reason code added" were both false. Corrected above.
+- [x] R-S12. `SchemaMismatchPolicyBranchTest` now runs the **key-absent** fixture through all three
+      policy branches, not only the present-but-different one — the absent case is the shape the
+      entire installed base arrives in.
+- [x] R-S13. The chunk constants have one owner (`ChunkSplitter`, in `modules:indexing`, already an
+      `api` dependency of adapters-lucene). The adapters-lucene mirror and its drift test are gone,
+      and two further private copies of `4096` were repointed. The phantom test name in the mirror's
+      Javadoc went with it.
+- [x] R-nits. `major.minor` analysis versions; the bench reads the effective HNSW accessors; the wire
+      test parses `tags.reason` instead of substring-matching; the once-per-boot WARN is resettable
+      and tested; the legacy hint no longer names a cause it cannot know; `ParityDiagnostics` and
+      `IndexStatusOps` share one legacy predicate and the fresh-empty-index case is pinned on both
+      sides; line citations refreshed; §G integration-test counts re-measured.
+
 ### Phase 2 — stable document identity (PENDING)
 
 - [ ] B1. Mint `doc_uid` once per logical document; preserve across rename, re-extraction, full
@@ -405,8 +430,33 @@ atomic `writeState` (`format_version` stays 2; absent fields read as null on an 
 - Recorded **before** the rebuild starts — a build that crashes the process must still spend its
   attempt, or a crash loop is invisible to the brake.
 - Cleared by `promoteBuildingGenerationToActive`: a completed cutover is the proof it converged.
-- On exhaustion `KnowledgeServer` logs an operator-actionable error naming `auto_rebuild_count` and
-  rethrows, leaving the index untouched.
+- On exhaustion `KnowledgeServer` logs an operator-actionable error, opens the active generation
+  **read-only**, and **finishes starting**.
+
+**Corrected twice, and the second correction is the interesting one.** The first cut *rethrew*, which
+is the dead-end `FAIL_CLOSED` produced, arriving three boots later. The second cut stopped rethrowing
+but `return`-ed out of `start()` — which skipped `createGrpcServer`/`grpcServer.start()`,
+`signalBus.writePort`, `appServices.startIndexingLoop()`, `startSentinelThread()`, and the whole
+`infraCtx`/`appServices` construction that builds `GrpcIngestService` and with it `IndexStatusOps`.
+The Worker exited 0 with no port and no fatal-reason marker, so *both* things this design promises —
+"Blue keeps serving" and "the status surface says why" — were unreachable, while every unit test and
+the reason-code gate stayed green. `start()` now sets a state and falls through:
+
+| Step | With the brake exhausted |
+|---|---|
+| runtimes | active generation opens read-only; ingest == search; no Green |
+| switch-buffer drain | skipped (no writer to drain into) |
+| gRPC create + start, `writePort` | run — the Worker binds and is discoverable |
+| indexing loop | not started, logged at ERROR (its only job is to write into a read-only runtime) |
+| sentinel | runs |
+
+Recovery is `core.rebuild-index` → `startMigration(user_requested_rebuild)` → cutover →
+`promoteBuildingGenerationToActive`, which clears `auto_rebuild_*`. The exhaustion log line names it.
+
+This is the `audit-without-test` case in its purest form: the constant existed, the mapping existed,
+the gate counted it — and nothing could emit it. Only `BrakeExhaustedWorkerServesReadOnlyTest`, which
+boots a real `KnowledgeServer` and reads the answer off the wire, could tell. It then immediately
+found a *second* defect the static reasoning had missed (§D.24).
 
 ### §C.9 Green verification
 
@@ -417,7 +467,17 @@ the promotion and the cutover retries next boot.
 
 ### §C.10 Reason codes
 
-**No reason code was added, removed, or renamed.** The user-facing vocabulary
+**One reason code was added: `INDEX_REBUILD_BRAKE_EXHAUSTED` → `index.rebuild_brake_exhausted`.**
+(The first cut of this section said none was, which was true when it was written and false by the
+time the brake stopped being a dead end.) It exists because exhaustion is a state with a *different
+remedy* from a plain mismatch: waiting will not fix it, and the user has to start a rebuild. It
+travels on the existing wire — `IndexStatusOps` reports compat state `BLOCKED_REBUILD_BRAKE` with
+`reindexRequiredReason = rebuild_brake_exhausted`, and `StatusLifecycleHandler.compatBlockedReason`
+maps that to the code — so no proto change was needed. `readinessNotice.ts` carries the worded row
+and the rebuild remedy; `check-readiness-reason-codes` sees 55 emittable codes / 49 worded rows (was
+54/48).
+
+Nothing else changed. The rest of the user-facing vocabulary
 (`index.schema_mismatch`, `BLOCKED_LEGACY`, `BLOCKED_MISMATCH`, `UNAVAILABLE`, `COMPATIBLE`,
 `schema_mismatch`, `legacy_index`, `embedding_mismatch`, `embedding_legacy`) describes a
 relationship between a stored and an expected fingerprint, and that relationship is unchanged — only
@@ -473,6 +533,13 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.20 | Docs: `11-index-schema-migration.md` (fingerprint section, enforcement status 2026-09, policy defaults + brake), `04-storage-engine.md`, `06-configuration-ssot.md`, `08-observability.md`, `09-testing-strategy.md`, `18-adapters-lucene-deep-dive.md`, `index-schema-mismatch-reindex-noop.md` (superseded banner + inline strikes), `environment-variables.md`, ADR-0014 (dated append, history not rewritten) | `docs/**` |
 | D.21 | RISK-011 instrumented to `tempdoc:915#C Design (Phase 1), tightened`; notes explain why it stays open rather than closed | `docs/reference/architectural-risks.md:264-282` |
 | D.22 | New tests: `IndexFingerprintTest`, `CatalogPhysicalProjectionTest`, `SchemaMismatchPolicyBranchTest`, `IndexRebuildBrakeTest`; extended `CommitReasonAccountingTest`, `InvariantSuiteIT`; updated 14 fixture files | see §G |
+| D.24 | **Delta-review round (B3).** `KnowledgeServer.start()` no longer returns on brake exhaustion: it sets `rebuildBrakeExhausted`, opens Blue read-only, and falls through the rest of the sequence. Five previously skipped sites and what each does now — `createGrpcServer` + `grpcServer.start()`: run, so the port is real; `signalBus.writePort(boundPort)`: runs, so the Head discovers the Worker; `infraCtx`/`appServices` construction: runs, which is what builds `GrpcIngestService` and with it `IndexStatusOps`, the only producer of the new reason code; `appServices.startIndexingLoop()`: deliberately NOT started (guarded flag) with an ERROR naming the recovery path, because its only job is to write into a read-only runtime; `startSentinelThread()`: runs. `drainSwitchBufferBestEffort()` is also skipped — a read-only runtime is not a `RunningRuntime`, so it could only have logged a WARN and dropped the ops | `KnowledgeServer.java` — the `rebuildBrakeExhausted` field, the brake branch, the drain guard, the loop guard |
+| D.25 | **The second defect, found by the test written for the first.** `IndexStatusOps.buildCore` dereferenced `indexingLoop` unconditionally. With no loop started that NPEs, and `GrpcIngestService.indexStatus` catches `RuntimeException` and returns a stub response with `core.state=ERROR` and NO compatibility sub-message — so `BLOCKED_REBUILD_BRAKE` was still unreachable, now silently. Null-guarded. This was ALSO a pre-existing latent hole: `DefaultWorkerAppServices.startIndexingLoop` already guards for a null loop (deferred-writer mode), so a status RPC arriving before the writer upgrade could blank the whole payload | `IndexStatusOps.java` — `buildCore`'s `setLastCommitTimestamp` |
+| D.26 | **S10.** `BrakeExhaustedWorkerServesReadOnlyTest` — boots a real `KnowledgeServer` over a seeded generation layout with an exhausted brake, then asserts over gRPC: `isRunning()` + `getPort() > 0`; `schemaCompatState=BLOCKED_REBUILD_BRAKE` and `reindexRequiredReason=rebuild_brake_exhausted` and `reindexRequired`; a `Search` RPC answered from Blue; and `startMigration` + `promoteBuildingGenerationToActive` clearing the brake | `BrakeExhaustedWorkerServesReadOnlyTest.java` (new) |
+| D.27 | **S12.** `SchemaMismatchPolicyBranchTest` gains a `withoutFingerprint()` source and `seedLegacyIndex`, and runs the key-absent fixture through all three policy values | `SchemaMismatchPolicyBranchTest.java` |
+| D.28 | **S13.** `ChunkSplitter` (in `modules:indexing`, already an `api` dep of adapters-lucene) owns `CHUNK_THRESHOLD_CHARS` and `CONTENT_PREVIEW_MAX_CHARS`. `SsotCommitMetadataSource` reads them; its mirror and `ChunkWriterFingerprintMirrorTest` are deleted (with them the phantom `ChunkDocumentWriterFingerprintInputsTest` name); `ChunkDocumentWriter` re-exports them the way it already re-exported `CHUNK_TARGET_TOKENS`; two further private `4096` copies in `IndexingDocumentOps` and `GrpcIngestService` now point at the one owner | `ChunkSplitter.java`, `SsotCommitMetadataSource.java`, `ChunkDocumentWriter.java`, `IndexingDocumentOps.java`, `GrpcIngestService.java` |
+| D.29 | **Nits.** `majorMinor()` truncates the analysis versions to `major.minor`; `EngineVectorIndexBench` reports the effective HNSW accessors instead of its own 16/200; the wire test parses `tags.reason` into a map instead of substring-matching a line; `resetUncomputableWarnedForTest()` makes the once-per-boot latch testable and `InvariantSuiteIT` asserts one WARN across three opens; `LEGACY_INDEX_HINT` no longer claims the index predates the key (it cannot know that); `ParityDiagnostics.diff` takes `docCount` and both consumers call `isIndexWithoutRecordedFingerprint` | see §F round 3 |
+| D.30 | **New tests for the nits.** `SchemaCompatFreshInstallTest` (a fresh empty index is COMPATIBLE, an index holding documents of unrecorded shape is BLOCKED_LEGACY); `ParityGuardTest.anEmptyIndexWithoutAFingerprintIsNotAMigrationCandidate`; `FingerprintInputSourcesTest.aPatchLevelLibraryBumpDoesNotMoveTheFingerprint` and `theChunkFingerprintInputsComeFromTheSplitterNotFromACopy`; `InvariantSuiteIT.aFreshEmptyIndexWithNoFingerprintIsNotMigrated` and `theUncomputableFingerprintWarningIsEmittedOncePerBoot` | see §F round 3 |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -536,6 +603,19 @@ installs a throwing provider cannot leak it into the rest of the fork.
 **E6. Actionable findings from this pass: 2** — the corrupt-state assertion (E3) and the
 second blue/green trigger (E2/§B.1 2c). Both changed the implementation.
 
+**E8. What the SECOND pass missed, and why (delta-review round).** The review-round critical pass
+walked the brake change and asked whether the reason code was wired on both sides. It was. What it
+never asked was whether anything could reach the code that emits it — and the answer was no, twice
+over: `start()` returned before `appServices` existed (§D.24), and even after that was fixed the
+status builder NPE'd before reaching the compatibility sub-message (§D.25). Both were invisible to
+every unit test, to `check-readiness-reason-codes`, and to a careful reading of the diff, because
+each one is a fact about a *composition* rather than about any file in it.
+
+The transferable form: **a reason code is not shipped when the constant, the mapping and the gate
+exist — it is shipped when something can emit it end to end.** The only instrument that could tell
+was a test that boots the real server and reads the wire, and it found the second defect within
+seconds of the first run. `audit-without-test`, at composition scale.
+
 **E7. What this pass missed, and why (review round).** The independent review found the inert-guard
 defect (B1) that E4 had walked straight past. The pass asked "does this conflate unknown with
 healthy?" and answered yes-handled — but only for the *expected* side, because that is the side the
@@ -567,6 +647,38 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F10 | prod default back to `FAIL_CLOSED` | `ResolvedConfigBuilderTest` | `null/blank defaults to BLUE_GREEN_MIGRATE in prod mode` FAILED (`ResolvedConfigBuilderTest.java:1495`) |
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
+
+### Round 3 — one break per delta-review decision
+
+| ID | Break | Test that caught it | Observed failure |
+|---|---|---|---|
+| G15 | the early `return;` restored inside `start()` | `BrakeExhaustedWorkerServesReadOnlyTest` | `the Worker must not treat an exhausted brake as a fatal start ==> expected: <true> but was: <false>` |
+| G16 | `indexingLoop` null-guard removed from `buildCore` | `BrakeExhaustedWorkerServesReadOnlyTest` | `the compat state is the wire carrier for the new reason code ==> expected: <BLOCKED_REBUILD_BRAKE> but was: <>` |
+| G17 | the `docCount` term dropped, so an empty index migrates | `ParityGuardTest`, `SchemaCompatFreshInstallTest`, `InvariantSuiteIT` | `an empty index has no content that could have been written under the wrong shape ==> expected: <false> but was: <true>`; `aFreshEmptyIndexIsCompatibleRatherThanBlockedLegacy` FAILED; `aFreshEmptyIndexWithNoFingerprintIsNotMigrated` FAILED with `IndexRuntimeIOException: Index was built with a different effective index shape…` |
+| G18 | the status path stops calling the shared predicate | `SchemaCompatFreshInstallTest` | `aFreshEmptyIndexIsCompatibleRatherThanBlockedLegacy` FAILED — "reporting BLOCKED_LEGACY here would demand a rebuild on first launch" |
+| G19 | analysis versions hashed at patch level | `FingerprintInputSourcesTest` | `aPatchLevelLibraryBumpDoesNotMoveTheFingerprint` FAILED — `expected: <10.3> but was: <10.3.1>` |
+| G20 | the chunk-constant mirror re-introduced | `FingerprintInputSourcesTest` | `the mirror is gone: read the splitter's constant, do not re-copy it ==> expected: not equal but was: <CHUNK_THRESHOLD_CHARS>` |
+| G21 | the blank-stored skip restored, so legacy indexes never migrate | `SchemaMismatchPolicyBranchTest` | all three legacy-fixture branches FAILED: `Expected IndexRuntimeIOException to be thrown, but nothing was thrown` (BLUE_GREEN_MIGRATE, FAIL_CLOSED) and `expected: <0> but was: <1>` (REBUILD_BACKUP_FIRST) |
+| G22 | the once-per-boot WARN latch removed | `InvariantSuiteIT` | `three opens, one warning ==> expected: <1> but was: <3>` |
+| G23 | the schema-mismatch `try` put back inside the `else` branch only (i.e. not covering a resumed migration) | `BrakeExhaustedWorkerServesReadOnlyTest` | `java.io.IOException: Failed to start KnowledgeServer` … `Caused by: IndexRuntimeIOException: Index was built with a different effective index shape than this runtime produces (index_fingerprint mismatch)` at `KnowledgeServer.start(:577)` — observed directly, before the hoist |
+
+**G15 failed as NO FAILURE OBSERVED twice, for two different reasons, and both were mine.**
+
+The first time, the harness's `replace` silently matched nothing, so the break was never applied and a
+green run got recorded as a weak test. The second time the break *was* applied and the test still
+passed — because the test never reached the branch at all. Its config used
+`justsearch.index.schema_mismatch.policy`; the real key is un-prefixed
+(`ResolvedConfigBuilder:1545`), so the policy silently fell back to the dev default
+`REBUILD_BACKUP_FIRST`, the mismatch was "recovered" destructively instead of propagating, and every
+remaining assertion passed on evidence that had nothing to do with the brake: the port is bound on
+any boot, search answers on any boot, and `BLOCKED_REBUILD_BRAKE` is read out of `state.json`, which
+the test wrote itself.
+
+The fix is `rebuildBrakeExhaustedForTest()` and a precondition assertion. That is the general shape:
+**when every observable consequence of a branch is also true without it, the test needs a witness
+that the branch ran** — otherwise it is measuring the fixture. This is the third time in this tempdoc
+that a falsification run caught a test passing for the wrong reason (F12, G12, G15), and the only one
+where two independent causes stacked.
 
 ### Round 2 — one break per review decision
 
@@ -605,16 +717,18 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Re-run in full after the review round; every line below is from that run, not the first one.
+Re-run in full after the DELTA-review round; every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
 
 | Command | Result |
 |---|---|
 | `spotlessApply -PskipWebBuild=true` | exit 0 |
 | `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
-| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 17s — **1454 suites, 8879 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console; the XML timestamps span 01:29:33Z–01:33:47Z, so the results were executed, not replayed from cache) |
-| `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` 7 tests, 0 failures. Forced: the first attempt reported `UP-TO-DATE`, which is a replay, not a run |
-| `:modules:ui:integrationTest` | BUILD SUCCESSFUL — 16 tests across 5 suites, 0 failures (includes `SchemaMismatchStatusContractTest`) |
-| Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 33 pass, 1 fail — `ts-any`, **inherited**. All 5 findings are `ts-any/silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 12s — **1455 suites, 8887 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console) |
+| `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` **9 tests**, 0 failures. Forced: an unforced attempt reports `UP-TO-DATE`, which is a replay, not a run |
+| `:modules:ui:integrationTest` | BUILD SUCCESSFUL — **9 tests across 4 suites**, 1 skipped, 0 failures (includes `SchemaMismatchStatusContractTest`). The earlier "16 across 5" was a stale-directory miscount, as the reviewer said |
+| `:modules:worker-core:test` (named explicitly — the brake tests live there) | BUILD SUCCESSFUL — included in the full-suite totals above; run standalone as well |
+| `:modules:indexer-worker:test --tests "*BrakeExhaustedWorkerServesReadOnlyTest*"` | BUILD SUCCESSFUL — the emit-chain test boots a real `KnowledgeServer`, so this is the first tier in this tempdoc above "compiles and unit-tests" |
+| Full kernel: `governance/run.mjs --produce-inputs --mode gate` | 33 pass, 1 fail — `ts-any`, **inherited**. (Two gates went red during this round and were FIXED, not baselined: `prose-tier-register` wanted a register row for the new `falsify-restore-from-backup` rule anchor — row 47 added; `config-surface` correctly reported `vectorHnswM` / `vectorHnswEfConstruction` as accessors no production code calls, because the bench nit moved its last two callers to the effective accessors — the effective accessors now call them.) All 5 findings are `ts-any/silent-growth` in files this branch does not touch (`citationResolve.test.ts`, `MarkdownBlock.ts`, `indexingProgress.ts`, `sv3-sessions.test.ts`, `searchResultViewModel.ts`); pinned as `ts-any-gate-counts-english-prose` (the gate scores the English word "any" in comments). `readinessNotice.ts`, the one ui-web file this branch edits, is not among them. |
 | `check-readiness-reason-codes` | OK — 55 emittable codes, 49 worded rows (was 54/48: the new code is wired on both sides) |
 | `check-live-witness` · `check-store-recoverability` · `check-search-degradation-reason-codes` · `check-language-agnostic-analysis` · `check-tempdoc-numbers` · `check-premerge-table` | all OK |
 | `docs/verify-canonical-doc-links.mjs` · `llmstxt-generate --check` · `skills-sync --check` · `verify-runtime-config-matrix` | OK (156 files) · OK (115 docs) · OK (5 skills) · OK (yaml=111, pairs=250, rows=306) |
@@ -663,7 +777,35 @@ Re-run in full after the review round; every line below is from that run, not th
    commit path's instance, never to the two comparison paths (§B.1 claim 1c). Fixed here as a
    side-effect; recorded because it is the exact shape of defect the one-fingerprint design exists
    to prevent, and it survived undetected only because the guard was off.
-6. **O6 — correction to my own earlier report.** I reported
+6. **O7 — OPEN, and it limits what this PR delivers. The blue/green trigger is not reached on the
+   ordinary boot path.** Found while making the S10 test honest, verified by direct execution rather
+   than by reading:
+
+   - The normal branch opens the active generation with `openDeferred()` whenever it has segments
+     (`KnowledgeServer.java`, `useDeferredWriter = hasLuceneSegments(activeIndexPath)`), and
+     `RuntimeSession` maps `Mode.DEFERRED` to `openReadOnly = true`.
+   - `ComponentsFactory.build:110-122` swallows a guard failure when `readOnly`, logging
+     `"Index open guard reported a mismatch at {} but continuing in read-only mode"`.
+   - So a boot whose index shape genuinely changed does **not** raise `SCHEMA_MISMATCH` from the
+     initial open. The mismatch surfaces later, from `DeferredRuntime.upgradeWriter()` inside
+     `initDeferredModels()`, whose `catch (Exception e)` logs
+     `"Background model initialization failed (non-fatal)"`.
+
+   Consequence: on the path most installs take, the guard WARNs, the writer upgrade fails silently,
+   ingestion is dead, and **no migration starts** — the status surface still reports
+   `BLOCKED_MISMATCH`/`reindex_required`, so the user is told, but the automatic blue/green rebuild
+   this PR makes the production default does not run. What lands here is still correct and necessary
+   (the fingerprint is truthful, the guard enforces where it is consulted, the brake is bounded and
+   no longer a dead end, and the resumed-migration branch is now covered — §D.24, G23). What is NOT
+   yet true is "the Worker rebuilds by itself on the common boot".
+
+   The fix is a design decision I am not taking unilaterally, because the read-only swallow exists
+   for a good reason (Blue must tolerate a mismatch while Green rebuilds): either `Mode.DEFERRED` is
+   distinguished from `Mode.READ_ONLY` at `ComponentsFactory:110` so a rebuild-requiring mismatch
+   propagates from a deferred open, or `initDeferredModels` stops treating `SCHEMA_MISMATCH` from
+   `upgradeWriter()` as non-fatal and routes it into the same handler. Owner decision required.
+
+7. **O6 — correction to my own earlier report.** I reported
    `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned
    load flake and asked whether to pin it. That was wrong: it is already pinned
    (`adapters-lucene-batchupdate-rmw-coordinator-load-flake`), as is the `OnnxEmbeddingEncoder`

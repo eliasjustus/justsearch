@@ -99,6 +99,21 @@ public final class ChunkSplitter {
    */
   public static final String ALGORITHM_VERSION = "v1";
 
+  /**
+   * Content length at or above which a document is split into chunk documents at all. It lives
+   * here, with the other splitting constants, because it is a property of the splitting policy
+   * rather than of any one writer: {@code ChunkDocumentWriter} and {@code IndexingDocumentOps}
+   * both gate on it, and {@code index_fingerprint} hashes it (tempdoc 915 §C) because it
+   * decides whether chunk documents exist on disk.
+   */
+  public static final int CHUNK_THRESHOLD_CHARS = 2000;
+
+  /**
+   * Bounds {@code content_preview}, a {@code stored:true} field derived from the same content
+   * this class splits. An {@code index_fingerprint} input for that reason (tempdoc 915 §C).
+   */
+  public static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
+
   /** Default target chunk size in tokens (~1.3 tokens per word). */
   public static final int DEFAULT_CHUNK_TOKENS = 500;
 

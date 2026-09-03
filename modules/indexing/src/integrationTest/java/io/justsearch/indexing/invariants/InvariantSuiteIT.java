@@ -119,7 +119,7 @@ final class InvariantSuiteIT {
       assertTrue(
           appender.list.stream()
               .map(ILoggingEvent::getFormattedMessage)
-              .anyMatch(msg -> msg.contains("legacy-index-without-fingerprint")),
+              .anyMatch(msg -> msg.contains("index-without-fingerprint")),
           "the PARITY_DIFF marker must carry the legacy hint, not the generic shape-change one");
     } finally {
       logger.detachAppender(appender);
@@ -150,6 +150,57 @@ final class InvariantSuiteIT {
     IndexOpenGuard guard =
         new IndexMetadataParityGuard(() -> tempDir, InvariantSuiteIT::fingerprintUnavailableMetadata);
     assertDoesNotThrow(guard::checkOnOpen);
+  }
+
+  /**
+   * A brand-new install: the index exists and has committed, but holds no documents yet. There is
+   * no content that could have been written under the wrong shape, so migrating it would rebuild
+   * emptiness — and would do so on the very first launch, before the user has indexed anything.
+   *
+   * <p>This is also the case where the open-time guard and the reported status state used to be
+   * able to disagree: the status path already had a docCount guard, the guard did not. They now
+   * share one predicate ({@code ParityDiagnostics.isIndexWithoutRecordedFingerprint}).
+   */
+  @Test
+  void aFreshEmptyIndexWithNoFingerprintIsNotMigrated() throws Exception {
+    seedEmptyIndex(tempDir, legacyMetadata());
+    IndexOpenGuard guard =
+        new IndexMetadataParityGuard(() -> tempDir, InvariantSuiteIT::stableMetadata);
+
+    assertDoesNotThrow(guard::checkOnOpen);
+  }
+
+  /**
+   * Tempdoc 915 §C.5 — the WARN that says the parity check is NOT running must be said, because a
+   * check that declines silently is indistinguishable from a check that passed. It must also be said
+   * ONCE: a line repeated on every generation open is a line nobody reads.
+   */
+  @Test
+  void theUncomputableFingerprintWarningIsEmittedOncePerBoot() throws Exception {
+    IndexMetadataParityGuard.resetUncomputableWarnedForTest();
+    seedIndex(tempDir, stableMetadata());
+    Logger logger = (Logger) LoggerFactory.getLogger(IndexMetadataParityGuard.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      IndexOpenGuard guard =
+          new IndexMetadataParityGuard(
+              () -> tempDir, InvariantSuiteIT::fingerprintUnavailableMetadata);
+      guard.checkOnOpen();
+      guard.checkOnOpen();
+      guard.checkOnOpen();
+      long warns =
+          appender.list.stream()
+              .map(ILoggingEvent::getFormattedMessage)
+              .filter(msg -> msg.contains("Index parity is NOT being checked"))
+              .count();
+      assertEquals(1L, warns, "three opens, one warning");
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+      IndexMetadataParityGuard.resetUncomputableWarnedForTest();
+    }
   }
 
   private static Map<String, Object> stableMetadata() {
@@ -185,6 +236,22 @@ final class InvariantSuiteIT {
         "analyzer_fp", "old-analyzers",
         "schema_ver", "1.0.0",
         "boosts_fp", "none");
+  }
+
+  /** Same commit metadata, no documents: a committed but empty index. */
+  private static void seedEmptyIndex(Path indexPath, Map<String, Object> metadata)
+      throws IOException {
+    try (Directory directory = FSDirectory.open(indexPath);
+        IndexWriter writer =
+            new IndexWriter(directory, new IndexWriterConfig(new StandardAnalyzer()))) {
+      List<Map.Entry<String, String>> commitData = new ArrayList<>();
+      for (var entry : metadata.entrySet()) {
+        commitData.add(Map.entry(entry.getKey(), entry.getValue().toString()));
+      }
+      commitData.add(Map.entry("commit_id", UUID.randomUUID().toString()));
+      writer.setLiveCommitData(commitData);
+      writer.commit();
+    }
   }
 
   private static void seedIndex(Path indexPath, Map<String, Object> metadata) throws IOException {
