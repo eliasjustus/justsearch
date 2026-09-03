@@ -1530,3 +1530,115 @@ capture 09:08:39, cutover 09:08:33 → settled 09:09:32 · arm 2 boot 09:13:39 �
 09:16:06 · arm 3 ladder 09:18:15 → brake 09:18:27, O14 boots 09:18:59 → 09:20:10, cleared-budget boot
 09:20:14 · arm 3b 09:23:36 → 09:24:20 · arm 4 09:20:29 → 09:23:16 · arm 5 09:24:31 → 09:26:42, arm 5b
 09:28:52 → 09:30:55 · arm 6 09:26:49 → 09:28:44.
+
+### Arm 2 re-run on `c06d8b25`
+
+R1 is fixed. Dist verified first: `BootRecoveryDecision$Veto` in the shipped Head jar carries
+`NONE, SUPERVISION_ENGAGED, RESTART_EXHAUSTED, INDEX_FATAL` (`javap` on
+`modules/ui/build/install/ui/lib/app-services-0.2.0.jar`, not on the source tree). Same 1000-doc
+Blue at `HNSW_M=32` as the round-2 pass, booted with `JUSTSEARCH_INDEX_SCHEMA_MISMATCH_POLICY=FAIL_CLOSED`.
+
+| # | Assertion | Verdict | Evidence |
+|---|---|---|---|
+| A1 | terminal readiness is `NOT_READY worker.index_schema_mismatch`, not `spawn_recovery_exhausted` | **PASS** | reached 10:15:22.072 (t+2.6 s), unchanged for the whole 200 s watch to 10:18:39 |
+| A2 | the policy remedy is carried | **PASS** | verbatim in `knowledgeServerStartError` and in the Head log; see the note below on where it does *not* appear |
+| A3 | `/api/health` payload names the mismatch | **PASS** | `HTTP 503` + 419-byte body: `lifecycle.reason_code = worker.index_schema_mismatch` **and** `components.worker.reason_code = worker.index_schema_mismatch` |
+| A4 | `knowledgeServerStartError` names the mismatch | **PASS** | the full remedy sentence, quoted below |
+| A5 | the fatal-reason marker is on disk | **PASS** | `worker-fatal-reason` = `index_schema_mismatch`, observed 10:20:07.192 at a 50 ms poll |
+| A6 | the ladder gives up early instead of burning the budget | **PASS** | `spawnAttempts=1`, `bootRecoveryReattempts=0` |
+| A7 | the index is still untouched | **PASS** | `state.json` SHA-256 identical; only `g-20260903-070331` + its `.clean-shutdown` on disk |
+| A8/A9 | the operator path re-opens the `INDEX_FATAL` give-up | **PASS** | `POST /api/worker/restart` → `HTTP 202 {"recovery":"ACCEPTED"}`, followed by a new spawn |
+| A10 | with the policy flipped, the migration starts | **PASS** | `PRE-OPEN PARITY_DIFF` → `Starting Blue/Green migration (policy=BLUE_GREEN_MIGRATE, attempt 1 of 3)`, `auto_rebuild_count: 1` |
+
+**A1/A4 — the refusal now reaches the user as itself.** Round 2 produced
+`worker.spawn.failed → worker.recovering → worker.spawn_recovery_exhausted` over ~150 s, with
+`knowledgeServerStartError = "Worker process crashed (exit code 1) before writing port to signal
+file"`. At this head, 2.6 s after boot:
+
+```
+readiness.components.workerControlPlane = NOT_READY / worker.index_schema_mismatch
+readiness.composites.retrieval          = NOT_READY / [worker.index_schema_mismatch, index.not_healthy, lambdamart.not_configured]
+knowledgeServerStartError = "The search index was built with a different index shape than this
+  version writes, and index.schema_mismatch.policy=FAIL_CLOSED refuses to rebuild it. Set the policy
+  to BLUE_GREEN_MIGRATE to rebuild alongside the existing index, or rebuild the index yourself."
+```
+
+**A6 — the ladder short-circuits.** One `Spawning worker:` for the whole boot, zero boot-recovery
+re-attempts, and the veto is narrated rather than silent (Head log, UTF-8):
+
+```
+10:15:20.313 INFO  Spawning worker: …                                   <- the only one
+10:15:21.537 WARN  Knowledge Server failed to start: The search index was built with a different index shape … (worker …
+10:15:31.538 ERROR Boot recovery declining to re-attempt: the worker refused with worker.index_schema_mismatch — the condition is on disk, so re-spawning would read the same bytes and refuse the same way
+```
+
+Round 2 burned `Boot recovery: re-attempting … (1/4)`, `(2/4)`, `(3/4)` with 10/20/40 s backoff before
+landing on `worker.spawn_recovery_exhausted` ~150 s in.
+
+**A8/A9 — the operator exemption is reachable over HTTP and works.** The path is
+`POST /api/worker/restart` (`InferenceRoutes.java:26` → `InferenceHandlers.handleRestartWorker` →
+`routeToRecoveryAuthority` → `KnowledgeServerHealthMonitor.requestRecoveryNow()` →
+`currentRecoveryInput(true)`, which withholds the `INDEX_FATAL` veto and clears the latched give-up
+for that veto only). Observed:
+
+```
+10:18:40.379  POST /api/worker/restart -> HTTP 202 {"recovery":"ACCEPTED","success":true}
+10:18:40.367  Boot recovery: re-attempting Knowledge Server start (1/4)     <- the give-up re-opened
+10:18:40.370  Spawning worker: …
+10:18:41.488  Boot recovery attempt 1 failed: … crashed (exit code 1) …
+10:18:41.558  Boot recovery declining to re-attempt: the worker refused with worker.index_schema_mismatch …
+```
+
+The re-spawn refuses again and re-latches, which is correct: the policy had not changed yet.
+
+**A10 — the remedy.** `index.schema_mismatch.policy` is forwarded to the Worker as a `-D` at spawn
+from the Head's boot-time resolved config (`WorkerSpawner.WORKER_FORWARDED_PROPS`), so flipping it
+needs a new Head process — the operator exemption re-opens the *give-up*, it cannot change the
+*policy*. Rebooted with `BLUE_GREEN_MIGRATE`: `PRE-OPEN PARITY_DIFF key=index_fingerprint
+stored=9814df378e0e… expected=02353ae765fd…` then `Starting Blue/Green migration (policy=BLUE_GREEN_MIGRATE,
+attempt 1 of 3)`, `building_generation g-20260903-081908`, `auto_rebuild_count: 1`.
+
+#### Residual finding
+
+**R2 — after an operator-requested retry that re-refuses, readiness is left on the transient
+`worker.recovering` instead of re-latching the terminal code.** Reproduced twice: after
+`POST /api/worker/restart` the component goes `DEGRADED / worker.recovering` and stays there —
+observed continuously for 120 s (10:21:05 → 10:23:05) and again 25 s after the first request — even
+though the Head has already narrated
+`Boot recovery declining to re-attempt: the worker refused with worker.index_schema_mismatch` at
+ERROR. `knowledgeServerStartError` keeps the remedy sentence throughout, so the user is not left
+without the cause, but the readiness component — the surface `readinessNotice.ts` renders — reports
+"recovering" indefinitely for a condition that by the Head's own reasoning will never recover on its
+own. The latch works for the automatic ladder (A1); it is the operator-requested arm that leaves the
+transient in place. Scoped as a follow-up, not a re-opening of R1.
+
+#### Corrections to my own round-2 measurements
+
+- **`/api/health` was never empty.** Round 2 recorded "unreachable (503)" and this round's first pass
+  recorded an empty body; both were my probe, not the product — `Invoke-RestMethod` throws on 503 and
+  my error-stream read returned nothing. `StatusLifecycleHandler.java:1137-1141` does
+  `ctx.status(503).json(snapshot)`, and `curl -i` shows the 419-byte body quoted in A3. The round-1/2
+  claim that the FAIL_CLOSED refusal "reaches the user only in worker.log" was therefore wrong about
+  `/api/health` specifically; it was right about the *content*, which named a spawn crash rather than
+  the refusal until this head.
+- **A2, where the remedy is not.** `ReadinessComponentView` (`:12-14`) has fields
+  `state, reasonCode, source, observedAt, stale, …` and no detail field at all, so the remedy sentence
+  is not on the readiness component by construction. It is carried by `knowledgeServerStartError`
+  (D.55's `startErrorFor`) and by `readinessNotice.ts`'s own wording row. Not a defect; my first probe
+  looked for a field that does not exist.
+
+#### Out of scope, pre-existing
+
+`LifecycleSnapshotTap: no mapping for dim=WORKER_CONTROL_PLANE state=NOT_READY
+reasonCode=worker.index_schema_mismatch; preserving any prior assertion (unknown reason ≠ healthy)`
+fires on every boot of this arm. The same WARN fired in round 2 for `worker.starting` and
+`worker.recovering`, so the tap's mapping table is generically incomplete rather than newly broken by
+the round-8 code — but the new code does inherit the gap.
+
+#### Machine signature
+
+RTX 4070, 12282 MiB. Before: 976 MiB used, 2 % util, port 33221 free, 0 Head/Worker JVMs. After: port
+33221 free, 0 Head/Worker JVMs. Riot/League client processes were resident but idle throughout
+(GPU at 2 %); every assertion in this arm is a log string, an HTTP status/body or a `state.json`
+field, none is a throughput measurement. Boots: 10:15:19 (main arc), 10:20:05 (marker + health +
+operator follow-up), 10:23:35 (`/api/health` re-measurement).
