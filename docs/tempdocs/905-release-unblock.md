@@ -753,14 +753,18 @@ Residual owner actions:
   the signing credential ID and recover or replace the eSigner TOTP enrollment secret. SSL.com's
   self-service QR reset requires the 4-digit eSigner PIN; its PIN reset requires either a current OTP
   or the current PIN. The owner then reported three unsuccessful PIN attempts followed by a provider
-  disablement message. Treat this as a signing-credential lockout pending provider confirmation:
-  SSL.com's error reference says only its support team can re-enable a credential showing the exact
-  `key status is disabled` error. Its public eSigner documentation does not state a three-attempt
-  threshold, so the reported sequence does not by itself prove that exact backend state; preserve the
-  literal portal message for support. Do not order another token or credential, and do not guess
-  further PINs. The portal's additional-token path purchases a separate physical YubiKey, whereas
-  JustSearch uses eSigner cloud CodeSignTool. Ask support to re-enable the existing credential and
-  restore the PIN/QR/TOTP enrollment path rather than rotating repository state.
+  disablement message. A read-only inspection of the authenticated SSL.com order page on 2026-09-03
+  established the actual account state: the order and certificate remain `issued`, eSigner remains
+  active, the order has zero YubiKeys, and its single signing credential is explicitly selected as
+  `disabled`. The same page exposes an available `signing credential enabled` control. Its signing
+  log contains prior successful `SIGN_HASH` entries but no recorded PIN-failure or lockout event. This
+  is therefore a disabled cloud-signing credential, not a revoked certificate or missing hardware
+  token. Do not order another token or credential, and do not guess further PINs. With owner
+  confirmation at the moment of the account mutation, first try re-enabling the existing credential
+  in the portal; if the control fails or eSigner still returns the exact `key status is disabled`
+  error, SSL.com's error reference says support must re-enable it. Its public eSigner documentation
+  does not publish a three-attempt threshold, so retain the literal error for support and recover the
+  PIN/QR/TOTP enrollment path rather than rotating repository state.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
