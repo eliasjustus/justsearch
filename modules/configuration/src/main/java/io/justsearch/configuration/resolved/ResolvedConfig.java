@@ -680,6 +680,14 @@ public record ResolvedConfig(
    * @param commitTimerIntervalMs period of the safety-net commit timer that fires whenever
    *     {@code pendingDocs > 0} (default 10000 — unchanged behaviour). The ceiling on every other
    *     commit-cadence lever, which is why it is configurable at all (885's tracked item).
+   * @param chunkTargetTokens TEMPORARY (tempdoc 916 Part 1) target chunk size in estimated tokens;
+   *     {@code null} means the shipped {@code ChunkSplitter.DEFAULT_CHUNK_TOKENS}
+   * @param chunkOverlapTokens TEMPORARY (916 Part 1) chunk overlap in estimated tokens;
+   *     {@code null} means the shipped {@code ChunkSplitter.DEFAULT_OVERLAP_TOKENS}
+   * @param chunkMinTokens TEMPORARY (916 Part 1) splitter advance floor in estimated tokens;
+   *     {@code null} means the shipped {@code ChunkSplitter.MIN_CHUNK_TOKENS}
+   * @param chunkThresholdChars TEMPORARY (916 Part 1) shortest document that gets chunked at all;
+   *     {@code null} means the shipped {@code ChunkingPolicy.DEFAULT_THRESHOLD_CHARS}
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -714,13 +722,63 @@ public record ResolvedConfig(
       String nrtMode,
       int nrtBackgroundReopenMs,
       int nrtOnDemandMaxStaleMs,
-      int commitTimerIntervalMs) {
+      int commitTimerIntervalMs,
+      Integer chunkTargetTokens,
+      Integer chunkOverlapTokens,
+      Integer chunkMinTokens,
+      Integer chunkThresholdChars) {
 
     /** Wire value of the default NRT reopen strategy (today's behaviour). */
     public static final String NRT_MODE_CONTINUOUS = "continuous";
 
     /** Wire value of the reopen-on-demand candidate (tempdoc 885 item 19). */
     public static final String NRT_MODE_ON_DEMAND = "on_demand";
+
+    // ---- Chunk granularity (tempdoc 916 Part 1) — TEMPORARY campaign instrument -------------
+    // These four mirror io.justsearch.indexing.chunking.ChunkSplitter / ChunkingPolicy, which this
+    // module cannot depend on (modules/configuration has no dependency on modules/indexing, and
+    // adding one to read four ints would be the wrong trade). ChunkingPolicyDriftTest in
+    // modules/worker-services — which sees both — fails the build if the mirrors ever disagree,
+    // the same device ConversationEngineTokenCeilingTest uses for ENGINE_DEFAULT_MAX_TOKENS.
+    // ALL FOUR ARE DELETED by the PR that lands tempdoc 916 Part 1's chosen constants.
+
+    /** Mirror of {@code ChunkSplitter.DEFAULT_CHUNK_TOKENS}. */
+    public static final int DEFAULT_CHUNK_TARGET_TOKENS = 500;
+
+    /** Mirror of {@code ChunkSplitter.DEFAULT_OVERLAP_TOKENS}. */
+    public static final int DEFAULT_CHUNK_OVERLAP_TOKENS = 50;
+
+    /** Mirror of {@code ChunkSplitter.MIN_CHUNK_TOKENS}. */
+    public static final int DEFAULT_CHUNK_MIN_TOKENS = 100;
+
+    /** Mirror of {@code ChunkingPolicy.DEFAULT_THRESHOLD_CHARS}. */
+    public static final int DEFAULT_CHUNK_THRESHOLD_CHARS = 2000;
+
+    // The four accessors below read their component through this.<name>() rather than the bare
+    // field on purpose: the component is only ever consumed via the effective accessor, and a bare
+    // field read is invisible to the config-surface gate's unread-component scan — which would then
+    // be right in spirit and wrong in fact. Explicit is also how a reader tells "campaign override"
+    // from "shipped constant" at a glance.
+
+    /** Target chunk size actually in force — the campaign override, else the shipped constant. */
+    public int effectiveChunkTargetTokens() {
+      return this.chunkTargetTokens() != null ? this.chunkTargetTokens() : DEFAULT_CHUNK_TARGET_TOKENS;
+    }
+
+    /** Chunk overlap actually in force — the campaign override, else the shipped constant. */
+    public int effectiveChunkOverlapTokens() {
+      return this.chunkOverlapTokens() != null ? this.chunkOverlapTokens() : DEFAULT_CHUNK_OVERLAP_TOKENS;
+    }
+
+    /** Splitter advance floor actually in force — the campaign override, else the constant. */
+    public int effectiveChunkMinTokens() {
+      return this.chunkMinTokens() != null ? this.chunkMinTokens() : DEFAULT_CHUNK_MIN_TOKENS;
+    }
+
+    /** Chunking threshold actually in force — the campaign override, else the constant. */
+    public int effectiveChunkThresholdChars() {
+      return this.chunkThresholdChars() != null ? this.chunkThresholdChars() : DEFAULT_CHUNK_THRESHOLD_CHARS;
+    }
 
     public Index {
       sort = sort != null ? List.copyOf(sort) : List.of();

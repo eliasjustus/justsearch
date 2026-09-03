@@ -198,6 +198,21 @@ Scope:
 | `JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS` | `index.nrt.background_reopen_ms` | Int | Background reopen cadence (ms) while `index.nrt.mode=on_demand`; default `2000`. Ignored in `continuous` mode. The thread still wakes on this period on an idle index, but Lucene's `openIfChanged` returns null when nothing changed, so no reopen occurs. |
 | `JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS` | `index.nrt.on_demand_max_stale_ms` | Int | Age (ms) past which a foreground search in `on_demand` mode escalates from the non-blocking `maybeRefresh()` to `maybeRefreshBlocking()`; default `1000`. Ignored in `continuous` mode. A search whose index has seen no writes since the last reopen refreshes on neither path. |
 | `JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS` | `index.commit.timer_interval_ms` | Int | Period (ms) of `CommitOps`' safety-net commit timer, which commits whenever `pendingDocs > 0` regardless of which write path produced them; default `10000` (the constant it replaces, so the default arm is unchanged). This is the ceiling on every other commit-cadence lever: tempdoc 885's live window measured the indexing loop's own commit triggers going to zero while this timer's share rose 16 → 46, because deferring the loop's commits keeps `pendingDocs` above zero longer and hands the timer more work. A non-positive value is refused with a WARN and the default is used. Resolved onto `ResolvedConfig.Index` and read by the Worker from the ordinal-450 config snapshot. |
+| `JUSTSEARCH_CHUNKING_SWEEP_TARGET_TOKENS` | `justsearch.chunking.sweep.target_tokens` | Int | **TEMPORARY — tempdoc 916 Part 1 campaign instrument; see the deletion commitment below.** Target chunk size in estimated tokens. Unset → `ChunkSplitter.DEFAULT_CHUNK_TOKENS` (500), bit-identical to today. |
+| `JUSTSEARCH_CHUNKING_SWEEP_OVERLAP_TOKENS` | `justsearch.chunking.sweep.overlap_tokens` | Int | **TEMPORARY — 916 Part 1.** Overlap between adjacent chunks in estimated tokens. Unset → `ChunkSplitter.DEFAULT_OVERLAP_TOKENS` (50). |
+| `JUSTSEARCH_CHUNKING_SWEEP_MIN_TOKENS` | `justsearch.chunking.sweep.min_tokens` | Int | **TEMPORARY — 916 Part 1.** Floor on how far the splitter advances between chunks. Unset → `ChunkSplitter.MIN_CHUNK_TOKENS` (100). Not cosmetic: the advance is `max(chunkLength − overlap, minChars)`, so at a 128-token target the shipped floor of 100 delivers only ~70% of a requested 50-token overlap. A sweep arm must scale it with the target (the campaign uses `target / 5`, which reproduces 100 exactly at the incumbent 500) or four of the twelve arms are confounded. |
+| `JUSTSEARCH_CHUNKING_SWEEP_THRESHOLD_CHARS` | `justsearch.chunking.sweep.threshold_chars` | Int | **TEMPORARY — 916 Part 1.** Shortest document that is chunked at all. Unset → 2000 (`ChunkingPolicy.DEFAULT_THRESHOLD_CHARS`). Held FIXED across the twelve chunk-size arms; it exists so the follow-on threshold derivation is a restart rather than a rebuild. Lowering it below ~1536 breaks a separate invariant: `IndexingDocumentOps.estimateTokenCount` divides by 3 specifically so any *chunked* document estimates above the 512-token corpus-profile threshold (tempdoc 717 review, Finding 2). |
+
+> **All four chunking keys are TEMPORARY and their deletion is committed.** They are the instrument
+> for tempdoc 916 Part 1's chunk-size campaign, not a user-facing preference: chunk granularity is a
+> fingerprint input, so every arm is a full reindex, and a knob makes an arm a backend restart
+> instead of a recompile (a recompile between arms would itself be the confounder — the argument
+> tempdoc 885 item 19 made for the NRT cadence keys). **Owner decision 2026-09-03: the campaign
+> branch carrying them (PR #622) does not merge.** The final Part 1 PR carries only the chosen
+> `(target, overlap, min, threshold)` as constants, so these four entries never reach `main` and the
+> `config-surface` baseline on `main` is never moved. If you are reading this on `main`, the keys
+> above are documentation of a campaign instrument, not a shipped surface. Net permanent config
+> surface after Part 1: +0, by construction.
 
 ## Additional Runtime Keys (Selected)
 

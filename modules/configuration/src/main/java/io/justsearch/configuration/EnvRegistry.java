@@ -1312,7 +1312,36 @@ public enum EnvRegistry {
      * config snapshot, not from a raw sysprop read inside the Worker JVM (the [R1] defect shape).
      */
     INDEX_COMMIT_TIMER_INTERVAL_MS(
-        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000");
+        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000"),
+
+    // ==== TEMPORARY — tempdoc 916 Part 1 chunk-size campaign instrument ======================
+    // Four keys with NO default: unset resolves to null, and ResolvedConfig.Index's
+    // effectiveChunk*() accessors then return the shipped ChunkSplitter constants, so an
+    // un-swept build is bit-identical to today. They exist so a sweep arm is a BACKEND RESTART
+    // rather than a recompile (a recompile between arms is itself a confounder — 885 item 19).
+    // Chunk granularity is an index-time decision, so all four are resolved on the Head and reach
+    // the Worker through the ordinal-450 config snapshot; a raw sysprop read inside the Worker
+    // would only ever see the Worker JVM's own launch args (the [R1] defect shape).
+    //
+    // DELETION IS COMMITTED: the PR that lands 916 Part 1's chosen (target, overlap, min,
+    // threshold) removes all four entries and returns the config-surface baseline in the same
+    // commit. See gates/config-surface/.changesets/916-chunk-size-sweep-keys.md.
+
+    /** TEMPORARY (916 Part 1): target chunk size in estimated tokens. Unset → 500. */
+    CHUNKING_SWEEP_TARGET_TOKENS(
+        "justsearch.chunking.sweep.target_tokens", "JUSTSEARCH_CHUNKING_SWEEP_TARGET_TOKENS"),
+
+    /** TEMPORARY (916 Part 1): chunk overlap in estimated tokens. Unset → 50. */
+    CHUNKING_SWEEP_OVERLAP_TOKENS(
+        "justsearch.chunking.sweep.overlap_tokens", "JUSTSEARCH_CHUNKING_SWEEP_OVERLAP_TOKENS"),
+
+    /** TEMPORARY (916 Part 1): splitter advance floor in estimated tokens. Unset → 100. */
+    CHUNKING_SWEEP_MIN_TOKENS(
+        "justsearch.chunking.sweep.min_tokens", "JUSTSEARCH_CHUNKING_SWEEP_MIN_TOKENS"),
+
+    /** TEMPORARY (916 Part 1): shortest document that is chunked at all. Unset → 2000. */
+    CHUNKING_SWEEP_THRESHOLD_CHARS(
+        "justsearch.chunking.sweep.threshold_chars", "JUSTSEARCH_CHUNKING_SWEEP_THRESHOLD_CHARS");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

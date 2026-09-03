@@ -16,6 +16,7 @@ import io.justsearch.indexerworker.util.ParseUtils;
 import io.justsearch.indexerworker.util.VectorUtils;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.chunking.ChunkSplitter;
+import io.justsearch.indexing.chunking.ChunkingPolicy;
 import io.justsearch.ipc.ContextChunk;
 import io.justsearch.ipc.ContextSection;
 import io.justsearch.ipc.RetrieveContextResponse;
@@ -847,11 +848,15 @@ final class RagContextOps {
    */
   private static void synthesizeWholeDocHits(
       String docId, String content, float score, List<LuceneRuntimeTypes.SearchHit> out) {
-    if (content.length() <= ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS) {
+    // Tempdoc 916 Part 1: virtual chunking must use the SAME policy the writer used, or a sweep
+    // arm's chunkless outliers would be cut at 500/50 while its real chunks were cut at the arm's
+    // size — two granularities inside one answer's context.
+    ChunkingPolicy policy = ChunkDocumentWriter.activePolicy();
+    if (content.length() <= policy.thresholdChars()) {
       out.add(syntheticChunkHit(docId, content, 0, 1, 0, content.length(), score, content));
       return;
     }
-    List<String> parts = ChunkSplitter.split(content);
+    List<String> parts = ChunkSplitter.split(content, policy, ChunkSplitter.Mode.DEFAULT);
     int total = parts.size();
     int searchFrom = 0;
     for (int i = 0; i < parts.size(); i++) {
@@ -1047,7 +1052,12 @@ final class RagContextOps {
       }
       if (content == null || content.isBlank()) continue;
 
-      List<String> chunks = ChunkSplitter.split(content);
+      // Tempdoc 916 Part 1: the second virtual-chunking site. Same reason as the first
+      // (synthesizeWholeDocHits) — a fallback that cut at 500/50 while the index was built at the
+      // arm's size would put two granularities in one answer's context.
+      List<String> chunks =
+          ChunkSplitter.split(
+              content, ChunkDocumentWriter.activePolicy(), ChunkSplitter.Mode.DEFAULT);
       int chunkTotal = chunks.size();
       int searchFrom = 0;
 

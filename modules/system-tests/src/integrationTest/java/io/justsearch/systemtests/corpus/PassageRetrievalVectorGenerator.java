@@ -4,6 +4,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 import io.justsearch.indexing.chunking.ChunkSplitter;
+import io.justsearch.indexing.chunking.ChunkingPolicy;
 import io.justsearch.indexing.chunking.ChunkSplitter.Chunk;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -46,9 +47,11 @@ public final class PassageRetrievalVectorGenerator {
 
   private static final String DEFAULT_SERVER_URL = "http://127.0.0.1:8081/v1/embeddings";
   private static final String MODEL_NAME = "nomic-embed-text-v1.5";
-  private static final int CHUNK_TARGET_TOKENS = 500;
-  private static final int CHUNK_OVERLAP_TOKENS = 50;
-  private static final int CHUNK_THRESHOLD_CHARS = 2000;
+  // Tempdoc 916 Part 1 (open item 4): these were three hand-copied literals of the production
+  // constants — false authority the moment the production numbers move. They now derive.
+  private static final int CHUNK_TARGET_TOKENS = ChunkingPolicy.DEFAULT.targetTokens();
+  private static final int CHUNK_OVERLAP_TOKENS = ChunkingPolicy.DEFAULT.overlapTokens();
+  private static final int CHUNK_THRESHOLD_CHARS = ChunkingPolicy.DEFAULT.thresholdChars();
   private static final int DETERMINISTIC_DIMENSION = 768;
 
   private static final ObjectMapper MAPPER =

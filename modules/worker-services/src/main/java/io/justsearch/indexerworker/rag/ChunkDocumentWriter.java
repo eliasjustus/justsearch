@@ -3,11 +3,14 @@ package io.justsearch.indexerworker.rag;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
+import io.justsearch.configuration.resolved.ConfigStore;
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkIds;
 import io.justsearch.indexing.chunking.ChunkSplitter;
+import io.justsearch.indexing.chunking.ChunkingPolicy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,12 +28,44 @@ public final class ChunkDocumentWriter {
 
   private static final Logger log = LoggerFactory.getLogger(ChunkDocumentWriter.class);
 
-  public static final int CHUNK_THRESHOLD_CHARS = 2000;
+  public static final int CHUNK_THRESHOLD_CHARS = ChunkingPolicy.DEFAULT_THRESHOLD_CHARS;
   public static final int CHUNK_TARGET_TOKENS = ChunkSplitter.DEFAULT_CHUNK_TOKENS;
   public static final int CHUNK_OVERLAP_TOKENS = ChunkSplitter.DEFAULT_OVERLAP_TOKENS;
   private static final int CONTENT_PREVIEW_MAX_CHARS = 4096;
 
   private ChunkDocumentWriter() {}
+
+  /**
+   * The chunk sizing actually in force, resolved once per call from the process-wide
+   * {@link ConfigStore}.
+   *
+   * <p>Tempdoc 916 Part 1. This is the ONE place chunk granularity is decided: the writer, the
+   * indexing loop's threshold pre-check, the RAG context assembler and the index-status projection
+   * all read it, so an arm cannot end up chunking at one size while another surface reports
+   * another. Chunk granularity is an index-time decision made inside the WORKER, and the resolved
+   * config is the only channel that crosses the Head→Worker boundary (the ordinal-450 snapshot);
+   * a raw {@code System.getProperty} here would see the Worker JVM's own launch args only — the
+   * 885 [R1] defect shape — and would also fail {@code checkNoDirectJustsearchSysProp}.
+   *
+   * <p>Returns {@link ChunkingPolicy#DEFAULT} whenever no config is published yet (early startup,
+   * unit tests), so the shipped constants are the fail-safe rather than zeros.
+   */
+  public static ChunkingPolicy activePolicy() {
+    ConfigStore store = ConfigStore.globalOrNull();
+    if (store == null) {
+      return ChunkingPolicy.DEFAULT;
+    }
+    ResolvedConfig resolved = store.get();
+    if (resolved == null || resolved.index() == null) {
+      return ChunkingPolicy.DEFAULT;
+    }
+    ResolvedConfig.Index index = resolved.index();
+    return new ChunkingPolicy(
+        index.effectiveChunkTargetTokens(),
+        index.effectiveChunkOverlapTokens(),
+        index.effectiveChunkMinTokens(),
+        index.effectiveChunkThresholdChars());
+  }
 
   /**
    * Parent-document metadata a chunk inherits at write time.
@@ -104,7 +139,8 @@ public final class ChunkDocumentWriter {
       log.debug("Failed to delete existing chunks for {}: {}", parentDocId, e.getMessage());
     }
 
-    if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
+    ChunkingPolicy policy = activePolicy();
+    if (content == null || content.length() < policy.thresholdChars()) {
       return 0;
     }
 
@@ -112,8 +148,7 @@ public final class ChunkDocumentWriter {
     ChunkSplitter.Mode mode = ChunkSplitter.Mode.fromMimeOrFileKind(
         meta != null ? meta.mimeBase : null,
         meta != null ? meta.fileKind : null);
-    List<ChunkSplitter.Chunk> chunks =
-        ChunkSplitter.splitWithMetadata(content, CHUNK_TARGET_TOKENS, CHUNK_OVERLAP_TOKENS, mode);
+    List<ChunkSplitter.Chunk> chunks = ChunkSplitter.splitWithMetadata(content, policy, mode);
     if (chunks.size() <= 1) {
       return 0;
     }

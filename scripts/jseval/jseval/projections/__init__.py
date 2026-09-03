@@ -59,6 +59,8 @@ _PROJECTION_MODULE_NAMES = (
     "lucene_runtime_telemetry",
     # Tempdoc 636 / D-005: recall-funnel decomposition.
     "staged_recall_accounting",
+    # Tempdoc 916: SPLADE truncation evidence (opt-in sidecar; empty when unset).
+    "splade_truncation",
 )
 
 

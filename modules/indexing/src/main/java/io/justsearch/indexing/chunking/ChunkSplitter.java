@@ -235,14 +235,36 @@ public final class ChunkSplitter {
    * @return list of text chunks
    */
   public static List<String> split(String content, int targetTokens, int overlapTokens, Mode mode) {
+    return split(
+        content,
+        new ChunkingPolicy(
+            targetTokens, overlapTokens, MIN_CHUNK_TOKENS, ChunkingPolicy.DEFAULT_THRESHOLD_CHARS),
+        mode);
+  }
+
+  /**
+   * Splits content into chunks under an explicit {@link ChunkingPolicy} (tempdoc 916 Part 1).
+   *
+   * <p>{@code split(content, ChunkingPolicy.DEFAULT, mode)} is bit-identical to
+   * {@code split(content, DEFAULT_CHUNK_TOKENS, DEFAULT_OVERLAP_TOKENS, mode)}; the policy overload
+   * is the only one that can move {@code minTokens}.
+   *
+   * @param content the text content to split
+   * @param policy target/overlap/min sizing (its {@code thresholdChars} is the writer's concern,
+   *     not the splitter's, and is ignored here)
+   * @param mode chunking mode (content-aware)
+   * @return list of text chunks
+   */
+  public static List<String> split(String content, ChunkingPolicy policy, Mode mode) {
     if (content == null || content.isBlank()) {
       return List.of();
     }
+    ChunkingPolicy effective = policy != null ? policy : ChunkingPolicy.DEFAULT;
 
     // Use content-aware token-to-char conversion (handles CJK and overflow)
-    int targetChars = tokensToChars(targetTokens, content);
-    int overlapChars = tokensToChars(overlapTokens, content);
-    int minChars = tokensToChars(MIN_CHUNK_TOKENS, content);
+    int targetChars = tokensToChars(effective.targetTokens(), content);
+    int overlapChars = tokensToChars(effective.overlapTokens(), content);
+    int minChars = tokensToChars(effective.minTokens(), content);
     // Keep invariants when callers request very small targetTokens (e.g., tests).
     minChars = Math.min(minChars, Math.max(1, targetChars));
 
@@ -750,14 +772,32 @@ public final class ChunkSplitter {
    * Splits content into chunks with full metadata and content-aware mode.
    */
   public static List<Chunk> splitWithMetadata(String content, int targetTokens, int overlapTokens, Mode mode) {
+    return splitWithMetadata(
+        content,
+        new ChunkingPolicy(
+            targetTokens, overlapTokens, MIN_CHUNK_TOKENS, ChunkingPolicy.DEFAULT_THRESHOLD_CHARS),
+        mode);
+  }
+
+  /**
+   * Splits content into chunks with full metadata under an explicit {@link ChunkingPolicy}
+   * (tempdoc 916 Part 1). {@code ChunkingPolicy.DEFAULT} reproduces the shipped split exactly.
+   *
+   * @param content the text content to split
+   * @param policy target/overlap/min sizing ({@code thresholdChars} is not read here)
+   * @param mode chunking mode (content-aware)
+   * @return list of chunks with metadata
+   */
+  public static List<Chunk> splitWithMetadata(String content, ChunkingPolicy policy, Mode mode) {
     if (content == null || content.isBlank()) {
       return List.of();
     }
+    ChunkingPolicy effective = policy != null ? policy : ChunkingPolicy.DEFAULT;
 
     // Use content-aware token-to-char conversion (handles CJK and overflow)
-    int targetChars = tokensToChars(targetTokens, content);
-    int overlapChars = tokensToChars(overlapTokens, content);
-    int minChars = tokensToChars(MIN_CHUNK_TOKENS, content);
+    int targetChars = tokensToChars(effective.targetTokens(), content);
+    int overlapChars = tokensToChars(effective.overlapTokens(), content);
+    int minChars = tokensToChars(effective.minTokens(), content);
     // Keep invariants when callers request very small targetTokens (e.g., tests).
     minChars = Math.min(minChars, Math.max(1, targetChars));
 

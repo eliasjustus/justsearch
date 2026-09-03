@@ -744,7 +744,10 @@ final class IndexStatusOps {
                 .build())
         // Tempdoc 821 §3-C3 — the two thresholds the auditor owns, published so off-process
         // oracles read them instead of mirroring the Java constants.
-        .setChunkMinChars(ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS)
+        // Tempdoc 916 Part 1: the ACTIVE threshold, not the shipped constant. Off-process oracles
+        // (jseval chunk_completeness) divide the corpus on this number, so a sweep arm that
+        // published 2000 while chunking at another value would silently mis-score every arm.
+        .setChunkMinChars(ChunkDocumentWriter.activePolicy().thresholdChars())
         .setVectorReadyPercent(VECTOR_READY_PERCENT)
         // ARTIFACT tier: `present` is the artifact count, taken over the SAME status-carrying
         // population as `expected` and with FAILED excluded, so the three buckets partition.

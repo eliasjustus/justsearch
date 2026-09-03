@@ -11,6 +11,7 @@ import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkSplitter;
+import io.justsearch.indexing.chunking.ChunkingPolicy;
 import io.justsearch.indexing.chunking.ChunkSplitter.Chunk;
 import io.justsearch.systemtests.corpus.FrozenEmbeddingBackend;
 import io.justsearch.systemtests.corpus.ManifestCorpusLoader;
@@ -52,9 +53,11 @@ import org.junit.jupiter.api.io.TempDir;
 class PassageRetrievalIntegrationTest {
 
   private static final int VECTOR_DIM = 768;
-  private static final int CHUNK_TARGET_TOKENS = 500;
-  private static final int CHUNK_OVERLAP_TOKENS = 50;
-  private static final int CHUNK_THRESHOLD_CHARS = 2000;
+  // Tempdoc 916 Part 1 (open item 4): these were three hand-copied literals of the production
+  // constants — false authority the moment the production numbers move. They now derive.
+  private static final int CHUNK_TARGET_TOKENS = ChunkingPolicy.DEFAULT.targetTokens();
+  private static final int CHUNK_OVERLAP_TOKENS = ChunkingPolicy.DEFAULT.overlapTokens();
+  private static final int CHUNK_THRESHOLD_CHARS = ChunkingPolicy.DEFAULT.thresholdChars();
   private static final int RECALL_K = 3;
 
   private RunningRuntime runtime;
