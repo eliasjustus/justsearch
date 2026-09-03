@@ -12,6 +12,7 @@ import io.justsearch.indexing.SchemaFields;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class ChunkSearchOps {
   private static final Logger log = LoggerFactory.getLogger(ChunkSearchOps.class);
+
+  private record PendingChunkHit(String docId, float score, Map<String, String> fields) {}
 
   private final RuntimeSession session;
   private final SearcherBridge bridge;
@@ -322,7 +325,7 @@ public final class ChunkSearchOps {
     }
   }
 
-  /** Extracts chunk hits from TopDocs using the standard stored field allowlist. */
+  /** Extracts chunk metadata, then reconstructs text with one stored-content read per parent. */
   private SearchResult buildChunkHits(
       org.apache.lucene.search.IndexSearcher searcher,
       org.apache.lucene.search.TopDocs topDocs,
@@ -331,10 +334,11 @@ public final class ChunkSearchOps {
     org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
 
     List<SearchHit> hits = new ArrayList<>();
+    List<PendingChunkHit> pending = new ArrayList<>(topDocs.scoreDocs.length);
+    Map<String, DocumentFieldOps.ChunkSlice> chunkSlices = new LinkedHashMap<>();
     Set<String> storedAllowlist =
         Set.of(
             SchemaFields.DOC_ID,
-            SchemaFields.CHUNK_CONTENT,
             SchemaFields.PARENT_DOC_ID,
             SchemaFields.CHUNK_INDEX,
             SchemaFields.CHUNK_TOTAL,
@@ -354,9 +358,6 @@ public final class ChunkSearchOps {
 
       Map<String, String> fields = new HashMap<>();
       fields.put(SchemaFields.DOC_ID, chunkDocId);
-      fields.put(
-          SchemaFields.CHUNK_CONTENT,
-          docFields.getOrDefault(SchemaFields.CHUNK_CONTENT, ""));
       fields.put(
           SchemaFields.PARENT_DOC_ID,
           docFields.getOrDefault(SchemaFields.PARENT_DOC_ID, ""));
@@ -387,7 +388,17 @@ public final class ChunkSearchOps {
         fields.put(SchemaFields.PARENT_TOKEN_COUNT, parentTokenCount);
       }
 
-      hits.add(new SearchHit(chunkDocId, scoreDoc.score, fields));
+      DocumentFieldOps.ChunkSlice slice = DocumentFieldOps.chunkSliceFrom(docFields);
+      if (slice != null) chunkSlices.put(chunkDocId, slice);
+      pending.add(new PendingChunkHit(chunkDocId, scoreDoc.score, fields));
+    }
+
+    Map<String, String> contentByChunk =
+        DocumentFieldOps.resolveChunkContents(searcher, idField, chunkSlices, Map.of());
+    for (PendingChunkHit item : pending) {
+      item.fields().put(
+          SchemaFields.CHUNK_CONTENT, contentByChunk.getOrDefault(item.docId(), ""));
+      hits.add(new SearchHit(item.docId(), item.score(), item.fields()));
     }
 
     long tookMs = System.currentTimeMillis() - startTime;

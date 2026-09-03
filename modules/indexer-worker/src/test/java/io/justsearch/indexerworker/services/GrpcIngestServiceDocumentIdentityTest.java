@@ -67,6 +67,7 @@ final class GrpcIngestServiceDocumentIdentityTest {
     String oldHash = DocumentIdentityStore.pathHash(oldPath);
     String newHash = DocumentIdentityStore.pathHash(newPath);
     String parentUid = "00000000-0000-4000-8000-000000000077";
+    String parentContent = "alpha beta";
     identityStore.importExisting(oldHash, parentUid, 10L);
 
     runtime
@@ -83,7 +84,9 @@ final class GrpcIngestServiceDocumentIdentityTest {
                     SchemaFields.FILENAME,
                     "old-report.pdf",
                     SchemaFields.CONTENT,
-                    "parent content")));
+                    parentContent)));
+    int[] chunkStarts = {0, 6};
+    int[] chunkEnds = {5, parentContent.length()};
     for (int i = 0; i < 2; i++) {
       runtime
           .indexingCoordinator()
@@ -102,8 +105,14 @@ final class GrpcIngestServiceDocumentIdentityTest {
                       oldPath,
                       SchemaFields.CHUNK_INDEX,
                       i,
-                      SchemaFields.CONTENT,
-                      "chunk " + i)));
+                      SchemaFields.CHUNK_TOTAL,
+                      2,
+                      SchemaFields.CHUNK_START_CHAR,
+                      chunkStarts[i],
+                      SchemaFields.CHUNK_END_CHAR,
+                      chunkEnds[i],
+                      SchemaFields.CHUNK_CONTENT,
+                      parentContent.substring(chunkStarts[i], chunkEnds[i]))));
     }
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();

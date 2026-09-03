@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +41,14 @@ public final class DocumentFieldOps {
 
   /** Stored parent identity used to seed/rebuild the Worker document-identity store. */
   public record StoredDocumentIdentity(String docId, String docUid) {}
+
+  /** Character slice in a stored parent document that reconstructs one chunk's text. */
+  record ChunkSlice(String parentDocId, int startChar, int endChar) {}
+
+  @FunctionalInterface
+  interface ParentContentLoader {
+    String load(String parentDocId) throws IOException;
+  }
 
   DocumentFieldOps(
       RuntimeSession session,
@@ -81,35 +90,20 @@ public final class DocumentFieldOps {
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */
   public String getDocumentContent(String docId) {
-    try {
-      maybeRefreshBlockingIfCommittedSinceRefresh();
-      return bridge.withSearcher(searcher -> {
-        Query query = new TermQuery(new Term(idField, docId));
-        var topDocs = searcher.search(query, 1);
-
-        if (topDocs.scoreDocs.length == 0) {
-          return null;
-        }
-
-        int docNum = topDocs.scoreDocs[0].doc;
-        Set<String> storedAllowlist = Set.of(SchemaFields.CONTENT);
-        Map<String, String> fields =
-            SearchResultFormatter.extractFromStoredFields(
-                searcher.storedFields(), docNum, true, storedAllowlist);
-        return fields.get(SchemaFields.CONTENT);
-      });
-    } catch (IOException e) {
-      log.debug("Failed to get content for {}: {}", docId, e.getMessage());
-      return null;
-    }
+    if (docId == null) return null;
+    return getDocumentContentBatch(List.of(docId)).get(docId);
   }
 
   /**
-   * Fetches content for a batch of document IDs using a single shared searcher.
+   * Fetches content for a batch of parent or chunk document IDs using a single shared searcher.
    *
-   * <p>Acquires ONE searcher, resolves all doc IDs, then iterates in ascending Lucene
-   * internal doc-ID order for LZ4 block cache locality. Doc IDs not found in the index
-   * are silently omitted from the result map (stale IDs from the pending query).
+   * <p>Parent documents return their stored {@code content}. Chunk documents reconstruct the exact
+   * text from {@code parent_doc_id} plus the stored start/end offsets. Distinct parent content is
+   * read once per batch, including when several requested chunks share the same parent.
+   *
+   * <p>Acquires ONE searcher, resolves all doc IDs, then iterates in ascending Lucene internal
+   * doc-ID order for LZ4 block cache locality. Doc IDs not found in the index, missing parents, and
+   * invalid slices are silently omitted from the result map (stale IDs from the pending query).
    *
    * <p>Calls {@code refreshBeforeFetch} to ensure write-after-read visibility.
    *
@@ -141,10 +135,16 @@ public final class DocumentFieldOps {
         // access (LZ4 block cache locality).
         resolved.sort(Map.Entry.comparingByKey());
 
-        // Phase 3: Extract content in sorted order.
-        Set<String> storedAllowlist = Set.of(SchemaFields.CONTENT);
+        // Phase 3: Extract parent content or chunk geometry in sorted order.
+        Set<String> storedAllowlist =
+            Set.of(
+                SchemaFields.CONTENT,
+                SchemaFields.PARENT_DOC_ID,
+                SchemaFields.CHUNK_START_CHAR,
+                SchemaFields.CHUNK_END_CHAR);
         org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
         Map<String, String> result = new LinkedHashMap<>(resolved.size());
+        Map<String, ChunkSlice> chunkSlices = new LinkedHashMap<>();
         for (Map.Entry<Integer, String> entry : resolved) {
           Map<String, String> fields =
               SearchResultFormatter.extractFromStoredFields(
@@ -152,8 +152,14 @@ public final class DocumentFieldOps {
           String content = fields.get(SchemaFields.CONTENT);
           if (content != null) {
             result.put(entry.getValue(), content);
+            continue;
+          }
+          ChunkSlice slice = chunkSliceFrom(fields);
+          if (slice != null) {
+            chunkSlices.put(entry.getValue(), slice);
           }
         }
+        result.putAll(resolveChunkContents(searcher, idField, chunkSlices, result));
         return Collections.unmodifiableMap(result);
       });
     } catch (IOException e) {
@@ -168,7 +174,7 @@ public final class DocumentFieldOps {
    * <p>Same 3-phase pattern as {@link #getDocumentContentBatch}: acquires ONE searcher,
    * resolves all doc IDs, then reads fields in ascending doc-number order. For DocValues-backed
    * fields (status fields), reads are O(1) per field via {@code projectDocValues}. Stored
-   * fields (e.g., chunk_content) go through {@code extractFromStoredFields}.
+   * fields go through {@code extractFromStoredFields}.
    *
    * <p>Reduces 300+ individual {@code getDocumentField} calls to 1 searcher acquisition +
    * N TermQuery resolutions + batch DocValues/stored reads. ~8-10s savings per enrichment
@@ -223,8 +229,7 @@ public final class DocumentFieldOps {
             readPathOps.projectDocValues(searcher, docNum, dvFieldIds, values);
           }
           if (hasStored) {
-            boolean includeContent = storedFieldNames.contains(SchemaFields.CONTENT)
-                || storedFieldNames.contains(SchemaFields.CHUNK_CONTENT);
+            boolean includeContent = storedFieldNames.contains(SchemaFields.CONTENT);
             Map<String, String> stored =
                 SearchResultFormatter.extractFromStoredFields(
                     storedFields, docNum, includeContent, storedFieldNames);
@@ -241,6 +246,73 @@ public final class DocumentFieldOps {
           fieldNames, docIds.size(), e.getMessage());
       return Map.of();
     }
+  }
+
+  static ChunkSlice chunkSliceFrom(Map<String, String> fields) {
+    if (fields == null) return null;
+    String parentDocId = fields.get(SchemaFields.PARENT_DOC_ID);
+    if (parentDocId == null || parentDocId.isBlank()) return null;
+    try {
+      int start = Integer.parseInt(fields.getOrDefault(SchemaFields.CHUNK_START_CHAR, "-1"));
+      int end = Integer.parseInt(fields.getOrDefault(SchemaFields.CHUNK_END_CHAR, "-1"));
+      return start >= 0 && end >= start ? new ChunkSlice(parentDocId, start, end) : null;
+    } catch (NumberFormatException ignored) {
+      return null;
+    }
+  }
+
+  /** Resolves each distinct parent once, then applies all requested chunk slices. */
+  static Map<String, String> resolveChunkContents(
+      org.apache.lucene.search.IndexSearcher searcher,
+      String idField,
+      Map<String, ChunkSlice> chunks,
+      Map<String, String> knownParentContent)
+      throws IOException {
+    org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
+    Set<String> contentOnly = Set.of(SchemaFields.CONTENT);
+    return resolveChunkContents(
+        chunks,
+        knownParentContent,
+        parentId -> {
+          var parentHits = searcher.search(new TermQuery(new Term(idField, parentId)), 1);
+          if (parentHits.scoreDocs.length == 0) return null;
+          Map<String, String> fields =
+              SearchResultFormatter.extractFromStoredFields(
+                  storedFields, parentHits.scoreDocs[0].doc, true, contentOnly);
+          return fields.get(SchemaFields.CONTENT);
+        });
+  }
+
+  /** Resolves slices through an injectable loader so parent de-duplication is directly testable. */
+  static Map<String, String> resolveChunkContents(
+      Map<String, ChunkSlice> chunks,
+      Map<String, String> knownParentContent,
+      ParentContentLoader parentLoader)
+      throws IOException {
+    if (chunks == null || chunks.isEmpty()) return Map.of();
+
+    Map<String, String> parentContent = new HashMap<>();
+    if (knownParentContent != null) parentContent.putAll(knownParentContent);
+    Set<String> attemptedParents = new LinkedHashSet<>(parentContent.keySet());
+
+    for (ChunkSlice slice : chunks.values()) {
+      String parentId = slice.parentDocId();
+      if (!attemptedParents.add(parentId)) continue;
+      String content = parentLoader.load(parentId);
+      if (content != null) parentContent.put(parentId, content);
+    }
+
+    Map<String, String> resolved = new LinkedHashMap<>();
+    for (var entry : chunks.entrySet()) {
+      ChunkSlice slice = entry.getValue();
+      String content = parentContent.get(slice.parentDocId());
+      if (content == null
+          || slice.startChar() < 0
+          || slice.endChar() < slice.startChar()
+          || slice.endChar() > content.length()) continue;
+      resolved.put(entry.getKey(), content.substring(slice.startChar(), slice.endChar()));
+    }
+    return resolved;
   }
 
   /**

@@ -2690,9 +2690,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 

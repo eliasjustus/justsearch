@@ -52,7 +52,8 @@ Fields in `fields.v1.json` have roles that determine indexing behavior:
 
 ## Naming Conventions
 
-- `entity_*_raw` — keyword entity fields (filter/facet)
-- `entity_*_text` — text entity fields (BM25 scoring)
+- `entity_*_raw` — multi-valued keyword entity fields (filter/facet and NER-membership evidence)
+- Analyzed `entity_*_text` duplicates are retired; do not reintroduce them for BM25 scoring.
 - `meta_*` — structured metadata fields (lowercased at index+query time)
 - `chunk_*` — chunk-level fields (on child documents only)
+- `chunk_content` is indexed but not stored; its only valid RMW policy is `rederive-parent-slice`.

@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2/PR-C1 PENDING (2026-09-03). The required six-corpus PR-C0 evaluation and PR-C1's overnight evidence campaign remain deferred and block their respective merges."
+status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0 AND PR-C2 IMPLEMENTED AND SHORT-CHECKED, PR-C1 PENDING (2026-09-03). PR-C0's six-corpus evaluation, PR-C2's long storage/read-cost measurement, and PR-C1's overnight evidence campaign remain deferred and block their respective merges."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -22,8 +22,8 @@ related:
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
 records what re-verification found. Phase 1 is merged. Phase 2 is split between the implemented
-Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0 is implemented and short-checked;
-PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block merge.
+Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0 and PR-C2 are implemented and
+short-checked; PR-C1 remains pending, and the deferred evidence campaigns still block merge.
 
 ---
 
@@ -154,7 +154,7 @@ PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block 
       Execution evidence is recorded separately from this implementation checklist.
 - [ ] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
-### Phase 3 — the reindex bundle, one migration for users (PR-C0 IMPLEMENTED; PR-C2/PR-C1 PENDING)
+### Phase 3 — the reindex bundle, one migration for users (PR-C0/PR-C2 IMPLEMENTED; PR-C1 PENDING)
 
 - [ ] C1. Quantized vectors by default, with jseval nDCG@10 / recall@50 evidence (delta ≤ 1%
       absolute), index size and RSS before/after; binary-quantized HNSW on `chunk_vector` as a
@@ -162,12 +162,15 @@ PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block 
 - [ ] C2. Pin vector similarity: add `vector.similarity: dot_product` to both catalog copies,
       construct the field with an explicit `FieldType`, add a unit-norm encoder test, recalibrate
       the 702 thresholds with jseval evidence, update `SsotValidatorFingerprintTest`.
-- [ ] C3. Stop storing `chunk_content` (`stored:false`, still indexed); slice the parent `content`
-      by `chunk_start_char`/`chunk_end_char`; measure the per-hit stored-field cost.
-- [ ] C4. Delete the `entity_*_text` fields and the entity text-boost path; keep facets on
+- [x] C3. Stop storing `chunk_content` (`stored:false`, still indexed); slice the parent `content`
+      by `chunk_start_char`/`chunk_end_char`. Exact reconstruction and one-parent-read semantics are
+      implemented and short-checked; the long per-hit stored-field/storage measurement is deferred
+      and remains a PR-C2 merge prerequisite.
+- [x] C4. Delete the `entity_*_text` fields and the entity text-boost path; keep facets on
       `entity_*_raw`; tell lane B for ADR-0007's amendment. PR-C0 has already retired the functional
       `entity_boost` configuration/query path while preserving the public status field as a zeroed
-      compatibility tombstone; physical field deletion remains PR-C2.
+      compatibility tombstone; PR-C2 removes the three physical fields and their writers, while
+      evidence-span NER membership reads the retained raw values.
 - [x] C5a. Replace the English stop-word list with a field-local document-frequency signal, move the
       decision into `SearchPlanner`, and report deliberate dense skips truthfully with typed reasons.
 - [ ] C5b. Verify comparable per-language skip rates and no material quality loss on the six
@@ -1096,9 +1099,10 @@ Re-run in full after O14; every line below is from that run. The integration-tes
    ingests, then a real cutover) is verified at the state-machine and policy-branch level here, not
    with a running Worker. The programme owner schedules the live run after lane E's measurement
    window closes; the reviewer's 5-arm procedure is the script.
-4. **O4 (routed, pre-existing).** Phase 3's consumer list for `chunk_content` is wrong:
+4. **O4 — CLOSED IN PR-C2.** Phase 3's consumer list for `chunk_content` was wrong:
    `HighlightingOps` never reads it, and three of the four cited `RagContextOps` lines read whole-doc
-   `CONTENT` (§B.2 D3/D4). Phase 3 must re-derive that list rather than trust the brief.
+   `CONTENT` (§B.2 D3/D4). PR-C2 re-derived the live read graph and covered both chunk-specific
+   search and the generic projection path used by citation matching (§P3.D).
 5. **O5 (routed, pre-existing, latent).** The vector-dimension override was applied only to the
    commit path's instance, never to the two comparison paths (§B.1 claim 1c). Fixed here as a
    side-effect; recorded because it is the exact shape of defect the one-fingerprint design exists
@@ -1947,3 +1951,59 @@ configuration matrix remains exactly `yaml_keys=111`, `env_sysprop_pairs=250`, `
 
 The six-corpus evaluation and hour-long benchmarks were not run. PR-C0 may be reviewed and stacked
 upon locally, but it must not merge until the six-corpus acceptance evidence is recorded here.
+
+### §P3.D PR-C2 implemented semantics
+
+- The canonical and runtime-mirror catalogs keep `chunk_content` analyzed and indexed but set
+  `stored:false`. Generic projections, chunk search, citation matching, embedding, SPLADE, BGE-M3,
+  and combined enrichment reconstruct the value from stored parent `content` plus
+  `chunk_start_char`/`chunk_end_char`.
+- Reconstruction is the exact Java UTF-16 substring with an exclusive end offset. It performs no
+  trimming or normalization, preserves CRLF, Markdown fences, whitespace, and surrogate pairs, and
+  produces no fabricated text on a missing parent or malformed/out-of-range geometry. Generic and
+  batch projections omit the unresolved value; the chunk-search result keeps its pre-existing
+  empty-string fallback. Batch paths read each distinct parent at most once.
+- `chunk_content` declares the dedicated `rederive-parent-slice` RMW policy. The policy is legal only
+  on that exact text field. Single, batch, and path-update RMW lanes reconstruct the old posting from
+  the old parent snapshot before applying an unrelated update; missing or invalid reconstruction
+  fails closed instead of silently erasing indexed chunk text.
+- BGE-M3 routing now determines chunkness from `is_chunk`, not from the former stored-content
+  presence. Combined enrichment also classifies pending documents structurally, preventing a chunk
+  discovered through another cache from receiving parent-only vector or NER status.
+- The three analyzed `entity_persons_text`, `entity_organizations_text`, and
+  `entity_locations_text` fields, schema constants, and NER writers are deleted. The retained
+  multi-valued `entity_*_raw` fields continue to serve filters, facets, and evidence-span membership.
+- The physical projection test proves both changes move `index_fingerprint` relative to the legacy
+  shape. The `rmwPolicy` annotation itself remains excluded from the fingerprint.
+
+Two independent audits found gaps before the short-check boundary. First, citation matching reads
+through generic `ReadPathOps`, not `ChunkSearchOps`; synthesis was added there rather than changing
+the citation contract. Second, Lucene RMW recreates a document from readable values, so merely
+removing storage would erase the chunk posting on any unrelated update; the dedicated policy and
+old-parent reconstruction close that hole. The combined-enrichment tests then exposed a third
+routing edge: reconstructed content allowed chunks to arrive through the SPLADE cache, so structural
+`is_chunk` routing was made authoritative across all pending IDs.
+
+### §P3.E PR-C2 local verification and deferred evidence (2026-09-03)
+
+Before changing the storage flag, the adversarial offset-law test passed against stored chunk text.
+After the catalog flip, the same CRLF/non-BMP/fence case passed through parent-slice synthesis. The
+focused adapter tests additionally prove indexed-but-not-stored physical shape, exact BM25 output,
+sibling batching with one parent read, generic projection behavior, malformed-geometry omission,
+and single/batch/path RMW posting preservation. Focused worker tests cover embedding, SPLADE, BGE-M3,
+combined enrichment, raw-only NER writes, and raw-field evidence selection. The chunk-regeneration
+and status-schema contracts also pass.
+
+The affected short-suite expansion passed for `configuration`, `indexing`, `adapters-lucene`, and
+`app-api`. Its first pass usefully exposed higher-level fixtures that still created independently
+stored chunk text without parent-backed offsets; those fixtures were converted to the production
+parent-slice shape. The final full rerun passed **1,166 worker-services tests** (0 failures, 2
+skipped) and **357 indexer-worker tests** (0 failures, 12 skipped). The focused adapter contract set
+passed 104 tests. `ssotValidate` and `ssot-tools:test` pass; generated field constants and skill
+projections are current; SSOT catalog sync, ADR coverage, language-agnostic analysis, canonical-link,
+LLM-index, Markdown, tempdoc-number, and pre-merge-table checks pass.
+
+The hour-scale storage/read-cost benchmark was deliberately not run in this work window. No storage
+or latency reduction is claimed yet, and PR-C2 must not merge until that pre-registered measurement
+is run and recorded. PR-C1 and its 12–18 machine-hour codec/quality campaign remain entirely
+deferred; no PR-C1 implementation is claimed by this section.

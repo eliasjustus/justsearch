@@ -66,7 +66,7 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `is_chunk` | boolean | "true" if this is a chunk, absent otherwise. |
 | `chunk_index` | int | Sequential index of the chunk (0, 1, 2...). |
 | `chunk_total` | int | Total number of chunks for the parent document. |
-| `chunk_content` | text | Searchable chunk text used for BM25 chunk retrieval. |
+| `chunk_content` | text (indexed, not stored) | Searchable chunk text used for BM25 retrieval; read paths reconstruct it from the stored parent `content` and chunk offsets. |
 | `chunk_start_char` | int | Start character offset (0-based) into the parent document’s extracted text. |
 | `chunk_end_char` | int | End character offset (exclusive, 0-based) into the parent document’s extracted text. |
 | `chunk_start_line` | int | Optional start line number (1-based) for citation/navigation UX. |
@@ -76,12 +76,9 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `chunk_vector` | floats | 768-dim chunk embeddings (HNSW) used for chunk-level hybrid retrieval. |
 | `chunk_embedding_status` | keyword | Chunk embedding generation status (`PENDING|COMPLETED|FAILED`). |
 | `chunk_embedding_retry_count` | long | Retry count for chunk embedding poison-pill protection. |
-| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity facet values (filter/facet). |
-| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity facet values (filter/facet). |
-| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity facet values (filter/facet). |
-| `entity_persons_text` | text (ICU-analyzed, stored) | Person entities for BM25 scoring. |
-| `entity_organizations_text` | text (ICU-analyzed, stored) | Organization entities for BM25 scoring. |
-| `entity_locations_text` | text (ICU-analyzed, stored) | Location entities for BM25 scoring. |
+| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity values for filtering, faceting, and NER-membership evidence selection. |
 | `meta_source` | keyword (stored, DocValues) | Document source for filter/facet. |
 | `meta_author` | keyword (stored, DocValues) | Document author for filter/facet. |
 | `meta_category` | keyword (stored, DocValues) | Document category for filter/facet. |
@@ -114,6 +111,15 @@ Large documents are split into overlapping chunks (default 500 tokens) to suppor
 *   **Storage:** Chunks are stored as separate Lucene documents.
 *   **Linkage:** They are linked to the original file via `parent_doc_id`.
 *   **Retrieval:** Searches can target `is_chunk:true` to find specific relevant passages rather than whole files.
+
+`chunk_content` contributes analyzed postings but is deliberately not stored a second time. A read
+that explicitly projects it loads each distinct parent at most once and returns the exact Java
+UTF-16 substring `content.substring(chunk_start_char, chunk_end_char)`—including original CRLF,
+fence, whitespace, and non-BMP characters, with no trimming or normalization. Missing parents and
+invalid or out-of-range offsets fail closed without fabricated text (batch/generic projections omit
+the value; the chunk-search envelope retains its existing empty-string fallback). Read-modify-write
+operations apply the catalog policy `rederive-parent-slice` so unrelated updates do not erase the
+chunk's indexed postings.
 
 Chunk-level vector retrieval uses **field separation**:
 - Full documents embed into `vector`

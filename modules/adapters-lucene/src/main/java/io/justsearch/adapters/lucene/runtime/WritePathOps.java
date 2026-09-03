@@ -314,6 +314,15 @@ public final class WritePathOps {
    */
   boolean readModifyWrite(IndexSearcher searcher, String docId, Map<String, Object> updates)
       throws IOException {
+    return readModifyWrite(searcher, docId, updates, new HashMap<>());
+  }
+
+  private boolean readModifyWrite(
+      IndexSearcher searcher,
+      String docId,
+      Map<String, Object> updates,
+      Map<String, String> parentContentCache)
+      throws IOException {
     var topDocs = searcher.search(new TermQuery(new Term(idField, docId)), 1);
     if (topDocs.scoreDocs.length == 0) {
       log.debug("readModifyWrite: document not found: {}", docId);
@@ -346,6 +355,16 @@ public final class WritePathOps {
       }
     }
 
+    // A parent read here can serve every sibling chunk in batch/path RMW. More importantly, a
+    // rename rewrites the parent first while this searcher still exposes the old identity; caching
+    // its content lets all old-parent chunk slices survive that rewrite exactly.
+    String storedContent = asString(fields.get(SchemaFields.CONTENT));
+    if (storedContent != null) {
+      parentContentCache.putIfAbsent(docId, storedContent);
+    }
+
+    preserveChunkContent(searcher, docId, updates, fields, parentContentCache);
+
     // RMW preservation engine (tempdoc 711): stored-field reconstruction above cannot see
     // non-stored, non-docValues data-bearing fields (KnnFloatVectorField vectors, SPLADE
     // FeatureFields). For each catalog field that declares an rmwPolicy and is absent from the
@@ -373,6 +392,104 @@ public final class WritePathOps {
     rmwSnap.writer().updateDocument(new Term(idField, docId), newDoc);
     log.debug("readModifyWrite: updated document: {}", docId);
     return true;
+  }
+
+  /**
+   * Reconstructs the non-stored chunk text before a whole-document RMW rewrite.
+   *
+   * <p>Failure is deliberately closed: rewriting a chunk without this field would silently erase
+   * its BM25 postings. The caller must rebuild an old or malformed index instead.
+   */
+  private void preserveChunkContent(
+      IndexSearcher searcher,
+      String chunkId,
+      Map<String, Object> updates,
+      Map<String, Object> fields,
+      Map<String, String> parentContentCache)
+      throws IOException {
+    FieldMapper.FieldDef chunkContentDef =
+        session.fieldMapper.fieldDefs().get(SchemaFields.CHUNK_CONTENT);
+    if (chunkContentDef == null
+        || !FieldMapper.RMW_REDERIVE_PARENT_SLICE.equals(chunkContentDef.rmwPolicy)) {
+      return;
+    }
+    if (updates.containsKey(SchemaFields.CHUNK_CONTENT)
+        || !asBoolean(fields.get(SchemaFields.IS_CHUNK))) {
+      return;
+    }
+
+    String parentId =
+        asString(
+            updates.containsKey(SchemaFields.PARENT_DOC_ID)
+                ? updates.get(SchemaFields.PARENT_DOC_ID)
+                : fields.get(SchemaFields.PARENT_DOC_ID));
+    int start =
+        parseRequiredChunkOffset(
+            updates.containsKey(SchemaFields.CHUNK_START_CHAR)
+                ? updates.get(SchemaFields.CHUNK_START_CHAR)
+                : fields.get(SchemaFields.CHUNK_START_CHAR),
+            "start",
+            chunkId);
+    int end =
+        parseRequiredChunkOffset(
+            updates.containsKey(SchemaFields.CHUNK_END_CHAR)
+                ? updates.get(SchemaFields.CHUNK_END_CHAR)
+                : fields.get(SchemaFields.CHUNK_END_CHAR),
+            "end",
+            chunkId);
+    if (parentId == null || parentId.isBlank() || end < start) {
+      throw new IOException("Cannot preserve chunk_content for malformed chunk " + chunkId);
+    }
+
+    String parentContent = parentContentCache.get(parentId);
+    if (parentContent == null) {
+      var parentDocs = searcher.search(new TermQuery(new Term(idField, parentId)), 1);
+      if (parentDocs.scoreDocs.length == 0) {
+        throw new IOException(
+            "Cannot preserve chunk_content for " + chunkId + ": missing parent " + parentId);
+      }
+      Document parentDoc = searcher.storedFields().document(parentDocs.scoreDocs[0].doc);
+      parentContent = parentDoc.get(SchemaFields.CONTENT);
+      if (parentContent == null) {
+        throw new IOException(
+            "Cannot preserve chunk_content for " + chunkId + ": parent content unavailable");
+      }
+      parentContentCache.put(parentId, parentContent);
+    }
+    if (end > parentContent.length()) {
+      throw new IOException(
+          "Cannot preserve chunk_content for "
+              + chunkId
+              + ": slice ["
+              + start
+              + ","
+              + end
+              + ") exceeds parent length "
+              + parentContent.length());
+    }
+    fields.put(SchemaFields.CHUNK_CONTENT, parentContent.substring(start, end));
+  }
+
+  private static int parseRequiredChunkOffset(Object value, String label, String chunkId)
+      throws IOException {
+    if (value == null) {
+      throw new IOException(
+          "Cannot preserve chunk_content for " + chunkId + ": missing " + label + " offset");
+    }
+    try {
+      int parsed = Integer.parseInt(value.toString());
+      if (parsed < 0) throw new NumberFormatException("negative");
+      return parsed;
+    } catch (NumberFormatException e) {
+      throw new IOException(
+          "Cannot preserve chunk_content for "
+              + chunkId
+              + ": invalid "
+              + label
+              + " offset "
+              + value,
+          e);
+    }
   }
 
   /**
@@ -423,6 +540,12 @@ public final class WritePathOps {
             policy.substring(FieldMapper.RMW_RESET_STATUS_PREFIX.length()),
             updates,
             fields);
+      } else if (FieldMapper.RMW_REDERIVE_PARENT_SLICE.equals(policy)
+          && asBoolean(fields.get(SchemaFields.IS_CHUNK))
+          && !fields.containsKey(SchemaFields.CHUNK_CONTENT)) {
+        // preserveChunkContent runs before this catalog-driven loop. Keep the policy arm explicit
+        // so a future refactor cannot validate the declaration yet silently skip its disposition.
+        throw new IOException("chunk_content rederive-parent-slice policy was not satisfied");
       }
     }
   }
@@ -497,9 +620,10 @@ public final class WritePathOps {
     int updated = 0;
     int notFound = 0;
     long minNs = Long.MAX_VALUE, maxNs = 0, sumNs = 0;
+    Map<String, String> parentContentCache = new HashMap<>();
     for (Map.Entry<String, Map<String, Object>> entry : batchUpdates) {
       long t0 = System.nanoTime();
-      if (readModifyWrite(searcher, entry.getKey(), entry.getValue())) {
+      if (readModifyWrite(searcher, entry.getKey(), entry.getValue(), parentContentCache)) {
         updated++;
       } else {
         notFound++;
@@ -543,6 +667,7 @@ public final class WritePathOps {
     // same pattern as LuceneRuntimeUtils).
     int lastSep = Math.max(newPath.lastIndexOf('/'), newPath.lastIndexOf('\\'));
     String newFilename = lastSep >= 0 ? newPath.substring(lastSep + 1) : newPath;
+    Map<String, String> parentContentCache = new HashMap<>();
     boolean parentUpdated =
         readModifyWrite(
             searcher,
@@ -550,10 +675,15 @@ public final class WritePathOps {
             Map.ofEntries(
                 Map.entry(SchemaFields.DOC_ID, newPath),
                 Map.entry(SchemaFields.PATH, newPath),
-                Map.entry(SchemaFields.FILENAME, newFilename)));
+                Map.entry(SchemaFields.FILENAME, newFilename)),
+            parentContentCache);
     if (!parentUpdated) {
       log.debug("updateDocumentPaths: parent document not found: {}", oldPath);
       return 0;
+    }
+    String renamedParentContent = parentContentCache.get(oldPath);
+    if (renamedParentContent != null) {
+      parentContentCache.put(newPath, renamedParentContent);
     }
 
     // 2. Find all chunks for the old parent path
@@ -578,7 +708,8 @@ public final class WritePathOps {
           chunkId,
           Map.of(
               SchemaFields.PARENT_DOC_ID, newPath,
-              SchemaFields.PATH, newPath));
+              SchemaFields.PATH, newPath),
+          parentContentCache);
       count++;
     }
 
