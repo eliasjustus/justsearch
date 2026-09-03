@@ -181,3 +181,19 @@ Too many open tabs hang the claude-in-chrome extension during live UI validation
 ## 28. `shared-worktree-checkout` — tempdoc 882, 2026-09-01
 
 Three workers edited disjoint file sets in one worktree. One was briefed "no git command that writes" and "touch only the listed files". A docs-regen hint fired on its own doc edit; it ran the repo-wide regen script, saw its siblings' dirty files in `git status`, assumed it had caused them, and ran `git checkout --` on seven files it did not own. Three sibling edits were lost and had to be redone by the orchestrator. Two structural facts made the brief the only guard: `bash-guard` deliberately allows single-file `git checkout -- <path>` in worktrees, and parent hooks never fire inside a subagent. **Principle**: a brief for a worker sharing a worktree names `git checkout --`, `git restore` and `git stash` as forbidden outright, tells the worker that unexpected dirty files belong to siblings and are to be reported, never cleaned, and reserves repo-wide regen scripts for the orchestrator to run once at the end.
+
+## 29. `falsify-restore-from-backup` — tempdoc 915, 2026-09-03
+
+A falsification driver broke one guarded behaviour at a time, ran the tests that should notice, and
+restored each file with `git checkout -- <file>`. Falsification runs against work that is by
+definition **uncommitted**, so every restore reverted to `HEAD` and deleted the change being
+falsified: five files in one pass, silently, and the driver's own end-of-run check reported the tree
+clean because `git status` agreed with `HEAD`. Two further harness defects rode along in the same
+script and both read as *results* rather than as bugs. A `str.replace` whose anchor no longer matched
+applied no break at all, and the green run that followed was recorded as `NO FAILURE OBSERVED` — the
+signature of a weak test. And the failure reporter walked every module's `build/test-results`, so one
+case's failures were re-reported as every later case's, making seven cases look caught when one was.
+**Principle**: a break-and-restore driver restores from a byte copy taken immediately before the
+break and diffs against that copy at the end; it asserts the break actually matched before it trusts
+the run; and it wipes the result directories per case. The general form — `NO FAILURE OBSERVED` is a
+claim about the harness before it is a claim about the test, and it must be diagnosed as such.

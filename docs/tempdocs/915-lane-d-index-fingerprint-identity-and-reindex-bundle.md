@@ -664,6 +664,8 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 
 **G15 failed as NO FAILURE OBSERVED twice, for two different reasons, and both were mine.**
 
+The harness half of that is recorded as `falsify-restore-from-backup` in `agent-postmortems.md` #29 — deliberately there and not in `agent-lessons.md`, whose always-loaded ratchet had zero headroom (`check-always-loaded-budget` failed the first attempt by exactly the bytes the new bullet added).
+
 The first time, the harness's `replace` silently matched nothing, so the break was never applied and a
 green run got recorded as a weak test. The second time the break *was* applied and the test still
 passed — because the test never reached the branch at all. Its config used
