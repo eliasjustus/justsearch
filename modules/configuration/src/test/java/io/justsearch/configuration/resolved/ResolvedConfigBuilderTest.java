@@ -961,65 +961,6 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
-    @DisplayName("916 Part 2: chunk-collapse aggregation defaults reproduce the pre-916 collapse")
-    void chunkCollapseAggregationDefaults() {
-      ResolvedConfig.HybridSearch h = new ResolvedConfigBuilder().build().hybridSearch();
-      assertEquals(1, h.chunkCollapseScanCapMultiplier());
-      assertEquals(0.0, h.chunkCollapseAggregationLambda(), 0.0);
-    }
-
-    @Test
-    @DisplayName("916 Part 2: chunk-collapse aggregation keys resolve from YAML")
-    void chunkCollapseAggregationFromYaml() {
-      String yaml =
-          """
-          index:
-            hybrid:
-              chunk_collapse_scan_cap_multiplier: 5
-              chunk_collapse_aggregation_lambda: 0.3
-          """;
-      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeYaml(parseYaml(yaml));
-      ResolvedConfig.HybridSearch h = builder.build().hybridSearch();
-      assertEquals(5, h.chunkCollapseScanCapMultiplier());
-      assertEquals(0.3, h.chunkCollapseAggregationLambda(), 0.0001);
-    }
-
-    @Test
-    @DisplayName("916 Part 2: over-fetch clamps to >= 1 and lambda clamps into [0, 1]")
-    void chunkCollapseAggregationClamped() {
-      String yaml =
-          """
-          index:
-            hybrid:
-              chunk_collapse_scan_cap_multiplier: 0
-              chunk_collapse_aggregation_lambda: 4.5
-          """;
-      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeYaml(parseYaml(yaml));
-      ResolvedConfig.HybridSearch h = builder.build().hybridSearch();
-      assertEquals(1, h.chunkCollapseScanCapMultiplier());
-      assertEquals(1.0, h.chunkCollapseAggregationLambda(), 0.0);
-    }
-
-    @Test
-    @DisplayName("916 Part 2: chunk-collapse aggregation env vars resolve via EnvRegistry")
-    void chunkCollapseAggregationEnvRegistryKeys() {
-      assertEquals(
-          "index.hybrid.chunk_collapse_scan_cap_multiplier",
-          EnvRegistry.HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER.configKey());
-      assertEquals(
-          "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER",
-          EnvRegistry.HYBRID_CHUNK_COLLAPSE_SCAN_CAP_MULTIPLIER.envVar());
-      assertEquals(
-          "index.hybrid.chunk_collapse_aggregation_lambda",
-          EnvRegistry.HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA.configKey());
-      assertEquals(
-          "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA",
-          EnvRegistry.HYBRID_CHUNK_COLLAPSE_AGGREGATION_LAMBDA.envVar());
-    }
-
-    @Test
     @DisplayName("contributeYaml reads RAG config")
     void ragConfig() {
       String yaml =

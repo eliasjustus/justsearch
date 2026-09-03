@@ -67,13 +67,6 @@ public final class SearchExecutor {
       Set.of("chunk_sparse", "chunk_vector", "chunk_splade");
   private static final Set<String> CHUNK_COLLAPSE_MIN_POSITIVE_RANK_KEYS =
       Set.of("chunk_sparse_rank", "chunk_vector_rank", "chunk_splade_rank");
-  /**
-   * Tempdoc 916 Part 2 — geometric ratio for a parent's non-best chunk scores in the collapse
-   * aggregate. The i-th further chunk contributes {@code lambda * 0.5^(i-1) * score}, so the whole
-   * remainder is worth at most {@code 2 * lambda * bestScore}: corroboration counts, but a document
-   * cannot outrank a better-matching one on chunk count alone.
-   */
-  private static final double CHUNK_COLLAPSE_REST_DECAY = 0.5;
 
   private final TextQueryOps textQueryOps;
   private final ReadPathOps readPathOps;
@@ -684,12 +677,6 @@ public final class SearchExecutor {
     int collapseLimit =
         Math.max(limit, limit * (hybridConfig != null ? hybridConfig.chunkCollapseLimitMultiplier() : 2));
 
-    // Tempdoc 916 Part 2 — aggregate-then-cut collapse levers (defaults 1 / 0.0 = pre-916 behaviour).
-    int collapseScanCapMultiplier =
-        hybridConfig != null ? hybridConfig.chunkCollapseScanCapMultiplier() : 1;
-    double collapseAggregationLambda =
-        hybridConfig != null ? hybridConfig.chunkCollapseAggregationLambda() : 0.0;
-
     // Tempdoc 774 Stage 1 — chunk-side recall-complete per-leg top-N to protect (0 = disabled, so no
     // per-leg protected-set work is done in executeChunkBranchFusion when the lever is off).
     int chunkRecallTopN =
@@ -710,8 +697,6 @@ public final class SearchExecutor {
             chunkSplade,
             candidateBudget,
             collapseLimit,
-            collapseScanCapMultiplier,
-            collapseAggregationLambda,
             weights,
             debug,
             zeroExclude,
@@ -747,8 +732,6 @@ public final class SearchExecutor {
               chunkSplade,
               retryBudget,
               collapseLimit,
-              collapseScanCapMultiplier,
-              collapseAggregationLambda,
               weights,
               debug,
               zeroExclude,
@@ -917,8 +900,6 @@ public final class SearchExecutor {
       boolean chunkSplade,
       int candidateBudget,
       int collapseLimit,
-      int collapseScanCapMultiplier,
-      double collapseAggregationLambda,
       double[] weights,
       boolean debug,
       boolean zeroExclude,
@@ -984,8 +965,7 @@ public final class SearchExecutor {
     List<LuceneRuntimeTypes.SearchHit> legTopNParents =
         collectRawLegTopNParents(bm25Result, denseResult, spladeResult, recallCompleteTopN);
     LuceneRuntimeTypes.SearchResult parentNormalizedChunkResult =
-        collapseChunkHitsToParents(
-            fusedChunkResult, collapseLimit, collapseScanCapMultiplier, collapseAggregationLambda);
+        collapseChunkHitsToParents(fusedChunkResult, collapseLimit);
     return new ChunkBranchResult(
         parentNormalizedChunkResult, anyLegSaturated, bm25Ns, knnNs, spladeNs, legTopNParents);
   }
@@ -1047,89 +1027,30 @@ public final class SearchExecutor {
     return new LuceneRuntimeTypes.SearchResult(List.of(), 0, 0);
   }
 
-  /**
-   * Tempdoc 916 Part 2 (lane E) — aggregate-then-cut parent collapse.
-   *
-   * <p>The pre-916 collapse was first-wins by input order and stopped the instant it had {@code
-   * limit} distinct parents, so every chunk hit past that point was discarded unscanned: when a few
-   * documents own the top chunks, a document whose evidence is spread over several mid-ranked
-   * chunks never surfaced at all. This scans {@code limit x scanCapMultiplier} distinct parents,
-   * scores each parent by {@code max + lambda * sum(geometrically decayed remaining chunk scores)},
-   * and only then cuts to {@code limit}.
-   *
-   * <p><b>The aggregate is the parent's emitted score, not merely a sort key.</b> This is the
-   * correction the 916 §J review forced: the first implementation sorted by the aggregate but
-   * emitted {@code winner.score()} (the max), and the whole-vs-chunk branch fusion
-   * ({@code HybridFusionUtils.fuseWithCCNamed}) blends min-max normalized <em>scores</em> keyed by
-   * docId — the per-branch <em>ranks</em> it also collects are debug-only. So the aggregate died
-   * inside this method and lambda's only reachable effect was set membership at the cut, which at
-   * {@code scanCapMultiplier = 1} is no effect at all. Emitting the aggregate is what makes lambda
-   * reach the blend.
-   *
-   * <p>Scale: the decay series sums to 2, so the aggregate is bounded by {@code max * (1 + 2*lambda)}.
-   * It is divided by exactly that factor before emission, which keeps the chunk branch inside
-   * {@code [0,1]} whenever its input was, is a single uniform divisor (so it preserves the aggregate
-   * ordering exactly), and is the identity at {@code lambda = 0}.
-   *
-   * <p>Determinism (the eval gate depends on it): the input is {@code fuseWithCC3}'s output, sorted
-   * {@code (score desc, chunk docId asc)}, so a parent's first-seen chunk is its best and the decayed
-   * remainder accumulates in a fixed order. The output is a <em>stable</em> sort by aggregate
-   * descending, which resolves ties by first-seen fused order — itself deterministic, and inherited
-   * from the fusion's own {@code docId} tie-break rather than re-imposed here. The
-   * descending-input assumption is an assumption, not a guarantee, so a non-descending input is
-   * handled explicitly: the per-parent maximum is tracked rather than assumed to arrive first.
-   *
-   * <p>{@code scanCapMultiplier = 1} with {@code lambda = 0.0} reproduces the pre-916 behaviour
-   * bit-for-bit — same hits, same scores, same fields, same debug scores — which is what makes it
-   * the A/B control arm. {@code limit <= 0} reproduces the pre-916 edge behaviour (one hit), rather
-   * than throwing.
-   */
   static LuceneRuntimeTypes.SearchResult collapseChunkHitsToParents(
-      LuceneRuntimeTypes.SearchResult chunkResult,
-      int limit,
-      int scanCapMultiplier,
-      double aggregationLambda) {
-    // limit <= 0 kept the pre-916 loop scanning one parent and returning it; reproduce that rather
-    // than computing a zero/negative slice (which threw).
-    int cut = Math.max(1, limit);
-    int scanCap = Math.max(cut, cut * Math.max(1, scanCapMultiplier));
-    double lambda = Math.max(0.0, Math.min(1.0, aggregationLambda));
-    double inflationBound = 1.0 + 2.0 * lambda;
-    Map<String, CollapsedParent> byParent = new LinkedHashMap<>();
+      LuceneRuntimeTypes.SearchResult chunkResult, int limit) {
+    Map<String, LuceneRuntimeTypes.SearchHit> bestPerParent = new LinkedHashMap<>();
     for (LuceneRuntimeTypes.SearchHit hit : chunkResult.hits()) {
       String parentId = hit.fields().get(SchemaFields.PARENT_DOC_ID);
       if (parentId == null || parentId.isEmpty()) {
         parentId = hit.docId();
       }
       LuceneRuntimeTypes.SearchHit normalized = normalizeChunkHitToParent(hit, parentId);
-      CollapsedParent existing = byParent.get(parentId);
+      LuceneRuntimeTypes.SearchHit existing = bestPerParent.get(parentId);
       if (existing == null) {
-        byParent.put(parentId, new CollapsedParent(normalized));
+        bestPerParent.put(parentId, normalized);
       } else {
-        existing.absorb(normalized, lambda);
+        bestPerParent.put(parentId, mergeCollapsedChunkParentHit(existing, normalized));
       }
-      if (byParent.size() >= scanCap) {
+      if (bestPerParent.size() >= limit) {
         break;
       }
     }
-    List<CollapsedParent> ordered = new ArrayList<>(byParent.values());
-    // List.sort is stable, so equal aggregates keep first-seen fused order (see javadoc).
-    ordered.sort((a, b) -> Double.compare(b.aggregateScore(), a.aggregateScore()));
-    List<LuceneRuntimeTypes.SearchHit> collapsed = new ArrayList<>(Math.min(cut, ordered.size()));
-    for (int i = 0; i < ordered.size() && i < cut; i++) {
-      collapsed.add(ordered.get(i).toHit(inflationBound));
-    }
+    List<LuceneRuntimeTypes.SearchHit> collapsed = new ArrayList<>(bestPerParent.values());
     return new LuceneRuntimeTypes.SearchResult(
         collapsed, collapsed.size(), chunkResult.tookMs(), null);
   }
 
-  /**
-   * Tempdoc 916 Part 2 — one parent's accumulating collapse state: its best chunk hit (the first
-   * seen, since the input is score-descending) plus the geometrically decayed contribution of every
-   * further chunk of the same parent. The ratio is fixed at {@link #CHUNK_COLLAPSE_REST_DECAY}
-   * rather than exposed as a third key: lambda already spans the whole "how much does corroborating
-   * evidence count" axis, and a second free parameter would double the sweep for no separable effect.
-   */
   private static LuceneRuntimeTypes.SearchHit normalizeChunkHitToParent(
       LuceneRuntimeTypes.SearchHit hit, String parentId) {
     if (parentId == null || parentId.isEmpty()) {
@@ -1164,55 +1085,6 @@ public final class SearchExecutor {
         Map.copyOf(mergedFields),
         Map.copyOf(mergedDebugScores),
         mergedProvenance);
-  }
-
-  private static final class CollapsedParent {
-    private LuceneRuntimeTypes.SearchHit hit;
-    private float bestScore;
-    private double restContribution;
-    private double nextDecay = 1.0;
-
-    CollapsedParent(LuceneRuntimeTypes.SearchHit best) {
-      this.hit = best;
-      this.bestScore = best.score();
-    }
-
-    /**
-     * The maximum is tracked rather than assumed to arrive first. Production input is
-     * {@code fuseWithCC3}'s descending output, so the first-seen chunk IS the best and this reduces
-     * to it — but "the caller sorted for me" is an assumption, and a silently wrong aggregate on an
-     * unsorted input is exactly the kind of defect that survives review. Field and provenance
-     * precedence still follow first-seen, unchanged from pre-916.
-     */
-    void absorb(LuceneRuntimeTypes.SearchHit sibling, double lambda) {
-      float siblingScore = sibling.score();
-      float demoted = siblingScore > bestScore ? bestScore : siblingScore;
-      if (siblingScore > bestScore) {
-        bestScore = siblingScore;
-      }
-      restContribution += lambda * nextDecay * demoted;
-      nextDecay *= CHUNK_COLLAPSE_REST_DECAY;
-      hit = mergeCollapsedChunkParentHit(hit, sibling);
-    }
-
-    /** Best chunk score plus the decayed rest; exactly the best score when lambda is 0. */
-    double aggregateScore() {
-      return bestScore + restContribution;
-    }
-
-    /**
-     * The parent hit as the chunk branch emits it, carrying the aggregate as its SCORE (divided by
-     * the {@code 1 + 2*lambda} inflation bound so the branch stays in [0,1]). At lambda 0 the
-     * divisor is 1 and the aggregate is the best score, so this is record-equal to the pre-916 hit.
-     */
-    LuceneRuntimeTypes.SearchHit toHit(double inflationBound) {
-      return new LuceneRuntimeTypes.SearchHit(
-          hit.docId(),
-          (float) (aggregateScore() / inflationBound),
-          hit.fields(),
-          hit.debugScores(),
-          hit.provenance());
-    }
   }
 
   private static void mergeCollapsedChunkParentDebugScore(

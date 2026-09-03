@@ -91,11 +91,8 @@ final class SearchExecutorChunkBranchLeversTest {
     @DisplayName("the collapse limit caps the parent count (limit×multiplier at the call site)")
     void collapseLimitCapsParents() {
       // limit=2 (e.g. limit=1 × multiplier=2) → 2 parents; limit=4 → 4 parents.
-      // 916: over-fetch 1 / lambda 0.0 is the shipped default and the pre-916 collapse.
-      assertEquals(
-          2, SearchExecutor.collapseChunkHitsToParents(fiveDistinctParents(), 2, 1, 0.0).hits().size());
-      assertEquals(
-          4, SearchExecutor.collapseChunkHitsToParents(fiveDistinctParents(), 4, 1, 0.0).hits().size());
+      assertEquals(2, SearchExecutor.collapseChunkHitsToParents(fiveDistinctParents(), 2).hits().size());
+      assertEquals(4, SearchExecutor.collapseChunkHitsToParents(fiveDistinctParents(), 4).hits().size());
     }
   }
 }

@@ -503,14 +503,6 @@ public final class ResolvedConfigBuilder {
         "index.hybrid.chunk_collapse_limit_multiplier",
         root,
         "index.hybrid.chunk_collapse_limit_multiplier");
-    putYamlInt(
-        "index.hybrid.chunk_collapse_scan_cap_multiplier",
-        root,
-        "index.hybrid.chunk_collapse_scan_cap_multiplier");
-    putYamlDouble(
-        "index.hybrid.chunk_collapse_aggregation_lambda",
-        root,
-        "index.hybrid.chunk_collapse_aggregation_lambda");
     putYamlBoolean(
         "index.hybrid.chunk_leg_recall_complete_enabled",
         root,
@@ -544,10 +536,6 @@ public final class ResolvedConfigBuilder {
     // chunk_cc_zero_exclude are omitted deliberately: their default is the resolved doc-level value
     // (computed in buildHybridSearch), and a putDefault at ordinal 100 would shadow that fallback.
     putDefault("index.hybrid.chunk_collapse_limit_multiplier", "2");
-    // Tempdoc 916 Part 2 (lane E) — aggregate-then-cut collapse, shipped OFF by default:
-    // (1, 0.0) is exactly the pre-916 first-wins/max collapse, so it doubles as the A/B control.
-    putDefault("index.hybrid.chunk_collapse_scan_cap_multiplier", "1");
-    putDefault("index.hybrid.chunk_collapse_aggregation_lambda", "0.0");
     putDefault("index.hybrid.chunk_leg_recall_complete_enabled", "false");
     putDefault("index.hybrid.chunk_leg_recall_complete_top_n", "10");
     putDefault("index.hybrid.chunk_branch_requires_base_results", "true");
@@ -1778,9 +1766,6 @@ public final class ResolvedConfigBuilder {
         // (same fallback semantics as the chunk weights; no putDefault, which would shadow it).
         resolveBoolean("index.hybrid.chunk_cc_zero_exclude", ccZeroExclude),
         Math.max(1, resolveInt("index.hybrid.chunk_collapse_limit_multiplier", 2)),
-        Math.max(1, resolveInt("index.hybrid.chunk_collapse_scan_cap_multiplier", 1)),
-        Math.max(
-            0.0, Math.min(1.0, resolveDouble("index.hybrid.chunk_collapse_aggregation_lambda", 0.0))),
         resolveBoolean("index.hybrid.chunk_leg_recall_complete_enabled", false),
         Math.max(1, resolveInt("index.hybrid.chunk_leg_recall_complete_top_n", 10)),
         resolveBoolean("index.hybrid.chunk_branch_requires_base_results", true));

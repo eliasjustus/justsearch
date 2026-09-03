@@ -1,13 +1,13 @@
 ---
-title: "Lane E — search-quality re-derivation: chunking, small-to-big, parameter sweeps (Part 2 shipped, Parts 1/3/4 designed)"
+title: "Lane E — search-quality re-derivation: chunking, small-to-big, parameter sweeps (Part 2 measured and REVERTED, Parts 1/3/4 designed)"
 type: tempdocs
-status: "IN PROGRESS (2026-09-03) — Part 2 (aggregate-then-cut parent collapse) implemented, falsified, measured, and its lambda axis swept: PARKED at the shipped defaults, which reproduce pre-916 behaviour bit-for-bit. The two config keys stay as a measured-and-parked instrument by owner decision. Parts 1/3/4 have a pre-implementation pass and a campaign plan but are NOT executed; Part 3 is blocked on lane A."
+status: "IN PROGRESS (2026-09-03) — Part 2 (aggregate-then-cut parent collapse) is CLOSED as REFUTED and fully REVERTED: audit finding 2 was measured at the set-membership level (sections G, I) and, after an independent review found the aggregate was a dead sort key, at the score-aggregation level (section J), across three index builds and two chunked corpora. No lambda passed the pre-registered rule; mechanism and both config keys are removed and the config-surface pin is back at 111/250. What ships is a characterization test suite that pins the collapse behaviour, including audit finding 2 as a measured-and-accepted limitation. Parts 1/3/4 have a pre-implementation pass and a campaign plan but are NOT executed; Part 3 is blocked on lane A."
 created: 2026-09-03
 updated: 2026-09-03
 lane: E (decision re-examination programme, wave 2)
 model: opus (implementation)
 parent: 00-program-overview (decision re-examination programme, 2026-09-01 audit)
-coordination: "→ lane D waits on Part 1's chosen (chunk_tokens, overlap, threshold) plus a chunker version string for its fingerprint; Part 2 ships without it and needs nothing from D. → tempdoc 854 (CHARTER, not started) owns the 854 W2-fix pool/limit coupling guard; this lane sweeps the fusion numbers in Part 4 only if 854 is still idle then. → Part 3 needs lane A's per-request ContextBudget merged."
+coordination: "→ lane D waits on Part 1's chosen (chunk_tokens, overlap, threshold) plus a chunker version string for its fingerprint; Part 2 was measured, refuted and reverted, so it changes no index shape and needs nothing from D in either merge order. → tempdoc 854 (CHARTER, not started) owns the 854 W2-fix pool/limit coupling guard; this lane sweeps the fusion numbers in Part 4 only if 854 is still idle then. → Part 3 needs lane A's per-request ContextBudget merged."
 related:
   - 774-passage-first-retrieval-program   # the chunk-branch levers this Part 2 lever sits beside
   - 854-fusion-residue-lane               # CHARTER; owns the W2-fix, not this
@@ -43,22 +43,40 @@ and Part 1 costs machine-days. Campaign plan in §C.
 - [ ] Deliver `(chunk_tokens, overlap, threshold)` with σ-aware evidence, a PR touching only the
       `ChunkSplitter` / `ChunkDocumentWriter` constants, and a chunker version string lane D reads.
 
-### Part 2 — parent collapse fix (DONE, this PR)
+### Part 2 — parent collapse fix (CLOSED — built, measured three times, REFUTED, REVERTED)
 
-- [x] Over-fetch chunk hits by a configurable multiple before cutting.
-- [x] Aggregate per parent with `max + λ·Σ(decayed rest)`, λ configurable, λ=0 ≡ today.
-- [x] Cut to the collapse cap only after aggregation.
-- [x] Collapse stays deterministic for the eval gate (stable sort; purity and permutation tests).
-- [x] Two config keys through `EnvRegistry` / `ResolvedConfigBuilder`, `config-surface` changeset
-      and baseline advanced in the same commit.
-- [x] Unit tests for the aggregator, incl. a pre-916 oracle for the λ=0 equivalence claim.
-- [x] Integration test through the collapse on a real chunked Lucene index.
-- [x] Falsification: every new test broken once, observed failing, restored (§F).
+Every item below was **done**, and the answer the work produced is that the mechanism does not help.
+The proposal is therefore reverted, not shipped: this PR leaves production code byte-identical to
+`main` and keeps the characterization tests plus the measurement.
+
+- [x] Over-fetch chunk hits by a configurable multiple before cutting. *(built; reverted §J.4)*
+- [x] Aggregate per parent with `max + λ·Σ(decayed rest)`, λ configurable, λ=0 ≡ today. *(built;
+      reverted)*
+- [x] Cut to the collapse cap only after aggregation. *(built; reverted)*
+- [x] Collapse stays deterministic for the eval gate — **this survives**, now pinned by
+      `SearchExecutorChunkCollapseCharacterizationTest` against the shipped collapse.
+- [x] Two config keys through `EnvRegistry` / `ResolvedConfigBuilder`, `config-surface` changeset and
+      baseline advanced in the same commit. *(built; **removed** in the revert, and the
+      `config-surface` pin returns to 111 / 250 in that same commit — the growth was authorised only
+      on condition of deletion if the mechanism did not ship.)*
+- [x] Unit tests for the aggregator, incl. a pre-916 oracle for the λ=0 equivalence claim. *(deleted
+      with the mechanism; the oracle's purpose — proving λ=0 ≡ today — is moot once λ does not
+      exist.)*
+- [x] Integration test through the collapse on a real chunked Lucene index. *(deleted with the
+      mechanism.)*
+- [x] Falsification: every new test broken once, observed failing, restored (§F). 17/17.
 - [x] Same-index A/B on the chunked corpora + a short-corpus control, ratchets green (§G).
 - [x] Pre-registered ship/park rule written before the measurement ran (§D.7).
-- [x] Register finding `F-056` (§H).
+- [x] Register finding `F-056` (§H) — now recorded as **refuted**, with every run id.
 - [x] **Owner-authorised λ sweep (§I)** — rule committed before running (`96a088f5`); 18 arms,
-      17 admissible; parks again, keys stay.
+      17 admissible; parked.
+- [x] **Independent review (§J), BL-1: the aggregate never reached the branch blend**, so §G and §I
+      measured set membership, not aggregation. Fixed, rule re-registered and committed before the
+      run (`52d35001`, 7m37s before the first arm), decisive A/B run: **10 arms, 10 admissible, no
+      λ passes, leak worsens somewhere at every λ → REVERT** (§J.4).
+- [x] **Kept:** `SearchExecutorChunkCollapseCharacterizationTest` (8 tests) pinning the shipped
+      collapse, including audit finding 2 as an executable statement of the limitation, and the
+      committed A/B driver `scripts/jseval/916_collapse_ab.py`.
 
 ### Part 3 — small-to-big retrieval (BLOCKED on lane A)
 
@@ -157,24 +175,24 @@ reading it is the latter, and the item is a comment plus a named invariant, not 
 ### B.4 `ResolvedConfigBuilder.java:1609-1615` — the seven never-swept defaults — **moved**
 
 Real location `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java:1696-1702`
-(pre-916 numbering; this branch adds two lines above them). All seven **values** are exactly as the
+(pre-916 numbering; this branch adds 15 lines above them, so HEAD reads 1708-1714). All seven **values** are exactly as the
 brief states:
 
 ```java
-        resolveInt("index.hybrid.rrf_k", 60),                                    // :1696
-        resolveInt("index.hybrid.vector_skip_min_chars", 4),                     // :1697
-        Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),        // :1698
-        Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),   // :1699
-        Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)), // :1700
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight", 0.75))), // :1701
-        Math.max(0.0, resolveDouble("index.hybrid.bm25_score_boost_weight", 0.002)),         // :1702
+        resolveInt("index.hybrid.rrf_k", 60),                                    // :1708
+        resolveInt("index.hybrid.vector_skip_min_chars", 4),                     // :1709
+        Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),        // :1710
+        Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),   // :1711
+        Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)), // :1712
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight", 0.75))), // :1713
+        Math.max(0.0, resolveDouble("index.hybrid.bm25_score_boost_weight", 0.002)),         // :1714
 ```
 
 Lines 1609-1615 today hold `buildInfraHealth()` (poll interval, NRT stale ms, …) — unrelated.
 
 ### B.5 `ResolvedConfigBuilder.java:392-393` / `:1465-1466` for `index.similarity.text.k1/.b` — **moved**
 
-Real: `:413-414` (`putYamlDouble("index.similarity.text.k1"/".b", …)`) and `:1549-1550`
+Real: `:413-414` (`putYamlDouble("index.similarity.text.k1"/".b", …)`) and `:1561-1562`
 (`resolveNullableDouble("index.similarity.text.k1"/".b")`). Nullable, no in-builder default literal.
 
 ### B.6 `ComponentsFactory.java:243-244` "the fallback always wins" — **moved (line) and WRONG (claim)**
@@ -191,7 +209,7 @@ Real location `modules/adapters-lucene/src/main/java/io/justsearch/adapters/luce
 The values 0.9 / 0.4 are right. **The claim that the lever is dead is wrong.** This is an ordinary
 null-coalescing fallback, and `index.similarity.text.k1` / `.b` *are* settable today — from
 `config.yaml`. They are registered as `ConfigKey.INDEX_SIMILARITY_TEXT_K1` / `_B` (`ConfigKey.java:53-54`),
-read at `ResolvedConfigBuilder.java:413-414`, resolved at `:1549-1550`, and the generated ownership
+read at `ResolvedConfigBuilder.java:413-414`, resolved at `:1561-1562`, and the generated ownership
 matrix records the precedence as `YAML > default`
 (`docs/reference/configuration/runtime-config-ownership-matrix.md:93-94`). What is genuinely absent
 is an env var / system property: `EnvRegistry.java` has zero hits for `K1` / `SIMILARITY_TEXT` —
@@ -207,7 +225,7 @@ builder would create two authorities for one number. Recorded so Part 4 does not
 
 ### B.7 `title_boost = 3.0`, HNSW `efConstruction`/`M`/`efSearch` — **moved**
 
-- `title_boost` 3.0: `ResolvedConfigBuilder.java:1427` (`resolveDouble("justsearch.search.title_boost", 3.0)`).
+- `title_boost` 3.0: `ResolvedConfigBuilder.java:1439` (`resolveDouble("justsearch.search.title_boost", 3.0)`).
 - `M = 16`: `ComponentsFactory.java:180`. `efConstruction = 200`: `ComponentsFactory.java:181-182`.
 - `efSearch = 100`: `ComponentsFactory.java:273`.
 
@@ -217,8 +235,8 @@ is unaffected; the location is.
 
 ### B.8 Reranker `20 / 200 ms / 5` at `:1275-1277`, chunk tier `10 / 50 / 150 ms / 3` at `:1303-1306` — **moved**
 
-Real: `ResolvedConfigBuilder.java:1350-1352` (`justsearch.rerank.top_k` 20, `.deadline_ms` 200,
-`.min_hits` 5) and `:1378-1381` (`justsearch.rerank.chunks.top_k` 10, `.max_gpu_candidates` 50,
+Real: `ResolvedConfigBuilder.java:1362-1364` (`justsearch.rerank.top_k` 20, `.deadline_ms` 200,
+`.min_hits` 5) and `:1390-1393` (`justsearch.rerank.chunks.top_k` 10, `.max_gpu_candidates` 50,
 `.deadline_ms` 150, `.min_hits` 3). All seven values match. Note the brief's "50" in the chunk tier
 is `max_gpu_candidates`, not a second top_k. Also: F-054 already established that `deadline_ms` is a
 CPU-side **pre-check**, not a timeout — Part 4 must not sweep it as if it were one.
@@ -291,13 +309,13 @@ the collapse plenty of candidates; the collapse throws them away. §D reuses bot
 rather than forking a third.
 
 Also verified: `mergeCollapsedChunkParentHit` (`:1074-1088`) keeps `winner.score()`, and because
-`fuseWithCC3` emits `(score desc, docId asc)` (`:762-767`), first-seen *is* max. So today's collapse
+`fuseWithCC3` emits `(score desc, docId asc)` (`:788-792`), first-seen *is* max. So today's collapse
 is already "max per parent" — the brief's "first-wins/max" is accurate; what is absent is the rest
 of the evidence and the post-aggregation cut.
 
 ### B.13 tempdoc 854 status — **verified**
 
-`docs/tempdocs/854-fusion-residue-lane.md:3` is present and reads
+`docs/tempdocs/854-fusion-residue-lane.md:4` is present and reads
 `status: "CHARTER (2026-08-19) … not started."` Part 4's fusion sweep is therefore lane E's unless
 854 starts first; the 854 W2-fix (pool `top_n` / `limit` coupling guard) is **not** in this lane.
 
@@ -471,7 +489,7 @@ compose instead of competing, and no fourth candidate-budget concept enters the 
 ### D.3 The aggregation function, stated
 
 For a parent whose chunk scores in fused order are `s₀ ≥ s₁ ≥ s₂ …` (descending is guaranteed —
-`fuseWithCC3` emits `(score desc, docId asc)`, `HybridFusionUtils.java:762-767`):
+`fuseWithCC3` emits `(score desc, docId asc)`, `HybridFusionUtils.java:788-792`):
 
 ```
 aggregate = s₀ + λ · Σ_{i≥1} 0.5^(i-1) · sᵢ
@@ -560,23 +578,37 @@ the membership and order change. Checked before writing, per `explore-before-imp
 > exactly that: `p-spread` passes `p-focused`). An average that hides a per-corpus regression is the
 > failure mode this rule exists to catch.
 
-### D.8 Files changed
+### D.8 Files changed — as built, and what remains after the §J.4 revert
 
-| File | Change |
+**Read the right-hand column.** Everything marked REVERTED was built, measured and then removed;
+`git diff origin/main -- 'modules/*/src/main'` on this branch is **empty**, so no production file
+below survives. This table is the record of what was tried, not of what the PR contains.
+
+| File | Change | After §J.4 |
+| :--- | :--- | :--- |
+| `modules/worker-services/.../execute/SearchExecutor.java` | `CHUNK_COLLAPSE_REST_DECAY`; `collapseChunkHitsToParents` rewritten (4 args); `CollapsedParent` accumulator; levers read at `:688-691` and threaded through `executeChunkBranchFusion` | **REVERTED** |
+| `modules/configuration/.../EnvRegistry.java` | two enum constants | **REVERTED** |
+| `modules/configuration/.../resolved/ResolvedConfig.java` | two `HybridSearch` record components | **REVERTED** |
+| `modules/configuration/.../resolved/ResolvedConfigBuilder.java` | yaml wiring, defaults, clamped resolution | **REVERTED** |
+| `modules/worker-services/src/test/.../SearchExecutorChunkCollapseAggregationTest.java` | new, 10 tests | **DELETED** with the mechanism |
+| `modules/worker-services/src/test/.../SearchExecutorChunkCollapseIndexIntegrationTest.java` | new, 3 tests on a real chunked index | **DELETED** with the mechanism |
+| `modules/worker-services/src/test/.../SearchExecutorChunkBranchLeversTest.java` | existing collapse-cap test updated to the 4-arg call | **REVERTED** to the 3-arg call |
+| `modules/configuration/src/test/.../ResolvedConfigBuilderTest.java` | 4 new config tests | **REVERTED** |
+| `docs/reference/configuration/environment-variables.md` | two rows | **REVERTED** |
+| `docs/reference/configuration/runtime-config-ownership-matrix.md` | regenerated | **REVERTED** (regenerator re-confirms 111/250/56) |
+| `gates/config-surface/.changesets/916-chunk-collapse-aggregation-keys.md` | new, `declared-growth` | **DELETED** |
+| `gates/config-surface/baseline.txt` | `yaml_keys` 111→113, `env_sysprop_pairs` 250→252 | **REVERTED** to 111 / 250 |
+| `docs/reference/search-quality-register.md` | F-056 | **KEPT** — F-056, rewritten as refuted |
+
+**What the PR actually contains — five files, all additions, no production change:**
+
+| File | Why it survives the revert |
 | :--- | :--- |
-| `modules/worker-services/.../execute/SearchExecutor.java` | `CHUNK_COLLAPSE_REST_DECAY`; `collapseChunkHitsToParents` rewritten (4 args); `CollapsedParent` accumulator; levers read at `:688-691` and threaded through `executeChunkBranchFusion` |
-| `modules/configuration/.../EnvRegistry.java` | two enum constants |
-| `modules/configuration/.../resolved/ResolvedConfig.java` | two `HybridSearch` record components |
-| `modules/configuration/.../resolved/ResolvedConfigBuilder.java` | yaml wiring, defaults, clamped resolution |
-| `modules/worker-services/src/test/.../SearchExecutorChunkCollapseAggregationTest.java` | new, 10 tests |
-| `modules/worker-services/src/test/.../SearchExecutorChunkCollapseIndexIntegrationTest.java` | new, 3 tests on a real chunked index |
-| `modules/worker-services/src/test/.../SearchExecutorChunkBranchLeversTest.java` | existing collapse-cap test updated to the 4-arg call |
-| `modules/configuration/src/test/.../ResolvedConfigBuilderTest.java` | 4 new config tests |
-| `docs/reference/configuration/environment-variables.md` | two rows |
-| `docs/reference/configuration/runtime-config-ownership-matrix.md` | regenerated |
-| `gates/config-surface/.changesets/916-chunk-collapse-aggregation-keys.md` | new, `declared-growth` |
-| `gates/config-surface/baseline.txt` | `yaml_keys` 111→113, `env_sysprop_pairs` 250→252 |
-| `docs/reference/search-quality-register.md` | F-056 |
+| `modules/worker-services/src/test/.../SearchExecutorChunkCollapseCharacterizationTest.java` | 8 tests pinning the *shipped* collapse, which had no direct unit coverage before this lane — incl. audit finding 2 as an executable statement of the limitation |
+| `docs/reference/search-quality-register.md` | F-056: the audit finding closed as refuted, with every run id |
+| `.claude/skills/search-quality/SKILL.md` | mirror of the above, regenerated by `skills-sync.mjs` |
+| `docs/tempdocs/916-lane-e-search-quality-rederivation.md` | this document |
+| `scripts/jseval/916_collapse_ab.py` | the A/B driver, so the admissibility filter that decides whether an arm counts is auditable rather than gitignored (§J review); generalized to hardcode no reverted key name |
 
 ---
 
@@ -615,6 +647,19 @@ saturation-retry one (a lever applied on the first call but not the retry would 
 defect class); (b) `configReachesTheCollapseParameters` asserts the ordinal-400 resolution onto the
 accessors; (c) the live A/B is the end-to-end proof — if the ON arm had produced numbers identical
 to OFF, that would have been the wrong-gate signature, and §G shows it did not.
+
+> **This check was WRONG, and how it was wrong is the most useful thing in this tempdoc** (§J, BL-1).
+> All three legs passed and the conclusion was still false. (a) verified the levers are *read*, not
+> that the value they produce is *emitted*. (b) verified config reaches the accessors, which was
+> never in doubt. (c) is the seductive one: the numbers **did** move, so the wrong-gate signature
+> did not appear — but they moved because a wider scan changed set membership at the cut, not
+> because the aggregate reached the blend. `CollapsedParent.toHit()` returned `winner.score()`, so
+> the aggregate was a sort key that never left the method.
+>
+> **The missing leg: trace the computed value forward to its consumer.** Every leg above traces
+> *inputs* into the method. None asked what the next stage reads — `fuseWithCCNamed` blends
+> min-max-normalized **scores**, and the score it received was the max, unchanged. A wrong-gate
+> check that only looks upstream of the computation cannot see a wrong *output field*.
 
 ### E.3 Test precision — right reason vs wrong reason
 
@@ -744,9 +789,14 @@ silently would be the more dangerous habit. Legal was rebuilt and re-run with 3 
 | legal OFF | 0.5816, 0.5816, 0.5816 — **sd 0.00000** | 0.8100 ×3 | 0.3600 ×3 | 0.1300 ×3 | 3/3 `ok`, comparable |
 | legal ON (λ=0.3) | 0.5826, *0.5888*, 0.5826 | 0.815, *0.810*, 0.815 | 0.3600, *0.3700*, 0.3600 | 0.1250, *0.1300*, 0.1250 | 2/3 `ok`; *replicate 1 `degraded-ce`* |
 
-**σ on this machine, at fixed configuration, is 0.** Three identical OFF runs produced bit-identical
-metrics. The only variance observed anywhere in the campaign came from cross-encoder deadline drops,
-which `ce_coverage` flags and excludes. This **supersedes the σ ≈ 0.0034 borrowed from F-055 in
+**σ(R@10) on this machine, at fixed configuration, is 0.** Three identical OFF runs produced
+bit-identical R@10, leak and P@1. **This does NOT extend to nDCG@10** (§J review, BL-4): enron
+`λ0.10-m5` replicates differ at the fifth decimal — `20260903T023442_mixed_enron-qa` 0.79685 (5
+silent CE drops) against `20260903T023643_mixed_enron-qa` 0.79764 (0 drops), and **both are
+`ce_coverage: ok`** because 5/300 sits inside the 2% tolerance. So the residual variance source is
+cross-encoder deadline drops that `ce_coverage` *tolerates*, not ones it flags — the guard bounds the
+contamination, it does not remove it. Every "spread 0.0000" claim in this tempdoc is an **R@10**
+claim and is now written as one. This **supersedes the σ ≈ 0.0034 borrowed from F-055 in
 §D.7** — that figure was measured on a contended machine and is an upper bound, not this cohort's
 noise. Consequence for the rule: a "> 2σ" test degenerates when σ = 0, so the deltas below are
 **real, not noise** — they are simply very small, and far inside the relevance ratchet's 0.02 band.
@@ -759,8 +809,8 @@ opportunistic re-reading the pre-registration exists to prevent.
 | :-- | :-- | :-- | --: | --: | --: | --: | --: | --: | :-- | :-- | :-- |
 | enron-qa | OFF | `20260903T003601_mixed_enron-qa` | 0.8034 | 0.6733 | 0.9200 | 0.9633 | 0.0500 | 151 ms | True | ok | ok |
 | enron-qa | ON | `20260903T003814_mixed_enron-qa` | 0.7981 | 0.6700 | 0.9133 | 0.9633 | 0.0533 | 153 ms | True | ok | ok |
-| legal-clerc-200 | OFF | `tmp/916-legal/off-{0,1,2}` | 0.5816 | 0.3600 | 0.8100 | 0.9250 | 0.1300 | — | True | ok ×3 | ok |
-| legal-clerc-200 | ON | `tmp/916-legal/on-{0,2}` (clean) | 0.5826 | 0.3600 | 0.8150 | 0.9250 | 0.1250 | — | True | ok | ok |
+| legal-clerc-200 | OFF | `20260903T010337` / `010706` / `011043` | 0.5816 | 0.3600 | 0.8100 | 0.9300 | 0.1300 | — | True | ok x3 | ok |
+| legal-clerc-200 | ON | `20260903T010518` / `011225` (clean) | 0.5826 | 0.3600 | 0.8150 | 0.9300 | 0.1250 | — | True | ok | ok |
 | scifact (control) | OFF | `20260903T005443_scifact` | 0.7591 | 0.6300 | 0.8942 | 0.9333 | 0.0267 | 148 ms | True | ok | chunk-free |
 | scifact (control) | ON | `20260903T005634_scifact` | 0.7591 | 0.6300 | 0.8942 | 0.9333 | 0.0267 | 147 ms | True | ok | chunk-free |
 
@@ -774,12 +824,17 @@ Deltas (ON − OFF):
 
 Three facts worth more than the deltas themselves:
 
-1. **`leg_union_recall` is unchanged on every corpus** (0.9633 / 0.9250 / 0.9333). The retrieval legs
+1. **`leg_union_recall` is unchanged on every corpus** (0.9633 / **0.9300** / 0.9333). The retrieval legs
    are byte-identical across arms; only the collapse moved. That is the causal isolation the
    experiment needed, and it is what makes these deltas attributable.
 2. **scifact is bit-identical across arms** — every metric to 4 dp. scifact is `chunk-free` (short
    corpus, chunk merge skipped), so the lever is *provably inert exactly where it should be*. This is
    both the negative control passing and a second, independent refutation of a wrong-gate mistake.
+2b. **The legal +0.0050 R@10 is INDEX-BUILD-SPECIFIC and is withdrawn as a result** (§J review,
+   BL-2). The independent reviewer rebuilt legal and measured ON at 0.8100 / 0.1300 — identical to
+   OFF — and my own §I sweep, on a *third* legal build, measured OFF 0.8150 with every λ also 0.8150.
+   Across three independent builds the +0.0050 appeared once. It is dropped from every headline;
+   only the enron sign and the scifact inertness survive as cross-build claims.
 3. **The numbers moved at all on the chunked corpora**, and `summary.json.env_overrides` records
    `{OVERFETCH_MULTIPLIER: "5", AGGREGATION_LAMBDA: "0.3"}` on every ON arm. Together with §E.2 this
    closes the wrong-gate question empirically: the lever reaches the Worker.
@@ -816,6 +871,11 @@ The mechanism is not refuted — legal gains recall *and* drops leak, scifact is
 the effect is causally isolated. What is refuted is **λ=0.3 as a shipped default**, on one point of a
 one-dimensional axis whose starting value came from the brief rather than from evidence.
 
+> **Superseded by §J, twice over.** (1) The legal +0.0050 is **index-build-specific** and is
+> withdrawn (BL-2): two later builds show it at 0.0000. (2) The aggregate never reached the branch
+> blend, so this arm measured set membership, not aggregation — "the mechanism is not refuted" was
+> true of a mechanism that was not running. §J re-measures correctly and the verdict is REVERT.
+
 ### G.7 Ratchets
 
 Run against the ON arms (`python -m jseval <gate> --dataset <ds> --run-dir <arm>`):
@@ -835,6 +895,31 @@ are `--skip-ingest` query-only runs, so `primary_docs_s` and `enrich_docs_s` are
 baseline (`realized ['reranker']` vs baseline `['dense','reranker','splade']`) — a property of
 query-only arms, present in the control as well, i.e. not attributable here. Claiming "perf-gate
 green" would have been false; claiming a regression would also have been false.
+
+**Legal arm, run afterwards on §J review request, with the exact flags recorded** (the §J review
+found the original ratchet claim did not say which arm or which flags produced it). Arm
+`20260903T034732_mixed_legal-clerc-200` (λ0.3 r0), **no `--allow-*` override on any gate**:
+
+```
+python -m jseval <gate> --dataset mixed/legal-clerc-200 \
+    --run-dir tmp/916-J/mixed_legal-clerc-200/l0.3-r0/20260903T034732_mixed_legal-clerc-200
+```
+
+| gate | check | current | floor | verdict |
+| :-- | :-- | --: | --: | :-- |
+| `relevance-gate` | `ndcg10-no-regression` | 0.5957 | 0.5580 | **ok** |
+| `leak-gate` | `leak-rate-no-regression` | 0.1150 | 0.1850 | **ok** |
+| `union-recall-gate` | `union-recall-no-regression` | 0.9350 | 0.8850 | **ok** |
+| `perf-gate` | `ce_p50_ms`, `retrieval_p50_ms` | — | — | **ok** |
+| `perf-gate` | 5 ingest/memory checks | — | — | **fail — identical in the OFF control** |
+
+**And the control check that makes the "not attributable" claim real rather than asserted:** running
+the same `perf-gate` on the OFF arm `20260903T034234_mixed_legal-clerc-200` fails **the same five
+checks, check for check** — `primary_docs_s`, `enrich_docs_s`, `resident_bytes`, `embed_bytes`,
+`splade_bytes` — with `ce_p50_ms`, `retrieval_p50_ms`, `reranker_bytes`, `ner_bytes` ok in both.
+Three of those five (`resident_bytes`, `embed_bytes`, `splade_bytes`) were **not named** in the earlier
+draft of this section or in F-056, which understated how much of `perf-gate` is silent on a
+`--skip-ingest` arm. Corrected in both places.
 
 ### G.8 Cadence (RECORDED, NOT ACTED ON)
 
@@ -938,8 +1023,11 @@ fails on every arm, and condition 3 (leak not worse) fails on enron on every arm
 
 The shape is not a split this time — it is **inertness plus a small consistent cost**:
 
-- **On legal, low λ does nothing at all.** R@10, leak and nDCG@10 are identical to OFF to four
-  decimals across λ ∈ {0.05, 0.10, 0.15}. The +0.0050 R@10 that λ=0.3 produced in §G was the whole
+- **On legal, low λ moves nothing that matters — but "identical at every λ" was wrong.** R@10 and
+  leak are identical to OFF at every λ ∈ {0.05, 0.10, 0.15}; nDCG@10 is identical at λ 0.10/0.15
+  (0.5795 / 0.5796 against OFF 0.5795) but **λ0.05 is 0.5778, i.e. −0.0017** (§J review, BL-3;
+  corrected here, in F-056 and in the skill mirror). It does not move the verdict: −0.0017 is a
+  regression, far inside the noise floor, and in the wrong direction for shipping. The +0.0050 R@10 that λ=0.3 produced in §G was the whole
   effect, and it sat below the 0.0068 noise floor anyway.
 - **On enron, every λ costs the same −0.0033 R@10 / +0.0033 leak** — flat across the axis, i.e. the
   cost is not λ-proportional in this range; a single reordering flips at any λ > 0 and stays flipped.
@@ -952,29 +1040,44 @@ enron at any λ, and helps legal only at λ=0.3 by less than the noise floor.** 
 establish. **Per §I.3 the keys STAY** (owner accepted reachable-code-not-dead-code); defaults remain
 `(1, 0.0)`, no baseline row moves, and nothing ships.
 
+> **Superseded by §J.** This verdict was reached against a lever whose aggregate never reached the
+> branch blend, so what §I actually swept was set membership at the collapse cut, not aggregation.
+> The conclusion survives — no λ helps — but the *reason* stated above is not the one the numbers
+> support. §J re-measures with the aggregate emitted as the score and reaches REVERT; the keys do
+> **not** stay. Read §I as the set-membership half of the answer.
+
 **Scifact control not run, and this is not a skipped condition.** §I.3 condition 2 is gated on there
 being a winning λ; there is none. It would also be uninformative: §G measured scifact **bit-identical
 at λ=0.3**, and the aggregate at λ ≤ 0.15 is strictly closer to the max-only baseline than at 0.3, so
 a weaker λ cannot produce a difference the stronger one did not. Recorded rather than quietly
 omitted.
 
-### I.6 A third void arm, and the reason it is not bad luck
+### I.6 Void arms: five in total, and the bias is drop-rate-dependent
 
-`legal λ0.05 m5 r1` is the **third** `degraded-ce` arm in this tempdoc, and — like the other two
-(§G.2's legal OFF, §G.5's λ=0.1) — it looks **better** than its clean sibling: 0.6176 / 0.8350 /
-0.1000 against 0.5778 / 0.8150 / 0.1200. Three for three in the same direction is a bias, not noise,
-and F-055 already supplies the mechanism: on legal, *delivering fusion order instead of the
-cross-encoder's* is worth **+0.131 nDCG@10** ("on legal the best cross-encoder may be no
-cross-encoder"). A `degraded-ce` arm is a partial CE-off arm, so on legal it is **systematically
-inflated**.
+Corrected after the §J review, which found "three of three" undercounted. **Five** arms across all
+campaigns carry `ce_coverage: degraded-ce`:
 
-The consequence generalises beyond this tempdoc: **on legal, admitting a `degraded-ce` arm biases the
-result toward whichever arm happened to degrade.** Any future campaign that treats CE drops as random
-noise to be averaged over will get a wrong answer with a plausible-looking mean. The `ce_coverage`
-guard is not a hygiene nicety here; it is load-bearing, and it changed this tempdoc's headline once
-already (§G.2).
+| run id | campaign | drops | rate | nDCG@10 | clean comparator |
+| :-- | :-- | --: | --: | --: | :-- |
+| `20260903T004513_mixed_legal-clerc-200` | §G legal OFF | 13 | 6.5% | 0.6008 | 0.5816 -> **higher** |
+| `20260903T010858_mixed_legal-clerc-200` | §G legal ON r1 | 33 | 16.5% | 0.5888 | 0.5826 -> **higher** |
+| `20260903T011647_mixed_legal-clerc-200` | §G.5 lambda=0.1 | 9 | 4.5% | 0.5918 | 0.5816 -> **higher** |
+| `20260903T015846_mixed_legal-clerc-200` | §I lambda0.05 r1 | 41 | 20.5% | 0.6176 | 0.5778 -> **higher** |
+| `20260903T005237_scifact` | §G scifact **build** arm | 1 | 1 of 5 q | 0.5021 | none — 5-query build arm, not comparable |
 
----
+**The claim, restricted to what the data supports.** On `legal-clerc-200`, at drop rates *above* the
+2% `ce_coverage` tolerance — 4.5% to 20.5% observed — a degraded arm scores **higher** than its clean
+comparator, four for four. The mechanism is F-055's adjacent datapoint: on legal, delivering fusion
+order instead of the cross-encoder's is worth **+0.131 nDCG@10**. **Carry F-055's own caveat whenever
+that number is quoted:** it was measured on a contended machine and its CE-off arms were
+OOM-produced, so it is directional evidence for the mechanism, not a calibrated magnitude.
+
+**The bias does not extend below the tolerance.** The one sub-tolerance case points the other way:
+enron `20260903T023442_mixed_enron-qa` (5 drops, 1.7%, verdict `ok`) scored 0.79685 against its
+0-drop sibling `20260903T023643_mixed_enron-qa` at 0.79764 — **lower**. So the operational rule is
+not "CE drops inflate results" but: **above the 2% tolerance on legal a degraded arm is inflated and
+must be re-run; below it, drops are ordinary sub-0.001 nDCG jitter.** The first half is what makes
+`ce_coverage` load-bearing — it changed this tempdoc's headline once (§G.2).
 
 ## §J Independent review (NEEDS-FIXES) — the lever did not do what its javadoc said
 
@@ -1052,21 +1155,93 @@ point that the admissibility filter deciding which arms count was itself untrack
 > parks do not count against it". They do not count *for* it either — this arm is the whole
 > evidence, and it is the last one.
 
-### J.4 Results
+### J.4 Results — the mechanism is REFUTED and REVERTED
 
-*(filled in after the run)*
+Ran 2026-09-03 03:42-04:19 UTC via the committed driver `scripts/jseval/916_collapse_ab.py`. **The
+rule was committed before the first arm and the timestamps prove it**: `52d35001` is dated
+03:34:57 UTC and the first arm's run id is `20260903T034234`, 7m37s later. **10 arms, 10 admissible** (`ce_coverage: ok` and `comparable: true`
+on every one — no void arm), **24 machine signatures, 0 game processes, GPU 754-758 MiB**,
+replicate spread **0.0000 on R@10** throughout.
+
+| corpus | arm | run id | ce_cov | comparable | nDCG@10 | R@10 | leak |
+| :-- | :-- | :-- | :-- | :-- | --: | --: | --: |
+| legal | OFF | `20260903T034234_mixed_legal-clerc-200` | ok | True | 0.6040 | 0.8350 | 0.1000 |
+| legal | lambda 0.1 r0/r1 | `20260903T034414` / `20260903T034553` | ok | True | 0.6033 | 0.8400 | 0.1000 |
+| legal | lambda 0.3 r0/r1 | `20260903T034732` / `20260903T034910` | ok | True | 0.5957 | 0.8300 | 0.1150 |
+| enron | OFF | `20260903T040949_mixed_enron-qa` | ok | True | 0.7990 | 0.9167 | 0.0467 |
+| enron | lambda 0.1 r0/r1 | `20260903T041147` / `20260903T041345` | ok | True | 0.7934 | 0.9100 | 0.0567 |
+| enron | lambda 0.3 r0/r1 | `20260903T041550` / `20260903T041751` | ok | True | 0.7978 | 0.9167 | 0.0500 |
+
+| lambda | legal d R@10 | enron d R@10 | legal d leak | enron d leak | noise | passes? |
+| :-- | --: | --: | --: | --: | --: | :-- |
+| 0.1 | +0.0050 | **-0.0067** | +0.0000 | **+0.0100** | 0.0068 | no |
+| 0.3 | **-0.0050** | +0.0000 | **+0.0150** | **+0.0033** | 0.0068 | no |
+
+**The lever is now genuinely live** — that is the one thing this arm establishes that the earlier two
+could not. At lambda 0.3 legal moves -0.0050 R@10 and +0.0150 leak where the dead-sort-key version
+moved it 0.0000. So this is a measurement of aggregation, not of scan breadth.
+
+**And aggregation loses.** No lambda satisfies the rule: at 0.1 enron drops -0.0067 R@10 with leak
++0.0100; at 0.3 legal drops -0.0050 with leak +0.0150. **`leak_rate` worsens on at least one corpus
+at every lambda tested** — condition 2 fails outright, independently of the R@10 floor. The single
+positive cell (legal +0.0050 at lambda 0.1) sits below the 0.0068 noise reference, and BL-2 already
+established that a legal +0.0050 does not survive an index rebuild.
+
+**Verdict: REVERT, per the committed rule.** The mechanism and both keys are removed in the same
+commit as the `config-surface` pin returning to 111 / 250. Production code in this branch is now
+**byte-identical to `main`** (`git diff origin/main -- 'modules/*/src/main'` is empty). "No third
+round" was the standing instruction and this is it.
+
+### J.5 What is kept, and why it is not nothing
+
+- **`SearchExecutorChunkCollapseCharacterizationTest`** (8 tests) — the collapse had no direct unit
+  coverage before this lane. It now has: audit finding 2 pinned as an executable statement of the
+  limitation, per-parent best-score carry, determinism, fused-order tie-breaking, parentless hits,
+  sibling evidence merging by max, and the non-positive-limit edge. The refuted design is gone; the
+  characterization of what actually ships stays.
+- **The measurement itself.** Audit finding 2 is now answered rather than open: aggregating spread
+  chunk evidence was tested at the set-membership level (sections G and I) and, after the section J
+  fix, at the score-aggregation level, across three index builds and two corpora, and it does not
+  help. That is the durable output of Part 2.
+- **The committed driver** `scripts/jseval/916_collapse_ab.py`, so the next A/B on this seam does not
+  re-implement admissibility filtering in a gitignored script. **It hardcodes no reverted key name**
+  (`retire-with-a-sweep`): the swept env var is now `--sweep-key` / `--sweep-values`, with
+  `--fixed-env` for the rest of the arm. Re-running the table above through the generalized driver
+  reproduces every cell and the PARK verdict, which is the regression check on the generalization.
+
+### J.6 What I got wrong, recorded plainly
+
+1. **`wrong-gate` in my own work.** I verified the config keys resolved, that the accessors were read
+   at both call sites, and that the numbers moved — and never checked that the quantity I computed
+   was the quantity the next stage consumes. The emitted score was the max; branch fusion blends
+   scores. Two full campaigns measured the wrong thing and reported confident verdicts.
+2. **My oracle was too weak.** Comparing parent ids let a wrong emitted score pass. The reviewer
+   compared whole `SearchResult`s. An equivalence oracle must cover every field the consumer reads,
+   not the field the test author was thinking about.
+3. **"Identical to four decimals"** (BL-3) and **"replicate spread 0.0000"** (BL-4) were overstated
+   summaries of tables that contradicted them in the same document. Both are corrected in place.
+4. **A single-index result was promoted to a headline** (BL-2). The legal +0.0050 did not survive a
+   rebuild, and I had a third build of my own that already disagreed.
+
 
 ---
 
 ## §H Register updates made
 
-- **`F-056`** added to `docs/reference/search-quality-register.md` — the Part 2 result: the
-  aggregate-then-cut collapse is PARKED at λ=0.3 by the pre-registered rule on a split
-  (legal +0.0050 R@10 / −0.0050 leak, enron −0.0067 R@10), with the two structural findings that
-  outlast the verdict (the CC normalization floor; σ=0 on clean arms).
-- **No baseline row changed.** The verdict is PARK, so every shipped default is unchanged and no
-  canonical number moved. This is the register's own rule working as intended: numbers change only
-  with a run id and a σ statement, and here the σ statement says do not change them.
+- **`F-056`** added to `docs/reference/search-quality-register.md`: **audit finding 2 measured and
+  refuted at both the set-membership and the score-aggregation level**, with every run id, across
+  three index builds and two chunked corpora. It records the verdict, the four structural findings
+  that outlast it (the CC pool floor is exactly 0.0; σ(R@10)=0 but not σ(nDCG); the `degraded-ce`
+  upward bias above the 2% tolerance; scifact as a genuine inert control), and the withdrawn claims
+  from the §J review.
+- **No baseline row changed, and now none can have.** The verdict is REVERT: production code is
+  byte-identical to `main`, so no shipped default and no canonical number moved. The register's own
+  rule did its job — a number changes only with a run id and a σ statement, and here the σ statement
+  says the effect is not there.
+- **F-056 is a closing entry, not an open thread.** It exists so the next reader of the 2026-09-01
+  audit finds the measurement instead of re-running the campaign. What would reopen it is named
+  there: a different aggregation shape, or a corpus whose evidence is genuinely spread over many
+  mid-ranked passages — not another λ point.
 - Skill mirror regenerated with `node scripts/docs/skills-sync.mjs`.
 
 ---
@@ -1084,11 +1259,15 @@ point that the admissibility filter deciding which arms count was itself untrack
   still idle when Part 1 finishes; lane E will re-check status first. The 854 W2-fix (pool `top_n` /
   `limit` splice coupling guard) is **not** taken here. Note for 854: §D.4 records that the branch
   fusion min-max normalizes each branch, so this PR's aggregate cannot leak scale into the blend.
-- **Owner.** Two decisions requested: (1) §C.4 proposes building a new committed RAG question-set
-  fixture because the 845/881 sets do not exist (§B.11) — confirm before ~2 h of machine time plus a
-  durable artefact is spent. (2) §C.1 recommends temporary `EnvRegistry` keys for the chunk-size
-  campaign, deleted in the PR that lands the chosen constants; confirm the temporary +3
-  `config-surface` growth is acceptable.
+- **Owner — all three decisions ANSWERED, recorded here so Part 1 inherits them.**
+  (1) §C.4's RAG question-set fixture: **yes, but as Part 1 step 0**, not as part of Part 2.
+  (2) §C.1's temporary `EnvRegistry` keys for the chunk-size campaign: **acceptable**, on the
+  condition already in the plan — deleted in the PR that lands the chosen constants, with the
+  `config-surface` pin returned in that same commit. Part 2 is the worked precedent for that
+  condition being real: the keys were authorised, the mechanism did not ship, and both keys and the
+  pin came back out in the landing commit (§J.4).
+  (3) Whether to keep the two parked keys: **moot** — the §J review found the mechanism inert at
+  defaults, the re-run refuted it, and the standing instruction was revert-together-with-the-keys.
 
 ## Open items
 
@@ -1110,55 +1289,83 @@ point that the admissibility filter deciding which arms count was itself untrack
 7. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
    observed). The first campaign attempt lost three arms to it before the cause was clear. Either
    raise the default or have `backend.py` distinguish "still starting" from "failed".
-8. **CLOSED by §I.** The λ axis is now swept clean: legal is unmoved at every λ, enron costs
-   −0.0033 at every λ, and the multiplier axis is inert. The keys stay by owner decision. What would
-   reopen the question is **not** another λ point but a different aggregation shape — the §D.4 pool
-   floor is why low-λ arithmetic cannot reach the parents this was meant to rescue — or a corpus
-   whose evidence really is spread over many mid-ranked passages, which neither chunked corpus in
-   the register turns out to be.
-9. **`ce_coverage` degradation on legal is an UPWARD bias, not noise** (§I.6, F-056 finding 4).
-   Three of three void arms beat their clean siblings, and F-055 supplies the mechanism. Any future
-   campaign on legal that averages over CE drops will get a wrong answer with a plausible mean.
+8. **CLOSED by §J.4 — Part 2 is finished, not parked.** §I swept the λ axis but, per the §J
+   review, measured only set membership; §J fixed the emission and re-ran, and no λ passes the
+   pre-registered rule while `leak_rate` worsens somewhere at every λ. Mechanism and keys are
+   reverted. What would reopen the question is **not** another λ point but a different aggregation
+   shape — the §D.4 pool floor is why low-λ arithmetic cannot reach the parents this was meant to
+   rescue — or a corpus whose evidence really is spread over many mid-ranked passages, which neither
+   chunked corpus in the register turns out to be.
+9. **`ce_coverage` degradation on legal is an UPWARD bias above the 2% tolerance, not noise** (§I.6,
+   F-056 finding 4). Four of four legal void arms beat their clean comparators at drop rates
+   4.5–20.5%, and F-055 supplies the mechanism. Below the tolerance the sign reverses and the effect
+   is sub-0.001 jitter. Any future campaign on legal that averages over CE drops will get a wrong
+   answer with a plausible-looking mean.
+10. **The `wrong-gate` lesson from §J.6 is not yet routed anywhere durable.** "Verify the quantity
+   you compute is the quantity the next stage consumes" is a generalisation of an existing named
+   handle rather than a new one, and CLAUDE.md's `before-appending-to-rules` gate says edit the
+   existing line rather than add prose. Flagged for the owner: `wrong-gate` in
+   `agent-postmortems.md` currently covers wrong *gates/flags*; this case is a wrong *output field*
+   with the same shape. Lane E did not edit that file, being outside its scope.
 
 ## Report-back
 
-- **PRs:** one, open, green-and-ready, **not merged** —
-  `feat(916): aggregate-then-cut parent collapse for the chunk branch (lane E part 2)`.
-- **Items:** Part 2 **13/13 done** (12 + the owner-authorised λ sweep, §I). Parts 1/3/4 **not started** (Part 3 blocked on lane A; Parts 1
-  and 4 are machine-time, planned in §C). Three deviations, each with its reason in §D:
-  (1) tie-break is first-seen fused order, not parent docId — it is the only tie-break under which
-  λ=0 reproduces today bit-for-bit, and the brief's goal was determinism, which it delivers;
-  (2) key names use the neighbouring `index.hybrid.chunk_collapse_*` namespace rather than the
-  brief's `index.chunk.collapse.*`, so adjacent knobs share one convention;
-  (3) the decay ratio is a constant, not a third key.
-  One brief premise is **wrong and was not implemented as written**: over-fetching the chunk *hits*
-  already existed at ×10 (§B.12); the starved stage was the collapse scan.
-- **Evidence:** 17 new tests, every one broken once and observed failing (§F table). Run ids in
-  §G.4. Drivers and artefacts under `tmp/916-ab/`, `tmp/916-legal/`, `tmp/916-lambda/` (gitignored;
-  §G and F-056 are the durable record).
-- **Measurements:** §G at λ=0.3 — legal **+0.0010 nDCG / +0.0050 R@10 / −0.0050 leak**, enron
-  **−0.0053 / −0.0067 / +0.0033**, scifact control **0.0000 on every metric**, `leg_union_recall`
-  unchanged everywhere → PARK on the split clause. §I swept λ ∈ {0.05, 0.10, 0.15} × multiplier
-  {3, 5}: legal **unmoved to 4 dp at every point**, enron **−0.0033 R@10 / +0.0033 leak at every
-  point** → PARK again, and the axis is now refuted rather than unmeasured. No default changed, no
-  baseline row moved, nothing shipped.
-- **Cross-lane requests raised:** lane D — chunker version string + the Part 1 triple (neither ready;
-  Part 2 needs nothing from D and changes no index shape); 854 — Part 4's fusion sweep is lane E's
-  only if 854 is still idle, and §D.4 records that branch fusion min-max normalizes so this change
-  cannot leak scale into the blend; owner — two decisions in §C (build a RAG question-set fixture?
-  temporary EnvRegistry keys for the chunk sweep?) plus whether to keep or remove the two parked keys.
+- **PR:** one, open, **not merged** — retitled
+  `test(916): characterize the chunk-collapse and close audit finding 2 as refuted (lane E part 2)`.
+  It contains **no production-code change**: `git diff origin/main -- 'modules/*/src/main'` is empty.
+- **Verdict: Part 2 is REFUTED and REVERTED**, by the rule committed in `52d35001` at 03:34:57 UTC,
+  7m37s before the first arm of the decisive A/B (`20260903T034234`). Ten arms, ten admissible
+  (`ce_coverage: ok` + `comparable` on every one), replicate spread 0.0000 on R@10, 24 clean machine
+  signatures. No λ beats the noise floor on both chunked corpora, and `leak_rate` worsens on at least
+  one corpus at **every** λ tested — condition 2 fails outright, independently of the R@10 clause.
+- **What three campaigns actually established.** §G and §I measured whether a wider collapse scan
+  changes set membership: it does not help. The §J review then found the aggregate was a dead sort
+  key, so §J re-measured whether score aggregation helps: it does not either, and it costs leak. The
+  answer to the 2026-09-01 audit's finding 2 is therefore **negative at both levels**, on two chunked
+  corpora across three independent index builds — not "unknown", and not "parked pending evidence".
+- **Items:** Part 2 **14/14 done** (12 + the owner-authorised λ sweep + the review round). Parts
+  1/3/4 **not started** (Part 3 blocked on lane A; Parts 1 and 4 are machine-time, planned in §C).
+  Three implementation deviations are recorded in §D with their reasons; all three are moot now that
+  the mechanism is reverted. One brief premise was **wrong**: over-fetching the chunk *hits* already
+  existed at ×10 (§B.12); the starved stage was the collapse scan.
+- **What survives, and it is not nothing.** (a) `SearchExecutorChunkCollapseCharacterizationTest`,
+  8 tests, pinning a collapse that had **no direct unit coverage before this lane** — including audit
+  finding 2 as an executable statement of the limitation, plus determinism, best-score carry,
+  fused-order tie-breaking, parentless hits and sibling-evidence merging. (b) `F-056`, closing the
+  audit finding with every run id. (c) The committed A/B driver
+  `scripts/jseval/916_collapse_ab.py`, so the admissibility filter that decides whether an arm counts
+  is auditable rather than living in gitignored `tmp/` — a direct §J review finding.
+- **Evidence:** 17 new tests were written and every one was broken once and observed failing before
+  being restored (§F table); 9 of them died with the mechanism, 8 remain. Every metric claim in §G,
+  §I and §J carries a `2026MMDDTHHMMSS_<corpus>` run id. **No throughput or latency number from any
+  of these campaigns is cited as evidence anywhere** — §G's index build was contended, so those
+  numbers are void by construction.
+- **Corrections I had to make to my own earlier claims**, all raised by the independent review and
+  all now fixed in place: the legal +0.0050 R@10 was index-build-specific and is **withdrawn**
+  (BL-2, three builds, appeared once); "legal identical to four decimals at every λ" was wrong at
+  λ0.05 (BL-3, −0.0017 nDCG); "σ is 0" is an **R@10** claim and does not extend to nDCG@10, where
+  sub-tolerance CE drops move the fifth decimal (BL-4); and the void-arm count was 3, not 5 (§I.6).
+- **Cross-lane requests:** lane D — chunker version string + the Part 1 triple (neither ready;
+  **Part 2 now changes nothing at all**, so D is unblocked in either merge order); 854 — Part 4's
+  fusion sweep is lane E's only if 854 is still idle, and §D.4's finding that branch fusion min-max
+  normalizes each branch (pool floor exactly 0.0) is a durable constraint 854 should have. Owner —
+  all three decisions answered and recorded in Cross-lane requests so Part 1 inherits them.
 - **Residue found outside scope and where it was routed:**
-  1. **`prepare-worktree.cjs` does not provide `datasets/`.** Every `mixed/*` corpus lives only in
-     the main checkout, so any worktree running jseval fails with
-     `FileNotFoundError: corpus.jsonl not found at <worktree>/datasets/mixed/<name>/corpus.jsonl`.
-     Worked around here with a gitignored junction. Routed to this tempdoc's open items as item 6
-     with the concrete fix, since `prepare-worktree.cjs` is lane 0's file, not lane E's.
-  2. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s, which is too short for a cold worktree boot**
-     (observed ~150 s; the first campaign lost three arms to it). Open item 7.
-  3. Both are the same shape — a worktree-only eval gap — and neither is a defect in the product.
+  1. **`prepare-worktree.cjs` does not provide `datasets/`** — every `mixed/*` corpus lives only in
+     the main checkout, so any worktree running jseval fails with `FileNotFoundError: corpus.jsonl
+     not found at <worktree>/datasets/mixed/<name>/corpus.jsonl`. Worked around with a gitignored
+     junction; routed to open item 6 with the concrete fix, since that file is lane 0's.
+  2. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
+     observed); the first campaign attempt lost three arms to it. Open item 7.
+  3. **The `wrong-gate` handle does not currently cover a wrong *output field*** — same shape,
+     different surface. Open item 10, flagged rather than edited: `agent-postmortems.md` is outside
+     lane E's scope.
 - **What the next lane must know:** (a) **check `ce_coverage` before believing any delta on this
-  machine** — it voided two arms here and one of them would have reversed the sign of the headline;
-  (b) **σ is 0 on clean arms**, so F-055's 0.0034 is an upper bound, not this cohort's noise;
-  (c) the **CC pool floor is exactly 0.0**, which bounds every "aggregate the passage evidence"
-  design, not just this one; (d) scifact is `chunk-free` and therefore a genuine inert control for
-  any chunk-branch change — use it.
+  machine** — it voided arms here and one would have reversed the sign of a headline; above the 2%
+  tolerance on legal a degraded arm is biased **upward**, below it the drops are sub-0.001 jitter;
+  (b) **σ(R@10) is 0 on clean arms but σ(nDCG@10) is not**, so quote the right one; (c) the **CC pool
+  floor is exactly 0.0**, which bounds every "aggregate the passage evidence" design, not just this
+  one; (d) **scifact is `chunk-free`** and therefore a genuine inert control for any chunk-branch
+  change — use it; (e) **verify that the quantity you compute is the quantity the next stage
+  consumes.** Two full campaigns here measured the wrong question because the aggregate was emitted
+  as a sort key while branch fusion blends scores.
