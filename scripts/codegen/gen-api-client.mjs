@@ -192,6 +192,16 @@ function atomicWriteJson(path, value) {
   }
 }
 
+export function canonicalizeJsonMaps(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeJsonMaps);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, entry]) => [key, canonicalizeJsonMaps(entry)]),
+  );
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, { headers: { accept: 'application/json' } });
   if (!response.ok) throw new Error(`capture failed: GET ${url} -> HTTP ${response.status}`);
@@ -209,7 +219,10 @@ export async function captureFromLive(
   ]);
   const capture = validateLivePair(manifest, openApi);
   atomicWriteJson(routePath, manifest);
-  atomicWriteJson(openApiPath, openApi);
+  // The offline Java exporter enables ORDER_MAP_ENTRIES_BY_KEYS. Canonicalize the captured
+  // wire document the same way so live capture and offline regeneration compare byte-for-byte,
+  // independent of Map.of iteration order in the serving JVM.
+  atomicWriteJson(openApiPath, canonicalizeJsonMaps(openApi));
   console.log(`captured ${capture.routeCount} routes -> ${routePath}`);
   console.log(`captured matching OpenAPI (${capture.routeDigest}) -> ${openApiPath}`);
   return manifest;

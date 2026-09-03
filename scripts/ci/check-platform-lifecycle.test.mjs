@@ -8,6 +8,9 @@ import {
   REGISTER_PATH,
   evaluateRegister,
   extractPin,
+  failureFindings,
+  renderGithubAnnotations,
+  renderGithubSummary,
   renderReport,
   runCli,
   shouldFail,
@@ -216,19 +219,36 @@ test('the real register resolves every seeded platform from its live source', ()
 
 test('CLI returns advisory success in report mode and failure in gate mode', () => {
   const originalLog = console.log;
+  const originalWarn = console.warn;
   const originalError = console.error;
   const output = [];
   console.log = (...args) => output.push(args.join(' '));
+  console.warn = (...args) => output.push(args.join(' '));
   console.error = (...args) => output.push(args.join(' '));
   try {
     assert.equal(runCli(['--mode', 'report', '--as-of', '2026-09-03']), 0);
     assert.equal(runCli(['--mode', 'gate', '--as-of', '2026-09-03']), 1);
   } finally {
     console.log = originalLog;
+    console.warn = originalWarn;
     console.error = originalError;
   }
-  assert.ok(output.some((line) => line.includes('platform-lifecycle report OK')));
+  assert.ok(output.some((line) => line.includes('platform-lifecycle report ATTENTION REQUIRED')));
   assert.ok(output.some((line) => line.includes('platform-lifecycle gate FAILED')));
+});
+
+test('failure findings produce GitHub-visible annotations and summary text', () => {
+  const register = JSON.parse(readFileSync(REGISTER_PATH, 'utf8'));
+  const result = evaluateRegister(register, {
+    readSource: (path) => readFileSync(path, 'utf8'),
+    asOf: '2026-09-03',
+  });
+  const failures = failureFindings(result);
+  assert.ok(failures.length > 0);
+  assert.equal(renderGithubAnnotations(result).length, failures.length);
+  assert.match(renderGithubAnnotations(result)[0], /^::warning title=Platform lifecycle /);
+  assert.match(renderGithubSummary(result), /Platform lifecycle attention required/);
+  assert.match(renderGithubSummary(result), /\*\*gradle\*\*/);
 });
 
 if (failures.length > 0) {

@@ -13,7 +13,12 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { captureFromLive, renderClient, validateLivePair } from './gen-api-client.mjs';
+import {
+  canonicalizeJsonMaps,
+  captureFromLive,
+  renderClient,
+  validateLivePair,
+} from './gen-api-client.mjs';
 
 let passed = 0;
 const failures = [];
@@ -92,6 +97,13 @@ run('live pair validation accepts matching classified route identities and metad
   });
 });
 
+run('live OpenAPI capture canonicalizes nested map keys without reordering arrays', () => {
+  assert.deepEqual(canonicalizeJsonMaps({ z: { b: 2, a: 1 }, a: [{ y: 2, x: 1 }] }), {
+    a: [{ x: 1, y: 2 }],
+    z: { a: 1, b: 2 },
+  });
+});
+
 run('live pair validation normalizes Javalin wildcards without rendering OpenAPI', () => {
   const manifest = {
     count: 1,
@@ -160,10 +172,15 @@ async function captureWritesTheValidatedPair() {
     await captureFromLive(`http://127.0.0.1:${address.port}`, { routePath, openApiPath });
     const capturedRoutes = JSON.parse(readFileSync(routePath, 'utf8'));
     const capturedOpenApi = JSON.parse(readFileSync(openApiPath, 'utf8'));
+    const capturedOpenApiText = readFileSync(openApiPath, 'utf8');
     assert.equal(capturedRoutes.routeDigest, DIGEST);
     assert.equal(
       capturedOpenApi['x-justsearch-surface'].classification,
       'reference-client-structural-inventory',
+    );
+    assert.ok(
+      capturedOpenApiText.indexOf('"paths"') < capturedOpenApiText.indexOf('"x-justsearch-route-source"'),
+      'captured OpenAPI maps use the same key ordering as the offline Java exporter',
     );
     passed += 1;
   } catch (error) {

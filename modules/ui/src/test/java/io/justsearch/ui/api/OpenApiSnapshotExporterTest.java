@@ -39,6 +39,9 @@ class OpenApiSnapshotExporterTest {
     String second = OpenApiSnapshotExporter.renderSnapshot(input);
     assertEquals(first, second);
     assertTrue(first.endsWith("\n"));
+    assertTrue(first.contains("\"openapi\": \"3.1.0\""));
+    assertTrue(first.contains("\"tags\": [\n"));
+    assertTrue(!first.contains("\"openapi\" :"));
 
     @SuppressWarnings("unchecked")
     var document = MAPPER.readValue(first, java.util.Map.class);

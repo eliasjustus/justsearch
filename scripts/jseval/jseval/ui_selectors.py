@@ -37,6 +37,7 @@ RAIL_SURFACE_SETTINGS = "core.settings-surface"
 RAIL_SURFACE_SECURITY = "core.security-surface"
 RAIL_SURFACE_HELP = "core.help-surface"
 RAIL_SURFACE_BROWSE = "core.browse-surface"
+RAIL_SURFACE_GOVERNANCE = "core.governance-surface"
 
 
 def rail_css(surface_id: str) -> str:
@@ -197,4 +198,5 @@ VIEWS: dict[str, str] = {
     "settings": RAIL_SURFACE_SETTINGS,
     "security": RAIL_SURFACE_SECURITY,
     "help": RAIL_SURFACE_HELP,
+    "governance": RAIL_SURFACE_GOVERNANCE,
 }

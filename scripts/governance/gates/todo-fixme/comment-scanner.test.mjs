@@ -81,6 +81,27 @@ raw = r'FIXME # XXX'
     expected: 2,
   },
   {
+    language: "Python f-string expressions",
+    path: "expressions.py",
+    source: [
+      'value = f"""{(',
+      "  1 # TODO expression one",
+      "  + 2 # FIXME expression two",
+      ')}"""',
+    ].join("\n"),
+    expected: 2,
+  },
+  {
+    language: "Python f-string non-comment hashes",
+    path: "literal-hashes.py",
+    source: [
+      'literal = f"# TODO literal; FIXME literal"',
+      'expression_string = f"{\'# XXX nested string\'}"',
+      'formatted = f"{255:# TODO format text}"',
+    ].join("\n"),
+    expected: 0,
+  },
+  {
     language: "PowerShell",
     path: "a.ps1",
     source: `

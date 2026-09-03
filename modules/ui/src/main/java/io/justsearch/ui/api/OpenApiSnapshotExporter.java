@@ -13,11 +13,20 @@ import java.util.Map;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.core.util.DefaultIndenter;
+import tools.jackson.core.util.DefaultPrettyPrinter;
+import tools.jackson.core.util.Separators;
 
 /** Offline exporter for the committed reference-client structural OpenAPI inventory. */
 public final class OpenApiSnapshotExporter {
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
+  private static final DefaultPrettyPrinter JSON_STRINGIFY_PRETTY_PRINTER =
+      new DefaultPrettyPrinter(
+              Separators.createDefaultInstance()
+                  .withObjectNameValueSpacing(Separators.Spacing.AFTER))
+          .withArrayIndenter(new DefaultIndenter("  ", "\n"))
+          .withObjectIndenter(new DefaultIndenter("  ", "\n"));
 
   private OpenApiSnapshotExporter() {}
 
@@ -70,7 +79,8 @@ public final class OpenApiSnapshotExporter {
     }
     Map<String, Object> document = OpenApiRenderer.render(routes);
     validateRouteDigest(envelope.get("routeDigest"), document, routeSnapshot);
-    return normalizeNewlines(MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(document))
+    return normalizeNewlines(
+            MAPPER.writer().with(JSON_STRINGIFY_PRETTY_PRINTER).writeValueAsString(document))
         + "\n";
   }
 

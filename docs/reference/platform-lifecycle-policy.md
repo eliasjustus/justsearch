@@ -38,8 +38,10 @@ node scripts/ci/check-platform-lifecycle.mjs --mode report
 
 Report mode still fails on an invalid register or unreadable/non-singular live
 pin, but lifecycle findings remain visible without making unrelated changes
-fail. Gate mode exits nonzero for failure findings and is appropriate when an
-owner is actively enforcing an upgrade deadline:
+fail. A failure-level finding is labelled `ATTENTION REQUIRED`; on GitHub it
+also produces a warning annotation and a job-summary entry, so advisory does
+not look like success. Gate mode exits nonzero for failure findings and is
+appropriate when an owner is actively enforcing an upgrade deadline:
 
 ```text
 node scripts/ci/check-platform-lifecycle.mjs --mode gate

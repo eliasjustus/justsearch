@@ -88,6 +88,13 @@ afterEach(() => {
 });
 
 describe('GovernanceView — activation efficacy (tempdoc 622 §17/§18)', () => {
+  it('keeps the scrollable governance surface keyboard reachable', async () => {
+    const el = await mount(stateBody(undefined));
+    expect(el.getAttribute('tabindex')).toBe('0');
+    expect(el.getAttribute('role')).toBe('region');
+    expect(el.getAttribute('aria-label')).toBe('Governance details');
+  });
+
   it('renders an Activation column with per-gate tone-labels from the efficacy block', async () => {
     const el = await mount(
       stateBody({

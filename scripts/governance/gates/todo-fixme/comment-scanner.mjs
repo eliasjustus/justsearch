@@ -253,15 +253,114 @@ function pythonStringAt(source, start) {
   );
 }
 
+function scanPythonFormatSpec(source, start) {
+  let count = 0;
+  let i = start;
+  while (i < source.length) {
+    if (source[i] === "}") return { count, next: i + 1 };
+    if (source.startsWith("{{", i)) {
+      i += 2;
+      continue;
+    }
+    if (source[i] === "{") {
+      const replacement = scanPythonFStringExpression(source, i + 1);
+      count += replacement.count;
+      i = replacement.next;
+      continue;
+    }
+    i += 1;
+  }
+  return { count, next: source.length };
+}
+
+function scanPythonString(source, start, string) {
+  const delimiter = string[1];
+  const prefix = string[0]
+    .slice(0, string[0].length - delimiter.length)
+    .toLowerCase();
+  const quoteStart = start + string[0].length - delimiter.length;
+  if (!prefix.includes("f")) {
+    return { count: 0, next: skipQuoted(source, quoteStart, delimiter) };
+  }
+  return scanPythonFString(source, quoteStart, delimiter);
+}
+
+function scanPythonFStringExpression(source, start) {
+  let count = 0;
+  let i = start;
+  const delimiters = [];
+  while (i < source.length) {
+    const string = pythonStringAt(source, i);
+    if (string) {
+      const scanned = scanPythonString(source, i, string);
+      count += scanned.count;
+      i = scanned.next;
+      continue;
+    }
+    if (source[i] === "#") {
+      const end = source.indexOf("\n", i + 1);
+      const stop = end === -1 ? source.length : end;
+      count += markerCount(source.slice(i + 1, stop));
+      i = stop;
+      continue;
+    }
+    if (delimiters.length === 0 && source[i] === ":") {
+      const formatSpec = scanPythonFormatSpec(source, i + 1);
+      return { count: count + formatSpec.count, next: formatSpec.next };
+    }
+    if (source[i] === "(" || source[i] === "[" || source[i] === "{") {
+      delimiters.push(source[i]);
+      i += 1;
+      continue;
+    }
+    if (source[i] === ")" || source[i] === "]" || source[i] === "}") {
+      if (source[i] === "}" && delimiters.length === 0) {
+        return { count, next: i + 1 };
+      }
+      delimiters.pop();
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return { count, next: source.length };
+}
+
+function scanPythonFString(source, quoteStart, delimiter) {
+  let count = 0;
+  let i = quoteStart + delimiter.length;
+  while (i < source.length) {
+    if (source.startsWith(delimiter, i)) {
+      return { count, next: i + delimiter.length };
+    }
+    if (source[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (source.startsWith("{{", i) || source.startsWith("}}", i)) {
+      i += 2;
+      continue;
+    }
+    if (source[i] === "{") {
+      const replacement = scanPythonFStringExpression(source, i + 1);
+      count += replacement.count;
+      i = replacement.next;
+      continue;
+    }
+    i += 1;
+  }
+  return { count, next: source.length };
+}
+
 function countPythonComments(source) {
   let count = 0;
   let i = 0;
   while (i < source.length) {
     const string = pythonStringAt(source, i);
     if (string) {
-      const delimiter = string[1];
-      const quoteStart = i + string[0].length - delimiter.length;
-      i = skipQuoted(source, quoteStart, delimiter);
+      const scanned = scanPythonString(source, i, string);
+      count += scanned.count;
+      i = scanned.next;
       continue;
     }
     if (source[i] === "#") {

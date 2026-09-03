@@ -265,7 +265,7 @@ public enum EnvRegistry {
     SEARCH_PROFILE("justsearch.search.pipeline.profile", "JUSTSEARCH_SEARCH_PROFILE", LifecycleStage.PERMANENT),
 
     /** Primary index collection override (legacy escape hatch; prefer YAML). */
-    INDEX_COLLECTION("justsearch.index.collection", "JUSTSEARCH_INDEX_COLLECTION", LifecycleStage.PERMANENT),
+    INDEX_COLLECTION("justsearch.index.collection", "JUSTSEARCH_INDEX_COLLECTION", LifecycleStage.DEPRECATED),
 
     /** Index parity guard escape hatch (allow opening read-only on mismatch). */
     INDEX_PARITY_ALLOW_MISMATCH(
@@ -312,7 +312,7 @@ public enum EnvRegistry {
      * {@code qwen-vl} (default — today's behavior) or {@code paddle-ocr-vl} (the F-009 pilot).
      * The per-file {@link #VLM_MODEL}/{@link #MMPROJ_MODEL} overrides still win when set.
      */
-    VLM_PROFILE("justsearch.vlm.profile", "JUSTSEARCH_VLM_PROFILE", LifecycleStage.PERMANENT),
+    VLM_PROFILE("justsearch.vlm.profile", "JUSTSEARCH_VLM_PROFILE", LifecycleStage.DEPRECATED),
 
     /**
      * Chat model profile (tempdoc 842) — selects the llama-server engine model pair:
@@ -386,7 +386,10 @@ public enum EnvRegistry {
     SEARCH_TITLE_BOOST("justsearch.search.title_boost", "JUSTSEARCH_SEARCH_TITLE_BOOST", LifecycleStage.PERMANENT),
 
     /** 326: NER entity field boost in BM25 DisjunctionMaxQuery (default: 2.0, 0 to disable). */
-    SEARCH_ENTITY_BOOST("justsearch.search.entity_boost", "JUSTSEARCH_SEARCH_ENTITY_BOOST"),
+    SEARCH_ENTITY_BOOST(
+        "justsearch.search.entity_boost",
+        "JUSTSEARCH_SEARCH_ENTITY_BOOST",
+        LifecycleStage.PERMANENT),
 
     /** 343: enable/disable chunk-aware merge in search (default: true via builder). */
     SEARCH_CHUNK_AWARE_ENABLED(
@@ -420,14 +423,14 @@ public enum EnvRegistry {
      */
     SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED(
         "search.mcp_delivery.entity_carriage_enabled",
-        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED", LifecycleStage.EXPERIMENTAL),
     /**
      * 771 item (b): byte ceiling for the whole rendered entity-carriage line, per hit (default: 200
      * via builder). Only consulted when {@code entity_carriage_enabled} is on.
      */
     SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS(
         "search.mcp_delivery.entity_carriage_max_chars",
-        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS", LifecycleStage.EXPERIMENTAL),
 
     /**
      * 789 Phase 2 (F1): append a continuation line to a delivered excerpt that names an indexed
@@ -436,28 +439,28 @@ public enum EnvRegistry {
      */
     SEARCH_MCP_FRAMING_CONTINUATION(
         "search.mcp_framing.continuation_enabled",
-        "JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED", LifecycleStage.EXPERIMENTAL),
     /**
      * 789 Phase 2 (F2): frame search/answer deliveries explicitly as retrieval evidence rather than
      * verified answers (default: false via builder).
      */
     SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER(
         "search.mcp_framing.evidence_not_answer_enabled",
-        "JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED", LifecycleStage.EXPERIMENTAL),
     /**
      * 789 Phase 2 (F3): carry corpus coverage + absence-is-not-evidence framing on zero-result and
      * thin-result deliveries (default: false via builder).
      */
     SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE(
         "search.mcp_framing.calibrated_absence_enabled",
-        "JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED", LifecycleStage.EXPERIMENTAL),
     /**
      * 789 Phase 2 (F3): delivered-body byte floor below which a non-empty result set still counts as
      * "thin" and receives the calibrated-absence framing (default: 400 via builder).
      */
     SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES(
         "search.mcp_framing.thin_result_floor_bytes",
-        "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES", LifecycleStage.PERMANENT),
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES", LifecycleStage.EXPERIMENTAL),
     /**
      * 789 (post-Amendment-3): normalized top-relevance floor below which a non-empty result set is
      * framed as a weak-relevance delivery (default: 0.40 via builder). Only consulted where the
@@ -465,7 +468,7 @@ public enum EnvRegistry {
      * single-leg deliveries are out of scope for the arm. {@code 0} disables it.
      */
     SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR(
-        "search.mcp_framing.weak_score_floor", "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR", LifecycleStage.PERMANENT),
+        "search.mcp_framing.weak_score_floor", "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR", LifecycleStage.EXPERIMENTAL),
 
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION", LifecycleStage.PERMANENT),
@@ -720,7 +723,7 @@ public enum EnvRegistry {
     BACKFILL_CHUNK_SLOTS_PER_BATCH(
         "justsearch.backfill.chunk_slots_per_batch",
         "JUSTSEARCH_BACKFILL_CHUNK_SLOTS_PER_BATCH",
-        "50", LifecycleStage.PERMANENT),
+        "50", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Doc-count per idle-branch BGE-M3 backfill batch (default 50). Previously a stray literal in
@@ -751,7 +754,7 @@ public enum EnvRegistry {
     CAPABILITY_CONTRACT_STRICT(
         "justsearch.models.capability_contract_strict",
         "JUSTSEARCH_MODELS_CAPABILITY_CONTRACT_STRICT",
-        "false", LifecycleStage.PERMANENT),
+        "false", LifecycleStage.EXPERIMENTAL),
 
     // ==================== Reranker Configuration ====================
 
@@ -794,7 +797,7 @@ public enum EnvRegistry {
     RERANK_JUDGE_BLEND_ENABLED(
         "justsearch.rerank.judge_blend_enabled",
         "JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED",
-        "false", LifecycleStage.PERMANENT),
+        "false", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Tempdoc 643: weight on the fusion-stage score in the judge blend, in [0,1]. 1.0 = ignore the
@@ -804,7 +807,7 @@ public enum EnvRegistry {
     RERANK_JUDGE_BLEND_ALPHA(
         "justsearch.rerank.judge_blend_alpha",
         "JUSTSEARCH_RERANK_JUDGE_BLEND_ALPHA",
-        "0.5", LifecycleStage.PERMANENT),
+        "0.5", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Tempdoc 643 (E1/E2): controls TWO independent effects, each with its own dependency:
@@ -828,7 +831,7 @@ public enum EnvRegistry {
     RERANK_JUDGE_ARBITRATION_ENABLED(
         "justsearch.rerank.judge_arbitration_enabled",
         "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ENABLED",
-        "false", LifecycleStage.PERMANENT),
+        "false", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Tempdoc 643 (E1/E2): alpha to use when the arbitration gate decides fusion is decisive and the
@@ -839,7 +842,7 @@ public enum EnvRegistry {
     RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE(
         "justsearch.rerank.judge_arbitration_alpha_diverge",
         "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_ALPHA_DIVERGE",
-        "0.85", LifecycleStage.PERMANENT),
+        "0.85", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Tempdoc 643 (perf-skip): when the arbitration gate says fusion is decisive, skip the
@@ -852,7 +855,7 @@ public enum EnvRegistry {
     RERANK_JUDGE_ARBITRATION_SKIP_ENABLED(
         "justsearch.rerank.judge_arbitration_skip_enabled",
         "JUSTSEARCH_RERANK_JUDGE_ARBITRATION_SKIP_ENABLED",
-        "false", LifecycleStage.PERMANENT),
+        "false", LifecycleStage.EXPERIMENTAL),
 
     /** Enable chunk reranking (auto if model found). */
     RERANK_CHUNKS_ENABLED(
@@ -1091,7 +1094,7 @@ public enum EnvRegistry {
     HYBRID_CC_WEIGHT_SPLADE("index.hybrid.cc_weight_splade", "JUSTSEARCH_HYBRID_CC_WEIGHT_SPLADE", LifecycleStage.PERMANENT),
     /** Tempdoc 580 §13.3: per-query adaptive CC-weight selection (default off). */
     HYBRID_ADAPTIVE_WEIGHTS_ENABLED(
-        "index.hybrid.adaptive_weights_enabled", "JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED", LifecycleStage.PERMANENT),
+        "index.hybrid.adaptive_weights_enabled", "JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED", LifecycleStage.EXPERIMENTAL),
     /**
      * Tempdoc 636 Design v2: per-query leg arbitration — raise the 2-way CC dense weight (alpha)
      * when dense is bounded-confident AND the legs diverge (low cross-leg rank overlap), so the
@@ -1285,7 +1288,7 @@ public enum EnvRegistry {
      * <p>An unrecognised value falls back to {@code continuous} with a WARN — this knob exists to
      * be A/B-measured, so a typo must not silently change cadence.
      */
-    INDEX_NRT_MODE("index.nrt.mode", "JUSTSEARCH_INDEX_NRT_MODE", "continuous", LifecycleStage.PERMANENT),
+    INDEX_NRT_MODE("index.nrt.mode", "JUSTSEARCH_INDEX_NRT_MODE", "continuous", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Background reopen cadence, in ms, while {@code index.nrt.mode=on_demand} (default 2000).
@@ -1294,7 +1297,7 @@ public enum EnvRegistry {
      * idle Worker performs no reopen.
      */
     INDEX_NRT_BACKGROUND_REOPEN_MS(
-        "index.nrt.background_reopen_ms", "JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS", "2000", LifecycleStage.PERMANENT),
+        "index.nrt.background_reopen_ms", "JUSTSEARCH_INDEX_NRT_BACKGROUND_REOPEN_MS", "2000", LifecycleStage.EXPERIMENTAL),
 
     /**
      * Age, in ms, past which a foreground search in {@code on_demand} mode escalates from the
@@ -1302,7 +1305,7 @@ public enum EnvRegistry {
      * query cannot silently return a view older than this bound. Ignored in {@code continuous} mode.
      */
     INDEX_NRT_ON_DEMAND_MAX_STALE_MS(
-        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000", LifecycleStage.PERMANENT),
+        "index.nrt.on_demand_max_stale_ms", "JUSTSEARCH_INDEX_NRT_ON_DEMAND_MAX_STALE_MS", "1000", LifecycleStage.EXPERIMENTAL),
 
     // ==================== Commit cadence (tempdoc 885 item 19 follow-up) ====================
 

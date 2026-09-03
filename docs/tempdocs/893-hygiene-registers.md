@@ -1,7 +1,7 @@
 ---
 title: "Hygiene authorities and auditable projections"
 type: tempdocs
-status: IMPLEMENTED (2026-09-03) — local verification green; live Head and hosted-CI proof pending
+status: IMPLEMENTED (2026-09-03) — local and live-Head verification green; hosted-CI proof pending
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L14
@@ -527,8 +527,9 @@ separate instruction.
   reference-client OpenAPI snapshot beside existing generated API inputs.
 - [x] Extend live capture to refresh route/OpenAPI snapshots together with matching count/digest.
 - [x] Add deterministic/unit checks and CI regeneration wiring.
-- [ ] Refresh the route snapshot from a real Head and compare the paired count/digest before claiming
-  live-router fidelity. Offline reproducibility is green; no Head/dev-stack capture was run in this session.
+- [x] Refresh the route snapshot from a real Head and compare the paired count/digest before claiming
+  live-router fidelity. The 2026-09-03 capture contains 243 routes and both projections carry
+  `sha256:9a1ee92e4593d204692792f458554f87ad4165ce51634e76059a1981af0047e6`.
 - [x] Remove the renderer body displaced from `OpenApiController`; do not leave Java/Node duplicates or
   create `contracts/http/openapi.snapshot.json`.
 
@@ -589,11 +590,30 @@ claim seeds and then performed a refute-first final review. The primary agent re
 registry, dashboard, tempdoc, integration, and verification ownership. Review found six defects; all
 six were fixed and the same reviewer confirmed no residual actionable defect in those scopes.
 
+### P.9 Post-review hardening
+
+- [x] Correct Python f-string comment scanning so debt markers inside replacement expressions are
+  found without treating literal hashes, nested strings, or format specifications as comments.
+- [x] Bound governance history to 5,000 rows and read the history tail once per API request. Retention
+  is intentionally row-bounded. A refute-first review found that the first compactor could lose a
+  concurrent writer's rows; append plus retention is now protected by a bounded cross-process lock,
+  stale-owner recovery, and same-directory atomic replacement, with a coordinated two-process test.
+- [x] Make report-mode lifecycle failures visibly actionable while retaining advisory exit semantics;
+  GitHub runs emit warning annotations and a job summary.
+- [x] Audit configuration lifecycle stages semantically. The resulting declaration census is 277
+  permanent, 27 experimental, and 2 deprecated keys; ambiguous product-owner cases remain permanent.
+- [x] Register Governance-view visual coverage and make its scroll region keyboard-focusable. The
+  focused capture has zero accessibility violations and no overflow.
+- [x] Run the live Head capture, then make Java and Node OpenAPI pretty-printing byte-identical so the
+  live projection also passes the offline regeneration check.
+
 ## V. Implementation and verification record (2026-09-03)
 
-Implementation is complete for the approved boundary. The one unchecked P.2 item is deliberately a
-live-evidence item, not missing code: the paired capture now requires one Java-computed full-descriptor
-digest from both live projections before writing either snapshot, but this session did not start Head.
+Implementation is complete for the approved boundary, including the post-review hardening and a real
+Head capture. The paired capture requires one Java-computed full-descriptor digest from both live
+projections before writing either snapshot; the captured 243-route inventory and its OpenAPI projection
+carry the same digest. The offline exporter now uses the same deterministic JSON layout as the live
+Node capture, so reproduction is byte-for-byte rather than merely structurally equivalent.
 
 Evidence:
 
@@ -617,17 +637,26 @@ Evidence:
   across API projection, config census, comment interpolation, workaround ownership, and dashboard
   stability; the second verified all six fixes. `git diff --check` and a credential-pattern diff scan
   were clean.
+- Post-review evidence: the live Head capture recorded 243 routes with matching route/OpenAPI digests;
+  the Java offline exporter reproduced the live OpenAPI bytes exactly and
+  `check-reference-client-openapi-regen.mjs` passed. The Governance visual step rendered the latest
+  repository snapshot with zero axe violations and no overflow. Focused scanner, history, lifecycle,
+  configuration, JVM, and Governance-view tests passed before the final full verification rerun.
+- A final independent refute-first review found one remaining defect: concurrent history compaction
+  could overwrite a newer append. The repaired `history.test.mjs` launches two coordinated Node
+  writers, proves all 50 distinct gate rows survive within the 100-row cap, and also proves stale-lock
+  recovery. Re-review then found malformed owner metadata and PID reuse could leave a permanent lock;
+  schema validation with directory-time fallback and a bounded maximum lease now cover both cases.
+  The focused test and all 33 governance test files passed after the repairs.
 
 Unverified or deferred evidence:
 
-- No real Head capture was run. The committed route snapshot predates the new descriptor digest, so
-  live-router fidelity remains explicitly unclaimed until `gen-api-client.mjs --from-live` refreshes
-  the paired snapshots against a running Head.
 - CI wiring is locally policy-checked, but no hosted run or uploaded governance-history artifact exists
   for this unpushed branch yet.
-- `jseval ui-shot --affected GovernanceView.ts` found no registered step for that view. A fixture health
-  screenshot did not render the Governance block, so the new repository-health panel has unit/typecheck
-  evidence but no direct visual screenshot evidence.
+- The Governance capture still reports two unrelated global shell-console errors: an unnamed
+  `jf-control` and a boot-transition timeout. The Governance surface itself has direct visual,
+  accessibility, overflow, unit, and typecheck evidence; this slice does not widen into those global
+  shell defects.
 - The advisory platform report identifies the repository's Gradle 9.6.1 pin as superseded by 9.7.1.
   This is an owner decision, not an automatic upgrade or a hidden green claim.
 

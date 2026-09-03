@@ -4,6 +4,8 @@ package io.justsearch.ui.api;
 import io.javalin.http.Context;
 import io.justsearch.configuration.PlatformPaths;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -43,7 +45,7 @@ public final class GovernanceStateController {
   // kernel via scripts/governance/lib/history.mjs). Served the same runtime way as the SARIF;
   // NEVER committed (it is local + dev-skewed). Joined against the committed roster for status.
   private static final String HISTORY_REL = "tmp/governance-history.ndjson";
-  // Cap the per-request NDJSON read so an unbounded history stays O(1)-ish (last-N lines).
+  // Shared with history.mjs retention: project only the newest bounded local window.
   private static final int HISTORY_MAX_LINES = 5000;
 
   private final ObjectMapper mapper = new ObjectMapper();
@@ -74,9 +76,10 @@ public final class GovernanceStateController {
     out.put("registry", registry);
     // Tempdoc 622 §17 — local-runtime activation efficacy (which gates ever fire / find anything),
     // joined against the committed roster. Present on every response path; absent-gracefully.
-    out.put("efficacy", loadEfficacyProjection(registry));
+    List<String> historyTail = loadHistoryTail();
+    out.put("efficacy", loadEfficacyProjection(registry, historyTail));
     // Tempdoc 893 §D.4 — latest versioned run-level repository facts from the same local history.
-    out.put("repositoryHealth", loadRepositoryHealthProjection());
+    out.put("repositoryHealth", loadRepositoryHealthProjection(historyTail));
     if (!Files.exists(sarifPath)) {
       out.put("available", false);
       out.put("gates", List.of());
@@ -148,9 +151,9 @@ public final class GovernanceStateController {
    * <p>Returns {@code {available:false}} when no history exists (clean checkout) — the FE
    * degrades to the roster-only view. Local + dev-skewed by construction; never committed.
    */
-  private Map<String, Object> loadEfficacyProjection(JsonNode registry) {
+  private Map<String, Object> loadEfficacyProjection(JsonNode registry, List<String> historyLines) {
     Map<String, Object> out = new LinkedHashMap<>();
-    if (!Files.exists(historyPath)) {
+    if (historyLines == null) {
       out.put("available", false);
       out.put("byGate", List.of());
       return out;
@@ -162,117 +165,168 @@ public final class GovernanceStateController {
         rosterGates.add(g.path("id").asText());
       }
     }
-    try {
-      List<String> lines = Files.readAllLines(historyPath);
-      // Cap to the most recent HISTORY_MAX_LINES so an unbounded history stays bounded per request.
-      int from = Math.max(0, lines.size() - HISTORY_MAX_LINES);
-      Map<String, Map<String, Object>> byGate = new LinkedHashMap<>();
-      for (int i = from; i < lines.size(); i++) {
-        String line = lines.get(i);
-        if (line.isBlank()) {
-          continue;
-        }
-        JsonNode e;
-        try {
-          e = mapper.readTree(line);
-        } catch (tools.jackson.core.JacksonException badLine) {
-          continue; // skip malformed NDJSON lines
-        }
-        String gateId = e.path("gate").asText();
-        if (gateId.isEmpty()) {
-          continue;
-        }
-        Map<String, Object> agg = byGate.computeIfAbsent(gateId, k -> {
-          Map<String, Object> m = new LinkedHashMap<>();
-          m.put("gate", k);
-          m.put("totalRuns", 0);
-          m.put("runsWithFindings", 0);
-          m.put("error", 0);
-          m.put("warning", 0);
-          m.put("note", 0);
-          return m;
-        });
-        agg.put("totalRuns", (int) agg.get("totalRuns") + 1);
-        agg.put("lastVerdict", e.path("verdict").asText());
-        agg.put("lastTs", e.path("ts").asText());
-        JsonNode f = e.path("findings");
-        int err = f.path("error").asInt(0);
-        int warn = f.path("warning").asInt(0);
-        int note = f.path("note").asInt(0);
-        if (err + warn + note > 0) {
-          agg.put("runsWithFindings", (int) agg.get("runsWithFindings") + 1);
-        }
-        agg.put("error", (int) agg.get("error") + err);
-        agg.put("warning", (int) agg.get("warning") + warn);
-        agg.put("note", (int) agg.get("note") + note);
+    Map<String, Map<String, Object>> byGate = new LinkedHashMap<>();
+    for (String line : historyLines) {
+      if (line.isBlank()) {
+        continue;
       }
-      // Classify status; include never-fired roster gates (0 local runs).
-      List<Map<String, Object>> result = new ArrayList<>();
-      for (Map<String, Object> agg : byGate.values()) {
-        agg.put("status", rosterGates.contains(agg.get("gate")) ? "active" : "orphaned");
-        result.add(agg);
+      JsonNode e;
+      try {
+        e = mapper.readTree(line);
+      } catch (tools.jackson.core.JacksonException badLine) {
+        continue; // skip malformed NDJSON lines
       }
-      for (String g : rosterGates) {
-        if (!byGate.containsKey(g)) {
-          Map<String, Object> m = new LinkedHashMap<>();
-          m.put("gate", g);
-          m.put("totalRuns", 0);
-          m.put("runsWithFindings", 0);
-          m.put("error", 0);
-          m.put("warning", 0);
-          m.put("note", 0);
-          m.put("status", "never-fired");
-          result.add(m);
-        }
+      String gateId = e.path("gate").asText();
+      if (gateId.isEmpty()) {
+        continue;
       }
-      out.put("available", true);
-      out.put("scope", "local"); // dev-skewed: CI/prod gate runs are not captured here
-      out.put("byGate", result);
-      return out;
-    } catch (IOException ex) {
-      log.warn("Failed to read history at {}: {}", historyPath, ex.getMessage());
-      out.put("available", false);
-      out.put("byGate", List.of());
-      return out;
+      Map<String, Object> agg = byGate.computeIfAbsent(gateId, k -> {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("gate", k);
+        m.put("totalRuns", 0);
+        m.put("runsWithFindings", 0);
+        m.put("error", 0);
+        m.put("warning", 0);
+        m.put("note", 0);
+        return m;
+      });
+      agg.put("totalRuns", (int) agg.get("totalRuns") + 1);
+      agg.put("lastVerdict", e.path("verdict").asText());
+      agg.put("lastTs", e.path("ts").asText());
+      JsonNode f = e.path("findings");
+      int err = f.path("error").asInt(0);
+      int warn = f.path("warning").asInt(0);
+      int note = f.path("note").asInt(0);
+      if (err + warn + note > 0) {
+        agg.put("runsWithFindings", (int) agg.get("runsWithFindings") + 1);
+      }
+      agg.put("error", (int) agg.get("error") + err);
+      agg.put("warning", (int) agg.get("warning") + warn);
+      agg.put("note", (int) agg.get("note") + note);
     }
+    // Classify status; include never-fired roster gates (0 local runs).
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> agg : byGate.values()) {
+      agg.put("status", rosterGates.contains(agg.get("gate")) ? "active" : "orphaned");
+      result.add(agg);
+    }
+    for (String g : rosterGates) {
+      if (!byGate.containsKey(g)) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("gate", g);
+        m.put("totalRuns", 0);
+        m.put("runsWithFindings", 0);
+        m.put("error", 0);
+        m.put("warning", 0);
+        m.put("note", 0);
+        m.put("status", "never-fired");
+        result.add(m);
+      }
+    }
+    out.put("available", true);
+    out.put("scope", "local"); // dev-skewed: CI/prod gate runs are not captured here
+    out.put("byGate", result);
+    return out;
   }
 
   /** Latest versioned repository-health row; legacy gate rows remain valid and are ignored here. */
-  private Map<String, Object> loadRepositoryHealthProjection() {
+  private Map<String, Object> loadRepositoryHealthProjection(List<String> historyLines) {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("available", false);
     out.put("scope", "local");
-    if (!Files.exists(historyPath)) {
+    if (historyLines == null) {
       return out;
     }
-    try {
-      List<String> lines = Files.readAllLines(historyPath);
-      int from = Math.max(0, lines.size() - HISTORY_MAX_LINES);
-      for (int i = lines.size() - 1; i >= from; i--) {
-        String line = lines.get(i);
-        if (line.isBlank()) {
-          continue;
-        }
-        JsonNode entry;
-        try {
-          entry = mapper.readTree(line);
-        } catch (tools.jackson.core.JacksonException badLine) {
-          continue;
-        }
-        if (!"repository-health".equals(entry.path("kind").asText())
-            || entry.path("schemaVersion").asInt() != 2
-            || !entry.path("metrics").isObject()) {
-          continue;
-        }
-        out.put("available", true);
-        out.put("capturedAt", entry.path("ts").asText());
-        out.put("metrics", entry.path("metrics"));
-        return out;
+    for (int i = historyLines.size() - 1; i >= 0; i--) {
+      String line = historyLines.get(i);
+      if (line.isBlank()) {
+        continue;
       }
+      JsonNode entry;
+      try {
+        entry = mapper.readTree(line);
+      } catch (tools.jackson.core.JacksonException badLine) {
+        continue;
+      }
+      if (!"repository-health".equals(entry.path("kind").asText())
+          || entry.path("schemaVersion").asInt() != 2
+          || !entry.path("metrics").isObject()) {
+        continue;
+      }
+      out.put("available", true);
+      out.put("capturedAt", entry.path("ts").asText());
+      out.put("metrics", entry.path("metrics"));
       return out;
+    }
+    return out;
+  }
+
+  /**
+   * Read the bounded history window once per response. A reverse byte scan finds the newline before
+   * the newest {@link #HISTORY_MAX_LINES} rows, avoiding a whole-file allocation for legacy files
+   * that predate append-time retention.
+   */
+  private List<String> loadHistoryTail() {
+    if (!Files.exists(historyPath)) {
+      return null;
+    }
+    try {
+      return readTailLines(historyPath, HISTORY_MAX_LINES);
     } catch (IOException ex) {
-      log.warn("Failed to read repository health at {}: {}", historyPath, ex.getMessage());
-      return out;
+      log.warn("Failed to read governance history at {}: {}", historyPath, ex.getMessage());
+      return null;
+    }
+  }
+
+  static List<String> readTailLines(Path path, int maxLines) throws IOException {
+    if (maxLines < 1) {
+      throw new IllegalArgumentException("maxLines must be positive");
+    }
+    try (RandomAccessFile file = new RandomAccessFile(path.toFile(), "r")) {
+      long size = file.length();
+      if (size == 0) {
+        return List.of();
+      }
+
+      file.seek(size - 1);
+      boolean skipTerminalNewline = file.readByte() == '\n';
+      byte[] chunk = new byte[64 * 1024];
+      long position = size;
+      long start = 0;
+      int boundaries = 0;
+
+      scan:
+      while (position > 0) {
+        int count = (int) Math.min(chunk.length, position);
+        position -= count;
+        file.seek(position);
+        file.readFully(chunk, 0, count);
+        for (int i = count - 1; i >= 0; i--) {
+          if (chunk[i] != '\n') {
+            continue;
+          }
+          long absolute = position + i;
+          if (skipTerminalNewline && absolute == size - 1) {
+            skipTerminalNewline = false;
+            continue;
+          }
+          skipTerminalNewline = false;
+          boundaries++;
+          if (boundaries == maxLines) {
+            start = absolute + 1;
+            break scan;
+          }
+        }
+      }
+
+      long remaining = size - start;
+      if (remaining > Integer.MAX_VALUE) {
+        throw new IOException("governance history tail exceeds the supported in-memory size");
+      }
+      byte[] bytes = new byte[(int) remaining];
+      file.seek(start);
+      file.readFully(bytes);
+      return new String(bytes, StandardCharsets.UTF_8).lines().toList();
     }
   }
 }

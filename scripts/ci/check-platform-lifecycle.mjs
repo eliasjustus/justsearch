@@ -10,7 +10,7 @@
  * Structural/schema/pin-resolution errors always fail closed. Lifecycle findings are advisory in
  * report mode; gate mode additionally fails expired support and evidence overdue beyond its grace.
  */
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -425,6 +425,35 @@ export function shouldFail(mode, result) {
   return mode === 'gate' && result.findings.some((finding) => finding.severity === 'failure');
 }
 
+export function failureFindings(result) {
+  return result.findings.filter((finding) => finding.severity === 'failure');
+}
+
+function escapeWorkflowCommand(value) {
+  return String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+}
+
+export function renderGithubAnnotations(result) {
+  return failureFindings(result).map(
+    (finding) =>
+      `::warning title=Platform lifecycle ${escapeWorkflowCommand(finding.category)}::` +
+      `${escapeWorkflowCommand(`${finding.id}: ${finding.message}`)}`,
+  );
+}
+
+export function renderGithubSummary(result) {
+  const failures = failureFindings(result);
+  if (failures.length === 0) return '';
+  return [
+    '### Platform lifecycle attention required',
+    '',
+    `The advisory check found ${failures.length} failure-level lifecycle finding(s):`,
+    '',
+    ...failures.map((finding) => `- **${finding.id}** (${finding.category}): ${finding.message}`),
+    '',
+  ].join('\n');
+}
+
 function parseArgs(argv) {
   const options = { mode: 'gate', register: REGISTER_PATH, repoRoot: process.cwd(), asOf: new Date().toISOString().slice(0, 10) };
   for (let i = 0; i < argv.length; i += 1) {
@@ -468,6 +497,17 @@ export function runCli(argv) {
     return 1;
   }
   const label = options.mode === 'report' ? 'report' : 'gate';
+  const failures = failureFindings(result);
+  if (options.mode === 'report' && failures.length > 0) {
+    console.warn(`⚠ platform-lifecycle report ATTENTION REQUIRED (${failures.length} failure finding(s))\n${output}`);
+    if (process.env.GITHUB_ACTIONS === 'true') {
+      for (const annotation of renderGithubAnnotations(result)) console.log(annotation);
+      if (process.env.GITHUB_STEP_SUMMARY) {
+        appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderGithubSummary(result), 'utf8');
+      }
+    }
+    return 0;
+  }
   console.log(`✓ platform-lifecycle ${label} OK\n${output}`);
   return 0;
 }

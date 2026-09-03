@@ -94,6 +94,11 @@ export class GovernanceView extends JfElement {
   constructor() {
     super();
     this.apiBase = '';
+    // The host is this surface's scroll container. Keep the long gate roster reachable by
+    // keyboard and name the nested region for assistive technology.
+    this.tabIndex = 0;
+    this.setAttribute('role', 'region');
+    this.setAttribute('aria-label', 'Governance details');
   }
 
   override connectedCallback(): void {
