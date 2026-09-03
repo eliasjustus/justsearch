@@ -71,7 +71,7 @@ METRIC_R10 = "R@10"
 METRIC_R50 = "R@50"
 
 # Statistic keys carried per replicate and averaged per arm.
-STAT_KEYS = ("ndcg", "r50", "r10", "leak", "union", "trunc_rate", "index_bytes", "primary_docs_s")
+STAT_KEYS = ("ndcg", "r50", "r10", "leak", "union", "trunc_rate", "index_bytes", "docs_s")
 
 
 def min_tokens_for(target):
@@ -178,8 +178,13 @@ def run_arm(out, corpus, target, overlap, rep, threshold_chars=None, runner=None
         return None
 
     cfg = os.path.join(armdir, "arm.yaml")
+    # ABSOLUTE. The evidence path is resolved inside the WORKER process, whose working directory is
+    # not jseval's, so a relative path silently writes nothing anywhere the driver looks — measured
+    # on the 2026-09-03 smoke arm, which produced `trunc_available: false` with the key correctly
+    # forwarded.
     io.open(cfg, "w", encoding="utf-8", newline="").write(
-        arm_yaml(target, overlap, threshold_chars, os.path.join(armdir, EVIDENCE_NAME)))
+        arm_yaml(target, overlap, threshold_chars,
+                 os.path.abspath(os.path.join(armdir, EVIDENCE_NAME))))
     # Every arm is a full reindex: chunk size is a fingerprint input, so there is no
     # `--skip-ingest` trick and no shared index to hold still.
     cmd = [sys.executable, "-m", "jseval", "run", "--dataset", corpus, "--modes", MODES,
@@ -219,6 +224,44 @@ def _read_json(path):
         return {}
 
 
+def _first_not_none(*values):
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def _chunk_branch(summary, mode):
+    """Did the chunk branch actually run? Tri-state, never a silent false.
+
+    An arm whose chunk branch never fired measured the doc-level legs only, and no chunk-size
+    conclusion may rest on it — so the roll-up has to be able to say "it ran", "it did not" and
+    "unknown" as three different things.
+
+    Read from `per_mode.<mode>.pipeline_tracking.observed` plus `stage_timing_stats.chunk_merge_ms`,
+    NOT from the per-query `chunkMergeApplied` field. Measured on the 2026-09-03 smoke arms: that
+    field is `None` on every row of both arms (`artifacts.py:248` copies it straight from the search
+    response, which does not carry it in this run mode), so counting its truthiness reported
+    `applied: 0` for two arms whose `pipeline_tracking.observed` contained `chunk_merge` and whose
+    `stage_timing_stats` carried a `chunk_merge_ms` — absent read as false, which is exactly the
+    tri-state conflation this project has a named rule about.
+    """
+    pm = ((summary.get("per_mode") or {}).get(mode)) or {}
+    tracking = pm.get("pipeline_tracking")
+    timing = pm.get("stage_timing_stats") or {}
+    if tracking is None and not timing:
+        return {"ran": None, "evidence": "no pipeline_tracking and no stage_timing_stats"}
+    observed = (tracking or {}).get("observed")
+    if observed is None:
+        return {"ran": None, "evidence": "pipeline_tracking present but carries no `observed` list"}
+    ran = "chunk_merge" in observed
+    return {
+        "ran": ran,
+        "evidence": "pipeline_tracking.observed",
+        "chunk_merge_ms_present": "chunk_merge_ms" in timing,
+    }
+
+
 def load(armdir, mode="hybrid"):
     """One replicate's record, or None when the arm produced no `summary.json`."""
     rd = _run_dir(armdir)
@@ -250,8 +293,30 @@ def load(armdir, mode="hybrid"):
         # Reported by the backend on /api/status as `indexSizeBytes` and carried into the run
         # summary by `jseval/ingest.py:140` -- so it is read, not summed off disk or guessed.
         "index_bytes": ingest.get("index_size_bytes"),
+        # `pipeline_summary.primary_indexing` is NOT emitted on every run shape -- the 2026-09-03
+        # smoke arm on mixed/legal-clerc-200 had `stages` (phase completion times) and no
+        # `primary_indexing` block at all, so this read is null there. `ingest.docs_per_sec`
+        # (docs_indexed / elapsed_sec) is always present and is the end-to-end indexing rate the
+        # decision rule's throughput clause actually needs. Both are recorded, and `docs_s_source`
+        # names which one the `docs_s` column came from -- an unlabelled fallback would make a 10%
+        # throughput clause compare two different quantities across arms.
         "primary_docs_s": run_metrics.get("primary_docs_s", prim.get("docs_per_s")),
         "enrich_docs_s": run_metrics.get("enrich_docs_s", ingest.get("docs_per_sec")),
+        "docs_s": _first_not_none(
+            run_metrics.get("primary_docs_s"), prim.get("docs_per_s"), ingest.get("docs_per_sec")),
+        "docs_s_source": (
+            "run_metrics.primary_docs_s"
+            if run_metrics.get("primary_docs_s") is not None
+            else "pipeline_summary.primary_indexing.docs_per_s"
+            if prim.get("docs_per_s") is not None
+            else "ingest.docs_per_sec"
+            if ingest.get("docs_per_sec") is not None
+            else None),
+        "docs_indexed": ingest.get("docs_indexed"),
+        "elapsed_sec": ingest.get("elapsed_sec"),
+        # Whether the chunk branch actually ran, per query. A chunk-size arm whose chunk branch never
+        # fired is measuring the doc-level legs only, which no chunk-size conclusion may rest on.
+        "chunk_branch": _chunk_branch(d, mode),
         "ce_cov": cev,
         "comparable": cmp_,
         "admissible": cev == "ok" and cmp_ is True,
@@ -356,7 +421,7 @@ def do_analyze(a):
             print("| %s | %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
                 corpus, arm_label(target, overlap), s["n_admissible"],
                 fmt_ms(s["ndcg"]), fmt_ms(s["r50"]), fmt_one(s["r10"]), fmt_one(s["leak"]),
-                fmt_one(s["trunc_rate"]), fmt_mb(s["index_bytes"]), fmt_one(s["primary_docs_s"], 1),
+                fmt_one(s["trunc_rate"]), fmt_mb(s["index_bytes"]), fmt_one(s["docs_s"], 1),
                 s["ce_cov"] or "-", s["comparable"], admissible))
     print("\n`*` = sigma is the --floor noise floor (%.4f), not an observed replicate spread "
           "(n=1)." % a.floor)
@@ -364,6 +429,9 @@ def do_analyze(a):
           "(`jseval/scoring.py:9`) and never R@50.")
     print("A `**VOID**` arm has no admissible replicate; void replicates are excluded from "
           "every mean and sigma above.")
+    print("`docs/s` is whichever source `docs_s_source` names in each arm's arm-metrics.json; on "
+          "runs without a `pipeline_summary.primary_indexing` block it is `ingest.docs_per_sec` "
+          "(docs_indexed / elapsed_sec), which is the end-to-end indexing rate.")
 
 
 def main():

@@ -54,14 +54,19 @@ pre-916 int overload across three chunking modes, and `ChunkSizeSweepKeysTest` a
 key is not even materialized into the Worker snapshot (a `putDefault` here would have made "unset"
 distinguishable from today, which is why none of the four declares one).
 
-**Deletion is committed, and there is a worked precedent.** The PR that lands 916 Part 1's chosen
-`(target, overlap, min, threshold)` as constants **deletes all four `EnvRegistry` entries, the four
-nullable fields on `ResolvedConfig.Index`, the `effectiveChunk*()` accessors, `ChunkSizeSweepKeysTest`
-and the campaign half of `ChunkingPolicyResolutionTest`, and returns the `config-surface` baseline —
-all in the same commit.** 916 Part 2 is the precedent that this commitment is real rather than
-decorative: its two keys were authorised on the same condition, the mechanism was refuted, and both
-the keys and the pin came back out in the landing commit (`aa605ec3`). Net permanent config surface
-after Part 1 merges: **0**.
+**These keys never reach `main` — owner decision, 2026-09-03.** The branch carrying this changeset
+(**PR #622**) is a **DRAFT campaign branch and is not intended to merge**. The final Part 1 PR
+carries only the *chosen* `(target, overlap, min, threshold)` as constants, the chunker version
+string, the fixture, the driver and the register updates — not these four keys, not the four
+nullable `ResolvedConfig.Index` fields, not the `effectiveChunk*()` accessors, not
+`ChunkSizeSweepKeysTest`, and not the campaign half of `ChunkingPolicyResolutionTest`.
+
+So there is **nothing on `main` to delete afterwards, and the `config-surface` baseline on `main` is
+never moved**. The baseline advance below exists so THIS branch is self-consistent and the gate is
+satisfied *here* rather than deferred; it is not a promise about a future commit. That is strictly
+stronger than 916 Part 2's "authorised on condition of deletion" shape — which was honoured
+(`aa605ec3` removed both keys and returned the pin) but did require a window in which a parked key
+could have been forgotten. Net permanent config surface after Part 1: **0, by construction.**
 
 `ChunkingPolicy` and the `effectiveChunk*()` accessors are the only parts that could reasonably
 survive deletion, and they should not: with the keys gone there is exactly one policy value, so the
@@ -82,4 +87,5 @@ record collapses back to the constants it wraps. The one piece that IS permanent
 Measured with `node scripts/docs/generate-runtime-config-matrix.mjs` on this branch
 (`yaml_keys=111 env_sysprop_pairs=254 config_keys=56 rows=310`). The pre-merge pin of 111/250 is what
 `main` measured on 2026-09-02; this branch adds these four and no others, so the advance is fully
-attributable and the ratchet keeps its meaning — it still only ratchets DOWN from here.
+attributable. It applies to **this campaign branch only** — since the branch does not merge, `main`
+stays at 111/250 and the ratchet's meaning on `main` is untouched.

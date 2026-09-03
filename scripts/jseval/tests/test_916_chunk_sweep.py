@@ -392,3 +392,41 @@ class TestSpladeTruncationProjection:
         assert "splade_truncation" in projections.registry()
         assert st.PROJECTION.name == "splade_truncation"
         assert st.PROJECTION.schema_version == 1
+
+class TestChunkBranchTriState:
+    """The chunk branch is a THREE-state reading, and the smoke arm proved why (916 §K.9)."""
+
+    def test_observed_list_containing_chunk_merge_is_ran_true(self):
+        summary = {"per_mode": {"hybrid": {
+            "pipeline_tracking": {"observed": ["dense", "chunk_merge", "branch_fusion"]},
+            "stage_timing_stats": {"chunk_merge_ms": 12.0}}}}
+        got = sweep._chunk_branch(summary, "hybrid")
+        assert got["ran"] is True
+        assert got["chunk_merge_ms_present"] is True
+
+    def test_observed_list_without_chunk_merge_is_ran_false(self):
+        # `branch_fusion` is present and `chunk_merge` is not, on purpose: the two stages travel
+        # together in a real run, so a fixture that omitted both could not tell a reader keying on
+        # `chunk_merge` from one keying on `branch_fusion`.
+        summary = {"per_mode": {"hybrid": {
+            "pipeline_tracking": {"observed": ["dense", "branch_fusion", "cross_encoder"]},
+            "stage_timing_stats": {"retrieval_ms": 3.0}}}}
+        got = sweep._chunk_branch(summary, "hybrid")
+        assert got["ran"] is False
+
+    def test_absent_tracking_is_unknown_not_false(self):
+        """The exact conflation the smoke arm exposed: absent must never read as 'did not run'."""
+        assert sweep._chunk_branch({"per_mode": {"hybrid": {}}}, "hybrid")["ran"] is None
+        assert sweep._chunk_branch({}, "hybrid")["ran"] is None
+        partial = {"per_mode": {"hybrid": {"pipeline_tracking": {}, "stage_timing_stats": {"x": 1}}}}
+        assert sweep._chunk_branch(partial, "hybrid")["ran"] is None
+
+
+class TestDocsSourceLabelling:
+    """`docs_s` must always say which source it came from — the smoke arms used two different ones."""
+
+    def test_prefers_run_metrics_then_primary_indexing_then_ingest(self):
+        assert sweep._first_not_none(None, None, 0.9) == 0.9
+        assert sweep._first_not_none(8.4, 1.0, 0.9) == 8.4
+        assert sweep._first_not_none(None, 1.0, 0.9) == 1.0
+        assert sweep._first_not_none(None, None, None) is None

@@ -1279,6 +1279,19 @@ contributes it at ordinal 450 → `IndexerWorker.java:76` publishes it as the gl
 `activePolicy()` reads it. `ChunkSizeSweepKeysTest.armValuesCrossTheWorkerBoundary` asserts that
 crossing end-to-end, including that an **unset** key is not materialized into the snapshot.
 
+**Publication model — owner decision 2026-09-03, and it changes what "deletion" means here.**
+This branch (**PR #622**) is a **DRAFT campaign branch and is not intended to merge**. The final
+Part 1 PR carries only the *chosen* constants, the chunker version string lane D asked for, the
+fixture, the driver and the register/scorecard updates. Consequence: **the four temporary keys never
+reach `main` at all**, so there is nothing on `main` to delete afterwards and the `config-surface`
+baseline on `main` is never moved. The changeset and the baseline advance in this commit exist so
+the campaign branch is self-consistent and auditable — the gate is satisfied *here*, not deferred —
+but the permanent config surface is untouched by construction rather than by a promise. That is
+strictly stronger than 916 Part 2's "authorised on condition of deletion" shape, because it removes
+the window in which a parked key could be forgotten.
+
+---
+
 ### K.2 The wrong-gate check (§E.2's missing leg: what does the NEXT stage read?)
 
 §E.2's lesson is that tracing *inputs into* a computation is not enough — the question is what the
@@ -1650,6 +1663,81 @@ while the suite was running, rewriting the `indexing` jar under a live classpath
 "one Gradle build at a time" convention, and the failure it produces looks exactly like a broad
 regression. Re-run serially before believing a wave of `NoClassDefFoundError`.
 
+### K.9 Smoke arms — the driver's first live run (owner-released, 2026-09-03)
+
+Two real arms on `mixed/legal-clerc-200` through `916_chunk_sweep.run_arm`, to check that the keys
+reach the writer **live** rather than only through the unit chain, and that `arm-metrics.json`
+populates. Both exited 0. Wall clock: **500/50 in 334.6 s (5.6 min)**, **256/50 in 406.9 s
+(6.8 min)** — §K.6 estimated ~6 min for this corpus, so the estimate holds and the smaller-target
+arms are ~20% slower, as expected.
+
+| | 500/50 (incumbent) | 256/50 |
+| :--- | ---: | ---: |
+| index size | 56.65 MB | **113.07 MB** |
+| nDCG@10 | 0.5789 | 0.6207 |
+| R@10 | 0.805 | 0.825 |
+| `leg_union_recall` | 0.925 | 0.915 |
+| `leak_rate` | 0.13 | 0.10 |
+| SPLADE truncation | *(not captured — see below)* | 0.6101 |
+| docs/s | 0.9 (`ingest.docs_per_sec`) | 8.4 (`run_metrics.primary_docs_s`) |
+| `ce_coverage` | `ok` | **`degraded-ce`** |
+| admissible | YES | **NO — VOID** |
+| chunk branch ran | yes | yes |
+
+**The keys reach the writer live: the index doubled.** 56.65 MB → 113.07 MB for the same 199
+documents is exactly what halving the target chunk size does, and nothing else in the two runs
+differed. That is the end-to-end proof the unit chain could not give — Head resolution → ordinal-450
+snapshot → Worker `ConfigStore` → `ChunkDocumentWriter.activePolicy()` → chunk documents on disk.
+
+**The 256 arm's numbers must NOT be read as a quality result.** It is `degraded-ce` and therefore
+**VOID** by the pre-registered admissibility filter, and F-056 finding 4 says a degraded arm on
+`legal-clerc-200` is biased **upward** — which is exactly the direction its nDCG moved. The filter
+did its job on the first live arm it was given. Quoting +0.042 nDCG here would have been the whole
+failure mode this lane documented.
+
+**And that void is a campaign-blocking finding, not bad luck.** The cause is visible per query: the
+256 arm hit `DEADLINE_EXCEEDED` on **21 of 200** queries against 1 of 200 for the incumbent. Halving
+the chunk size roughly doubles the passages the cross-encoder must rerank, so the CE deadline is
+reached more often, coverage degrades, and the arm voids. **A campaign that voids most of its
+small-chunk arms measures nothing.** The sweep window must decide this before launching: either
+raise the CE deadline to a fixed, arm-invariant value large enough for the smallest arm (and record
+it as a campaign constant), or accept re-runs and budget for them. It cannot be left to chance, and
+it cannot be tuned per arm — an arm-varying deadline is a second lever inside the experiment.
+
+**Three driver defects the smoke found, all fixed:**
+
+1. **SPLADE evidence path was relative.** `trunc_available: false` on the first arm with the key
+   correctly forwarded — the path is resolved inside the **Worker**, whose working directory is not
+   jseval's, so nothing was written anywhere the driver looked. Now absolute; the second arm
+   reported `truncation_rate = 0.6101`.
+2. **`pipeline_summary.primary_indexing` is not emitted on every run shape.** It was absent on the
+   500 arm (which has only a `stages` phase-completion block) and present on the 256 arm — so a
+   single-source read silently reports `null` for some arms and a number for others. `arm-metrics`
+   now records `docs_s` plus **`docs_s_source`**, because a 10%-throughput clause comparing two
+   different quantities across arms is worse than no clause.
+3. **A tri-state conflation I wrote an hour earlier.** The first version of the chunk-branch check
+   counted per-query `chunkMergeApplied` truthiness and reported `applied: 0` for **both** arms —
+   i.e. "the chunk branch never fired", which would have invalidated the entire campaign premise.
+   It is `None` on every row (`artifacts.py:248` copies it from a search response that does not
+   carry it in this mode), and the authoritative signal is
+   `per_mode.<mode>.pipeline_tracking.observed`, which contains `chunk_merge` on both arms. Absent
+   read as false. Now an explicit three-state (`ran: true | false | null`) with its evidence named.
+   Four new tests cover it; the "did not run" fixture deliberately contains `branch_fusion` without
+   `chunk_merge`, because the first version of that test could not tell the two stages apart and
+   survived the mutation that swapped them.
+
+**Still unverified, and not claimed: the `tier2-eval` title binding.** Confirming it needs the
+`tier2-eval` path with a standard-profile LLM, which this window did not run. There is an
+*indirect* positive signal — jseval's own run artifacts return bare corpus ids (`10515350`), the
+same form the fixture writes into `evidence_list[].title` — but `tier2-eval` matches against
+`parent_doc_id` **paths** via `_doc_id_matches_title`, which is a different surface, so the signal
+does not settle it. The check stays first-action for the sweep window: index one arm, run one
+`tier2-eval` query, confirm the returned `parent_doc_id` contains the gold id.
+
+Backend stopped; no listener on 33221 (`netstat` shows only `TIME_WAIT` client sockets).
+
+---
+
 ### K.8 What this window did NOT do
 
 No dev stack, no eval backend, no LLM, per the window's hard limit. Consequently: **no retrieval
@@ -1699,8 +1787,13 @@ corpus. Every one of these is a task for the sweep window, not a gap in this one
   tested on lane E's base `305bb039`, where **no chunking fingerprint exists at all** — the reads
   are entirely lane D's unmerged addition (`git show 305bb039:…SsotCommitMetadataSource.java`
   contains no `ChunkSplitter` reference). So lane E cannot make this change without editing lane D's
-  file, and programme rule 4 says lane E hands lane D numbers, not diffs. Either merge order works;
-  whoever lands second should verify the four accessors resolve.
+  file, and programme rule 4 says lane E hands lane D numbers, not diffs.
+  **DECIDED by the owner 2026-09-03, and this is an explicit, recorded exception to programme rule
+  4:** the four-line change is **authorised as an orchestrator-approved cross-lane edit made in lane
+  E's final Part 1 PR**, after #620 merges and lane E rebases onto it. Lane D's tempdoc carries the
+  mirror note. Until then the sweep is unaffected — every arm is a `--clean` rebuild and the
+  fingerprint is never read *across* arms, so a fingerprint that records the shipped constants
+  cannot mislead a comparison that never consults it.
   (1) Part 1 will hand you a chosen
   `(chunk_tokens, overlap, threshold)`; it is not ready yet and Part 2 does not block on it.
   (2) Please accept or amend a **chunker version string** as a fingerprint input —
@@ -1764,6 +1857,13 @@ corpus. Every one of these is a task for the sweep window, not a gap in this one
    shape — the §D.4 pool floor is why low-λ arithmetic cannot reach the parents this was meant to
    rescue — or a corpus whose evidence really is spread over many mid-ranked passages, which neither
    chunked corpus in the register turns out to be.
+9b. **CE deadline is a campaign gate, decided BEFORE the sweep (§K.9).** The 256/50 smoke arm
+   voided on `degraded-ce` from 21/200 `DEADLINE_EXCEEDED` (incumbent: 1/200) — halving the chunk
+   size roughly doubles the passages the cross-encoder reranks. If most small-chunk arms void, the
+   sweep measures nothing. Fix a single arm-invariant CE deadline large enough for the 128-token
+   arm and record it as a campaign constant, or budget re-runs; do not tune it per arm, which would
+   put a second lever inside the experiment.
+
 9. **`ce_coverage` degradation on legal is an UPWARD bias above the 2% tolerance, not noise** (§I.6,
    F-056 finding 4). Four of four legal void arms beat their clean comparators at drop rates
    4.5–20.5%, and F-055 supplies the mechanism. Below the tolerance the sign reverses and the effect
@@ -1797,7 +1897,11 @@ corpus. Every one of these is a task for the sweep window, not a gap in this one
    `--top-k 50`, no comparability with existing baselines) and is recorded here rather than
    silently substituted.
 
-13. **The sweep driver has never driven a real arm.** `916_chunk_sweep.py`'s roll-up math is tested
+13. **CLOSED by §K.9 — the driver has now driven two real arms** (500/50 and 256/50 on
+   `mixed/legal-clerc-200`, both exit 0), which found and fixed three driver defects and confirmed
+   the keys reach the writer live (index 56.65 MB → 113.07 MB). What remains open from the original
+   item is only the `tier2-eval` title binding, which needs an LLM. Superseded text:
+   **The sweep driver had never driven a real arm.** `916_chunk_sweep.py`'s roll-up math is tested
    against synthetic run trees only; its `--start-backend --clean --pipeline` path, the SPLADE
    evidence sidecar wiring (`JUSTSEARCH_SPLADE_EVIDENCE_PATH`, default null) and the index-size /
    docs-per-second keys it reads are all unexercised against a live run. First action of the sweep

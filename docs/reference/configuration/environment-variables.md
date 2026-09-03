@@ -207,10 +207,12 @@ Scope:
 > for tempdoc 916 Part 1's chunk-size campaign, not a user-facing preference: chunk granularity is a
 > fingerprint input, so every arm is a full reindex, and a knob makes an arm a backend restart
 > instead of a recompile (a recompile between arms would itself be the confounder — the argument
-> tempdoc 885 item 19 made for the NRT cadence keys). The PR that lands the chosen
-> `(target, overlap, min, threshold)` as constants **deletes all four entries and returns the
-> `config-surface` baseline in the same commit**, exactly as tempdoc 916 Part 2 did with its two
-> keys. Net permanent config surface after Part 1 merges: +0.
+> tempdoc 885 item 19 made for the NRT cadence keys). **Owner decision 2026-09-03: the campaign
+> branch carrying them (PR #622) does not merge.** The final Part 1 PR carries only the chosen
+> `(target, overlap, min, threshold)` as constants, so these four entries never reach `main` and the
+> `config-surface` baseline on `main` is never moved. If you are reading this on `main`, the keys
+> above are documentation of a campaign instrument, not a shipped surface. Net permanent config
+> surface after Part 1: +0, by construction.
 
 ## Additional Runtime Keys (Selected)
 
