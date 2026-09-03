@@ -290,6 +290,36 @@ final class ResolvedConfigBuilderTest {
       assertEquals("standard", config.ai().chatProfile());
     }
 
+    @Test
+    @DisplayName("vector quantization defaults on through EnvRegistry and an explicit false wins")
+    void vectorQuantizationDefaultAndOverrideAreResolvedWithProvenance() {
+      ResolvedConfigBuilder defaults = new ResolvedConfigBuilder();
+      defaults.contributeEnvRegistry();
+      ResolvedConfig defaultConfig = defaults.build();
+
+      assertTrue(defaultConfig.index().vectorQuantizationEnabledOrDefault());
+      ConfigResolution defaultResolution =
+          defaultConfig.resolutions().get("index.vector.quantization.enabled");
+      assertEquals("true", defaultResolution.value());
+      assertEquals(ResolvedConfigBuilder.ORDINAL_DEFAULT, defaultResolution.sourceOrdinal());
+
+      ResolvedConfigBuilder overridden = new ResolvedConfigBuilder();
+      overridden.contributeEnvRegistry();
+      overridden.put(
+          "index.vector.quantization.enabled",
+          ResolvedConfigBuilder.ORDINAL_YAML,
+          "yaml",
+          "application.yaml",
+          "false");
+      ResolvedConfig overriddenConfig = overridden.build();
+
+      assertFalse(overriddenConfig.index().vectorQuantizationEnabledOrDefault());
+      ConfigResolution overrideResolution =
+          overriddenConfig.resolutions().get("index.vector.quantization.enabled");
+      assertEquals("false", overrideResolution.value());
+      assertEquals(ResolvedConfigBuilder.ORDINAL_YAML, overrideResolution.sourceOrdinal());
+    }
+
     // ==================== Reasoning budget (tempdoc 835 §9f) ====================
     //
     // These guard a SILENT failure: reasoning and answer tokens share one completion ceiling, so an
@@ -1145,6 +1175,10 @@ final class ResolvedConfigBuilderTest {
       // HybridSearch defaults
       assertEquals(60, config.hybridSearch().rrfK());
       assertEquals(0.75, config.hybridSearch().vectorRrfWeight(), 0.001);
+      assertEquals(0.40, config.hybridSearch().vectorLowSignalTopScoreThreshold(), 0.001);
+      assertTrue(
+          config.index().vectorQuantizationEnabledOrDefault(),
+          "new indexes use restart-safe Int8 vectors unless Float32 is explicitly requested");
       // Worker defaults
       // AI defaults — must match RuntimePolicyConfigFactory defaults
       assertTrue(config.ai().llmEnabled(), "llmEnabled default must be true (matches factory)");

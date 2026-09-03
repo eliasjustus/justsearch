@@ -445,13 +445,14 @@ class ChunkSearchIntegrationTest {
 
     // Index many chunks that do NOT match the BM25 query, but do have vectors.
     for (int i = 0; i < 10; i++) {
-      indexChunkWithVector("doc-1", i, 10, "unrelated content " + i, new float[] {0f, 0f, 0f, i});
+      indexChunkWithVector(
+          "doc-1", i, 10, "unrelated content " + i, new float[] {-1f, 0f, 0f, 0f});
     }
 
     commitAndRefresh();
 
     // Use a far-away query vector to force low vector similarity (low-signal gating).
-    float[] far = new float[] {1000f, 1000f, 1000f, 1000f};
+    float[] far = new float[] {1f, 0f, 0f, 0f};
     int limit = 10;
     int cap = runtime.resolvedConfig().hybridSearch().vectorOnlyCapLowSignal();
 

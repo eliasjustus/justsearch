@@ -19,6 +19,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.FeatureField;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.index.DocValuesType;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,15 @@ class FieldMapperTest {
    * Creates a test catalog with a specific vector dimension.
    */
   private static FieldCatalogDef createTestCatalog(int vectorDim) {
+    return createTestCatalog(vectorDim, "dot_product");
+  }
+
+  /**
+   * Creates a test catalog with a specific vector dimension and similarity. The similarity decides
+   * whether the mapper normalizes on write, so a non-normalizing catalog is needed to show that the
+   * zero-vector rejection belongs to dot product and not to vectors in general.
+   */
+  private static FieldCatalogDef createTestCatalog(int vectorDim, String similarity) {
     return new FieldCatalogDef("test-v1", List.of(
         // Primary key (required)
         new FieldDef("doc_id", "keyword", true, true, List.of("id", "sort"), null, null, false),
@@ -63,7 +73,8 @@ class FieldMapperTest {
         // Boolean field
         new FieldDef("ocr_present", "boolean", false, true, List.of("filter"), null, null, false),
         // Vector field
-        new FieldDef("vector", "vector", false, false, List.of("vector"), new VectorSpec(vectorDim), null, false)
+        new FieldDef("vector", "vector", false, false, List.of("vector"),
+            new VectorSpec(vectorDim, similarity), null, false)
     ));
   }
 
@@ -103,11 +114,15 @@ class FieldMapperTest {
   void mapsVectorWithDimensionCheck() {
     // Use a catalog with dim=4 and a matching 4-dim vector
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
-    float[] vec = new float[4];
+    float[] vec = {3.0f, 4.0f, 0.0f, 0.0f};
     Map<String, Object> in = Map.of("vector", vec);
     Document doc = fm.toDocument(in, null);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
+    assertEquals(
+        VectorSimilarityFunction.DOT_PRODUCT,
+        doc.getField("vector").fieldType().vectorSimilarityFunction(),
+        "the catalog similarity must reach Lucene through an explicit vector FieldType");
   }
 
   /**
@@ -141,21 +156,51 @@ class FieldMapperTest {
     }
   }
 
-  /**
-   * A healthy vector is untouched by the drop path — the report stays empty. A zero vector is
-   * healthy under the catalog's Euclidean similarity (Lucene accepts it), so it is written, not
-   * dropped; that changes only if a normalizing similarity is adopted.
-   */
+  /** A healthy vector is untouched by the drop path — the report stays empty. */
   @Test
   void aUsableVectorIsNotReportedAsDropped() {
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
 
-    for (float[] usable : List.of(new float[] {3f, 4f, 0f, 0f}, new float[4])) {
-      FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
-      Document doc = fm.toDocument(Map.of("doc_id", "doc-0", "vector", usable), report);
-      assertNotNull(doc.getField("vector"));
-      assertEquals(0, report.count());
-    }
+    FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
+    Document doc =
+        fm.toDocument(Map.of("doc_id", "doc-0", "vector", new float[] {3f, 4f, 0f, 0f}), report);
+    assertNotNull(doc.getField("vector"));
+    assertEquals(0, report.count());
+  }
+
+  /**
+   * The zero-vector rejection belongs to the similarity, not to vectors. The SSOT catalog indexes
+   * dense fields with {@code dot_product}, so the mapper normalizes on write and a zero-magnitude
+   * vector has no unit-length image — it is dropped like a non-finite one, and the document
+   * survives. Under a non-normalizing similarity the same vector is written as-is, which is what
+   * keeps the rule from silently widening into "vectors must be non-zero".
+   */
+  @Test
+  void aZeroVectorIsDroppedForDotProductButWrittenForEuclidean() {
+    FieldMapper dotProduct = new FieldMapper(createTestCatalog(4));
+    FieldMapper.DroppedVectorReport dropped = new FieldMapper.DroppedVectorReport();
+    Document dotProductDoc =
+        dotProduct.toDocument(Map.of("doc_id", "doc-0", "vector", new float[4]), dropped);
+
+    assertNull(dotProductDoc.getField("vector"), "a zero vector cannot be L2-normalized");
+    assertNotNull(dotProductDoc.getField("doc_id"), "the rest of the document survives the drop");
+    assertEquals(1, dropped.count());
+    assertEquals(List.of("doc-0/vector"), dropped.sampleDocIds());
+    assertTrue(
+        dropped.lastReason().contains("magnitude"),
+        "the WARN names the zero magnitude, not a generic failure: " + dropped.lastReason());
+
+    FieldMapper euclidean = new FieldMapper(createTestCatalog(4, "euclidean"));
+    FieldMapper.DroppedVectorReport kept = new FieldMapper.DroppedVectorReport();
+    Document euclideanDoc =
+        euclidean.toDocument(Map.of("doc_id", "doc-0", "vector", new float[4]), kept);
+
+    assertNotNull(
+        euclideanDoc.getField("vector"), "Euclidean does not normalize, so zero is indexable");
+    assertEquals(
+        VectorSimilarityFunction.EUCLIDEAN,
+        euclideanDoc.getField("vector").fieldType().vectorSimilarityFunction());
+    assertEquals(0, kept.count());
   }
 
   @Test
@@ -214,7 +259,8 @@ class FieldMapperTest {
     // Use a catalog with dim=4 and a matching 4-element list
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
     List<Double> lst = new ArrayList<>();
-    for (int i = 0; i < 4; i++) lst.add(0.0);
+    lst.add(1.0);
+    for (int i = 1; i < 4; i++) lst.add(0.0);
     Map<String, Object> in =
         Map.of(
             "vector", lst,
@@ -266,7 +312,7 @@ class FieldMapperTest {
     assertEquals(Integer.valueOf(16), dim16Mapper.ssotVectorDimensionOrNull());
 
     // 4-dim vector should work with dim4Mapper but fail with dim16Mapper
-    float[] vec4 = new float[4];
+    float[] vec4 = {1.0f, 0.0f, 0.0f, 0.0f};
     Map<String, Object> in = Map.of("vector", vec4);
 
     assertNotNull(dim4Mapper.toDocument(in, null), "4-dim vector should work with dim=4 catalog");

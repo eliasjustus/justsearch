@@ -24,11 +24,12 @@ import org.junit.jupiter.api.Test;
  * Tempdoc 931 §C.3 (audit finding 3) — one degenerate embedding used to lose a whole batch.
  *
  * <p>Lucene's {@code KnnFloatVectorField} throws {@link IllegalArgumentException} on a non-finite
- * vector, and {@code IndexingCoordinator.indexBatch} calls {@code toDocument} in its batch loop with no
- * per-document catch — so a single bad vector aborted every other document in the batch before
- * anything reached the writer. The document is worth far more than the one field: the field is
- * dropped, the document is written and stays lexically searchable, its embedding status is
- * corrected to FAILED, and the drop is counted.
+ * vector, and {@code FieldMapper} normalizes DOT_PRODUCT vectors through {@link
+ * VectorNormalization}, which throws on a zero magnitude. {@code IndexingCoordinator.indexBatch}
+ * calls {@code toDocument} in its batch loop with no per-document catch — so a single bad vector
+ * aborted every other document in the batch before anything reached the writer. The document is
+ * worth far more than the one field: the field is dropped, the document is written and stays
+ * lexically searchable, its embedding status is corrected to FAILED, and the drop is counted.
  */
 class NonFiniteVectorDropTest {
 
@@ -36,6 +37,7 @@ class NonFiniteVectorDropTest {
   private static final float[] GOOD_C = {0.0f, 1.0f, 0.0f, 0.0f};
   private static final float[] NAN = {1.0f, Float.NaN, 0.0f, 0.0f};
   private static final float[] INFINITE = {1.0f, 0.0f, Float.NEGATIVE_INFINITY, 0.0f};
+  private static final float[] ZERO = {0.0f, 0.0f, 0.0f, 0.0f};
 
   @Test
   void aNaNVectorInTheMiddleOfABatchLosesOnlyItsOwnVectorField() throws Exception {
@@ -45,6 +47,11 @@ class NonFiniteVectorDropTest {
   @Test
   void anInfiniteVectorInTheMiddleOfABatchLosesOnlyItsOwnVectorField() throws Exception {
     assertDegenerateVectorIsDroppedNotFatal(INFINITE);
+  }
+
+  @Test
+  void aZeroVectorInTheMiddleOfABatchLosesOnlyItsOwnVectorField() throws Exception {
+    assertDegenerateVectorIsDroppedNotFatal(ZERO);
   }
 
   private void assertDegenerateVectorIsDroppedNotFatal(float[] degenerate) throws Exception {

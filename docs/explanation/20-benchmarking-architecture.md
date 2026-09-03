@@ -279,11 +279,14 @@ The suite runner can enforce a correctness gate with `-MinRecallAtK`.
 
 Vector backends vary in default similarity:
 
-- Lucene defaults to EUCLIDEAN if not explicitly set.
+- JustSearch explicitly declares Lucene `DOT_PRODUCT` for both production dense-vector fields.
 - Qdrant frequently uses Cosine.
 - DuckDB-vss supports cosine.
 
-For cross-tool comparability, we typically **L2 normalize vectors** (doc and query vectors). With normalized vectors, Euclidean vs cosine vs dot-product induce the same ranking, making recall@k comparisons meaningful.
+Production encoders and the Lucene indexing/query boundaries **L2 normalize vectors**. Benchmark
+fixtures must do the same. With normalized vectors, Euclidean vs cosine vs dot-product induce the
+same ranking, making recall@k comparisons meaningful without silently benchmarking a different
+vector shape than production.
 
 ---
 

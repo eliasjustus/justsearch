@@ -42,9 +42,13 @@
         "omitNorms": { "type": "boolean" },
         "vector": {
           "type": "object",
-          "required": ["dimension"],
+          "required": ["dimension", "similarity"],
           "properties": {
-            "dimension": { "type": "integer", "minimum": 1 }
+            "dimension": { "type": "integer", "minimum": 1 },
+            "similarity": {
+              "type": "string",
+              "enum": ["dot_product", "cosine", "euclidean", "maximum_inner_product"]
+            }
           },
           "additionalProperties": false
         }

@@ -1551,7 +1551,7 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.vector.hnsw.m"),
         resolveNullableInt("index.vector.hnsw.ef_construction"),
         resolveNullableInt("index.vector.ef_search"),
-        resolveNullableBoolean("index.vector.quantization.enabled"),
+        resolveBoolean("index.vector.quantization.enabled", true),
         resolveBoolean("index.auto_recovery", false),
         normalizeSchemaMismatchPolicy(
             resolveString("index.schema_mismatch.policy", null),
@@ -1722,9 +1722,9 @@ public final class ResolvedConfigBuilder {
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight", 0.75))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_score_boost_weight", 0.002)),
-        // Default is in EUCLIDEAN score space (0.294 = 1/3.4), not the cosine-score space the field
-        // was originally calibrated for (tempdoc 702); explicit user overrides keep their value.
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.294))),
+        // Dense fields now use DOT_PRODUCT. For unit vectors Lucene's score is (1+dot)/2, so the
+        // intended cosine-score boundary from tempdoc 702 is represented directly as 0.40.
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.40))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_low_signal_top_score_threshold", 0.0)),
         Math.max(0, resolveInt("index.hybrid.bm25_low_signal_total_hits_threshold", 0)),
         Math.max(0, resolveInt("index.hybrid.vector_only_cap_low_signal", 3)),

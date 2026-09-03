@@ -63,7 +63,9 @@ Trigger: IndexingLoop wakes up (IDLE -> RUNNING).
     d. EmbeddingActor (Inference Thread) -> Computes vectors on CPU.
     e. Returns ChunkedEmbedding (Primary Mean-Pooled Vector + Chunk Vectors).
 4. LuceneIndexRuntime.index() -> Writes Document.
-   - Codec: Uses `PragmaticCodec` (Int8 HNSW) to reduce vector RAM footprint by ~75%.
+   - Codec: New writes use `JustSearchCodecV2` with unsigned-byte scalar-quantized HNSW by default;
+     `index.vector.quantization.enabled=false` selects Float32. Quality, index-size, and RSS deltas
+     remain benchmark-gated rather than assumed from encoding width.
    - Fields: `content` (Text, BM25), `vector` (KNN Float), `doc_uid` (Keyword).
 5. JobQueue.markDone() -> Updates SQLite state.
 6. Commit: Occurs every 10 seconds or when buffer is full.

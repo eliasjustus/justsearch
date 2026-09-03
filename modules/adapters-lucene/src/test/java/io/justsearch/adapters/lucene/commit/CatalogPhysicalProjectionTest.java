@@ -122,10 +122,9 @@ final class CatalogPhysicalProjectionTest {
     assertNull(shapes.get(0).vectorDimension(), "a text field carries no vector shape");
     assertEquals(768, shapes.get(1).vectorDimension());
     assertEquals(
-        "euclidean",
+        "dot_product",
         shapes.get(1).vectorSimilarity(),
-        "a vector field with no declared similarity records Lucene's actual default, so declaring"
-            + " one later is a real fingerprint change rather than a silent no-op");
+        "a legacy vector declaration without similarity resolves to the current physical default");
   }
 
   @Test
@@ -223,6 +222,23 @@ final class CatalogPhysicalProjectionTest {
         fingerprint(legacy.toString()),
         "an index whose chunks carry no parent-revision identity cannot serve the guarded RMW"
             + " path, so it must read as a different physical shape");
+  }
+
+  @Test
+  void wave2ProductionVectorsPinDotProductAndMoveTheFingerprint() throws Exception {
+    JsonNode current = productionCatalog();
+    assertEquals("dot_product", field(current, "vector").path("vector").path("similarity").asText());
+    assertEquals(
+        "dot_product", field(current, "chunk_vector").path("vector").path("similarity").asText());
+
+    ObjectNode legacy = (ObjectNode) current.deepCopy();
+    field(legacy, "vector").withObject("vector").put("similarity", "euclidean");
+    field(legacy, "chunk_vector").withObject("vector").put("similarity", "euclidean");
+
+    assertNotEquals(
+        fingerprint(current.toString()),
+        fingerprint(legacy.toString()),
+        "changing the Lucene vector similarity changes the physical index fingerprint");
   }
 
   @Test

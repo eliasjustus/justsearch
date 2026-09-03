@@ -286,7 +286,10 @@ public final class ReadPathOps {
     int effectiveLimit = limit <= 0 ? 10 : limit;
     int queryK = resolveVectorQueryK(effectiveLimit);
     KnnFloatVectorQuery knnQuery =
-        new KnnFloatVectorQuery(SchemaFields.VECTOR, queryVector, queryK);
+        new KnnFloatVectorQuery(
+            SchemaFields.VECTOR,
+            VectorNormalization.l2NormalizedCopy(queryVector, "queryVector"),
+            queryK);
     return search(knnQuery, effectiveLimit, null, RuntimeSearchSort.RELEVANCE, null);
   }
 
@@ -297,7 +300,11 @@ public final class ReadPathOps {
     int effectiveLimit = limit <= 0 ? 10 : limit;
     int queryK = resolveVectorQueryK(effectiveLimit);
     KnnFloatVectorQuery knnQuery =
-        new KnnFloatVectorQuery(SchemaFields.VECTOR, queryVector, queryK, filter);
+        new KnnFloatVectorQuery(
+            SchemaFields.VECTOR,
+            VectorNormalization.l2NormalizedCopy(queryVector, "queryVector"),
+            queryK,
+            filter);
     return search(knnQuery, effectiveLimit, null, RuntimeSearchSort.RELEVANCE, null);
   }
 

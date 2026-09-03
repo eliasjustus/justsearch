@@ -36,8 +36,9 @@ LLM-index, Markdown, tempdoc-number, and pre-merge-table checks pass.
 
 The hour-scale storage/read-cost benchmark was deliberately not run in this work window. No storage
 or latency reduction is claimed yet, and PR-C2 must not merge until that pre-registered measurement
-is run and recorded. PR-C1 is described separately in §P3.F; its implementation stays on draft PR #648
-until its quality campaign runs (split from the C2 PR on 2026-09-05, tempdoc 931).
+is run and recorded. PR-C1 is described separately in §P3.F; its implementation was split out of the
+C2 PR on 2026-09-05 (tempdoc 931) and re-applied on its own draft PR on top of #657, where it waits
+for its quality campaign.
 
 
 ### §P3.F PR-C1 implementation, focused verification, and deferred evidence (2026-09-03)

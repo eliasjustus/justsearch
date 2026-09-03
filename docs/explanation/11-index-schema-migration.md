@@ -54,6 +54,12 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
     `roles`, and for vector fields `dimension` + `similarity`.
   - The analyzer definitions (index-time analysis fingerprint).
   - `vector_format` (`float32` vs `int8_sq`).
+    New writes use the separately named `JustSearchCodecV2`, whose
+    `PerFieldKnnVectorsFormat` persists the concrete decoder for each field. The outer codec name is
+    compatibility plumbing rather than another fingerprint input: `vector_format` already captures
+    the physical encoding, while per-field metadata makes mixed V2 segments restart-safe. Legacy
+    `JustSearchCodec` Float32 segments remain readable; legacy V1 Int8 segments were never
+    restart-safe and must rebuild rather than be probed with the wrong decoder.
   - HNSW `m` + `ef_construction` (graph-construction parameters), hashed as the **effective**
     values the codec builds with (`ResolvedConfig.Index.effectiveVectorHnswM()` and friends), not
     the raw nullable config — so writing a default out explicitly stays a no-op instead of costing a
@@ -132,6 +138,9 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   reports through the same predicate and the same `diff()`, so the status banner cannot demand a
   reindex the guard is not performing. A blank stored value on the *benign* key (`boosts_fp`) is
   still skipped: an unverifiable scoring descriptor is not worth reporting, let alone acting on.
+- **Wave-2 vector migration:** the catalog now pins `dot_product` for both dense fields, and Int8 is
+  the default write format unless explicitly disabled. Both values are physical fingerprint inputs,
+  so a pre-wave-2 Float32/EUCLIDEAN index is rebuilt instead of being opened under the new shape.
 - **Stamping:** on commit, the Worker writes `index_fingerprint` into Lucene commit user-data via
   `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`), plus
   `index_fingerprint_inputs` — the canonical JSON the digest is the SHA-256 of, stamped verbatim and
@@ -508,4 +517,3 @@ The UI and dev tooling should treat `GET /api/status` as the primary “what’s
 Key fields include migration state/pointers, per-generation counts, switch-buffer depth, and queue drain breakdowns.
 
 See `docs/explanation/08-observability.md` for the current `/api/status` field map.
-

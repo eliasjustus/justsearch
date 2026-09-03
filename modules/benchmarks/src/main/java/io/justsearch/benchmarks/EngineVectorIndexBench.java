@@ -238,10 +238,6 @@ public final class EngineVectorIndexBench {
     BenchmarkUtils.HeapSnapshot heapBefore = BenchmarkUtils.HeapSnapshot.capture();
     BenchmarkUtils.RssSnapshot rssBefore = BenchmarkUtils.RssSnapshot.capture();
 
-    io.justsearch.configuration.resolved.ResolvedConfig.Index rcIdx =
-        io.justsearch.configuration.resolved.ConfigStore.globalOrNull() != null
-            ? io.justsearch.configuration.resolved.ConfigStore.global().get().index() : null;
-
     // Phase 2-3 Step E: builder.open() collapses construct + start into a single call.
     runtimeStartBeginNanos = System.nanoTime();
     io.justsearch.adapters.lucene.runtime.RunningRuntime runtime =
@@ -249,6 +245,8 @@ public final class EngineVectorIndexBench {
             .atPath(indexPath)
             .open();
     runtimeStartEndNanos = System.nanoTime();
+    io.justsearch.configuration.resolved.ResolvedConfig.Index rcIdx =
+        runtime.resolvedConfig().index();
     try {
 
       long benchStartNanos = runtimeStartEndNanos;
@@ -424,7 +422,18 @@ public final class EngineVectorIndexBench {
       //
       // We intentionally validate using a fixed k=10 KnnFloatVectorQuery (not searchVector),
       // so time-to-searchable is not confounded by query-time oversampling knobs (index.vector.ef_search).
-      var sr = runtime.readPathOps().search(new KnnFloatVectorQuery(SchemaFields.VECTOR, sentinelVector, k), k, null, io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE, null);
+      var sr =
+          runtime
+              .readPathOps()
+              .search(
+                  new KnnFloatVectorQuery(
+                      SchemaFields.VECTOR,
+                      BenchmarkUtils.l2NormalizedCopy(sentinelVector),
+                      k),
+                  k,
+                  null,
+                  io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
+                  null);
       sentinelQueryEndNanos = System.nanoTime();
       sentinelValidated =
           sr != null
@@ -716,16 +725,14 @@ public final class EngineVectorIndexBench {
       // bench whose knobs drift from the runtime is measuring a configuration nobody ships.
       knobs.put(
           "ann_hnsw_m",
-          rcIdx != null
-              ? rcIdx.effectiveVectorHnswM()
-              : io.justsearch.configuration.resolved.ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_M);
+          rcIdx.effectiveVectorHnswM());
       knobs.put(
           "ann_ef_construction",
-          rcIdx != null
-              ? rcIdx.effectiveVectorHnswEfConstruction()
-              : io.justsearch.configuration.resolved.ResolvedConfig.Index.DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION);
-      knobs.put("ann_ef_search_or_null", rcIdx != null ? rcIdx.vectorEfSearch() : null);
-      knobs.put("ann_quantization_enabled", rcIdx != null && rcIdx.vectorQuantizationEnabled() != null ? rcIdx.vectorQuantizationEnabled() : false);
+          rcIdx.effectiveVectorHnswEfConstruction());
+      knobs.put("ann_ef_search_or_null", rcIdx.vectorEfSearch());
+      knobs.put(
+          "ann_quantization_enabled",
+          rcIdx.vectorQuantizationEnabledOrDefault());
       if (queriesVectorsPath != null && !queriesVectorsPath.isBlank()) {
         knobs.put("queries_vectors_path", Paths.get(queriesVectorsPath).toAbsolutePath().toString());
       }

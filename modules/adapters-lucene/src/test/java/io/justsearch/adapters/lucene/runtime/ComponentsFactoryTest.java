@@ -131,6 +131,18 @@ class ComponentsFactoryTest {
   // -- Vector format tests --
 
   @Test
+  void buildWithDefaultConfigUsesRestartSafeQuantizedCodec() throws Exception {
+    Path idx = tempDir.resolve("default-quant-idx");
+    Components c = buildComponents("index: {}", idx, false, null);
+    try {
+      assertInstanceOf(Lucene104HnswScalarQuantizedVectorsFormat.class, c.knnVectorsFormat());
+      assertEquals(JustSearchCodecV2.NAME, c.writer().getConfig().getCodec().getName());
+    } finally {
+      closeComponents(c);
+    }
+  }
+
+  @Test
   void buildWithQuantizationEnabledUsesQuantizedFormat() throws Exception {
     String yaml = "index:\n  vector:\n    quantization:\n      enabled: true";
     Path idx = tempDir.resolve("quant-idx");
@@ -152,6 +164,7 @@ class ComponentsFactoryTest {
       assertFalse(
           c.knnVectorsFormat() instanceof Lucene104HnswScalarQuantizedVectorsFormat,
           "should be plain Float32, not quantized");
+      assertEquals(JustSearchCodecV2.NAME, c.writer().getConfig().getCodec().getName());
     } finally {
       closeComponents(c);
     }

@@ -204,4 +204,15 @@ class EnvRegistryTest {
         withSysProp(EnvRegistry.CHAT_PROFILE.sysProp(), "compact",
             () -> assertEquals("compact", EnvRegistry.CHAT_PROFILE.getString("standard")));
     }
+
+    @Test
+    void vectorQuantizationEntryHasDefaultAndMappings() {
+        assertEquals(
+            "index.vector.quantization.enabled",
+            EnvRegistry.INDEX_VECTOR_QUANTIZATION_ENABLED.sysProp());
+        assertEquals(
+            "JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED",
+            EnvRegistry.INDEX_VECTOR_QUANTIZATION_ENABLED.envVar());
+        assertEquals("true", EnvRegistry.INDEX_VECTOR_QUANTIZATION_ENABLED.defaultValue());
+    }
 }

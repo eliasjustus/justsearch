@@ -96,7 +96,7 @@ query-time stages search against.
 | 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
 | 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes the multi-valued keyword fields `entity_persons_raw`, `entity_organizations_raw`, and `entity_locations_raw` for filters, facets, and NER-membership evidence selection; the redundant analyzed entity-text duplicates were retired in 915 PR-C2 |
-| 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
+| 8   | **HNSW Vector Indexing** | `JustSearchCodecV2`            | M=16, efConstruction=200; restart-safe per-field Int8 default, explicit Float32 opt-out        |
 | 9   | **Commit**               | `CommitOps`                    | On time (>10 s), size (>1,000 docs), or shutdown; NRT refresh                                 |
 
 ---

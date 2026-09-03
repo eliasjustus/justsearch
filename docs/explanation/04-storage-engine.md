@@ -234,10 +234,25 @@ The `queueDepth` counter guards against overloading the writer.
 *   If `queueDepth > maxQueueDepth` (default 10,000), `indexBatch` throws `BACKPRESSURE` exception to slow down the ingest loop.
 
 ### 5. Vector Search (HNSW)
-We use `Lucene99HnswVectorsFormat` (Float32) in the current default codec (`JustSearchCodec`, which extends `Lucene104Codec`).
-*   **Quantization:** Available behind a flag (default off): `index.vector.quantization.enabled`, `JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED`, or `-Djustsearch.index.vector.quantization.enabled=true`. Uses `Lucene104HnswScalarQuantizedVectorsFormat`. Tested with Lucene 10.3.1 (5K/20K/50K docs, all modes pass). Provides ~75% vector storage reduction. Float32 remains default for backwards compatibility with existing indexes.
+
+New segments use `JustSearchCodecV2`, a `Lucene104Codec` wrapper whose
+`PerFieldKnnVectorsFormat` records the concrete vector format in Lucene field metadata. This makes
+both Float32 and quantized segments readable after process restart and allows mixed generations to
+be merged safely. The legacy `JustSearchCodec` service remains registered, with its no-argument
+Float32 behavior unchanged, so existing Float32 segments remain readable.
+
+*   **Quantization:** Int8 scalar-quantized HNSW is the default. Set
+    `index.vector.quantization.enabled=false`,
+    `JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED=false`, or
+    `-Dindex.vector.quantization.enabled=false` to write Float32 instead. The on-disk format is
+    `Lucene104HnswScalarQuantizedVectorsFormat` with `UNSIGNED_BYTE` selected explicitly. The
+    long-form quality, recall, index-size, and RSS acceptance campaign is tracked in tempdoc 915;
+    the implementation alone is not evidence that the default is release-ready.
+*   **Similarity:** Both `vector` and `chunk_vector` explicitly use `dot_product`. Encoder outputs
+    are L2-normalized, so Lucene's score is `(1 + dotProduct) / 2`.
 *   **Dimension:** Validated against the SSOT catalog (768).
-*   **Validation:** `FieldMapper` strictly checks that `vector` field arrays match the expected dimension, throwing errors if they drift.
+*   **Validation:** `FieldMapper` constructs an explicit vector `FieldType` and rejects dimension
+    drift or an unsupported similarity.
 
 ### 6. Performance Configuration
 

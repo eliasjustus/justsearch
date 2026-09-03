@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 MERGED; PHASE 2 PR-A AND PR-B IMPLEMENTED AND LOCALLY VERIFIED; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2/PR-C1 PENDING IN A SEPARATE STACKED DRAFT (2026-09-05). PR-C0 six-corpus evaluation and PR-C1 evidence campaign: see tempdoc 931 §B rows 3a-3d."
+status: "PHASE 1 MERGED; PHASE 2 PR-A AND PR-B IMPLEMENTED AND LOCALLY VERIFIED; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2 AND PR-C1 IMPLEMENTED AND SHORT-CHECKED IN SEPARATE STACKED DRAFTS (2026-09-05). PR-C0 six-corpus evaluation and PR-C1 evidence campaign: see tempdoc 931 §B rows 3a-3d."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -22,8 +22,9 @@ related:
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
 records what re-verification found. Phase 1 is merged. Phase 2 PR-A and PR-B are implemented and
-locally verified. Phase 3 PR-C0 is implemented and short-checked; PR-C2 and PR-C1 follow in a
-stacked draft (tempdoc 931 §B row 4), and the deferred evidence campaigns still block merge.
+locally verified. Phase 3 PR-C0 is implemented and short-checked; PR-C2 and PR-C1 are implemented
+and short-checked in stacked drafts of their own (tempdoc 931 §B row 4), and the deferred evidence
+campaigns still block merge.
 
 ---
 
@@ -90,14 +91,21 @@ stacked draft (tempdoc 931 §B row 4), and the deferred evidence campaigns still
       Execution evidence is recorded separately from this implementation checklist.
 - [x] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
-### Phase 3 — the reindex bundle, one migration for users (PR-C0 IMPLEMENTED; PR-C2/PR-C1 PENDING)
+### Phase 3 — the reindex bundle, one migration for users (PR-C0 IMPLEMENTED; PR-C2/PR-C1 IMPLEMENTED IN STACKED DRAFTS)
 
-- [ ] C1. Quantized vectors by default, with jseval nDCG@10 / recall@50 evidence (delta ≤ 1%
-      absolute), index size and RSS before/after; binary-quantized HNSW on `chunk_vector` as a
-      report-only experiment.
-- [ ] C2. Pin vector similarity: add `vector.similarity: dot_product` to both catalog copies,
-      construct the field with an explicit `FieldType`, add a unit-norm encoder test, recalibrate
-      the 702 thresholds with jseval evidence, update `SsotValidatorFingerprintTest`.
+- [x] C1a. Make quantized vectors the default through restart-safe `JustSearchCodecV2`; preserve the
+      legacy Float32 codec reader; pin unsigned-byte scalar encoding and the shared HNSW 16/200
+      defaults; cover Float32, Int8, mixed-segment, force-merge, and legacy-upgrade reopen paths.
+- [ ] C1b. Record jseval nDCG@10 / recall@50 evidence (delta ≤ 1% absolute), index size and RSS
+      before/after; run binary-quantized HNSW on `chunk_vector` as a report-only experiment.
+- [x] C2a. Pin `vector.similarity: dot_product` in both catalog copies, construct fields with an
+      explicit `FieldType`, enforce unit normalization at encoder and Lucene indexing/query
+      boundaries, move the 702 candidate thresholds into DOT_PRODUCT score space, and prove the
+      physical fingerprint moves in `CatalogPhysicalProjectionTest`. `SsotValidatorFingerprintTest`
+      is analyzer-only and is deliberately not the owner of this assertion.
+- [ ] C2b. Recalibrate/confirm the candidate thresholds with the registered scifact + legal jseval
+      comparison. Until that evidence passes, the defaults are implemented candidates, not accepted
+      quality conclusions.
 - [ ] C3. Stop storing `chunk_content` (`stored:false`, still indexed); slice the parent `content`
       by `chunk_start_char`/`chunk_end_char`; measure the per-hit stored-field cost.
 - [ ] C4. Delete the `entity_*_text` fields and the entity text-boost path; keep facets on
@@ -159,9 +167,9 @@ Per field, sorted by `id`: `id`, `type`, `stored`, `doc_values`, `multi_valued`,
 (`IndexFingerprint.effectiveVectorDimension()`), not the catalog's declared 768 — see §B.1 claim 1c
 for why the previous instance-setter approach was silently inconsistent.
 
-`vector.similarity` falls back to `"euclidean"`, which is what Lucene's two-arg
-`KnnFloatVectorField` constructor actually applies (`FieldMapper.java:428`). Recording the real
-default is what makes Phase 3's `dot_product` a genuine fingerprint change rather than a no-op.
+`vector.similarity` now falls back to `"dot_product"`, matching the explicit production field type.
+Before §P3.F, the two-arg `KnnFloatVectorField` constructor silently applied EUCLIDEAN; changing the
+catalog and construction together makes the Phase 3 transition a genuine fingerprint move.
 
 **`rmwPolicy` is excluded.** `FieldMapper.validateRmwPolicies` rejects an `rmwPolicy` on any stored
 or doc-values field, so by construction it can only describe fields that are never read back from
@@ -606,7 +614,8 @@ change. The hour-scale Lane E benchmark campaign is deliberately not part of PR-
 The accepted order is PR-A → PR-C0 → PR-C2 → PR-C1 → lane E constants → PR-B. PR-C0 is deliberately
 fingerprint-neutral. PR-C2 and PR-C1 each move the fingerprint for independently attributable
 storage/codec changes; all fingerprint-moving PRs still land before one release so users pay for one
-rebuild. PR-C1 remains blocked by its codec/versioning work and 12–18 machine-hour evidence campaign.
+rebuild. PR-C1's codec/versioning work is implemented; its merge remains blocked by the deferred
+multi-hour evidence campaign.
 
 The hour-scale Lane E benchmarks are not PR-C0 verification and were not run. PR-C0's six-corpus
 multilingual comparison is also deferred for the current work window, but it is **not waived**: its

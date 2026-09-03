@@ -124,4 +124,31 @@ class VectorUtilsTest {
       assertTrue(result >= -1.0 && result <= 1.0);
     }
   }
+
+  @Nested
+  class L2NormalizationTests {
+
+    @Test
+    void returnsUnitLengthCopyWithoutMutatingInput() {
+      float[] input = {3.0f, 4.0f};
+
+      float[] normalized = VectorUtils.l2NormalizedCopy(input);
+
+      assertArrayEquals(new float[] {0.6f, 0.8f}, normalized, 0.0001f);
+      assertArrayEquals(new float[] {3.0f, 4.0f}, input, 0.0f);
+    }
+
+    @Test
+    void rejectsZeroAndNonFiniteVectors() {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> VectorUtils.l2NormalizedCopy(new float[] {0.0f, 0.0f}));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> VectorUtils.l2NormalizedCopy(new float[] {Float.NaN, 1.0f}));
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> VectorUtils.l2NormalizedCopy(new float[] {Float.POSITIVE_INFINITY, 1.0f}));
+    }
+  }
 }

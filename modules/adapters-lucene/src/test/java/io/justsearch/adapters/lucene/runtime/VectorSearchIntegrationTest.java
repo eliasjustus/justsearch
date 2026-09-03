@@ -30,9 +30,9 @@ class VectorSearchIntegrationTest extends RuntimeTestBase {
     var runtime = createRuntimeWithDim(4);
 
     // Index documents with vectors (4-dimensional for simplicity)
-    float[] vec1 = new float[] {1.0f, 0.0f, 0.0f, 0.0f}; // Pointing in +X direction
+    float[] vec1 = new float[] {3.0f, 0.0f, 0.0f, 0.0f}; // Non-unit +X input
     float[] vec2 = new float[] {0.0f, 1.0f, 0.0f, 0.0f}; // Pointing in +Y direction
-    float[] vec3 = new float[] {0.9f, 0.1f, 0.0f, 0.0f}; // Close to vec1
+    float[] vec3 = new float[] {9.0f, 1.0f, 0.0f, 0.0f}; // Non-unit, close to vec1
 
     runtime.indexingCoordinator().indexSingle(
         new IndexDocument(
@@ -58,7 +58,7 @@ class VectorSearchIntegrationTest extends RuntimeTestBase {
     runtime.commitOps().maybeRefreshBlocking();
 
     // Search for vectors similar to vec1 (should return doc-1 and doc-3)
-    float[] queryVector = new float[] {1.0f, 0.0f, 0.0f, 0.0f};
+    float[] queryVector = new float[] {5.0f, 0.0f, 0.0f, 0.0f}; // Non-unit query input
     SearchResult result = runtime.readPathOps().searchVector(queryVector, 3);
 
     assertNotNull(result);
@@ -69,6 +69,9 @@ class VectorSearchIntegrationTest extends RuntimeTestBase {
     assertTrue(
         firstDocId.equals("doc-1") || firstDocId.equals("doc-3"),
         "First result should be doc-1 or doc-3, got: " + firstDocId);
+    assertTrue(
+        result.hits().get(0).score() <= 1.0001f,
+        "DOT_PRODUCT scores must stay in unit-vector score space after boundary normalization");
 
     // doc-2 should be last (orthogonal to query)
     String lastDocId = result.hits().get(2).docId();
@@ -154,6 +157,10 @@ class VectorSearchIntegrationTest extends RuntimeTestBase {
     // Should throw on empty vector
     assertThrows(
         IllegalArgumentException.class, () -> runtime.readPathOps().searchVector(new float[0], 10));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> runtime.readPathOps().searchVector(new float[] {0.0f, 0.0f, 0.0f, 0.0f}, 10));
 
     runtime.close();
   }

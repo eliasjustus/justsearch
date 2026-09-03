@@ -31,12 +31,8 @@ import java.util.stream.Collectors;
 public final class SsotCommitMetadataSource implements CommitMetadataSource {
   private static final ObjectMapper M =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
-  /**
-   * The similarity Lucene's two-arg {@code KnnFloatVectorField} constructor applies when the
-   * catalog does not declare one. Named here so the fingerprint records the similarity actually in
-   * force, and so declaring {@code vector.similarity} in the catalog later moves the fingerprint.
-   */
-  private static final String DEFAULT_VECTOR_SIMILARITY = "euclidean";
+  /** The explicit similarity FieldMapper applies when a legacy catalog omits the property. */
+  private static final String DEFAULT_VECTOR_SIMILARITY = "dot_product";
 
   private final File repoRoot;
   private final SsotAnalyzerRegistry analyzerRegistry;
@@ -149,14 +145,14 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
     return parts[0] + "." + parts[1];
   }
 
-  /** {@code float32} unless vector quantization is enabled. */
+  /** {@code int8_sq} unless vector quantization is explicitly disabled. */
   private static String vectorFormat() {
     try {
       ResolvedConfig rc = resolvedConfigOrFallback();
-      boolean quantized = rc != null && Boolean.TRUE.equals(rc.index().vectorQuantizationEnabled());
+      boolean quantized = rc == null || rc.index().vectorQuantizationEnabledOrDefault();
       return quantized ? "int8_sq" : "float32";
     } catch (RuntimeException e) {
-      return "float32";
+      return "int8_sq";
     }
   }
 

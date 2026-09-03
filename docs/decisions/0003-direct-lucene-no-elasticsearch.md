@@ -7,7 +7,8 @@ date: 2026-02-03
 probes:
   - adr-0003-lucene-direct
   - adr-0003-no-search-platform
-last_reviewed: 2026-09-02
+  - adr-0003-v2-vector-codec-default
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0003: Use Lucene Directly Without Search Platform
@@ -89,3 +90,21 @@ See also: [Storage Engine](../explanation/04-storage-engine.md) for full Lucene 
 - JustSearch moves to a client-server model where a hosted search backend is acceptable, removing the desktop footprint constraint.
 
 *Added by tempdoc 269 trigger audit (2026-03).*
+
+## Amendment: Restart-safe vector formats and DOT_PRODUCT (2026-09-03)
+
+The decision to use Lucene directly remains accepted. Its original codec implementation detail is
+superseded: new writes use `JustSearchCodecV2`, whose per-field HNSW format persists the concrete
+format name and suffix required for restart-safe reads. New writes default to unsigned-byte scalar
+quantization; `index.vector.quantization.enabled=false` selects Float32. The legacy
+`JustSearchCodec` SPI stays registered with its Float32 reader so existing Float32 segments remain
+readable.
+
+The two dense fields now declare explicit `DOT_PRODUCT` similarity. Encoder output and the final
+Lucene indexing/query boundaries enforce unit normalization, so the similarity choice is no longer
+the implicit two-argument `KnnFloatVectorField` default. The quality, recall, index-size, and RSS
+effects remain subject to the registered benchmark campaign; this amendment records the shipped
+implementation candidate and intended storage contract, not an accepted empirical improvement
+claim.
+
+*Amended by tempdoc 915 (2026-09-03).*
