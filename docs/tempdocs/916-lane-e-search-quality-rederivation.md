@@ -94,7 +94,12 @@ hypothesis and checked against this worktree (base `39d38f73`). Verdicts: **veri
 content match), **moved** (content correct, line stale), **wrong** (content is not what the brief
 says), **superseded** (the shape the brief describes was deliberately replaced).
 
-**Counts: 5 verified · 6 moved · 2 wrong · 3 superseded.**
+**Counts over the 13 checkable claims (B.1-B.13; B.14 is a re-check of wave-1 facts, not a brief
+claim): 4 verified · 6 moved · 2 wrong · 2 superseded.** One claim (B.6) is counted once as
+**wrong**, because although its line number merely moved, its substantive assertion — that the
+k1/b lever is dead — is false; a claim whose line is right and whose content is wrong is a wrong
+claim, not a moved one. B.12 is counted as **moved** and separately carries two corrections that do
+not change its verdict.
 
 ### B.1 `ChunkSplitter.java:91-122` constants — **verified**
 
