@@ -30,6 +30,7 @@ import {
   aggregateConfigSurfaceClassifications,
 } from './classifications.mjs';
 import { CONFIG_SURFACE_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
+
 import { scanDeadConfig } from './dead-config.mjs';
 import { scanYamlReaders } from './yaml-readers.mjs';
 import {
@@ -42,6 +43,7 @@ import {
 } from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 
 const TOOL = { toolName: 'justsearch-config-surface', toolVersion: '0.2.0' };
 
@@ -52,6 +54,16 @@ function deadBaselineUri(gate) {
 }
 
 /** Report field → baseline metric name. */
+/** The gate's own vocabulary plus the shared repin rule (tempdoc 918). */
+const RULE_DESCRIPTIONS = { ...CONFIG_SURFACE_RULE_DESCRIPTIONS, ...repinRuleDescription('config-surface') };
+
+/** What each metric COUNTS — `yaml_keys` is not "config keys", and the finding says so. */
+const METRIC_UNITS = {
+  yaml_keys: 'application.yaml keys',
+  env_sysprop_pairs: 'env/sysprop pairs',
+  config_keys: 'runtime config keys',
+};
+
 const METRICS = {
   yaml_keys: 'yamlKeyCount',
   env_sysprop_pairs: 'envSyspropPairCount',
@@ -102,7 +114,7 @@ export async function enforceConfigSurface(options) {
         },
       ],
       verdict: 'fail',
-      ruleDescriptions: CONFIG_SURFACE_RULE_DESCRIPTIONS,
+      ruleDescriptions: RULE_DESCRIPTIONS,
     };
   }
 
@@ -126,6 +138,12 @@ export async function enforceConfigSurface(options) {
 
   const rebalanceWrites = new Map();
 
+  // Tempdoc 918: the repin rule needs the pin as it stood at the PR base.
+  const priorMetricText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorMetricBaseline = priorMetricText === null ? null : parseBaseline(priorMetricText);
+
   for (const [metric, field] of Object.entries(METRICS)) {
     const current = Number(report[field]);
     if (!Number.isFinite(current)) continue;
@@ -136,7 +154,18 @@ export async function enforceConfigSurface(options) {
       pinned,
       classification: coveringClassification,
     });
-    if (v.status === 'fail') {
+    // Tempdoc 918: a covering changeset licenses the pin advance, not an unpinned overflow.
+    // `verdictForMetric` returns pass for both "at baseline" and "over baseline but covered";
+    // `current > pinned` is what separates them.
+    if (v.status === 'pass' && current > pinned) {
+      verdict = 'fail';
+      findings.push(repinFinding({
+        rulePrefix: 'config-surface', classification: coveringClassification, row: metric,
+        measured: current, livePin: pinned, priorPin: priorMetricBaseline?.get(metric),
+        baselineFile: gate.baseline.path, unit: METRIC_UNITS[metric] ?? 'entries',
+        pinLine: `${metric} ${current} <today>`, uri: gate.baseline.path,
+      }));
+    } else if (v.status === 'fail') {
       verdict = 'fail';
       findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: gate.baseline.path });
     } else if (v.status === 'info') {
@@ -287,7 +316,7 @@ export async function enforceConfigSurface(options) {
     ...TOOL,
     findings,
     verdict,
-    ruleDescriptions: CONFIG_SURFACE_RULE_DESCRIPTIONS,
+    ruleDescriptions: RULE_DESCRIPTIONS,
     rebalanceWrites: [...rebalanceWrites.entries()].map(([metric, c]) => ({
       file: gate.baseline.path,
       before: String(baseline.get(metric) ?? ''),

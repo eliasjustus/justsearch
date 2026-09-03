@@ -165,6 +165,7 @@
       "evidence": "Reproduced 2026-09-02 on worktree-resid-kernel, and each hit was read rather than assumed: MarkdownBlock.ts:154, indexingProgress.ts:100 and searchResultViewModel.ts:51 carry the word in prose, plus citationResolve.test.ts and sv3-sessions.test.ts. gates/ts-any/baseline.txt last moved 2026-07-14 (bc4b26fd), so the 18 baselined rows were counted the same way and may be overstated. Diagnosed by tempdoc 884 section F row 1, which attached the analysis to the gate itself in gates/ts-any/.changesets/884-ts-any-prose-false-positives.md. TRACKED FIX: strip comments before counting (the pattern exists at scripts/ci/check-readiness-reason-codes.mjs:116-148), then rebalance the baseline. Owner: whoever next touches the ts-any gate.",
       "added": "2026-09-02",
       "reviewBy": "2026-09-30",
+      "fixOwner": "the governance-kernel lane. Tempdoc 918 §G names it as the blocker on wiring `ts-any` into ci.yml: the 17 hermetic kernel gates were wired there and `ts-any` was the one green-blocked exclusion, so the counting fix + rebalance now has a named consumer instead of \"whoever next touches the gate\".",
       "exitProbe": "slow: node scripts/governance/run.mjs --gate ts-any --mode gate"
     },
     {

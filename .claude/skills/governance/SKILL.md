@@ -59,6 +59,20 @@ version yet; tracked upstream, accepted until the fix ships.
 Without a `tempdoc:` or `adr:` field, the changeset-loader throws (Pass-5
 discipline). The body is free-form; explain context not obvious from git.
 
+**A growth-licensing changeset must advance the pin in the SAME commit** (tempdoc 918).
+The changeset licenses the pin *edit*; it does not license a row measuring above an
+unchanged pin. Write the changeset AND set the row's new value in the gate's baseline
+file, together — otherwise the gate fails with `<gate>/declared-growth-without-repin`
+(the finding names the pin file, the row, the measured value and the exact line to
+write). Predictable evasion: "the changeset covers it, the pin can move later." It
+cannot: discovery is PR-scoped, so at squash-merge the changeset leaves the diff and
+the next push to `main` fails `silent-growth` on a row nobody touched — three observed
+incidents (#517→854, #595→885, #614→#613/#615). This applies to `declared-growth`,
+`declared-regression`, `merge-import`, `emergency-override`, `lockfile-import`,
+`test-wired-infra` and `strength-regression`; the shrink/renormalization words
+(`unused-export-shrink`, `unit-renormalization`, `monotonic-shrink`, `dep-shrink`,
+`severity-decrease`, …) are unaffected.
+
 ## Allowed classifications per gate
 
 Vocabularies are **per gate** — using another gate's word fails the loader.

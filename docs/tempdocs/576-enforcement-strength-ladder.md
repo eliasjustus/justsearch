@@ -498,6 +498,11 @@ The three remaining deeper gaps, implemented on `worktree-576-token-migration` (
 reusing the existing governance substrate — no new kernel infra. Investigation (own probes + 3 Explore
 agents) found the substrate more complete than §11 framed (`guard-resolver.mjs`, `baseline-tamper-
 detector.mjs`, `covers.mjs`, the `report-pit-strength`/`test-efficacy` pipeline all already exist).
+**RETIRED 2026-09-03 (tempdoc 918):** `scripts/governance/lib/covers.mjs` and its test were deleted.
+The `covers:` bounded-exception protocol never gained a second consumer — its only one, the
+`ui-bundle` gate, was removed for go-public (tempdoc 634), and the lift-out outlived it with no
+`covers:` frontmatter anywhere in `gates/` or `contracts/`. The other artefacts named in this
+sentence are still live.
 
 ### §5 — the vacuous-pass guard (`expectedMinPopulation`)
 The concrete §5 deliverable ("the kernel asserts expectedMinPopulation >= 1 per register" — a renamed

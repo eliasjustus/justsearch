@@ -14,6 +14,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import { repinFinding, repinRuleDescription } from '../../lib/declared-growth-repin.mjs';
 import { verdictForBaselineShift } from './truth-table.mjs';
 
 export const MODULE_DEPS_CLASSIFICATIONS = new Set([
@@ -23,6 +24,7 @@ export const MODULE_DEPS_RULE_DESCRIPTIONS = {
   'module-deps/within-baseline': 'Cross-module dep count at or below baseline',
   'module-deps/silent-growth': 'Module gained dependencies without a declared changeset',
   'module-deps/declared-growth': 'Module gained dependencies; classification covers',
+  ...repinRuleDescription('module-deps'),
   'module-deps/rebalance-available': 'Module shed dependencies; ratchet can be rebalanced',
   'module-deps/rebalanced': 'Baseline auto-updated',
   'module-deps/report-malformed': 'module-deps JSON report could not be parsed (fail-closed)',
@@ -80,6 +82,12 @@ export async function enforceModuleDeps(options) {
   const growthCovered = decls.some(d => ['declared-growth','merge-import','emergency-override'].includes(d.classification));
   const covering = decls.find(d => ['declared-growth','merge-import','emergency-override'].includes(d.classification))?.classification ?? 'declared-growth';
 
+  // Tempdoc 918: prior pin read before the loop; the baseline-shift block below reuses it.
+  const priorText = readPriorBaselineText({
+    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
+  });
+  const priorBaseline = priorText === null ? null : parseBaseline(priorText);
+
   const rebalanceWrites = new Map();
   for (const [name, cur] of counts) {
     const pinned = baseline.get(name);
@@ -89,7 +97,13 @@ export async function enforceModuleDeps(options) {
         verdict = 'fail';
         findings.push({ ruleId: 'module-deps/silent-growth', level: 'error', message: `${name}: ${pinned} → ${cur} cross-module deps without declared changeset`, uri: name });
       } else {
-        findings.push({ ruleId: 'module-deps/declared-growth', level: 'note', message: `${name}: ${pinned} → ${cur}; '${covering}' covers`, uri: name });
+        // Tempdoc 918: the changeset licenses the pin advance, not an unpinned overflow.
+        verdict = 'fail';
+        findings.push(repinFinding({
+          rulePrefix: 'module-deps', classification: covering, row: name, measured: cur,
+          livePin: pinned, priorPin: priorBaseline?.get(name), baselineFile: gate.baseline.path,
+          unit: 'cross-module deps', pinLine: `${name} ${cur} <today>`,
+        }));
       }
     } else if (cur < pinned) {
       findings.push({ ruleId: rebalance ? 'module-deps/rebalanced' : 'module-deps/rebalance-available', level: 'note', message: `${name}: ${cur} < pinned ${pinned}`, uri: name });
@@ -101,11 +115,7 @@ export async function enforceModuleDeps(options) {
   // rule descriptions above but nothing ever emitted it: `readFileAtRef` was imported and never
   // called, so raising a pinned number by hand passed as `rebalance-available`. A documented ruleId
   // that cannot fire is worse than an absent one — the catalog claims the hole is covered.
-  const priorText = readPriorBaselineText({
-    fixtureMode, fixtureRoot, sourceRoot, baselineRef, baselinePath: gate.baseline.path,
-  });
-  if (priorText !== null) {
-    const priorBaseline = parseBaseline(priorText);
+  if (priorBaseline !== null) {
     for (const [name, livePin] of baseline.entries()) {
       const priorPin = priorBaseline.get(name);
       if (priorPin === undefined) continue;

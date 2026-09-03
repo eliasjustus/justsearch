@@ -20,7 +20,14 @@ import { resolve } from 'node:path';
 
 import { NPM_AUDIT_CLASSIFICATIONS, aggregateNpmAuditClassifications } from './classifications.mjs';
 import { NPM_AUDIT_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
+
+/** The gate's own vocabulary plus the shared repin rule (tempdoc 918). */
+const RULE_DESCRIPTIONS = {
+  ...NPM_AUDIT_RULE_DESCRIPTIONS,
+  ...repinRuleDescription('npm-audit', REPIN_REGRESSION_RULE_SUFFIX),
+};
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
+import { repinFinding, repinRuleDescription, REPIN_REGRESSION_RULE_SUFFIX } from '../../lib/declared-growth-repin.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
 
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical', 'total'];
@@ -54,7 +61,7 @@ export async function enforceNpmAudit(options) {
         },
       ],
       verdict: 'fail',
-      ruleDescriptions: NPM_AUDIT_RULE_DESCRIPTIONS,
+      ruleDescriptions: RULE_DESCRIPTIONS,
     };
   }
 
@@ -74,7 +81,7 @@ export async function enforceNpmAudit(options) {
         },
       ],
       verdict: 'fail',
-      ruleDescriptions: NPM_AUDIT_RULE_DESCRIPTIONS,
+      ruleDescriptions: RULE_DESCRIPTIONS,
     };
   }
   if (rawBaseline?.schema !== 'npm-audit-ratchet-baseline.v1') {
@@ -90,7 +97,7 @@ export async function enforceNpmAudit(options) {
         },
       ],
       verdict: 'fail',
-      ruleDescriptions: NPM_AUDIT_RULE_DESCRIPTIONS,
+      ruleDescriptions: RULE_DESCRIPTIONS,
     };
   }
 
@@ -112,6 +119,13 @@ export async function enforceNpmAudit(options) {
     : [];
   const aggregated = aggregateNpmAuditClassifications(declarations);
 
+  // Tempdoc 918: the repin rule needs the baseline as it stood at the PR base, so it is read
+  // BEFORE the regression loop; the baseline-shift block below reuses it.
+  const priorBaseline = readPriorBaseline({
+    fixtureMode, fixtureRoot, repoRoot, baselineRef, baselineFilePath: gate.baseline.path,
+  });
+  const priorTargets = priorBaseline ? normalize(priorBaseline.targets ?? {}) : null;
+
   const allTargets = [...new Set([...Object.keys(baseline), ...Object.keys(current)])].sort();
   const rebalanceWrites = {};
   let hasRegression = false;
@@ -126,8 +140,22 @@ export async function enforceNpmAudit(options) {
       if (cv > bv) {
         hasRegression = true;
         const ruleId = classifyRegression(aggregated);
-        const level = ruleId === 'silent-regression' ? 'error' : 'note';
-        if (ruleId === 'silent-regression') verdict = 'fail';
+        if (ruleId !== 'silent-regression') {
+          // Tempdoc 918: the changeset licenses the baseline count being raised, not a live count
+          // sitting above an unchanged one.
+          verdict = 'fail';
+          findings.push(repinFinding({
+            rulePrefix: 'npm-audit', classification: ruleId, row: `${target}/${severity}`,
+            measured: cv, livePin: bv, priorPin: priorTargets?.[target]?.[severity] === undefined
+              ? undefined : Number(priorTargets[target][severity]),
+            baselineFile: gate.baseline.path, unit: 'advisories',
+            suffix: REPIN_REGRESSION_RULE_SUFFIX,
+            pinLine: `targets["${target}"]["${severity}"] = ${cv}`, uri: gate.baseline.path,
+          }));
+          continue;
+        }
+        const level = 'error';
+        verdict = 'fail';
         findings.push({
           ruleId: `npm-audit/${ruleId}`,
           level,
@@ -179,15 +207,7 @@ export async function enforceNpmAudit(options) {
   // severity counts in the same diff as a regression. Detect by reading the
   // baseline file at the PR's baseline ref and flagging any tracked-severity
   // count that increased baseline-side without a classified changeset.
-  const priorBaseline = readPriorBaseline({
-    fixtureMode,
-    fixtureRoot,
-    repoRoot,
-    baselineRef,
-    baselineFilePath: gate.baseline.path,
-  });
-  if (priorBaseline) {
-    const priorTargets = normalize(priorBaseline.targets ?? {});
+  if (priorTargets) {
     const allBaselineTargets = [
       ...new Set([...Object.keys(priorTargets), ...Object.keys(baseline)]),
     ].sort();
@@ -229,7 +249,7 @@ export async function enforceNpmAudit(options) {
     toolVersion: '0.1.0',
     findings,
     verdict,
-    ruleDescriptions: NPM_AUDIT_RULE_DESCRIPTIONS,
+    ruleDescriptions: RULE_DESCRIPTIONS,
     rebalanceWrites: Object.keys(rebalanceWrites).map(target => ({ file: target, before: '', after: '' })),
   };
 }
