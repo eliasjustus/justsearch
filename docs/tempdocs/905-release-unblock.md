@@ -797,9 +797,14 @@ Residual owner actions:
   all eight were locally verified, the final installer signature passed `signtool`, the extracted
   installer census accepted 178 MZ files with zero rejected, and no release was published. This proves
   the migrated Environment credential for the installer workflow and bounds this run's provider usage
-  to eight signatures. The later portal read reached a signed-out session, so **232** is only the
-  arithmetic expectation from 240 minus eight, not a provider-authoritative post-run balance; it must
-  not be reused as admission evidence for another paid dispatch.
+  to eight signatures. An initial post-run portal read reached a signed-out session, so the temporary
+  **232** arithmetic estimate from 240 minus eight was explicitly non-authoritative. A signed-in
+  follow-up on 2026-09-04 used the provider's documented `END ENTITY CERTIFICATES` usage surface and
+  showed **240 unused signings** on the active Tier 1 Annual plan. The provider ledger also shows the
+  September 3 signing activity. SSL.com's published pricing says the first 30 days include unlimited
+  signings, so the unchanged paid allowance indicates that this run used the introductory unlimited
+  period rather than the annual pool. The authoritative current balance is therefore 240; the 232
+  estimate is retired and must not be used for admission.
 - The separate packaged-verification job then passed its fresh-install, restart/session-token, and
   upgrade-arrival product legs before its EvidenceBundle Node process aborted during stdout teardown
   with Windows exit `0xC0000409` / libuv `UV_HANDLE_CLOSING`. The bundle path had already been emitted;
