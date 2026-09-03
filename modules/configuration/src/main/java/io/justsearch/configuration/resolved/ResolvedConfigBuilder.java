@@ -1020,7 +1020,20 @@ public final class ResolvedConfigBuilder {
       case "rebuild_backup_first", "rebuild-backup-first", "rebuild" -> "REBUILD_BACKUP_FIRST";
       case "blue_green_migrate", "blue-green-migrate", "blue_green", "blue-green" ->
           "BLUE_GREEN_MIGRATE";
-      default -> raw.trim();
+      default -> {
+        // An unrecognised value is a typo, and it used to be returned verbatim — so it matched no
+        // branch anywhere, which after tempdoc 915 §C.12 meant the pre-open detection forced a
+        // writable open, the guard raised, recovery refused it and the Worker did not start. A
+        // misspelled policy must not be a boot failure: fall back to the mode default, loudly
+        // (the same shape normalizeIntegrityCheck already uses).
+        String fallback = isProd ? "BLUE_GREEN_MIGRATE" : "REBUILD_BACKUP_FIRST";
+        LOG.warn(
+            "Unrecognised index.schema_mismatch.policy \"{}\"; falling back to {}. Valid values:"
+                + " FAIL_CLOSED, REBUILD_BACKUP_FIRST, BLUE_GREEN_MIGRATE.",
+            raw.trim(),
+            fallback);
+        yield fallback;
+      }
     };
   }
 

@@ -85,15 +85,166 @@ final class PreOpenSchemaMismatchBootTest {
     WorkerBootFixture.seed(layout.activePath(), "f".repeat(64), 3);
     WorkerBootFixture.publishConfig(layout.dataDir(), layout.indexBase(), "FAIL_CLOSED");
 
-    KnowledgeServer refusing = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
-    IOException ex = assertThrows(IOException.class, refusing::start);
-    assertTrue(
-        KnowledgeServer.isSchemaMismatch(ex),
-        "FAIL_CLOSED must refuse for the schema-mismatch reason, not some incidental failure");
+    ch.qos.logback.classic.Logger root =
+        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    root.addAppender(appender);
+    try {
+      KnowledgeServer refusing =
+          new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+      IOException ex = assertThrows(IOException.class, refusing::start);
+      assertTrue(
+          KnowledgeServer.isSchemaMismatch(ex),
+          "FAIL_CLOSED must refuse for the schema-mismatch reason, not some incidental failure");
+      assertEquals(
+          IndexGenerationManager.MigrationState.IDLE.name(),
+          stateAfterBoot(layout).migration_state(),
+          "refusing must not have started a migration");
+      // And it refused because PRE-OPEN detection routed it, not because the open-time guard caught
+      // it on the way past. Without this the assertions above are equally true of the second line of
+      // defence — which is exactly what round 3's G25 falsification demonstrated.
+      assertTrue(
+          appender.list.stream()
+              .map(ILoggingEvent::getFormattedMessage)
+              .anyMatch(m -> m.startsWith("PRE-OPEN PARITY_DIFF key=index_fingerprint")),
+          "the pre-open routing must be what refused; got: "
+              + appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList());
+    } finally {
+      root.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
+  /**
+   * (S15) The dev default, and the one policy the pre-open path deliberately changes the OPEN MODE
+   * for: {@code REBUILD_BACKUP_FIRST}'s recovery lives inside {@code
+   * RuntimeSession.openComponentsWithRecovery} and only runs on a writable open, so detection forces
+   * one instead of duplicating the recovery. That recovery is DESTRUCTIVE — it empties the active
+   * generation — so what has to be pinned is the ordering: the backup is taken before a writer ever
+   * touches Blue, and it holds Blue's documents.
+   */
+  @Test
+  void rebuildBackupFirstBacksUpTheMismatchedIndexBeforeEmptyingIt(@TempDir Path tempDir)
+      throws Exception {
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), "f".repeat(64), 3);
+    WorkerBootFixture.publishConfig(
+        layout.dataDir(), layout.indexBase(), "REBUILD_BACKUP_FIRST");
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+    assertTrue(server.getPort() > 0, "the Worker comes up on the rebuilt index");
+
+    Path backup = soleSiblingWithSuffix(layout.activePath(), ".bak-");
+    assertNotNull(
+        backup,
+        "the mismatched index must be backed up, never deleted: this policy empties the active"
+            + " generation and the backup is the user's only copy");
     assertEquals(
-        IndexGenerationManager.MigrationState.IDLE.name(),
-        stateAfterBoot(layout).migration_state(),
-        "refusing must not have started a migration");
+        3, docCount(backup), "and the backup holds Blue as it was, so the copy was taken first");
+    assertEquals(
+        0, docCount(layout.activePath()), "while the active generation was rebuilt empty");
+  }
+
+  /**
+   * (S15, second half) A typo in the policy key must not be a boot failure. Pre-open detection
+   * forces a writable open for anything it does not recognise, so a value that reaches the Worker
+   * verbatim used to raise, be refused by recovery, and take the Worker down. It normalizes to the
+   * mode default now, in the config layer, where every consumer sees the same answer.
+   */
+  @Test
+  void anUnrecognisedPolicyFallsBackInsteadOfKillingTheWorker(@TempDir Path tempDir)
+      throws Exception {
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), "f".repeat(64), 3);
+    WorkerBootFixture.publishConfig(layout.dataDir(), layout.indexBase(), "blue_green_migrat");
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+
+    assertTrue(server.isRunning(), "a misspelled policy is a typo, not a reason to refuse to boot");
+    assertTrue(server.getPort() > 0);
+  }
+
+  /**
+   * (B4) A corrupt index that used to self-heal at boot. Pre-open inspection sits OUTSIDE {@code
+   * RuntimeSession.openComponentsWithRecovery}, where backup-then-empty recovery lives, so raising
+   * {@code CORRUPT_INDEX} from it killed the Worker on a case the product recovers from — and since
+   * the cause of an unreadable commit is an {@code IndexFormatTooOldException}, it took the
+   * legitimate older-Lucene-major upgrade path down with it.
+   */
+  @Test
+  void aCorruptIndexStillSelfHealsAtBoot(@TempDir Path tempDir) throws Exception {
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), null, 3);
+    corruptSegments(layout.activePath());
+    WorkerBootFixture.publishConfig(
+        layout.dataDir(),
+        layout.indexBase(),
+        "BLUE_GREEN_MIGRATE",
+        java.util.Map.of("index.auto_recovery", "true"));
+
+    ch.qos.logback.classic.Logger root =
+        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    root.addAppender(appender);
+    try {
+      server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+      server.start();
+
+      assertTrue(server.isRunning(), "auto-recovery must still get its chance to run");
+      assertTrue(server.getPort() > 0, "a Worker with no port is a Worker gone");
+      var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+      assertTrue(
+          messages.stream().anyMatch(m -> m.startsWith("Could not read committed parity metadata")),
+          "pre-open inspection must DECLINE, loudly, rather than answer 'mismatch' to a question"
+              + " it could not read; got: " + messages);
+      assertNotNull(
+          soleSiblingWithSuffix(layout.activePath(), ".bak-"),
+          "and the open path's corruption recovery must have run — the damaged index is backed up,"
+              + " never deleted");
+    } finally {
+      root.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
+  /** Overwrites the commit file so the index cannot be read at all. */
+  private static void corruptSegments(Path generation) throws IOException {
+    try (var files = java.nio.file.Files.list(generation)) {
+      Path segments =
+          files
+              .filter(p -> p.getFileName().toString().startsWith("segments"))
+              .findFirst()
+              .orElseThrow();
+      java.nio.file.Files.write(segments, new byte[] {0, 1, 2, 3, 4, 5, 6, 7});
+    }
+  }
+
+  /** The one sibling directory whose name adds {@code suffix} to {@code dir}'s, or null. */
+  private static Path soleSiblingWithSuffix(Path dir, String suffix) throws IOException {
+    String prefix = dir.getFileName().toString() + suffix;
+    try (var siblings = java.nio.file.Files.list(dir.getParent())) {
+      return siblings
+          .filter(p -> p.getFileName().toString().startsWith(prefix))
+          .findFirst()
+          .orElse(null);
+    }
+  }
+
+  /** Committed document count, or 0 when the directory holds no readable index. */
+  private static int docCount(Path generation) throws IOException {
+    try (org.apache.lucene.store.Directory d =
+        org.apache.lucene.store.FSDirectory.open(generation)) {
+      if (!org.apache.lucene.index.DirectoryReader.indexExists(d)) {
+        return 0;
+      }
+      try (var reader = org.apache.lucene.index.DirectoryReader.open(d)) {
+        return reader.numDocs();
+      }
+    }
   }
 
   /** (b) The negative: a matching index still opens deferred, silently. */

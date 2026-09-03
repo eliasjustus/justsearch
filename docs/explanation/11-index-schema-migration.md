@@ -270,6 +270,36 @@ The open-time guard remains as a second line — it still catches a writable ope
 deferred writer upgrade — but it is no longer the only line, and it can no longer be bypassed by the
 choice of open mode.
 
+**An unreadable commit is not a mismatch.** The pre-open inspection answers three things, not two:
+match, mismatch, or *could not read*. Corruption, an index written by an older Lucene major, a
+missing segments file — all arrive as an `IOException` and none of them is evidence about the index's
+shape. Each is logged at WARN naming the cause class and yields no diff, so the open path keeps the
+responses it has always had: `index.auto_recovery`'s backup-then-empty rebuild, Lucene's own format
+upgrade, and the second-line guard. Raising from the pre-open site would sit *outside*
+`RuntimeSession.openComponentsWithRecovery`, so a corrupt index that self-heals today would take the
+Worker down instead.
+
+**A resumed migration whose Green is itself mismatched abandons it.** `startMigration` deliberately
+no-ops while a migration is in flight, so retrying is not an option: it would hand back the same
+generation that just failed the parity check, and the mismatch would be raised again from inside the
+handler. Instead the boot calls `abandonBuildingGeneration` — clear `building_generation`, return
+`migration_state` to `IDLE`, mark the directory for deletion — spends one brake attempt, and builds a
+fresh Green. The auto-rebuild budget carries over unchanged, because abandoning a Green is not
+evidence that the rebuild converged. If the budget is already spent, the read-only Blue fall-through
+described under the brake runs instead. Either way `start()` returns and the Worker binds a port.
+
+**An index with no documents is never a migration candidate**, whatever it has stamped — absent
+fingerprint, stale fingerprint, or none of the above. There is no content that could have been
+written under the wrong shape, and `CommitOps` replaces the whole commit user-data map on every
+commit, so the next write re-stamps it. `ParityDiagnostics.holdsNothingToMigrate(docCount)` is the
+one predicate; the status surface (`IndexStatusOps`) reports through it too, so a fresh install is
+never told by one surface to rebuild an index the other considers fine.
+
+**An unrecognised `index.schema_mismatch.policy` falls back to the mode default** (production
+`BLUE_GREEN_MIGRATE`, development `REBUILD_BACKUP_FIRST`) with a WARN naming the valid values,
+resolved in `ResolvedConfigBuilder` so every consumer sees the same answer. A typo in one config key
+is not a reason to refuse to boot.
+
 **A mismatch escaping the deferred writer upgrade is not "non-fatal".** When
 `DeferredRuntime.upgradeWriter()` raises `SCHEMA_MISMATCH` inside `initDeferredModels()`, that means
 ingestion has stopped — the index cannot accept writes under this runtime's shape. It is reported at

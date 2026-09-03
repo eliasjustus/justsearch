@@ -85,7 +85,23 @@ public final class ParityDiagnostics {
    */
   public static boolean isIndexWithoutRecordedFingerprint(
       String storedFingerprint, long docCount) {
-    return isBlank(storedFingerprint) && docCount > 0;
+    return isBlank(storedFingerprint) && !holdsNothingToMigrate(docCount);
+  }
+
+  /**
+   * True when the index holds no documents, and therefore nothing whose physical shape could be
+   * wrong — whatever it has stamped. {@code CommitOps.setLiveCommitData} replaces the whole
+   * user-data map on every commit, so a stale fingerprint on an empty index is re-stamped by the
+   * next commit rather than being a fact about any content.
+   *
+   * <p>Both branches below consult it, which is the fix for an asymmetry the first cut had: the
+   * exclusion was applied only where the stored side was BLANK, so an index with zero documents and
+   * a stale non-blank fingerprint still took the "changed" branch and spent a full blue/green
+   * migration rebuilding nothing. {@code IndexStatusOps} reports through the same predicate, so the
+   * guard and the status surface cannot disagree about an empty index.
+   */
+  public static boolean holdsNothingToMigrate(long docCount) {
+    return docCount <= 0;
   }
 
   public static List<Diff> diff(
@@ -118,6 +134,9 @@ public final class ParityDiagnostics {
         continue;
       }
       if (!Objects.equals(storedRaw, expectedRaw)) {
+        if (REBUILD_REQUIRING_KEYS.contains(key) && holdsNothingToMigrate(docCount)) {
+          continue;
+        }
         diffs.add(
             new Diff(
                 key,

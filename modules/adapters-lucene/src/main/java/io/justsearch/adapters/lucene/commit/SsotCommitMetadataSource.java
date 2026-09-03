@@ -119,7 +119,6 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
 
   private File file(String relative) { return new File(repoRoot, relative); }
 
-  /** {@code float32} unless vector quantization is enabled. */
   /**
    * Reduces a library version to {@code major.minor}. The analysis libraries are fingerprint
    * inputs because an upgrade can change the postings with every field descriptor unchanged, but
@@ -139,6 +138,7 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
     return parts[0] + "." + parts[1];
   }
 
+  /** {@code float32} unless vector quantization is enabled. */
   private static String vectorFormat() {
     try {
       ResolvedConfig rc = resolvedConfigOrFallback();

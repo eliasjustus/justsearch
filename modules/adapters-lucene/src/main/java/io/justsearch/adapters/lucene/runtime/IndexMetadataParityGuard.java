@@ -10,10 +10,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexFormatTooNewException;
-import org.apache.lucene.index.IndexFormatTooOldException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.slf4j.Logger;
@@ -90,13 +87,27 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
         return ParityDiagnostics.diff(stored, expectedMetadata, reader.numDocs());
       }
     } catch (IOException e) {
-      if (isCorruption(e)) {
-        throw new IndexRuntimeIOException(
-            IndexRuntimeIOException.Reason.CORRUPT_INDEX,
-            "Index corruption detected during parity inspection",
-            e);
-      }
-      throw new IllegalStateException("Failed to inspect index metadata for parity", e);
+      // NOT fatal, and not a mismatch. This method answers one question — "does the last commit
+      // record the shape this runtime writes?" — and anything that stops it reading the commit
+      // leaves that question UNANSWERED, which is a different thing from answering "no".
+      //
+      // Raising here was a real regression (tempdoc 915 B4): the pre-open call site sits outside
+      // RuntimeSession.openComponentsWithRecovery, where backup-then-empty corruption recovery
+      // lives, so a corrupt index that used to self-heal at boot killed the Worker instead. The
+      // cause is an IndexFormatTooOldException for a genuinely older Lucene major, so it also
+      // swallowed the legitimate format-upgrade path. CorruptIndexException,
+      // IndexFormatTooOld/TooNew and IndexNotFoundException are all IOExceptions, so one catch
+      // covers them; the open that follows classifies corruption itself (ComponentsFactory
+      // classifies IOException on the reader/writer open as CORRUPT_INDEX) and routes it into the
+      // recovery this method must not pre-empt.
+      log.warn(
+          "Could not read committed parity metadata at {} ({}: {}). Treating the index shape as"
+              + " unverified for now and letting the open decide — corruption recovery, a Lucene"
+              + " format upgrade and the open-time guard all live there.",
+          indexPath,
+          e.getClass().getSimpleName(),
+          e.getMessage());
+      return java.util.List.of();
     }
   }
 
@@ -140,26 +151,6 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       throw schemaMismatch();
     }
     throw new IllegalStateException("Shard is read-only due to parity mismatch");
-  }
-
-  /**
-   * True if {@code e} or any cause in its chain is a Lucene corruption exception
-   * ({@link CorruptIndexException}, {@link IndexFormatTooOldException}, {@link
-   * IndexFormatTooNewException}), or if {@link LuceneRuntimeUtils#classifyIOException}
-   * maps it to {@code CORRUPT_INDEX} (covers {@code NoSuchFileException} on segment files).
-   */
-  private static boolean isCorruption(IOException e) {
-    Throwable t = e;
-    while (t != null) {
-      if (t instanceof CorruptIndexException
-          || t instanceof IndexFormatTooOldException
-          || t instanceof IndexFormatTooNewException) {
-        return true;
-      }
-      t = t.getCause();
-    }
-    return LuceneRuntimeUtils.classifyIOException(e)
-        == IndexRuntimeIOException.Reason.CORRUPT_INDEX;
   }
 
   /**

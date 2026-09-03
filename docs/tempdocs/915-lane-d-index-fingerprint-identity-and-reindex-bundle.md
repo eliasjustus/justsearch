@@ -471,57 +471,6 @@ the gate counted it — and nothing could emit it. Only `BrakeExhaustedWorkerSer
 boots a real `KnowledgeServer` and reads the answer off the wire, could tell. It then immediately
 found a *second* defect the static reasoning had missed (§D.24).
 
-### §C.12 Detection happens before the open, not inside it
-
-The defect O7 named: the mismatch decision depended on HOW the index was being opened. The active
-generation takes `openDeferred()` whenever it has segments; `RuntimeSession` maps `Mode.DEFERRED` to
-a read-only open; and `ComponentsFactory` only *logs* a guard failure when `readOnly`. So on the boot
-path most installs take — an existing index, with documents, whose shape changed — nothing was
-raised and no migration started. The status surface still said `reindex_required`, which is exactly
-why it survived two review rounds: the user was told, so nothing looked broken.
-
-**The question is about the bytes on disk, so it is answered from the bytes on disk.**
-`IndexMetadataParityGuard.inspectCommittedParity(path, expected)` opens an `FSDirectory` and a
-`DirectoryReader`, reads `getIndexCommit().getUserData()` and `numDocs()`, and calls the same
-`ParityDiagnostics.diff(stored, expected, docCount)` every other consumer calls. No writer, no
-`RuntimeSession`, no open-mode choice — and no second implementation, which is what keeps the
-legacy-blank rule (§C.5a), the empty-index exclusion and the model tri-state (§C.5) identical at both
-sites by construction rather than by agreement. `checkOnOpen()` was refactored to call it, so there
-is literally one implementation.
-
-Dispatch, once a rebuild-requiring diff is found:
-
-| Policy | Pre-open action | Why |
-|---|---|---|
-| `BLUE_GREEN_MIGRATE` | raise `SCHEMA_MISMATCH` | the existing boot handler already builds Green beside a read-only Blue, brake included |
-| `FAIL_CLOSED` | raise `SCHEMA_MISMATCH` | the same handler rethrows; refusing is the policy |
-| `REBUILD_BACKUP_FIRST` | do **not** raise; force a WRITABLE open | its backup-then-rebuild recovery lives in `RuntimeSession.openComponentsWithRecovery` and is the one implementation of that policy. Duplicating it here to satisfy a symmetry would be the fork this whole tempdoc is about |
-
-**Ordering, verified rather than assumed.** The expected fingerprint needs the model providers and
-the effective vector dimension installed first. `installModelFingerprintProviders` was already early
-enough (`KnowledgeServer.java:539`, right after `logConfiguration()`), but
-`installEffectiveVectorDimension` was **not** — it lived inside `buildIndexRuntime`, which does not
-run until after the point where pre-open detection now happens. Left alone, a BGE-M3 install would
-have compared a boot-time fingerprint computed with the catalog's declared 768 against a stored one
-written at 1024, and migrated every boot. It is hoisted to the same early site
-(`effectiveVectorDimensionSupplier()`), so there is now exactly one install for both inputs, before
-any comparison.
-
-### §C.13 A mismatch from the deferred writer upgrade is not "non-fatal"
-
-The second half of O7. `DeferredRuntime.upgradeWriter()` runs inside `initDeferredModels()`, whose
-`catch (Exception e)` logged everything as `"Background model initialization failed (non-fatal)"`.
-A `SCHEMA_MISMATCH` there is not a degraded capability — it is a stopped ingestion pipeline, because
-the index cannot accept writes under this runtime's shape.
-
-It is now **reported loudly rather than propagated**, and the choice is deliberate: this runs on a
-background `CompletableFuture` with no caller left to receive an exception, `start()` having long
-returned. Propagation would mean inventing a channel (a flag polled by the sentinel, a callback into
-the boot handler) whose only job is to carry a condition the next boot's pre-open detection handles
-correctly anyway — and the status surface already reports `BLOCKED_MISMATCH` with `reindex_required`
-from the same fingerprint comparison, so the user is not waiting on a restart to be told. What was
-missing was never the propagation; it was that the line said "non-fatal".
-
 ### §C.9 Green verification
 
 `KnowledgeServerMigrationOps.verifyGreenMetadata` compares `index_fingerprint` instead of
@@ -562,7 +511,107 @@ programme puts UI/frontend internals out of scope for every lane, so renaming th
 gratuitous FE-breaking change carrying no new truth. Their comments are relabelled instead.
 **Open question O2.**
 
-### §C.12 New/changed config keys
+### §C.12 Detection happens before the open, not inside it
+
+The defect O7 named: the mismatch decision depended on HOW the index was being opened. The active
+generation takes `openDeferred()` whenever it has segments; `RuntimeSession` maps `Mode.DEFERRED` to
+a read-only open; and `ComponentsFactory` only *logs* a guard failure when `readOnly`. So on the boot
+path most installs take — an existing index, with documents, whose shape changed — nothing was
+raised and no migration started. The status surface still said `reindex_required`, which is exactly
+why it survived two review rounds: the user was told, so nothing looked broken.
+
+**The question is about the bytes on disk, so it is answered from the bytes on disk.**
+`IndexMetadataParityGuard.inspectCommittedParity(path, expected)` opens an `FSDirectory` and a
+`DirectoryReader`, reads `getIndexCommit().getUserData()` and `numDocs()`, and calls the same
+`ParityDiagnostics.diff(stored, expected, docCount)` every other consumer calls. No writer, no
+`RuntimeSession`, no open-mode choice — and no second implementation, which is what keeps the
+legacy-blank rule (§C.5a), the empty-index exclusion and the model tri-state (§C.5) identical at both
+sites by construction rather than by agreement. `checkOnOpen()` was refactored to call it, so there
+is literally one implementation.
+
+Dispatch, once a rebuild-requiring diff is found:
+
+| Policy | Pre-open action | Why |
+|---|---|---|
+| `BLUE_GREEN_MIGRATE` | raise `SCHEMA_MISMATCH` | the existing boot handler already builds Green beside a read-only Blue, brake included |
+| `FAIL_CLOSED` | raise `SCHEMA_MISMATCH` | the same handler rethrows; refusing is the policy |
+| `REBUILD_BACKUP_FIRST` | do **not** raise; force a WRITABLE open | its backup-then-rebuild recovery lives in `RuntimeSession.openComponentsWithRecovery` and is the one implementation of that policy. Duplicating it here to satisfy a symmetry would be the fork this whole tempdoc is about |
+
+**Ordering, verified rather than assumed.** The expected fingerprint needs the model providers and
+the effective vector dimension installed first. `installModelFingerprintProviders` was already early
+enough (`KnowledgeServer.java:555`, right after `logConfiguration()`), but
+`installEffectiveVectorDimension` was **not** — it lived inside `buildIndexRuntime`, which does not
+run until after the point where pre-open detection now happens. Left alone, a BGE-M3 install would
+have compared a boot-time fingerprint computed with the catalog's declared 768 against a stored one
+written at 1024, and migrated every boot. It is hoisted to the same early site
+(`effectiveVectorDimensionSupplier()`), so there is now exactly one install for both inputs, before
+any comparison.
+
+### §C.13 A mismatch from the deferred writer upgrade is not "non-fatal"
+
+The second half of O7. `DeferredRuntime.upgradeWriter()` runs inside `initDeferredModels()`, whose
+`catch (Exception e)` logged everything as `"Background model initialization failed (non-fatal)"`.
+A `SCHEMA_MISMATCH` there is not a degraded capability — it is a stopped ingestion pipeline, because
+the index cannot accept writes under this runtime's shape.
+
+It is now **reported loudly rather than propagated**, and the choice is deliberate: this runs on a
+background `CompletableFuture` with no caller left to receive an exception, `start()` having long
+returned. Propagation would mean inventing a channel (a flag polled by the sentinel, a callback into
+the boot handler) whose only job is to carry a condition the next boot's pre-open detection handles
+correctly anyway — and the status surface already reports `BLOCKED_MISMATCH` with `reindex_required`
+from the same fingerprint comparison, so the user is not waiting on a restart to be told. What was
+missing was never the propagation; it was that the line said "non-fatal".
+
+### §C.14 What moving the decision earlier broke
+
+Two blockers, both from the same root: a check that used to run *inside* the open now runs *before*
+it, so it lost the envelope the open provided and gained a decision the open never had to make.
+
+**B4 — an unreadable commit is not a mismatch.** `inspectCommittedParity` raised `CORRUPT_INDEX`
+when the directory could not be read. Inside the open that was harmless — `RuntimeSession`
+caught it two frames up and ran backup-then-empty recovery, which ships enabled
+(`index.auto_recovery: true`). At the new call site there is nothing above it but `start()`, so a
+corrupt index that used to self-heal at boot killed the Worker instead. And because the cause of an
+unreadable commit is an `IndexFormatTooOldException`, the same throw swallowed the legitimate
+older-Lucene-major upgrade path. The method now answers one of *three* things, not two: match,
+mismatch, or **could not read** — the third is a WARN naming the cause class and an empty diff list,
+and the open decides (recovery, format upgrade, or the second-line guard). Every one of
+`CorruptIndexException`, `IndexFormatTooOld/TooNew` and `IndexNotFoundException` is an
+`IOException`, so one catch covers them, and `ComponentsFactory` classifies corruption on the
+reader/writer open independently — nothing is lost by declining here.
+
+**B5 — a mismatched Green must be abandoned, not retried.** Round 3 hoisted the schema-mismatch
+`try` over the resumed-migration branch, which was necessary and not sufficient.
+`IndexGenerationManager.startMigration` deliberately no-ops while a migration is in flight, so the
+handler re-resolved the *same* Green and re-opened it with the builder that had just thrown: the
+second `SCHEMA_MISMATCH` was raised inside the catch, uncaught, and `start()` died — on attempts 1,
+2 and 3, i.e. three dead Workers before the brake that exists to bound exactly this repetition could
+report anything. `abandonBuildingGeneration(reason)` is the missing move: clear
+`building_generation`, return `migration_state` to `IDLE`, mark the directory for deletion, carry
+the auto-rebuild budget over unchanged (abandoning a Green is not evidence the rebuild converged, so
+it must not refresh the brake). One attempt is then spent and a fresh Green allocated — or, if the
+budget is gone, the read-only Blue fall-through runs as before. `start()` returns in every case.
+
+**Ride-along.** The catch opened a second read-only runtime on Blue when the resumed branch had
+already opened one, overwriting the field without closing it — a leaked `Directory` +
+`SearcherManager` holding Windows handles on Blue for the Worker's whole lifetime, in the
+brake-exhausted state, which is the state that keeps running. Blue is held in a local and reused.
+
+**Unknown policy values.** `normalizeSchemaMismatchPolicy` returned an unrecognised value verbatim,
+which used to be merely inert. After §C.12 it was not: pre-open detection forces a writable open for
+any policy it does not recognise, the guard raises, recovery refuses the destructive rebuild and the
+Worker fails to start. A typo in one config key must not be a boot failure — it falls back to the
+mode default with a WARN, in the config layer, so every consumer sees the same answer.
+
+**Empty-index symmetry.** The `docCount` exclusion was applied only where the *stored* fingerprint
+was blank, so a 0-document index with a *stale* one still took the changed branch and would have
+spent a full blue/green migration rebuilding nothing. Both branches consult
+`ParityDiagnostics.holdsNothingToMigrate(docCount)` now, and `IndexStatusOps` reports through it, so
+the guard and the status surface cannot disagree about an empty index in one direction after
+agreeing in the other. What actually happens to such an index: `CommitOps.setLiveCommitData`
+replaces the whole user-data map, so the next commit **re-stamps** it.
+
+### §C.15 New/changed config keys
 
 **None.** No new `System.getenv`/`getProperty` outside `io.justsearch.configuration`; no new
 `EnvRegistry` row; `index.schema_mismatch.policy` and
@@ -597,10 +646,10 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.20 | Docs: `11-index-schema-migration.md` (fingerprint section, enforcement status 2026-09, policy defaults + brake), `04-storage-engine.md`, `06-configuration-ssot.md`, `08-observability.md`, `09-testing-strategy.md`, `18-adapters-lucene-deep-dive.md`, `index-schema-mismatch-reindex-noop.md` (superseded banner + inline strikes), `environment-variables.md`, ADR-0014 (dated append, history not rewritten) | `docs/**` |
 | D.21 | RISK-011 instrumented to `tempdoc:915#C Design (Phase 1), tightened`; notes explain why it stays open rather than closed | `docs/reference/architectural-risks.md:264-282` |
 | D.22 | New tests: `IndexFingerprintTest`, `CatalogPhysicalProjectionTest`, `SchemaMismatchPolicyBranchTest`, `IndexRebuildBrakeTest`; extended `CommitReasonAccountingTest`, `InvariantSuiteIT`; updated 14 fixture files | see §G |
-| D.31 | **O7.** `IndexMetadataParityGuard`: `inspectCommittedParity(Path, Map)` and `schemaMismatch()` extracted; `checkOnOpen()` now calls both, so the pre-open and open-time paths share one implementation and one message | `IndexMetadataParityGuard.java:70`, `:102` |
-| D.32 | **O7.** `KnowledgeServer.start()`: pre-open detection before the open-mode choice, and dispatch | `KnowledgeServer.java:592` (`preOpenMismatch`), `:595` (`inspectCommittedParity`), `:597` (`requiresRebuild`), `:629` (`policyHandledInCatch`), `:632` (raise), `:634` (`useDeferredWriter … && !preOpenMismatch`), `:727` (the existing handler) |
+| D.31 | **O7.** `IndexMetadataParityGuard`: `inspectCommittedParity(Path, Supplier<Map<String,Object>>)` and `schemaMismatch()` extracted; `checkOnOpen()` now calls both, so the pre-open and open-time paths share one implementation and one message. (The `Supplier` is G30's fix: an eager `Map` parameter built the expected metadata before the index-exists check.) | `IndexMetadataParityGuard.java:72`, `:119` |
+| D.32 | **O7.** `KnowledgeServer.start()`: pre-open detection before the open-mode choice, and dispatch | `KnowledgeServer.java:608` (`preOpenMismatch`), `:611` (`inspectCommittedParity`), `:613` (`requiresRebuild`), `:653` (`policyHandledInCatch`), `:656` (raise), `:658` (`useDeferredWriter … && !preOpenMismatch`), `:751` (the existing handler) |
 | D.33 | **O7.** `installEffectiveVectorDimension` hoisted out of `buildIndexRuntime` to the early install site, so the boot-time comparison sees the same dimension as every later one under BGE-M3 | `KnowledgeServer.java` — `effectiveVectorDimensionSupplier()`, installed beside `installModelFingerprintProviders` |
-| D.34 | **O7.** `logBackgroundInitFailure(Exception)` + `isSchemaMismatch(Throwable)`: a schema mismatch escaping the deferred writer upgrade is reported as stopped ingestion, not as a non-fatal background failure | `KnowledgeServer.java:968`, `:986`, called at `:1506` |
+| D.34 | **O7.** `logBackgroundInitFailure(Exception)` + `isSchemaMismatch(Throwable)`: a schema mismatch escaping the deferred writer upgrade is reported as stopped ingestion, not as a non-fatal background failure | `KnowledgeServer.java:1008`, `:1026`, called at `:1546` |
 | D.35 | **O7 tests.** `WorkerBootFixture` (shared boot scaffolding: production catalog, seed with matching / foreign / absent fingerprint, config publication, layout) and `PreOpenSchemaMismatchBootTest` (a-e plus the classifier) | both new, `modules/indexer-worker/src/test/.../server/` |
 | D.24 | **Delta-review round (B3).** `KnowledgeServer.start()` no longer returns on brake exhaustion: it sets `rebuildBrakeExhausted`, opens Blue read-only, and falls through the rest of the sequence. Five previously skipped sites and what each does now — `createGrpcServer` + `grpcServer.start()`: run, so the port is real; `signalBus.writePort(boundPort)`: runs, so the Head discovers the Worker; `infraCtx`/`appServices` construction: runs, which is what builds `GrpcIngestService` and with it `IndexStatusOps`, the only producer of the new reason code; `appServices.startIndexingLoop()`: deliberately NOT started (guarded flag) with an ERROR naming the recovery path, because its only job is to write into a read-only runtime; `startSentinelThread()`: runs. `drainSwitchBufferBestEffort()` is also skipped — a read-only runtime is not a `RunningRuntime`, so it could only have logged a WARN and dropped the ops | `KnowledgeServer.java` — the `rebuildBrakeExhausted` field, the brake branch, the drain guard, the loop guard |
 | D.25 | **The second defect, found by the test written for the first.** `IndexStatusOps.buildCore` dereferenced `indexingLoop` unconditionally. With no loop started that NPEs, and `GrpcIngestService.indexStatus` catches `RuntimeException` and returns a stub response with `core.state=ERROR` and NO compatibility sub-message — so `BLOCKED_REBUILD_BRAKE` was still unreachable, now silently. Null-guarded. This was ALSO a pre-existing latent hole: `DefaultWorkerAppServices.startIndexingLoop` already guards for a null loop (deferred-writer mode), so a status RPC arriving before the writer upgrade could blank the whole payload | `IndexStatusOps.java` — `buildCore`'s `setLastCommitTimestamp` |
@@ -609,6 +658,13 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.28 | **S13.** `ChunkSplitter` (in `modules:indexing`, already an `api` dep of adapters-lucene) owns `CHUNK_THRESHOLD_CHARS` and `CONTENT_PREVIEW_MAX_CHARS`. `SsotCommitMetadataSource` reads them; its mirror and `ChunkWriterFingerprintMirrorTest` are deleted (with them the phantom `ChunkDocumentWriterFingerprintInputsTest` name); `ChunkDocumentWriter` re-exports them the way it already re-exported `CHUNK_TARGET_TOKENS`; two further private `4096` copies in `IndexingDocumentOps` and `GrpcIngestService` now point at the one owner | `ChunkSplitter.java`, `SsotCommitMetadataSource.java`, `ChunkDocumentWriter.java`, `IndexingDocumentOps.java`, `GrpcIngestService.java` |
 | D.29 | **Nits.** `majorMinor()` truncates the analysis versions to `major.minor`; `EngineVectorIndexBench` reports the effective HNSW accessors instead of its own 16/200; the wire test parses `tags.reason` into a map instead of substring-matching a line; `resetUncomputableWarnedForTest()` makes the once-per-boot latch testable and `InvariantSuiteIT` asserts one WARN across three opens; `LEGACY_INDEX_HINT` no longer claims the index predates the key (it cannot know that); `ParityDiagnostics.diff` takes `docCount` and both consumers call `isIndexWithoutRecordedFingerprint` | see §F round 3 |
 | D.30 | **New tests for the nits.** `SchemaCompatFreshInstallTest` (a fresh empty index is COMPATIBLE, an index holding documents of unrecorded shape is BLOCKED_LEGACY); `ParityGuardTest.anEmptyIndexWithoutAFingerprintIsNotAMigrationCandidate`; `FingerprintInputSourcesTest.aPatchLevelLibraryBumpDoesNotMoveTheFingerprint` and `theChunkFingerprintInputsComeFromTheSplitterNotFromACopy`; `InvariantSuiteIT.aFreshEmptyIndexWithNoFingerprintIsNotMigrated` and `theUncomputableFingerprintWarningIsEmittedOncePerBoot` | see §F round 3 |
+| D.36 | **B4.** `inspectCommittedParity` no longer raises `CORRUPT_INDEX`. One `catch (IOException)` — which covers `CorruptIndexException`, `IndexFormatTooOld/TooNew` and `IndexNotFoundException` — WARNs with the cause class and returns an empty diff list, so the open path keeps its corruption recovery, its format upgrade and its second-line guard. `isCorruption` and three imports swept with it | `IndexMetadataParityGuard.java:89-111` |
+| D.37 | **B5.** `IndexGenerationManager.abandonBuildingGeneration(reason)`: clears `building_generation`, returns `migration_state` to `IDLE`, marks the directory for deletion (after the pointer write, so a crash leaves an orphan the GC reaps rather than a pointer into a deleting directory), and carries the auto-rebuild budget over unchanged | `IndexGenerationManager.java:273` |
+| D.38 | **B5.** The schema-mismatch handler abandons a mismatched Green before it retries, so `startMigration` allocates a fresh one instead of no-opping and handing back the generation that just threw. `start()` returns with Blue read-only whether the budget is fresh or spent | `KnowledgeServer.java:763-773` (the `inProgress` abandon, `:772`), `:777` (`blue`) |
+| D.39 | **B5 ride-along.** Blue is held in a local (`blueReadOnly`, `KnowledgeServer.java:627`) and reused by both catch branches, instead of a second read-only runtime being opened over the first and the first leaked | `KnowledgeServer.java:627`, `:777`, `:799`, `:815` |
+| D.40 | **S15.** `normalizeSchemaMismatchPolicy`'s `default` branch falls back to the mode default with a WARN instead of returning an unrecognised value verbatim — the shape `normalizeIntegrityCheck` already used | `ResolvedConfigBuilder.java:1009-1039` |
+| D.41 | **Nit.** `ParityDiagnostics.holdsNothingToMigrate(docCount)`: the empty-index exclusion now applies to the changed branch as well as the blank one, and `IndexStatusOps` reports through the same predicate | `ParityDiagnostics.java`, `IndexStatusOps.java` (`safeSchemaCompatState`) |
+| D.42 | **Round-4 tests.** `ResumedMigrationMismatchBootTest` (B5 at a FRESH budget — the boot the brake test cannot reach); `PreOpenSchemaMismatchBootTest` +4 (`PRE-OPEN` WARN asserted under FAIL_CLOSED (S14); `REBUILD_BACKUP_FIRST` backs Blue up before emptying it, asserted on the backup's doc count (S15); an unrecognised policy boots; a corrupt index still self-heals (B4)); `ParityGuardTest` +3 (unreadable commit, empty-index-with-stale-fingerprint, expected-metadata build count on an existing index); `SchemaCompatFreshInstallTest` +1; `ResolvedConfigBuilderTest` +1. `BrakeExhaustedWorkerServesReadOnlyTest` rewritten onto `WorkerBootFixture` (S16) and drives the `startMigration` RPC rather than the generation manager (S17) | see §F round 4 |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -713,8 +769,8 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 
 | ID | Break | Test that caught it | Failing assertion |
 |---|---|---|---|
-| F1 | `REBUILD_REQUIRING_KEYS` → `Set.of()` | `ParityGuardTest`, `SchemaMismatchPolicyBranchTest`, `InvariantSuiteIT` | four tests red, not three — `parityGuardTriggersRebuildOnFingerprintMismatch` FAILED; `aLegacyIndexWithNoFingerprintIsMigratedRatherThanIgnored` FAILED; `blueGreenMigratePropagatesTheMismatchAndKeepsEveryDocument` FAILED (`SchemaMismatchPolicyBranchTest.java:127`); `failClosedRefusesAndKeepsEveryDocument` FAILED (`:158`) |
-| F2 | drop `boosts_fp` from `PARITY_KEYS` | `ParityGuardTest` | `parityGuardCatchesBoostsMismatch` FAILED (`ParityGuardTest.java:68`) |
+| F1 | `REBUILD_REQUIRING_KEYS` → `Set.of()` | `ParityGuardTest`, `SchemaMismatchPolicyBranchTest`, `InvariantSuiteIT` | four tests red, not three — `parityGuardTriggersRebuildOnFingerprintMismatch` FAILED; `aLegacyIndexWithNoFingerprintIsMigratedRatherThanIgnored` FAILED; `blueGreenMigratePropagatesTheMismatchAndKeepsEveryDocument` FAILED; `failClosedRefusesAndKeepsEveryDocument` FAILED (cited by NAME, not line: later rounds inserted fixtures above both and the line numbers this row originally carried drifted) |
+| F2 | drop `boosts_fp` from `PARITY_KEYS` | `ParityGuardTest` | `parityGuardCatchesBoostsMismatch` FAILED (by name, same reason as F1) |
 | F3 | `diff()` blank-skip → only skip when both sides null | `InvariantSuiteIT` | `anIndeterminateExpectedFingerprintIsNotAMismatch` FAILED (`InvariantSuiteIT.java:99`) |
 | F4 | `compute()` no longer returns empty on INDETERMINATE | `IndexFingerprintTest` | `anIndeterminateModelYieldsNoFingerprintAtAll` FAILED (`IndexFingerprintTest.java:261`) |
 | F5 | `hnsw.ef_construction` hard-coded to 0 | `IndexFingerprintTest` | `everyPhysicalInputMovesTheFingerprint` FAILED (`IndexFingerprintTest.java:172`) |

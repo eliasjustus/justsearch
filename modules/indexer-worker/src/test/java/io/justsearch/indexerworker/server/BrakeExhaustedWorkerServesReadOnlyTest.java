@@ -6,20 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.justsearch.adapters.lucene.commit.IndexFingerprint;
-import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
-import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
-import io.justsearch.adapters.lucene.runtime.CommitReason;
-import io.justsearch.adapters.lucene.runtime.IndexSchema;
-import io.justsearch.adapters.lucene.runtime.RunningRuntime;
-import io.justsearch.configuration.FieldCatalogDef;
-import io.justsearch.configuration.resolved.ConfigStore;
-import io.justsearch.configuration.resolved.ResolvedConfig;
-import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
-import io.justsearch.indexerworker.WorkerConfig;
+import io.justsearch.app.api.status.MigrationSource;
 import io.justsearch.indexerworker.index.IndexGenerationManager;
-import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.ipc.MigrationStartRequest;
+import io.justsearch.ipc.MigrationStartResponse;
 import io.justsearch.ipc.StatusRequest;
 import io.justsearch.ipc.StatusResponse;
 import io.justsearch.ipc.IngestServiceGrpc;
@@ -28,9 +18,7 @@ import io.justsearch.ipc.SearchResponse;
 import io.justsearch.ipc.SearchServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -75,31 +63,22 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
   @Test
   void anExhaustedBrakeServesSearchReadOnlyAndReportsWhyIngestionStopped(@TempDir Path tempDir)
       throws Exception {
-    Path dataDir = tempDir.resolve("data");
-    Path indexBase = dataDir.resolve("index");
-    Files.createDirectories(dataDir);
-
     // 1. A real generation layout: Blue holds one document and is fine; a migration is already in
     //    flight and its Green carries a foreign fingerprint. That is the scenario the brake models —
     //    a rebuild that keeps failing the same way — and it is the path that reaches start()'s
     //    SCHEMA_MISMATCH handler, because the resumed migration opens Green with open() rather than
-    //    openDeferred(). (See the reachability note in tempdoc 915 §C.8: a first-boot mismatch on an
-    //    index that HAS segments takes openDeferred(), where ComponentsFactory swallows a guard
-    //    failure because the initial open is read-only.)
-    IndexGenerationManager genManager = new IndexGenerationManager(indexBase);
-    var layout = genManager.initializeOrLoad();
-    Path bluePath = genManager.resolveGenerationPathStrict(layout.state().active_generation());
-    seedIndex(bluePath, null);
-
-    IndexGenerationManager.State inFlight = genManager.startMigration("schema_mismatch");
-    Path greenPath = genManager.resolveGenerationPathStrict(inFlight.building_generation());
-    seedIndex(greenPath, "f".repeat(64));
+    //    openDeferred(). Seeded through WorkerBootFixture: the inline copy this test used to carry
+    //    seeded Blue with FieldCatalogDef.forTesting(768) instead of the catalog the Worker loads,
+    //    which is the fork the fixture exists to prevent.
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), null, 1);
+    WorkerBootFixture.seedInFlightGreen(layout, "f".repeat(64), 1);
+    IndexGenerationManager genManager = layout.genManager();
 
     // 2. The brake, already spent on the shape THIS runtime would produce. Computing the target
     //    the same way the server does is the point: a hand-written key would make the test pass
     //    while the production lookup missed.
-    String target = new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY)
-        .toString();
+    String target = WorkerBootFixture.currentFingerprint();
     for (int i = 0; i <= IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS; i++) {
       genManager.recordAutoRebuildAttempt(target);
     }
@@ -108,8 +87,9 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
         "precondition: the budget for this target is spent");
 
     // 3. Boot a real Worker over that data directory, under the production policy.
-    publishConfig(dataDir, indexBase);
-    server = new KnowledgeServer(workerConfig(dataDir));
+    WorkerBootFixture.publishConfig(
+        layout.dataDir(), layout.indexBase(), "BLUE_GREEN_MIGRATE");
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
     server.start();
 
     // (a) the Worker took the exhausted-brake path AND finished starting. The first assertion is
@@ -151,79 +131,36 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
             .search(SearchRequest.newBuilder().setQuery("*").setLimit(10).build());
     assertNotNull(search, "search must answer while the brake is exhausted");
 
-    // (d) the recovery path out of the state. A user-initiated rebuild allocates Green beside
-    //     Blue, and the promotion that completes it clears the brake — otherwise "run Rebuild
-    //     index" would be advice that leaves the user exactly where they were.
-    IndexGenerationManager.State migrating =
-        genManager.startMigration("user_requested_rebuild");
-    assertNotNull(migrating.building_generation(), "the operator rebuild is reachable from here");
-    IndexGenerationManager.State promoted = genManager.promoteBuildingGenerationToActive();
+    // (d) the recovery path out of the state, driven over the wire rather than by calling the
+    //     generation manager directly. core.rebuild-index (RebuildIndexHandler) resolves to
+    //     IndexingService.startMigration(USER_REQUESTED_REBUILD) → MigrationOps → this exact RPC,
+    //     so this is the Worker half of the chain the readiness notice's remedy promises. The Head
+    //     half (handler → op-lease → RemoteKnowledgeClient) is app-services' and is covered there;
+    //     what could not be asserted from a fixture call is that the RPC is even reachable in the
+    //     braked state, which is where appServices is built from a read-only runtime.
+    MigrationStartResponse rebuild =
+        IngestServiceGrpc.newBlockingStub(channel)
+            .withDeadlineAfter(30, TimeUnit.SECONDS)
+            .startMigration(
+                MigrationStartRequest.newBuilder()
+                    .setReason(MigrationSource.USER_REQUESTED_REBUILD.wire())
+                    .setRestartWorker(false)
+                    .build());
+    assertTrue(rebuild.getAccepted(), "the operator rebuild is reachable from here: "
+        + rebuild.getError());
+    assertNotNull(rebuild.getBuildingGenerationId(), "and it allocates a Green beside Blue");
+    assertTrue(!rebuild.getBuildingGenerationId().isBlank());
+    // A FRESH manager for everything after the boot. IndexGenerationManager caches state.json
+    // per instance and invalidates only on its OWN writes, so the seeding instance above would
+    // answer from a pre-boot snapshot and this arm would assert against state the Worker has since
+    // replaced.
+    IndexGenerationManager postBoot = new IndexGenerationManager(layout.indexBase());
+    IndexGenerationManager.State promoted = postBoot.promoteBuildingGenerationToActive();
     assertNull(promoted.auto_rebuild_key(), "a completed rebuild clears the brake");
     assertEquals(
         0,
-        genManager.autoRebuildAttemptsFor(target),
+        postBoot.autoRebuildAttemptsFor(target),
         "the budget is restored, so a later genuine mismatch is not refused for this one");
   }
 
-  /**
-   * Commits one document. A non-null {@code fingerprintOverride} stamps a shape no runtime would
-   * produce, which is what makes the open fail the parity check.
-   */
-  private static void seedIndex(Path path, String fingerprintOverride) throws Exception {
-    java.util.Map<String, Object> meta =
-        new java.util.HashMap<>(new SsotCommitMetadataSource().build());
-    if (fingerprintOverride != null) {
-      meta.put(IndexFingerprint.COMMIT_META_KEY, fingerprintOverride);
-    }
-    Map<String, Object> frozen = Map.copyOf(meta);
-    try (RunningRuntime r =
-        IndexSchema.fromCatalog(
-                FieldCatalogDef.forTesting(768),
-                () -> frozen,
-                new JsonSchemaCommitMetadataValidator())
-            .atPath(path)
-            .open()) {
-      r.indexingCoordinator()
-          .indexSingle(
-              new IndexDocument(
-                  Map.of(
-                      SchemaFields.DOC_ID, "seeded-doc",
-                      SchemaFields.DOC_UID, "seeded-doc#0",
-                      SchemaFields.CONTENT, "a document Blue must keep serving")));
-      r.commitOps().commitAndTrack(CommitReason.DRAIN);
-    }
-  }
-
-  private static void publishConfig(Path dataDir, Path indexBase) {
-    ResolvedConfig rc =
-        new ResolvedConfigBuilder()
-            .contributeBaseSources()
-            .putDefault("justsearch.data.dir", dataDir.toAbsolutePath().toString())
-            .putDefault("justsearch.index.base_path", indexBase.toAbsolutePath().toString())
-            // The key really is un-prefixed here (ResolvedConfigBuilder:1545). Getting it wrong is
-            // silent: the policy falls back to the DEV default REBUILD_BACKUP_FIRST, the mismatch is
-            // "recovered" destructively instead of propagating, and the brake branch never runs -
-            // which is precisely what the rebuildBrakeExhaustedForTest() precondition caught.
-            .putDefault("index.schema_mismatch.policy", "BLUE_GREEN_MIGRATE")
-            .build();
-    ConfigStore.setGlobal(new ConfigStore(rc));
-  }
-
-  private static WorkerConfig workerConfig(Path dataDir) {
-    ResolvedConfig rc = ConfigStore.global().get();
-    return new WorkerConfig(
-        "127.0.0.1",
-        0,
-        30_000L,
-        128,
-        64 * 1024 * 1024,
-        dataDir,
-        rc.search().collection(),
-        60_000L,
-        "0.0.0-test",
-        new SsotCommitMetadataSource().build(),
-        "test-manifest",
-        500L,
-        "block");
-  }
 }

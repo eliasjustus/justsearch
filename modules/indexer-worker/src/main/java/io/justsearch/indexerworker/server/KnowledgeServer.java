@@ -84,6 +84,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
@@ -223,6 +224,19 @@ public final class KnowledgeServer implements Closeable {
    */
   boolean rebuildBrakeExhaustedForTest() {
     return rebuildBrakeExhausted;
+  }
+
+  /** Read-only runtimes constructed so far. See {@link #readOnlyOpensForTest()}. */
+  private final AtomicInteger readOnlyOpens = new AtomicInteger();
+
+  /**
+   * How many read-only runtimes this boot constructed. A test seam for a defect with no other
+   * observable: opening Blue a second time and overwriting the field leaks a {@code Directory} +
+   * {@code SearcherManager} that nothing will ever close, and a leaked handle is invisible to every
+   * assertion a passing boot can make (tempdoc 915 B5 ride-along).
+   */
+  int readOnlyOpensForTest() {
+    return readOnlyOpens.get();
   }
 
   // Migration enumerator progress (best-effort observability)
@@ -578,7 +592,9 @@ public final class KnowledgeServer implements Closeable {
       // The schema-mismatch handling below covers BOTH branches. It used to wrap only the normal
       // one, so a resumed migration whose Green was itself mismatched threw straight out of start()
       // — no policy branch, no brake, no read-only fall-through — which is the repeat-failure shape
-      // the brake exists to bound (tempdoc 915 §C.8).
+      // the brake exists to bound (tempdoc 915 §C.8). Wrapping it was necessary and not sufficient:
+      // the handler ABANDONS a mismatched Green before retrying, because startMigration() no-ops on
+      // an in-flight migration and would otherwise hand back the same broken generation (§C.14, B5).
       // Tempdoc 915 §C.12 (open item O7). Decide whether this index has the shape this runtime
       // writes BEFORE choosing how to open it. The check used to live inside the open, where a
       // deferred open arrives as read-only and ComponentsFactory only logs the mismatch — so on the
@@ -602,10 +618,18 @@ public final class KnowledgeServer implements Closeable {
         }
       }
 
+      // Blue, once it is open read-only. Held so the schema-mismatch handler can REUSE it instead
+      // of opening a second runtime on the same directory: the resumed-migration branch below opens
+      // Blue before it touches Green, and overwriting that field without closing it leaked a
+      // Directory + SearcherManager holding Windows file handles on Blue for the Worker's whole
+      // lifetime — in the exhausted-brake state, which is precisely the state that keeps running
+      // (tempdoc 915 B5 ride-along).
+      LuceneRuntime blueReadOnly = null;
       try {
       if (inProgress) {
         // Serve search from active generation (Blue) while writing to building generation (Green).
-        this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+        blueReadOnly = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+        this.searchLifecycle = blueReadOnly;
         this.buildingIndexPath = genManager.resolveGenerationPathStrict(buildingGenId);
         this.ingestLifecycle =
             buildIndexRuntime(buildingIndexPath, fpSupplier)
@@ -736,8 +760,24 @@ public final class KnowledgeServer implements Closeable {
             // A fingerprint we cannot compute must not be charged to a shared budget: without a
             // distinct sentinel every indeterminate boot would spend an attempt against the literal
             // string "null" and exhaust the brake for an unrelated real target.
+            if (inProgress) {
+              // The mismatch was raised opening GREEN, not Blue — a read-only open of Blue cannot
+              // raise it, ComponentsFactory logs guard failures on read-only opens. So this boot
+              // resumed a migration whose building generation carries a shape this runtime does not
+              // write, and startMigration() no-ops while a migration is in flight. Without
+              // discarding that Green first, the branch below re-resolved the SAME generation and
+              // re-opened it: the second SCHEMA_MISMATCH was raised inside this catch, uncaught, and
+              // killed start() on attempts 1-3 — three dead Workers before the brake could even
+              // report anything (tempdoc 915 B5). Discard it, spend an attempt, build a fresh one.
+              genManager.abandonBuildingGeneration(MigrationSource.SCHEMA_MISMATCH.wire());
+              this.buildingIndexPath = null;
+            }
             String targetFingerprint = expectedIndexFingerprintOrNull();
             int attempt = recordAutoRebuildAttemptOrSkip(genManager, targetFingerprint);
+            LuceneRuntime blue =
+                blueReadOnly != null
+                    ? blueReadOnly
+                    : buildReadOnlyRuntime(activeIndexPath).openReadOnly();
             if (attempt > IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS) {
               // Do NOT rethrow. Rethrowing fails start(), which is the same dead-end the old
               // FAIL_CLOSED default produced, three boots later and with no explanation. Open the
@@ -756,7 +796,7 @@ public final class KnowledgeServer implements Closeable {
                   activeIndexPath,
                   IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
                   e);
-              this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+              this.searchLifecycle = blue;
               this.ingestLifecycle = this.searchLifecycle;
               this.buildingIndexPath = null;
               this.rebuildBrakeExhausted = true;
@@ -771,8 +811,8 @@ public final class KnowledgeServer implements Closeable {
                   IndexGenerationManager.MAX_AUTO_REBUILD_ATTEMPTS,
                   e);
 
-              // Blue: open existing index in read-only mode for serving search.
-              this.searchLifecycle = buildReadOnlyRuntime(activeIndexPath).openReadOnly();
+              // Blue: serve search from the existing index, read-only.
+              this.searchLifecycle = blue;
 
               // Green: create a new generation and start a writable runtime.
               IndexGenerationManager.State migrated = genManager.startMigration(MigrationSource.SCHEMA_MISMATCH.wire());
@@ -1775,6 +1815,7 @@ public final class KnowledgeServer implements Closeable {
   }
 
   private LuceneRuntimeBuilder buildReadOnlyRuntime(Path indexPath) {
+    readOnlyOpens.incrementAndGet();
     io.justsearch.configuration.JustSearchConfigurationLoader loader =
         new io.justsearch.configuration.JustSearchConfigurationLoader();
     io.justsearch.configuration.FieldCatalogDef catalog = loader.loadFieldCatalog();

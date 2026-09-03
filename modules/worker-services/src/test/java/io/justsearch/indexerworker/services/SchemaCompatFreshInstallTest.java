@@ -82,6 +82,40 @@ final class SchemaCompatFreshInstallTest {
     assertTrue(status.getCompatibility().getReindexRequired());
   }
 
+  /**
+   * The other half of the same rule, added in round 4. A STALE fingerprint on an index holding
+   * nothing is as much a non-event as an absent one — the next commit rewrites the whole user-data
+   * map — and the guard now declines to migrate it. Reporting BLOCKED_MISMATCH here would put the
+   * status surface and the guard back into disagreement about an empty index, in the opposite
+   * direction from the case above.
+   */
+  @Test
+  void anEmptyIndexWithAStaleFingerprintIsCompatible() throws Exception {
+    Map<String, Object> stale =
+        new java.util.HashMap<>(
+            new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource().build());
+    stale.put(
+        io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY, "a".repeat(64));
+    Map<String, Object> frozen = Map.copyOf(stale);
+    runtime =
+        IndexSchema.fromCatalog(
+                FieldCatalogDef.forChunkTesting(0),
+                () -> frozen,
+                new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator())
+            .atPath(tempDir)
+            .open();
+    runtime.commitOps().commitAndTrack();
+    runtime.commitOps().maybeRefreshBlocking();
+
+    StatusResponse status = buildStatus();
+    assertEquals(
+        "COMPATIBLE",
+        status.getCompatibility().getSchemaCompatState(),
+        "a stale shape recorded against no documents describes nothing; the next commit re-stamps"
+            + " it, so demanding a rebuild would rebuild emptiness");
+    assertFalse(status.getCompatibility().getReindexRequired());
+  }
+
   /** Drives the production {@code buildStatusResponse} over a real index. */
   private StatusResponse buildStatus() {
     JobQueue jobQueue = mock(JobQueue.class);

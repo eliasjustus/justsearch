@@ -252,6 +252,65 @@ public final class IndexGenerationManager {
     return next;
   }
 
+  /**
+   * Discards the current building generation: clears {@code building_generation}, returns {@code
+   * migration_state} to {@code IDLE} and marks the abandoned directory for deletion, so a following
+   * {@link #startMigration(String)} allocates a FRESH Green instead of returning the old one.
+   *
+   * <p>Exists because {@code startMigration} deliberately no-ops while a migration is in flight
+   * (see its contract above), which is right for concurrent callers and wrong for the one case that
+   * needs the opposite: a resumed migration whose Green is itself unusable. Retrying the same
+   * generation there re-raises the same failure on every boot — the Worker died three boots running
+   * before the brake could even fire (tempdoc 915 B5).
+   *
+   * <p>The auto-rebuild budget is carried over unchanged. Abandoning a Green is not evidence the
+   * rebuild converged, so it must not refresh the brake; the caller spends its attempt.
+   *
+   * @param reason short label for the log line
+   * @return the updated normalized state, or the unchanged state when there is no building
+   *     generation to abandon
+   */
+  public State abandonBuildingGeneration(String reason) throws IOException {
+    State current = readStateBestEffort();
+    if (current == null) {
+      return null;
+    }
+    State normalized = normalizeAndUpgradeStateIfNeeded(current);
+    String building = normalized.building_generation();
+    if (building == null || building.isBlank()) {
+      return normalized;
+    }
+    String safeBuilding = requireSafeGenerationId(building, "state.json building_generation");
+    State next =
+        new State(
+            STATE_FORMAT_VERSION,
+            normalized.active_generation(),
+            null,
+            normalized.previous_generation(),
+            MigrationState.IDLE.name(),
+            false,
+            null,
+            null,
+            System.currentTimeMillis(),
+            normalized.auto_rebuild_key(),
+            normalized.auto_rebuild_count(),
+            normalized.auto_rebuild_first_ms());
+    writeState(next);
+    log.warn(
+        "Abandoned building generation {} (reason={}); migration_state reset to IDLE",
+        safeBuilding,
+        reason == null || reason.isBlank() ? "unspecified" : reason.trim());
+    // Marked AFTER the pointer is gone, and best-effort: a crash between the two leaves an orphan
+    // directory the GC reaps, whereas marking first would leave state.json pointing at a directory
+    // already being deleted.
+    try {
+      SafeIndexPathOps.markForDeletion(resolveGenerationPath(safeBuilding), indicesDir);
+    } catch (Exception e) {
+      log.debug("Failed to mark abandoned generation {} for deletion: {}", safeBuilding, e.getMessage());
+    }
+    return next;
+  }
+
   /** Sets operator pause intent for migration orchestration (best-effort). */
   public State setMigrationPaused(boolean paused, String reason) throws IOException {
     State current = readStateBestEffort();

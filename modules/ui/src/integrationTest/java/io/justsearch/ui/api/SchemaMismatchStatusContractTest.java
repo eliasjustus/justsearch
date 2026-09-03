@@ -309,6 +309,20 @@ final class SchemaMismatchStatusContractTest {
             .open();
 
     try {
+      // One document, deliberately. A stale fingerprint on an index holding NOTHING is not a
+      // mismatch: there is no content that could have been written under the wrong shape and the
+      // next commit re-stamps the whole user-data map, so ParityDiagnostics excludes it and the
+      // status surface reports COMPATIBLE through the same predicate (tempdoc 915 C.14). Committing
+      // an empty index here made this contract test assert a state the product no longer produces.
+      runtime
+          .indexingCoordinator()
+          .indexSingle(
+              new io.justsearch.indexing.api.IndexDocument(
+                  Map.of(
+                      io.justsearch.indexing.SchemaFields.DOC_ID, "legacy-doc",
+                      io.justsearch.indexing.SchemaFields.DOC_UID, "legacy-doc#0",
+                      io.justsearch.indexing.SchemaFields.CONTENT,
+                          "written under a shape this runtime does not produce")));
       runtime.commitOps().commitAndTrack();
     } finally {
       runtime.close();

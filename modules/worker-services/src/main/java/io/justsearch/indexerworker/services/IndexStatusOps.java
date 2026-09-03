@@ -1150,17 +1150,23 @@ final class IndexStatusOps {
       // mismatch because the remedy is different: waiting will not fix it.
       return "BLOCKED_REBUILD_BRAKE";
     }
+    long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
     if (stored.isEmpty()) {
       // No recorded shape: either the index predates the key or a commit was made while an
       // input was indeterminate. Which one it is cannot be told from the commit, so the same
       // predicate the open-time guard uses decides it here — one rule, two consumers, so a
       // brand-new empty index is never reported as needing a rebuild by one and not the other.
-      long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
       return ParityDiagnostics.isIndexWithoutRecordedFingerprint(stored, docCount)
           ? "BLOCKED_LEGACY"
           : "COMPATIBLE";
     }
-    return current.equals(stored) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
+    if (current.equals(stored)) {
+      return "COMPATIBLE";
+    }
+    // A STALE fingerprint on an index holding nothing is the same non-event as an absent one: the
+    // next commit rewrites the whole user-data map. Through the guard's own predicate, so the two
+    // surfaces cannot disagree about an empty index in one direction after agreeing in the other.
+    return ParityDiagnostics.holdsNothingToMigrate(docCount) ? "COMPATIBLE" : "BLOCKED_MISMATCH";
   }
 
   /** True once the Worker has spent its automatic-rebuild budget on the current target shape. */

@@ -132,4 +132,107 @@ class ParityGuardTest {
         "a recorded shape is compared, not migrated blind");
   }
 
+  /**
+   * The asymmetry the round-4 review found: the empty-index exclusion was applied only where the
+   * STORED side was blank, so a 0-document index carrying a stale fingerprint still took the
+   * "changed" branch and would have burned a full blue/green migration rebuilding nothing. It
+   * re-stamps instead — {@code CommitOps.setLiveCommitData} replaces the whole user-data map on the
+   * next commit.
+   */
+  @Test
+  void anEmptyIndexWithAStaleFingerprintIsRestampedNotMigrated() {
+    Map<String, String> stored =
+        Map.of(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY, "a".repeat(64));
+    Map<String, Object> expected = new SsotCommitMetadataSource().build();
+
+    assertTrue(
+        ParityDiagnostics.diff(stored, expected, 0L).isEmpty(),
+        "an index with no documents has no content whose shape could be wrong");
+    assertTrue(
+        ParityDiagnostics.requiresRebuild(ParityDiagnostics.diff(stored, expected, 1L)),
+        "and the same stale fingerprint on an index that HOLDS something is still a rebuild —"
+            + " otherwise the exclusion would have swallowed the case it exists to allow");
+  }
+
+  /**
+   * Tempdoc 915 B4. Pre-open inspection answers "does the last commit record this runtime's shape?"
+   * — anything that stops it reading the commit leaves that UNANSWERED, which is not the same as
+   * answering "no". It used to raise {@code CORRUPT_INDEX} from a call site that sits outside
+   * {@code RuntimeSession.openComponentsWithRecovery}, so a corrupt index that used to self-heal at
+   * boot killed the Worker instead (and the same throw swallowed the legitimate older-Lucene-major
+   * upgrade, whose cause is an {@code IndexFormatTooOldException} raised from exactly here).
+   */
+  @Test
+  void anUnreadableCommitIsNotAMismatchAndIsNotFatal() throws Exception {
+    Path dir = Files.createTempDirectory("lucene-parity-corrupt");
+    var meta = new GoodMeta();
+    var r =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), meta, new JsonSchemaCommitMetadataValidator())
+            .atPath(dir)
+            .open();
+    r.indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(SchemaFields.DOC_ID, "c-1", SchemaFields.DOC_UID, "c-1#0")));
+    r.commitOps().commitAndTrack();
+    r.close();
+
+    try (var files = Files.list(dir)) {
+      Path segments =
+          files
+              .filter(p -> p.getFileName().toString().startsWith("segments"))
+              .findFirst()
+              .orElseThrow();
+      Files.write(segments, new byte[] {0, 1, 2, 3, 4, 5, 6, 7});
+    }
+
+    assertTrue(
+        IndexMetadataParityGuard.inspectCommittedParity(dir, meta::build).isEmpty(),
+        "a commit that cannot be read yields no diffs — the open that follows classifies the"
+            + " corruption and runs the recovery this must not pre-empt");
+  }
+
+  /**
+   * The counter half of G30. The lazy supplier was introduced because an eager version built the
+   * expected metadata on a directory with no commits; {@code CommitMetadataIntegrationTest} pins the
+   * fresh case. This pins the other one — on an index that DOES exist the metadata is built exactly
+   * once per inspection, not once per parity key.
+   */
+  @Test
+  void theExpectedMetadataIsBuiltOncePerInspectionOnAnExistingIndex() throws Exception {
+    Path dir = Files.createTempDirectory("lucene-parity-count");
+    var meta = new GoodMeta();
+    var r =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), meta, new JsonSchemaCommitMetadataValidator())
+            .atPath(dir)
+            .open();
+    r.indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(SchemaFields.DOC_ID, "n-1", SchemaFields.DOC_UID, "n-1#0")));
+    r.commitOps().commitAndTrack();
+    r.close();
+
+    java.util.concurrent.atomic.AtomicInteger builds =
+        new java.util.concurrent.atomic.AtomicInteger();
+    IndexMetadataParityGuard.inspectCommittedParity(
+        dir,
+        () -> {
+          builds.incrementAndGet();
+          return meta.build();
+        });
+    assertEquals(1, builds.get(), "one inspection, one expected-metadata build");
+
+    java.util.concurrent.atomic.AtomicInteger onMissing =
+        new java.util.concurrent.atomic.AtomicInteger();
+    IndexMetadataParityGuard.inspectCommittedParity(
+        dir.resolve("no-such-generation"),
+        () -> {
+          onMissing.incrementAndGet();
+          return meta.build();
+        });
+    assertEquals(0, onMissing.get(), "and none at all when there is nothing to compare against");
+  }
 }

@@ -73,16 +73,44 @@ final class WorkerBootFixture {
 
   /** Publishes a config pinning the data dir, the index base and the mismatch policy. */
   static void publishConfig(Path dataDir, Path indexBase, String policy) {
-    ResolvedConfig rc =
+    publishConfig(dataDir, indexBase, policy, Map.of());
+  }
+
+  /** As above, plus any extra resolved keys the case under test needs (e.g. auto-recovery). */
+  static void publishConfig(
+      Path dataDir, Path indexBase, String policy, Map<String, String> extras) {
+    ResolvedConfigBuilder builder =
         new ResolvedConfigBuilder()
             .contributeBaseSources()
             .putDefault("justsearch.data.dir", dataDir.toAbsolutePath().toString())
             .putDefault("justsearch.index.base_path", indexBase.toAbsolutePath().toString())
-            // Un-prefixed on purpose (ResolvedConfigBuilder:1545). Getting it wrong is silent: the
+            // Un-prefixed on purpose (ResolvedConfigBuilder:1544). Getting it wrong is silent: the
             // policy falls back to the dev default and the branch under test never runs.
-            .putDefault("index.schema_mismatch.policy", policy)
-            .build();
-    ConfigStore.setGlobal(new ConfigStore(rc));
+            .putDefault("index.schema_mismatch.policy", policy);
+    extras.forEach(builder::putDefault);
+    ConfigStore.setGlobal(new ConfigStore(builder.build()));
+  }
+
+  /**
+   * Puts the layout into the state a boot that resumes a migration sees: {@code migration_state =
+   * MIGRATING} with a Green seeded at {@code greenFingerprint}. Shared because two different
+   * properties turn on it — what a FRESH budget does with a mismatched Green, and what a SPENT one
+   * does — and re-seeding it per test is how the two drifted onto different catalogs.
+   *
+   * @return the Green generation id
+   */
+  static String seedInFlightGreen(Layout layout, String greenFingerprint, int docs)
+      throws Exception {
+    IndexGenerationManager.State inFlight =
+        layout.genManager().startMigration("schema_mismatch");
+    String greenId = inFlight.building_generation();
+    seed(layout.genManager().resolveGenerationPathStrict(greenId), greenFingerprint, docs);
+    return greenId;
+  }
+
+  /** The {@code index_fingerprint} this runtime would write — the brake's target key. */
+  static String currentFingerprint() {
+    return new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY).toString();
   }
 
   static WorkerConfig workerConfig(Path dataDir) {
