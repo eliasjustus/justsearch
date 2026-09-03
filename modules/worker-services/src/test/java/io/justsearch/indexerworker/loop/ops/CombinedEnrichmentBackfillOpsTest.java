@@ -78,7 +78,21 @@ class CombinedEnrichmentBackfillOpsTest {
               Map<String, String> m = new HashMap<>();
               for (String id : ids) {
                 String c = contentByDoc.get(id);
-                if (c != null) m.put(id, c);
+                if (c != null) {
+                  m.put(id, c);
+                  continue;
+                }
+                Map<String, Object> state = fakeIndex.getOrDefault(id, Map.of());
+                if (!"true".equals(state.get(SchemaFields.IS_CHUNK))) continue;
+                String parentId = (String) state.get(SchemaFields.PARENT_DOC_ID);
+                String parentContent = contentByDoc.get(parentId);
+                if (parentContent == null) continue;
+                int start =
+                    Integer.parseInt((String) state.get(SchemaFields.CHUNK_START_CHAR));
+                int end = Integer.parseInt((String) state.get(SchemaFields.CHUNK_END_CHAR));
+                if (start >= 0 && end >= start && end <= parentContent.length()) {
+                  m.put(id, parentContent.substring(start, end));
+                }
               }
               return m;
             });
@@ -213,7 +227,7 @@ class CombinedEnrichmentBackfillOpsTest {
       "tempdoc 717 (P1): a blank-content chunk is escalated (retry), never marked COMPLETED without"
           + " a vector")
   void blankContentChunk_escalatesInsteadOfMarkingCompleted() {
-    // A pending chunk with NO chunk_content and no CONTENT fallback — a fetch/consistency anomaly.
+    // A pending chunk whose parent content cannot be reconstructed — a fetch/consistency anomaly.
     // The old behavior marked CHUNK_EMBEDDING_STATUS=COMPLETED with no embed (a silent data-less
     // COMPLETED, the F-032 "status lies" class). It must now escalate via the retry seam.
     seedChunkDoc("chunk-blank", "parent-0", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
@@ -607,7 +621,7 @@ class CombinedEnrichmentBackfillOpsTest {
     // SPLADE and NER succeeded independently in the same per-doc entry.
     assertEquals(SchemaFields.SPLADE_STATUS_COMPLETED, state.get(SchemaFields.SPLADE_STATUS));
     assertEquals(SchemaFields.NER_STATUS_COMPLETED, state.get(SchemaFields.NER_STATUS));
-    assertEquals("Alice", state.get(SchemaFields.ENTITY_PERSONS_TEXT));
+    assertEquals(List.of("Alice"), state.get(SchemaFields.ENTITY_PERSONS_RAW));
 
     verify(indexingCoordinator, times(1)).updateDocumentsBatch(anyList());
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
@@ -666,7 +680,7 @@ class CombinedEnrichmentBackfillOpsTest {
     assertEquals("0", parentState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
     assertEquals(SchemaFields.SPLADE_STATUS_COMPLETED, parentState.get(SchemaFields.SPLADE_STATUS));
     assertEquals(SchemaFields.NER_STATUS_COMPLETED, parentState.get(SchemaFields.NER_STATUS));
-    assertEquals("Alice", parentState.get(SchemaFields.ENTITY_PERSONS_TEXT));
+    assertEquals(List.of("Alice"), parentState.get(SchemaFields.ENTITY_PERSONS_RAW));
 
     // Chunk docs are untouched — VECTOR-only mode never derives a CHUNK_VECTOR, and
     // chunkVectorsEnabled=false in this harness keeps them out of the batch entirely.
@@ -863,21 +877,23 @@ class CombinedEnrichmentBackfillOpsTest {
   // ---------------------------------------------------------------------------------------
   // Tempdoc 712: chunk-level SPLADE enrichment (flag-gated, default OFF). Chunk docs are
   // seeded splade_status=PENDING at index time (ChunkDocumentWriter) and picked up by the
-  // combined pass's splade-status query, but they carry CHUNK_CONTENT, never CONTENT — so the
-  // parent lane's blank-content early-out historically marked their splade COMPLETED without
-  // ever encoding (silent data-less COMPLETED; the mechanism behind the dead chunk-sparse
-  // sub-leg, F-033). Flag OFF pins that historical behavior byte-identically; flag ON encodes
-  // chunk_content into the splade FeatureField inside the same single bundled write.
+  // combined pass's splade-status query. Their text is reconstructed from the stored parent plus
+  // chunk offsets — so the parent lane's blank-content early-out historically marked their splade
+  // COMPLETED without ever encoding (silent data-less COMPLETED; the mechanism behind the dead
+  // chunk-sparse sub-leg, F-033). Flag OFF pins that historical behavior byte-identically; flag ON
+  // encodes the reconstructed slice into the splade FeatureField in one bundled write.
   // ---------------------------------------------------------------------------------------
 
-  /** Seeds a chunk doc carrying CHUNK_CONTENT + a splade status (712 chunk-sparse fixtures). */
+  /** Seeds a parent-backed chunk slice plus a SPLADE status (712 chunk-sparse fixtures). */
   private void seedSpladeChunkDoc(
-      String chunkId, String parentId, String chunkContent, String spladeStatus,
+      String chunkId, String parentId, String expectedChunkText, String spladeStatus,
       String chunkEmbeddingStatusOrNull) {
+    contentByDoc.put(parentId, expectedChunkText);
     Map<String, Object> state = fakeIndex.computeIfAbsent(chunkId, k -> new HashMap<>());
     state.put(SchemaFields.IS_CHUNK, "true");
     state.put(SchemaFields.PARENT_DOC_ID, parentId);
-    state.put(SchemaFields.CHUNK_CONTENT, chunkContent);
+    state.put(SchemaFields.CHUNK_START_CHAR, "0");
+    state.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(expectedChunkText.length()));
     state.put(SchemaFields.SPLADE_STATUS, spladeStatus);
     if (chunkEmbeddingStatusOrNull != null) {
       state.put(SchemaFields.CHUNK_EMBEDDING_STATUS, chunkEmbeddingStatusOrNull);
@@ -925,8 +941,9 @@ class CombinedEnrichmentBackfillOpsTest {
   @Test
   @DisplayName(
       "chunk-SPLADE flag ON, parent-lane pickup (splade-status query): a splade-PENDING chunk doc"
-          + " is encoded from CHUNK_CONTENT and completed in ONE bundled write")
-  void chunkSpladeOn_parentLanePickup_encodesChunkContent_oneBundledWrite() throws Exception {
+          + " is encoded from its reconstructed parent slice and completed in ONE bundled write")
+  void chunkSpladeOn_parentLanePickup_encodesReconstructedSlice_oneBundledWrite()
+      throws Exception {
     seedSpladeChunkDoc(
         "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
     when(spladeEncoder.encodeBatch(anyList()))

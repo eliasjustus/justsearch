@@ -2,6 +2,7 @@ package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
@@ -166,6 +167,7 @@ class RmwFieldPreservationTest {
           chunk.put(SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f));
           chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
           chunk.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
+          seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
 
@@ -175,7 +177,7 @@ class RmwFieldPreservationTest {
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
-                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                  "chunk-0", Map.of(SchemaFields.CHUNK_TOTAL, "1")));
           commit(runtime);
 
           assertEquals(
@@ -205,12 +207,13 @@ class RmwFieldPreservationTest {
           chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
           chunk.put(SchemaFields.CHUNK_VECTOR, VEC);
           chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
-                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                  "chunk-0", Map.of(SchemaFields.PATH, "test/renamed.txt")));
           commit(runtime);
 
           assertArrayEquals(
@@ -239,6 +242,7 @@ class RmwFieldPreservationTest {
           chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
           chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
           // Deliberately NO CHUNK_VECTOR — the degenerate state.
+          seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
 
@@ -280,13 +284,14 @@ class RmwFieldPreservationTest {
           chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
           chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
           // COMPLETED but vectorless — the F-032 "status lies" state.
+          seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
 
           // A subset RMW omitting chunk_vector: the re-read is null, so the fallback must reset.
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
-                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                  "chunk-0", Map.of(SchemaFields.PATH, "test/renamed.txt")));
           commit(runtime);
 
           var counts = runtime.indexCountOps().queryChunkEmbeddingCounts();
@@ -348,12 +353,13 @@ class RmwFieldPreservationTest {
           chunk.put(SchemaFields.CHUNK_CONTENT, "chunk body");
           chunk.put(SchemaFields.CHUNK_VECTOR, VEC);
           chunk.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+          seedParentForChunk(runtime, chunk, "chunk body");
           runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
           commit(runtime);
 
           assertTrue(
               runtime.indexingCoordinator().updateDocument(
-                  "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                  "chunk-0", Map.of(SchemaFields.PATH, "test/renamed.txt")));
           commit(runtime);
 
           assertArrayEquals(
@@ -366,6 +372,114 @@ class RmwFieldPreservationTest {
               "status stays COMPLETED when the vector was actually preserved");
         },
         this::createRuntimeWithChunkVector);
+  }
+
+  @Test
+  void nonStoredChunkContentPostingsSurviveSingleRmw() throws Exception {
+    withConfig(
+        (runtime) -> {
+          indexParent(runtime, "parent-0", "alpha beta");
+          indexChunk(runtime, "chunk-0", "parent-0", "alpha", 0, 5);
+          commit(runtime);
+          assertEquals(1, chunkTextHits(runtime, "alpha"));
+
+          assertTrue(
+              runtime.indexingCoordinator().updateDocument(
+                  "chunk-0", Map.of(SchemaFields.CHUNK_TOTAL, "1")));
+          commit(runtime);
+
+          assertEquals(
+              1,
+              chunkTextHits(runtime, "alpha"),
+              "a partial rewrite must carry the reconstructed text postings forward");
+          assertEquals("alpha", runtime.documentFieldOps().getDocumentContent("chunk-0"));
+        },
+        this::createRuntimeWithChunkText);
+  }
+
+  @Test
+  void chunkGeometryUpdateReindexesTheNewExactParentSlice() throws Exception {
+    withConfig(
+        (runtime) -> {
+          indexParent(runtime, "parent-0", "alpha beta");
+          indexChunk(runtime, "chunk-0", "parent-0", "alpha", 0, 5);
+          commit(runtime);
+
+          assertTrue(
+              runtime
+                  .indexingCoordinator()
+                  .updateDocument(
+                      "chunk-0",
+                      Map.of(
+                          SchemaFields.CHUNK_START_CHAR,
+                          "6",
+                          SchemaFields.CHUNK_END_CHAR,
+                          "10")));
+          commit(runtime);
+
+          assertEquals(0, chunkTextHits(runtime, "alpha"));
+          assertEquals(1, chunkTextHits(runtime, "beta"));
+          assertEquals("beta", runtime.documentFieldOps().getDocumentContent("chunk-0"));
+        },
+        this::createRuntimeWithChunkText);
+  }
+
+  @Test
+  void nonStoredSiblingChunkPostingsSurviveBatchRmw() throws Exception {
+    withConfig(
+        (runtime) -> {
+          indexParent(runtime, "parent-0", "alpha beta");
+          indexChunk(runtime, "chunk-0", "parent-0", "alpha", 0, 5);
+          indexChunk(runtime, "chunk-1", "parent-0", "beta", 6, 10);
+          commit(runtime);
+
+          var result =
+              runtime
+                  .indexingCoordinator()
+                  .updateDocumentsBatch(
+                      List.of(
+                          Map.entry(
+                              "chunk-0",
+                              Map.<String, Object>of(SchemaFields.CHUNK_TOTAL, "2")),
+                          Map.entry(
+                              "chunk-1",
+                              Map.<String, Object>of(SchemaFields.CHUNK_TOTAL, "2"))));
+          commit(runtime);
+
+          assertEquals(2, result.updatedCount());
+          assertEquals(0, result.notFoundCount());
+          assertEquals(1, chunkTextHits(runtime, "alpha"));
+          assertEquals(1, chunkTextHits(runtime, "beta"));
+        },
+        this::createRuntimeWithChunkText);
+  }
+
+  @Test
+  void nonStoredChunkContentSurvivesParentPathUpdate() throws Exception {
+    withConfig(
+        (runtime) -> {
+          String oldPath = "C:\\docs\\old.txt";
+          String newPath = "C:\\docs\\renamed.txt";
+          indexParent(runtime, oldPath, "alpha beta");
+          indexChunk(runtime, "chunk-0", oldPath, "alpha", 0, 5);
+          commit(runtime);
+
+          assertEquals(2, runtime.indexingCoordinator().updateDocumentPaths(oldPath, newPath));
+          commit(runtime);
+
+          assertEquals(
+              1,
+              chunkTextHits(runtime, "alpha"),
+              "renaming the parent must not erase the chunk's indexed text");
+          assertEquals(
+              "alpha",
+              runtime.documentFieldOps().getDocumentContent("chunk-0"),
+              "the renamed parent id must still resolve the exact stored offset slice");
+          assertEquals(
+              newPath,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.PARENT_DOC_ID));
+        },
+        this::createRuntimeWithChunkText);
   }
 
   /**
@@ -493,6 +607,41 @@ class RmwFieldPreservationTest {
     assertTrue(ex.getMessage().contains("only vector fields"), ex.getMessage());
   }
 
+  @Test
+  void startupAcceptsParentSlicePolicyOnChunkContent() throws Exception {
+    String catalogJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "chunk_content", "type": "text", "stored": false, "docValues": false, "roles": [], "analyzer": "icu", "rmwPolicy": "rederive-parent-slice" }
+          ]
+        }
+        """;
+
+    assertDoesNotThrow(() -> new FieldMapper(json(catalogJson)).validateRmwPolicies());
+  }
+
+  @Test
+  void startupRejectsParentSlicePolicyOnAnyOtherField() throws Exception {
+    String badJson =
+        """
+        {
+          "fields": [
+            { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
+            { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
+            { "id": "ghost_text", "type": "text", "stored": false, "docValues": false, "roles": [], "analyzer": "icu", "rmwPolicy": "rederive-parent-slice" }
+          ]
+        }
+        """;
+    IllegalStateException ex =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new FieldMapper(json(badJson)).validateRmwPolicies());
+    assertTrue(ex.getMessage().contains("only supported on the chunk_content"), ex.getMessage());
+  }
+
   // ---- helpers ----
 
   private void indexDoc(RunningRuntime runtime, String id, float[] vec, String spladeStatus) {
@@ -512,6 +661,51 @@ class RmwFieldPreservationTest {
     commit(runtime);
   }
 
+  private static void indexParent(RunningRuntime runtime, String parentId, String content) {
+    runtime
+        .indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(
+                    SchemaFields.DOC_ID,
+                    parentId,
+                    SchemaFields.DOC_UID,
+                    parentId + "#0",
+                    SchemaFields.PATH,
+                    parentId,
+                    SchemaFields.CONTENT,
+                    content)));
+  }
+
+  private static void indexChunk(
+      RunningRuntime runtime,
+      String chunkId,
+      String parentId,
+      String content,
+      int startChar,
+      int endChar) {
+    Map<String, Object> chunk = new HashMap<>();
+    chunk.put(SchemaFields.DOC_ID, chunkId);
+    chunk.put(SchemaFields.DOC_UID, chunkId + "#0");
+    chunk.put(SchemaFields.PATH, parentId);
+    chunk.put(SchemaFields.IS_CHUNK, "true");
+    chunk.put(SchemaFields.PARENT_DOC_ID, parentId);
+    chunk.put(SchemaFields.CHUNK_INDEX, "0");
+    chunk.put(SchemaFields.CHUNK_TOTAL, "1");
+    chunk.put(SchemaFields.CHUNK_START_CHAR, String.valueOf(startChar));
+    chunk.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(endChar));
+    chunk.put(SchemaFields.CHUNK_CONTENT, content);
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
+  }
+
+  private static void seedParentForChunk(
+      RunningRuntime runtime, Map<String, Object> chunk, String parentContent) {
+    String parentId = chunk.get(SchemaFields.PARENT_DOC_ID).toString();
+    indexParent(runtime, parentId, parentContent);
+    chunk.put(SchemaFields.CHUNK_START_CHAR, "0");
+    chunk.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(parentContent.length()));
+  }
+
   private static void commit(RunningRuntime runtime) {
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();
@@ -525,6 +719,15 @@ class RmwFieldPreservationTest {
                 searcher.count(
                     org.apache.lucene.document.FeatureField.newSaturationQuery(
                         SchemaFields.SPLADE, feature)));
+  }
+
+  private static int chunkTextHits(RunningRuntime runtime, String term) throws Exception {
+    return runtime
+        .readPathOps()
+        .withSearcher(
+            searcher ->
+                searcher.count(
+                    new TermQuery(new Term(SchemaFields.CHUNK_CONTENT, term))));
   }
 
   private static float[] readVector(RunningRuntime runtime, String field, String docId)
@@ -640,9 +843,12 @@ class RmwFieldPreservationTest {
             { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
             { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
             { "id": "path", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "content", "type": "text", "stored": true, "docValues": false },
             { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-            { "id": "chunk_content", "type": "text", "stored": true, "docValues": false },
+            { "id": "chunk_content", "type": "text", "stored": false, "docValues": false, "rmwPolicy": "rederive-parent-slice" },
+            { "id": "chunk_start_char", "type": "long", "stored": true, "docValues": true },
+            { "id": "chunk_end_char", "type": "long", "stored": true, "docValues": true },
             { "id": "splade_status", "type": "keyword", "stored": false, "docValues": true, "roles": ["filter"] },
             { "id": "splade_retry_count", "type": "long", "stored": false, "docValues": true },
             { "id": "splade", "type": "splade", "stored": false, "docValues": false, "rmwPolicy": "reset-status:splade_status" }
@@ -659,15 +865,22 @@ class RmwFieldPreservationTest {
             { "id": "doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["id"] },
             { "id": "doc_uid", "type": "keyword", "stored": false, "docValues": true, "roles": ["tiebreak"] },
             { "id": "path", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
+            { "id": "content", "type": "text", "stored": true, "docValues": false },
             { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
-            { "id": "chunk_content", "type": "text", "stored": true, "docValues": false },
+            { "id": "chunk_content", "type": "text", "stored": false, "docValues": false, "rmwPolicy": "rederive-parent-slice" },
+            { "id": "chunk_start_char", "type": "long", "stored": true, "docValues": true },
+            { "id": "chunk_end_char", "type": "long", "stored": true, "docValues": true },
             { "id": "chunk_embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
             { "id": "chunk_embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
             { "id": "chunk_vector", "type": "vector", "stored": false, "docValues": false, "rmwPolicy": "preserve-reread-or-reset:chunk_embedding_status", "vector": { "dimension": 4 } }
           ]
         }
         """);
+  }
+
+  private RunningRuntime createRuntimeWithChunkText() {
+    return IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(4)).ephemeral().open();
   }
 
   private RunningRuntime open(String json) {

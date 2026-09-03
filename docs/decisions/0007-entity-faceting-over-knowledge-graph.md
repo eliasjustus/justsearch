@@ -7,7 +7,7 @@ date: 2026-01-22
 updated: 2026-02-11
 probes:
   - adr-0007-entity-boost-retired-or-off
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0007: Entity Faceting Over Full Knowledge Graph
@@ -94,8 +94,10 @@ the physical fields and their writers in the fingerprint-moving bundle:
 - `justsearch.search.entity_boost` / `JUSTSEARCH_SEARCH_ENTITY_BOOST` are no longer configuration
   inputs. The public `entityBoost` status property remains as an always-zero compatibility
   tombstone; protobuf field 9 is not deleted or reused.
-- `SSOT/catalogs/fields.v1.json` still declares the three `entity_*_text` fields until PR-C2, so C0
-  is fingerprint-neutral. They are indexed but no longer queried.
+- PR-C2 removed the three `entity_*_text` fields and their writers. The physical catalog change
+  moves `index_fingerprint` and is rebuilt through the blue/green migration path.
+- Evidence-span NER membership now consumes the retained `entity_*_raw` values directly; entity
+  filtering, faceting, disambiguation, and delivery carriage remain unchanged.
 
 The `entity_*_raw` keyword fields named in the Decision section are unaffected: they are the
 facet fields, and faceting is the shipped decision.
@@ -104,9 +106,9 @@ facet fields, and faceting is the shipped decision.
 
 `adr-0007-entity-boost-retired-or-off` is an `any-of` probe with two alternatives — the functional
 configuration/query machinery is absent, **or** the `entity_*_text` fields are gone from
-`SSOT/catalogs/fields.v1.json`. C0 satisfies the first; C2 satisfies both. It fails only if query
-machinery returns while the fields still exist. The compatibility tombstone is intentionally not
-scanned because its continued presence protects the public wire contract.
+`SSOT/catalogs/fields.v1.json`. C0 satisfied the first; C2 satisfies both. It fails only if query
+machinery returns while the fields exist. The compatibility tombstone is intentionally not scanned
+because its continued presence protects the public wire contract.
 
 `any-of` was added to the probe engine for this case
 (`scripts/governance/gates/adr-coverage/probes.mjs`). It is for a premise that is true for two

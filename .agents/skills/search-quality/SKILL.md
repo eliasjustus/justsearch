@@ -2703,9 +2703,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 
@@ -3436,7 +3436,7 @@ query-time stages search against.
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
 | 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
-| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
+| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes the multi-valued keyword fields `entity_persons_raw`, `entity_organizations_raw`, and `entity_locations_raw` for filters, facets, and NER-membership evidence selection; the redundant analyzed entity-text duplicates were retired in 915 PR-C2 |
 | 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
 | 9   | **Commit**               | `CommitOps`                    | On time (>10 s), size (>1,000 docs), or shutdown; NRT refresh                                 |
 

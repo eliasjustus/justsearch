@@ -1,7 +1,9 @@
 package io.justsearch.adapters.lucene.commit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.Chunking;
@@ -10,6 +12,8 @@ import io.justsearch.adapters.lucene.commit.IndexFingerprint.Hnsw;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.Inputs;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.ModelFingerprint;
 import java.util.List;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.Test;
@@ -25,6 +29,8 @@ import org.junit.jupiter.api.Test;
  * is not.
  */
 final class CatalogPhysicalProjectionTest {
+
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private static final String WITHOUT_ANNOTATION =
       """
@@ -56,7 +62,22 @@ final class CatalogPhysicalProjectionTest {
       """;
 
   private static JsonNode parse(String json) {
-    return JsonMapper.builder().build().readTree(json);
+    return JSON.readTree(json);
+  }
+
+  private static JsonNode productionCatalog() throws Exception {
+    try (var in =
+        CatalogPhysicalProjectionTest.class.getResourceAsStream("/SSOT/catalogs/fields.v1.json")) {
+      assertNotNull(in, "the runtime SSOT catalog must be present on the test classpath");
+      return JSON.readTree(in);
+    }
+  }
+
+  private static ObjectNode field(JsonNode catalog, String id) {
+    for (JsonNode candidate : catalog.path("fields")) {
+      if (id.equals(candidate.path("id").asText())) return (ObjectNode) candidate;
+    }
+    return null;
   }
 
   private static Inputs inputsFor(String catalogJson, Integer effectiveDimension) {
@@ -136,6 +157,38 @@ final class CatalogPhysicalProjectionTest {
         fingerprint(WITHOUT_ANNOTATION),
         fingerprint(withExtraField),
         "adding or removing a field changes what documents carry");
+  }
+
+  @Test
+  void wave2StorageDeletionMovesTheProductionCatalogFingerprint() throws Exception {
+    JsonNode current = productionCatalog();
+    ObjectNode chunkContent = field(current, "chunk_content");
+    assertNotNull(chunkContent, "chunk_content remains an indexed field");
+    assertFalse(chunkContent.path("stored").asBoolean(), "chunk_content is no longer stored");
+    assertNull(field(current, "entity_persons_text"));
+    assertNull(field(current, "entity_organizations_text"));
+    assertNull(field(current, "entity_locations_text"));
+
+    ObjectNode legacy = (ObjectNode) current.deepCopy();
+    field(legacy, "chunk_content").put("stored", true);
+    ArrayNode fields = (ArrayNode) legacy.path("fields");
+    for (String id :
+        List.of("entity_persons_text", "entity_organizations_text", "entity_locations_text")) {
+      ObjectNode retired = JSON.createObjectNode();
+      retired.put("id", id);
+      retired.put("type", "text");
+      retired.put("stored", true);
+      retired.put("docValues", false);
+      retired.put("analyzer", "icu");
+      retired.putArray("roles");
+      fields.add(retired);
+    }
+
+    assertNotEquals(
+        fingerprint(current.toString()),
+        fingerprint(legacy.toString()),
+        "stopping duplicate chunk storage and deleting the three physical entity text fields must"
+            + " invalidate indexes built with the legacy shape");
   }
 
   @Test

@@ -184,6 +184,8 @@ public final class FieldMapper {
    * F-032 "status lies" hole that plain {@code preserve-reread} left open).
    */
   static final String RMW_PRESERVE_REREAD_OR_RESET_PREFIX = "preserve-reread-or-reset:";
+  /** RMW policy for indexed chunk text reconstructed exactly from its stored parent offsets. */
+  static final String RMW_REDERIVE_PARENT_SLICE = "rederive-parent-slice";
 
   /**
    * Fail-fast catalog validation (tempdoc 711, generalized to every type by tempdoc 714): every
@@ -231,6 +233,13 @@ public final class FieldMapper {
         }
         if (policy.startsWith(RMW_RESET_STATUS_PREFIX)) {
           validateResetTarget(def, policy.substring(RMW_RESET_STATUS_PREFIX.length()));
+          continue;
+        }
+        if (policy.equals(RMW_REDERIVE_PARENT_SLICE)) {
+          if (!SchemaFields.CHUNK_CONTENT.equals(def.id) || !"text".equals(def.type)) {
+            throw new IllegalStateException(
+                "rmwPolicy 'rederive-parent-slice' is only supported on the chunk_content text field");
+          }
           continue;
         }
         throw new IllegalStateException(

@@ -83,7 +83,10 @@ final class GrpcIngestServiceChunkRegenerationTest {
     String mimeBase = "application/pdf";
     String fileKind = "pdf";
 
-    String content = "     " + repeat("lorem ipsum ", 600);
+    String content =
+        " \t\r\n# Unicode 🚀 heading\r\n```java\r\nString emoji = \"🧪\";\r\n```\r\n"
+            + repeat("lorem 🐝 ipsum\r\n", 600)
+            + "\r\n  ";
     assertTrue(content.length() > ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS);
 
     lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
@@ -136,6 +139,10 @@ final class GrpcIngestServiceChunkRegenerationTest {
       long end = Long.parseLong(fields.get(SchemaFields.CHUNK_END_CHAR));
       assertEquals(expected.get(i).startChar(), start);
       assertEquals(expected.get(i).endChar(), end);
+      assertEquals(
+          content.substring(Math.toIntExact(start), Math.toIntExact(end)),
+          fields.get(SchemaFields.CHUNK_CONTENT),
+          "reconstructed chunk text must equal the exact parent-content slice without trimming");
 
       assertEquals(mime, fields.get(SchemaFields.MIME));
       assertEquals(mimeBase, fields.get(SchemaFields.MIME_BASE));
