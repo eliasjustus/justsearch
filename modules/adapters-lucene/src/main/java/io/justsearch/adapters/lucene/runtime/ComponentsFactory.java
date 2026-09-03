@@ -156,8 +156,13 @@ final class ComponentsFactory {
         // so post-crash body corruption is detected without paying FULL on every clean boot. Gated to
         // the read-only/deferred-first open — the deferred writer-upgrade reopens read-write and must
         // not re-pay FULL on a healthy index (the read-only open already verified it).
+        //
+        // Reads the marker without consuming it (tempdoc 915 O14): this open takes no writer, so it
+        // cannot leave the index unclean, and clearing a marker it will never re-write made every
+        // subsequent read-only boot report a crash that did not happen. The clear moves to the
+        // writer open below.
         if (readOnly && !fullScan) {
-          boolean cleanLastShutdown = CleanShutdownMarker.consumeWasClean(resolvedPath);
+          boolean cleanLastShutdown = CleanShutdownMarker.wasClean(resolvedPath);
           if (!cleanLastShutdown) {
             log.info(
                 "Unclean previous shutdown detected at {} — running FULL integrity verification.",
@@ -328,6 +333,11 @@ final class ComponentsFactory {
       }
 
       w = new IndexWriter(dir, cfg);
+      // A writer now exists, so this session CAN die mid-commit: invalidate the previous clean
+      // shutdown. RuntimeSession.close() re-writes it if this writer closes cleanly. Deliberately
+      // outside the integrity-tier block above — whether the next boot scans is a separate question
+      // from whether this session could dirty the index.
+      CleanShutdownMarker.consume(resolvedPath);
       softDeletesReader =
           new SoftDeletesDirectoryReaderWrapper(
               DirectoryReader.open(w, /*applyAllDeletes=*/ true, /*writeAllDeletes=*/ true),

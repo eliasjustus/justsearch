@@ -295,6 +295,15 @@ commit, so the next write re-stamps it. `ParityDiagnostics.holdsNothingToMigrate
 one predicate; the status surface (`IndexStatusOps`) reports through it too, so a fresh install is
 never told by one surface to rebuild an index the other considers fine.
 
+**Only a writer invalidates the clean-shutdown marker.** The marker exists so the next open can
+escalate to a FULL integrity scan after a writer died mid-commit. A read-only open takes no writer,
+so it cannot leave the index unclean — it reads the marker to decide whether to escalate and leaves
+it in place. The clear happens when the `IndexWriter` opens, and `RuntimeSession.close()` re-writes
+it when that writer closes cleanly. Fusing the two made a Worker that serves the active generation
+read-only for its whole life (a migration, or the exhausted-brake state) delete a marker it would
+never re-write, so every subsequent boot reported a crash that had not happened and paid a FULL
+verification for it.
+
 **An unrecognised `index.schema_mismatch.policy` falls back to the mode default** (production
 `BLUE_GREEN_MIGRATE`, development `REBUILD_BACKUP_FIRST`) with a WARN naming the valid values,
 resolved in `ResolvedConfigBuilder` so every consumer sees the same answer. A typo in one config key

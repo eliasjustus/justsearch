@@ -408,10 +408,17 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
   }
 
   @Test
-  void cleanCloseWritesMarkerAndOpenConsumesIt() throws Exception {
+  void cleanCloseWritesMarkerAndTheWriterOpenConsumesIt() throws Exception {
     // tempdoc 628 Gap 1: the clean-shutdown marker is what gates the STRUCTURAL→FULL escalation. A
-    // graceful writable close must write it; the next open must consume it (so a crash THIS session is
-    // detectable next time). (FULL's body-bit-rot detection itself is covered by IndexIntegrityCheckTest.)
+    // graceful writable close must write it, and the next WRITER open must consume it (so a crash
+    // THIS session is detectable next time). (FULL's body-bit-rot detection itself is covered by
+    // IndexIntegrityCheckTest.)
+    //
+    // Tempdoc 915 O14 corrected which open does the consuming. This case asserted that ANY open
+    // did, including a read-only one — and that is the defect: a read-only open takes no writer, so
+    // it cannot leave the index unclean, and clearing a marker it will never re-write made every
+    // later read-only boot report a crash that had not happened. The read-only half is now pinned
+    // the other way in CleanShutdownMarkerLifecycleTest.
     Path dataRoot = dataDir();
     Path indexPath = dataRoot.resolve("marker-lifecycle-idx");
     Files.createDirectories(indexPath);
@@ -432,12 +439,19 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
         Files.exists(CleanShutdownMarker.pathFor(indexPath)),
         "a graceful writable close must write the clean-shutdown marker");
 
-    // A subsequent open consumes the marker so an unclean shutdown of this session would be detected.
     ReadOnlyRuntime ro = schema.atPath(indexPath).withFallbackIndexPath(dataRoot).openReadOnly();
     ro.close();
+    assertTrue(
+        Files.exists(CleanShutdownMarker.pathFor(indexPath)),
+        "a read-only open reads the marker to decide whether to escalate, and leaves it: it writes"
+            + " nothing, so it cannot be the session that dirties the index");
+
+    // A writer CAN die mid-commit, so its open is what invalidates the previous clean shutdown.
+    RunningRuntime rw2 = schema.atPath(indexPath).withFallbackIndexPath(dataRoot).open();
     assertFalse(
         Files.exists(CleanShutdownMarker.pathFor(indexPath)),
-        "opening the index must consume (clear) the clean-shutdown marker");
+        "opening a WRITER must consume (clear) the clean-shutdown marker");
+    rw2.close();
   }
 
   // ==========================================================================

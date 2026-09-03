@@ -733,6 +733,7 @@ of the former changed, which is not config-surface growth. `config-surface` is r
 | D.47 | **Cutover restart + D4.** `preserveEvidenceBeforeRestart(context, promoted)` writes the clean-shutdown marker for the promoted generation and flushes the metrics snapshot, immediately after the promotion and before `initiateShutdownAction`. New `flushTelemetryAction` component on `CutoverContext`, wired to `KnowledgeServer.flushTelemetryBestEffort` | `KnowledgeServerMigrationOps.java`, `KnowledgeServer.java` |
 | D.48 | **Nit.** The unreadable-commit WARN is latched on `path\|exceptionClass`, so one unreadable index produces one line across the pre-open check and the open-time guard — and a second, different unreadable generation still says so | `IndexMetadataParityGuard.java` |
 | D.49 | **Round-5 tests.** `MidMigrationCompatSurfaceTest` (a real `GrpcIngestService` over two different runtimes — a wiring test, because handing `IndexStatusOps` the values under test is the mistake itself); `CutoverRestartEvidenceTest`; `BrakeExhaustedWorkerServesReadOnlyTest` +count/fingerprint assertions and a second case that clears `auto_rebuild_*` from `state.json` by hand and asserts the next boot migrates as a MISMATCH rather than as a legacy index; `PreOpenSchemaMismatchBootTest` asserts the fatal-reason marker under FAIL_CLOSED and exactly ONE unreadable-commit WARN | see §F round 6 |
+| D.50 | **O14.** `CleanShutdownMarker.consumeWasClean` split into `wasClean` (non-destructive) + `consume`; `ComponentsFactory`'s dirty-open escalation only reads, and the consume happens at `new IndexWriter`. New `CleanShutdownMarkerLifecycleTest`: five consecutive read-only boots leave the marker in place, a writable open clears it, a clean close re-writes it, and a writer that never closes leaves it absent | `CleanShutdownMarker.java`, `ComponentsFactory.java` |
 | D.23 | **Review round.** `ParityDiagnostics`: `LEGACY_INDEX_HINT` + the asymmetric blank-side rule (§C.5a). `IndexMetadataParityGuard`: `warnIfFingerprintUncomputable`, once per process. `ResolvedConfig.Index`: `DEFAULT_VECTOR_HNSW_M` / `DEFAULT_VECTOR_HNSW_EF_CONSTRUCTION` + `effectiveVectorHnsw*()`; `ComponentsFactory` reads them instead of its own 16/200. `IndexFingerprint`: `Analysis`, `threshold_chars`, `preview.max_chars`, `ner_model_sha256`, three-arg provider install. New `NerFingerprint` (worker-core). `SpladeFingerprint`: a missing model file is `NOT_CONFIGURED`. `ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS` made public; both constants mirrored into `SsotCommitMetadataSource` with a drift test. `KnowledgeServer`: `recordAutoRebuildAttemptOrSkip` (no budget for an unattributable boot), `expectedIndexFingerprintOrNull` (guarded), and exhaustion opens Blue read-only. `LifecycleReasonCode.INDEX_REBUILD_BRAKE_EXHAUSTED`; `StatusLifecycleHandler.compatBlockedReason` maps `BLOCKED_REBUILD_BRAKE`; `IndexStatusOps` produces it. `readinessNotice.ts`: corrected comment + new `index.rebuild_brake_exhausted` row, added to `REINDEX_CAUSE_CODES`. `WorkerSpawner` comment; `SchemaMismatchStatusContractTest` states its escape use; `environment-variables.md` documents the per-mode default | see §F round 2 |
 
 ---
@@ -849,6 +850,14 @@ restored. Driver: `tmp/falsify.sh` + `tmp/falsify-patch.py` (deleted before comm
 | F10 | prod default back to `FAIL_CLOSED` | `ResolvedConfigBuilderTest` | `null/blank defaults to BLUE_GREEN_MIGRATE in prod mode` FAILED (`ResolvedConfigBuilderTest.java:1495`) |
 | F11 | `startMigration` repoints `active_generation` to Green | `IndexRebuildBrakeTest` | `migrationBuildsGreenBesideBlueAndOnlyPromotionSwitches` FAILED (`IndexRebuildBrakeTest.java:43`) |
 | F12 | `rmwPolicy` put back into the physical projection | `CatalogPhysicalProjectionTest` | `theProjectionDropsRmwPolicyEntirely` FAILED (`:89`); `anRmwPolicyAnnotationDoesNotCostTheUserAReindex` FAILED (`:75`) |
+
+### Round 7 — O14, the clean-shutdown marker's owner
+
+| ID | Break | Test that caught it | Observed failure |
+|---|---|---|---|
+| G50 | make the read-only open consume the marker again | `CleanShutdownMarkerLifecycleTest` | `boot 1: a read-only open writes nothing, so it cannot make the index unclean — and must not report that it did ==> expected: <true> but was: <false>` |
+| G51 | stop consuming at the writer open — a crash would look clean | `CleanShutdownMarkerLifecycleTest` | `the writer consumed it ==> expected: <false> but was: <true>`; `a writer exists now, so this session CAN die mid-commit … ==> expected: <false> but was: <true>`. Both directions pinned: the fix must not turn a real crash into a clean boot |
+| G52 | re-fuse the read and the invalidation inside `wasClean()` | `CleanShutdownMarkerLifecycleTest` | same first assertion — the separation is the fix, not the call site |
 
 ### Round 6 — the live-validation defects
 
@@ -994,13 +1003,13 @@ is not a guarantee.
 ## §G Verification results
 
 Gradle home: `C:\Users\Elias\AppData\Local\Temp\jsgh-R1` (isolated from the other lanes).
-Re-run in full after the live-validation round (D1/D2/D3, the FAIL_CLOSED marker, the cutover evidence write); every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
+Re-run in full after O14; every line below is from that run. The integration-test counts in the previous version of this table were wrong — they were read from a results directory holding an earlier run's XML, which is the same stale-artefact mistake the round-3 falsification harness made (§F). Counts here are from a `cleanIntegrationTest` run.
 
 | Command | Result |
 |---|---|
 | `spotlessApply -PskipWebBuild=true` | exit 0 |
 | `build -x test -PskipWebBuild=true` | BUILD SUCCESSFUL |
-| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 33s — **1459 suites, 8909 tests, 0 failures, 0 errors, 26 skipped** (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: `RecoveryIntegrationTest` caught a real consequence of B4 that no targeted run would have (§F G40) — the same value the O7 round got from G30 |
+| `cleanTest test -PskipWebBuild=true --no-build-cache --continue` | BUILD SUCCESSFUL in 4m 9s — **1460 suites, 8912 tests, 0 failures, 0 errors, 26 skipped**. The run before it was RED, usefully: `RecoveryIntegrationTest.cleanCloseWritesMarkerAndOpenConsumesIt` encoded the superseded contract (ANY open consumes), which is the defect O14 names. Renamed and re-pointed at the writer, with the read-only half asserted the other way (counted from `TEST-*.xml`, not from the console). The run before this one was RED, and usefully so: `RecoveryIntegrationTest` caught a real consequence of B4 that no targeted run would have (§F G40) — the same value the O7 round got from G30 |
 | `cleanIntegrationTest :modules:indexing:integrationTest --no-build-cache` | BUILD SUCCESSFUL — `InvariantSuiteIT` **9 tests**, 0 failures. Forced: an unforced attempt reports `UP-TO-DATE`, which is a replay, not a run |
 | `:modules:indexer-worker:test --tests "*PreOpenSchemaMismatchBootTest*"` | BUILD SUCCESSFUL — **10** boot-level cases now (a-e, the classifier, and the four added this round: the FAIL_CLOSED `PRE-OPEN` WARN, `REBUILD_BACKUP_FIRST` backup-before-empty, an unrecognised policy, a corrupt index self-healing). Boot-level because every one of them passes at unit level against the defect it pins |
 | `:modules:indexer-worker:test --tests "*ResumedMigrationMismatchBootTest*"` | BUILD SUCCESSFUL — B5 at a FRESH budget, the boot the brake test structurally cannot reach |
@@ -1097,15 +1106,16 @@ Re-run in full after the live-validation round (D1/D2/D3, the FAIL_CLOSED marker
     existing index logs 6-8 of `Lucene health check failed: SearcherManager not available (runtime
     closed?)`; fresh-index boots log none. `SearcherBridge.java` is byte-identical between
     `39d38f73` and this branch, so it predates the change.
-13. **O14 — OPEN, this tempdoc.** A read-only runtime CONSUMES the clean-shutdown marker on open
-    (`ComponentsFactory` calls `consumeWasClean`, which deletes it) and never writes one back,
-    because `RuntimeSession.close()` only writes it when a writer closed cleanly. So a Worker that
-    serves Blue read-only for its whole life — a migration, and every boot of the braked state —
-    leaves Blue permanently marked unclean and pays a FULL integrity verification on every
-    subsequent boot. Live evidence: `g-20260903-052152` logged `Unclean previous shutdown` on five
-    consecutive boots. D.47 fixes the cutover half; this half is a distinct decision (restore the
-    marker a read-only session consumed, or scope the consume to writable opens) and is not made
-    here.
+13. **O14 — CLOSED (owner decision).** A read-only open consumed the clean-shutdown marker and
+    never wrote one back, so a Worker serving Blue read-only for its whole life — a migration, and
+    every boot of the braked state — left Blue permanently marked unclean and paid a FULL integrity
+    verification on every subsequent boot (`g-20260903-052152`, five consecutive boots). This was a
+    wrong-gate: the marker guards against a WRITER dying mid-commit, and a read-only open has no
+    writer, so it can neither dirty the index nor earn the right to invalidate the evidence. Reading
+    the answer and invalidating it are separate acts now (`wasClean` / `consume`); the consume moves
+    to the `new IndexWriter` site, which is the moment an unclean death becomes possible, and sits
+    outside the integrity-tier block because whether the next boot SCANS is a different question
+    from whether this session could dirty the index. §F G50-G52.
 
 14. **O6 — correction to my own earlier report.** I reported
    `BatchUpdateIntegrationTest.concurrentRmwOnSameDocIdSerializedByCoordinator_402` as an unpinned
