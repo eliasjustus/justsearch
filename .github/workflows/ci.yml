@@ -292,16 +292,18 @@ jobs:
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
 
-      # Tempdoc 913 T1/T2, the same shape as the block below it. The dev-MCP surface's doc-sync
-      # gate and the two pure suites that cover its verdict logic ran in no workflow at all, which
-      # is why an allowlist could lose an endpoint and the ownership verdict could report
-      # `rebuildFirst` on every distFrom launch with nothing to contradict either. All three are
-      # pure (no dev stack, no Gradle): check-dev-mcp-doc-sync spawns the MCP server over stdio and
-      # calls tools/list, which touches no run state.
-      - name: Dev-MCP surface (doc sync + pure unit suites)
+      # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
+      # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
+      # and real stdio handler projection. No suite starts the shared dev stack or runs Gradle.
+      - name: Dev-MCP surface (hermetic bootstrap + truth + doc sync)
         run: |
+          node scripts/dev/generate-dev-mcp-runtime.mjs --check
+          node scripts/dev/generate-dev-mcp-runtime.test.mjs
+          node scripts/dev/test-dev-mcp-bootstrap.mjs
+          node scripts/dev/test-dev-mcp-observations.mjs
           node scripts/ci/check-dev-mcp-doc-sync.mjs
           node scripts/dev/test-dev-mcp-surface-honesty.mjs
+          node scripts/dev/test-dev-mcp-projection-live.mjs
           node scripts/dev/test-ownership-verdict.mjs
 
       # Tempdoc 913 D1, the same shape a fourth time, one register-family out. The

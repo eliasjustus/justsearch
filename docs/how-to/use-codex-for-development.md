@@ -56,6 +56,12 @@ In the IDE extension or desktop app, attach the same folder and make it the
 primary working directory. Codex walks upward from the working directory to
 discover `AGENTS.md`, `.agents/skills`, and `.codex` configuration.
 
+The required `justsearch-dev` MCP initializes from tracked files in a fresh
+worktree; it does not require that worktree to have a root `node_modules` yet.
+Node.js 24 or newer and Git must already be available. Install root npm
+dependencies when repository scripts or generated-runtime maintenance require
+them, but task creation itself does not depend on that installation.
+
 At session start, follow the automatically loaded `AGENTS.md` contract. Use
 `$justsearch-start` when you explicitly want repository orientation or a fresh
 world-state summary; it is not required for every session. Run the world-state
@@ -108,7 +114,12 @@ Expected results:
 
 If project MCP, skills, or hooks are all absent, check project trust first. If
 only MCP is absent, run `codex mcp list` from the repository root and validate
-`.codex/config.toml`. If hooks misbehave, set
+`.codex/config.toml`. Then run `node scripts/dev/justsearch-dev-mcp.mjs` and
+inspect `tmp/justsearch-dev-mcp/bootstrap-failure.json`; bootstrap errors use
+stable `DEV_MCP_BOOT_*` codes and emit no protocol output on stdout. A missing
+or stale generated runtime is repaired from an installed checkout with
+`node scripts/dev/generate-dev-mcp-runtime.mjs`, followed by its `--check`
+mode. If hooks misbehave, set
 `JUSTSEARCH_DISABLE_HOOKS=1` for recovery, capture the failure, and fix the
 shared manifest or adapter rather than hand-editing generated wiring.
 

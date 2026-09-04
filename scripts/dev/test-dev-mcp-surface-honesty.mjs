@@ -47,9 +47,8 @@ import {
 import { buildDevRunnerArgsStart } from './justsearch-dev-mcp/cli.mjs';
 import { createRequire } from 'node:module';
 
-// server.mjs installs process-level uncaughtException/unhandledRejection handlers that LOG rather
-// than exit, so a top-level abort in this file would otherwise leave exit code 0 — a green that
-// ran nothing. Fail closed: non-zero until the runner at the bottom clears it.
+// Fail closed: non-zero until the runner at the bottom clears it, so a top-level abort cannot leave
+// a green result that ran only part of the suite.
 process.exitCode = 1;
 
 const HERE = import.meta.dirname;

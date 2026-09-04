@@ -1,7 +1,7 @@
 ---
 title: "Hermetic bootstrap and truthful failure architecture for the required justsearch-dev MCP"
 type: tempdocs
-status: "OPEN — theorization, research, design, and derisk complete 2026-09-04; implementation pending owner approval"
+status: "IMPLEMENTED — verification complete 2026-09-04; ready for review"
 created: 2026-09-04
 updated: 2026-09-04
 author: Codex session 01a06b3b
@@ -52,8 +52,8 @@ ownership, or making the server optional merely to suppress startup failures.
       sources; distinguish facts from inferences.
 - [x] Design one coherent end state, including superseded paths and verification.
 - [x] Derisk the design with targeted experiments and a confidence/model recommendation.
-- [ ] Obtain owner approval before implementation.
-- [ ] Implement the approved design in a later pass with its runnable regression tests.
+- [x] Obtain owner approval before implementation (`proceed autonomously`, 2026-09-04).
+- [x] Implement the approved design with runnable regression tests and real-client acceptance.
 
 ## 3. Confirmed facts before theorization
 
@@ -919,3 +919,104 @@ the boolean `running` contract or license generation requires a repository-wide 
 coherent change with its teardown and proof matrix. Do not split out an availability-only patch
 that leaves false-health projections behind: the repeated task-creation failure and the reproduced
 state lies are separate defects in the same required control-plane reliability boundary.
+
+## 15. Implementation and verification record
+
+### 15.1 Shipped architecture
+
+The approved design is implemented on `codex/925-dev-mcp-bootstrap-architecture`:
+
+- `scripts/dev/justsearch-dev-mcp.mjs` is now a Node-built-ins-only launcher. It checks Node 24,
+  installs fatal handlers before the first application import, dynamically imports `server.mjs`,
+  exits promptly after import/main failure even if partial initialization left handles behind, and
+  emits one bounded/sanitized stderr line plus the best-effort
+  `tmp/justsearch-dev-mcp/bootstrap-failure.json` diagnostic. Successful initialization removes a
+  stale diagnostic.
+- `runtime-entry.mjs`, `runtime.generated.mjs`, and `runtime.generated.LEGAL.txt` establish the
+  revision-local SDK/Zod boundary. `generate-dev-mcp-runtime.mjs` uses exact esbuild `0.28.2`,
+  permits only explicit `node:` externals, derives the package/legal closure from the esbuild
+  metafile, rejects unapproved or missing license evidence, writes deterministic outputs, and has a
+  byte-checking `--check` mode.
+- `server.mjs` and `schemas.mjs` import the tracked generated runtime instead of resolving root npm
+  packages at startup. Root SDK/Zod/esbuild dependencies remain the generation authority, not a
+  task-creation prerequisite.
+- `observations.mjs` separates file `PRESENT`/`ABSENT`/`INVALID`/`UNREADABLE` and socket
+  `REACHABLE`/`REFUSED`/`TIMED_OUT`/`ERROR`. `preflight.checkStates` is authoritative and every
+  gating check must be `PASS`; its legacy booleans map all non-pass states to `false`.
+  `quick_health.runState` is `ACTIVE`/`ABSENT`/`UNKNOWN`, and compatibility `running` is nullable.
+  A reachable inference listener is called an orphan only when the absence of an owner is proven;
+  corrupt ownership state or a reachable-but-unhealthy API yields `null`.
+- The existing twelve-tool inventory, shared-stack ownership authority, and runner admission path
+  are unchanged. The harness was updated to distinguish `running: null` from `false`.
+
+The committed generated runtime is 1,077,341 bytes with SHA-256
+`3f57ea2ae8874ac5492ae11d9e4dd0497b8c6441fc327b114efa2442c48fc16b`. Its exact eight-package
+closure is `@modelcontextprotocol/sdk@1.29.0`, `ajv@8.20.0`, `ajv-formats@3.0.1`,
+`fast-deep-equal@3.1.3`, `fast-uri@3.1.0`, `json-schema-traverse@1.0.0`, `zod@4.4.3`, and
+`zod-to-json-schema@3.25.1`; the only external module is `node:process`.
+
+### 15.2 Guardrails and documentation
+
+The existing CI Dev-MCP block now checks generated freshness/licensing, the exact dependency-free
+bootstrap topology, typed observations, canonical tool inventory, handler projection, and ownership
+verdicts. The path-triggered `dev-mcp-surface` consult entry names the same recipes.
+`docs/reference/contributing/mcp-dev-tools.md` is the canonical shipped-behavior update, while
+`docs/how-to/use-codex-for-development.md` documents the fresh-worktree guarantee and recovery
+diagnostic.
+
+The design proposed expanding the compact `CLAUDE.md` pre-merge row as well. That wording was
+tested and reverted because it exceeded the always-loaded prompt budget; no `CLAUDE.md` content
+changed. The exact, path-triggered procedure belongs in the consult register and the executable CI
+block, so retaining the compact row avoids creating a second detailed authority.
+
+### 15.3 Evidence
+
+All new and directly affected suites pass after a clean `npm ci`:
+
+- generated runtime: 11/11 from `node scripts/dev/generate-dev-mcp-runtime.test.mjs`, plus
+  `node scripts/dev/generate-dev-mcp-runtime.mjs --check`;
+- dependency-free bootstrap: 12/12 from `node scripts/dev/test-dev-mcp-bootstrap.mjs`, including
+  exact `.codex/config.toml`, root and nested CWD,
+  malformed/absent run state, missing/corrupt runtime, unsupported Node, partial-handle
+  termination, both post-main fatal paths, stdout cleanliness, bounded diagnostics, and credential
+  redaction;
+- typed observations: 21/21 from `node scripts/dev/test-dev-mcp-observations.mjs` across JSON/file
+  failures, reachable/refused/timeout/error probes, default HTTP port behavior, legacy-adapter
+  truth, and inference ownership attribution;
+- `node scripts/dev/test-dev-mcp-surface-honesty.mjs`: 78/78;
+  `node scripts/dev/test-dev-mcp-projection-live.mjs`: 16 assertions;
+  `node scripts/dev/test-ownership-verdict.mjs`: 40/40;
+- canonical inventory sync and repository governance pass via
+  `node scripts/ci/check-dev-mcp-doc-sync.mjs`,
+  `node scripts/docs/llmstxt-generate.mjs --check`,
+  `node scripts/docs/skills-sync.mjs --check`,
+  `node scripts/docs/verify-canonical-doc-links.mjs`,
+  `node scripts/architecture/module-deps.mjs --check-canonical`,
+  `node scripts/docs/verify-runtime-config-matrix.mjs`,
+  `node scripts/docs/prompt-surface-inventory.mjs`,
+  `node scripts/ci/check-premerge-table.mjs`,
+  `node scripts/ci/check-workflow-triggers.mjs`,
+  `node scripts/ci/check-tempdoc-numbers.mjs`, and
+  `node scripts/governance/run.mjs --gate hook-integrity --mode gate`.
+
+The deployment-topology test creates its Git fixture in the OS temporary directory outside every
+`node_modules` ancestor and parses the real required launcher rather than duplicating it. The final
+authenticated acceptance additionally moved this worktree's root `node_modules` aside, ran
+`codex exec --ephemeral` from the worktree, and observed a real `justsearch-dev` `quick_health`
+tool call returning `runState: ABSENT` and `running: false`; the Codex process exited 0 with final
+sentinel `DEV_MCP_ACCEPTANCE_OK ABSENT false`. The package tree was restored in a `finally` block
+and its hold path is absent.
+
+One unrelated repository-wide check remains red on the branch base:
+`check-always-loaded-budget.mjs` reports `CLAUDE.md` at 22,626 bytes against a 22,589-byte ceiling
+(+37 bytes). This implementation has a zero-byte `CLAUDE.md` diff and did not change the baseline
+or weaken the ratchet. It is recorded here so the verification claim does not turn a pre-existing
+failure into a false green.
+
+### 15.4 Remaining work and unverified assumptions
+
+No implementation work remains in this tempdoc. Remote CI on the workflow's pinned Node runtime is
+not yet evidence because this branch has not been published; pushing, review, and merge require a
+separate owner-authorized publication pass. Bootstrap stderr display remains client-dependent under
+the MCP stdio contract, which is why the implementation also writes the best-effort local
+diagnostic. No claim depends on stderr being presented in the Codex UI.

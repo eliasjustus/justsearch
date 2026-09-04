@@ -13,6 +13,46 @@ This file is the **canonical inventory** of that surface: the tool list, the `fe
 
 For the operational side — shared-stack ownership and contention, worktree FE serving, troubleshooting — load the `/dev-stack` skill. It links here rather than restating the inventory.
 
+## Bootstrap and availability
+
+`justsearch-dev` is a required, revision-local server. It must initialize from a freshly checked-out
+Git worktree with Node.js 24 or newer, even before that worktree has a root `node_modules` directory.
+The application server and `dev-runner.cjs` always come from the caller's checkout; another
+checkout is never used as a dependency fallback.
+
+The external startup dependency boundary is a generated projection:
+
+| File | Authority |
+|---|---|
+| `scripts/dev/justsearch-dev-mcp/runtime-entry.mjs` | Hand-authored list of SDK/Zod exports required at runtime. |
+| `scripts/dev/justsearch-dev-mcp/runtime.generated.mjs` | Committed ESM projection of the locked third-party dependency closure. Never edit manually. |
+| `scripts/dev/justsearch-dev-mcp/runtime.generated.LEGAL.txt` | Committed package/version/license text for every package represented in the bundle. |
+| `scripts/dev/generate-dev-mcp-runtime.mjs` | Generator and `--check` freshness/license authority. |
+
+After changing root MCP dependencies or the runtime entry, install the root development
+dependencies and run:
+
+```powershell
+node scripts/dev/generate-dev-mcp-runtime.mjs
+node scripts/dev/generate-dev-mcp-runtime.mjs --check
+node scripts/dev/generate-dev-mcp-runtime.test.mjs
+node scripts/dev/test-dev-mcp-bootstrap.mjs
+```
+
+The bootstrap before `server.mjs` uses Node built-ins only. It dynamically imports the application
+so import failures cross a real error boundary, emits no stdout on failure, and writes a
+best-effort diagnostic to `tmp/justsearch-dev-mcp/bootstrap-failure.json`. A successful launch
+removes any stale record.
+
+| Bootstrap code | Meaning |
+|---|---|
+| `DEV_MCP_BOOT_UNSUPPORTED_NODE` | The launcher is older than the supported Node.js runtime. |
+| `DEV_MCP_BOOT_RUNTIME_MISSING` | The committed generated runtime is absent. Regenerate it in an installed checkout. |
+| `DEV_MCP_BOOT_MODULE_NOT_FOUND` | Another revision-local application module is absent. |
+| `DEV_MCP_BOOT_IMPORT_FAILED` | The server or generated runtime could not be parsed or imported. |
+| `DEV_MCP_BOOT_MAIN_FAILED` | Imports succeeded but server initialization rejected. |
+| `DEV_MCP_RUNTIME_UNCAUGHT` / `DEV_MCP_RUNTIME_UNHANDLED_REJECTION` | A fatal post-bootstrap process error terminated the server. |
+
 ## Available Tools
 
 The dev MCP surface exposes exactly these **12** tools:
@@ -21,8 +61,8 @@ The dev MCP surface exposes exactly these **12** tools:
 |------|---------|
 | `justsearch.dev.start` | Start the backend and frontend dev stack. Readiness waiting is part of this tool via its wait options. |
 | `justsearch.dev.stop` | Stop the active dev run and clean up owned processes. |
-| `justsearch.dev.quick_health` | Fast orientation check for run/API/worker health, plus `foreignRuns` — backends it did not start. `detail: "full"` adds the dev-runner process/port/readiness payload. |
-| `justsearch.dev.preflight` | Run dev preflight checks before heavier workflows. Takes `distFrom` so the dist checks run against the tree `start` will launch from. |
+| `justsearch.dev.quick_health` | Fast orientation check with typed run/probe state, plus `foreignRuns` — backends it did not start. `detail: "full"` adds the dev-runner process/port/readiness payload. |
+| `justsearch.dev.preflight` | Run dev preflight checks with typed `PASS`/`FAIL`/`UNKNOWN`/`SKIPPED` outcomes. Takes `distFrom` so the dist checks run against the tree `start` will launch from. |
 | `justsearch.dev.acquire_when_free` | Block until the shared stack is acquirable, then return how to take it (the documented remedy for `OWNER_CONFLICT`). |
 | `justsearch.dev.tail_log` | Read recent backend, frontend, or runner log lines. |
 | `justsearch.dev.fetch_api_json` | Fetch predefined JSON endpoints by key. |
@@ -48,11 +88,19 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
 ## Standard Workflow
 
 1. Orient with `justsearch.dev.quick_health` — the compact readiness check, and the first call after compaction.
+   - `runState` is `ACTIVE`, `ABSENT`, or `UNKNOWN`. The compatibility field `running` is
+     `true`, `false`, or `null`; `null` means the record/probe evidence could not establish either
+     outcome. Treat `UNKNOWN` as a blocker to claiming the shared stack is free.
+   - `probes.api`, `probes.worker`, and `probes.inference`, when present, distinguish
+     `REACHABLE`, `REFUSED`, `TIMED_OUT`, and `ERROR`. A timeout is not a connection refusal.
    - Add `detail: "full"` when process state, ports, or runner metadata matter; it is the only mode that spawns a subprocess.
    - Read `foreignRuns` before concluding the machine is free. It lists JustSearch-shaped backends this dev-runner did **not** start (a `jseval` backend on `33221`, a bare `runHeadless`, an unattributed llama-server). The tri-state is load-bearing: `[]` = probed and found none, `null` = did not probe (`probe: false`), a non-empty array = these are running and none is the owned run. Ownership verdicts and `running` describe the dev-runner's own run only — before tempdoc 844 that made a "free" verdict precede a 100%-GPU neighbour and contaminated a measurement round.
    - `foreignRuns` merges two sources and says which is which. `source: "registered"` means the producer declared the run in the foreign-run register (below) — the entry then carries identity (`producer`, `repoRoot`, `pid`, `dataDir`, `sessionId`, `gpuBound`) and a `state` that was *verified*, not assumed: `live` (its declared port answered), `unreachable` (port silent, pid alive — booting or wedged), `stale` (port silent **and** pid gone: a record whose producer was killed before it could clean up, so nothing is running — delete `recordFile` if it is yours), `unreadable` (the record file could not be parsed). A `live` entry additionally carries `identityStale: true` when the port answers but the recorded pid is gone — the listener is verified, the identity behind it is not. `source: "observed"` means only that a port answered with nothing declaring it. A registered port is never also listed as observed.
 2. Run `justsearch.dev.preflight` if the stack is not running.
    - Pass the **same** `distFrom` you will pass to `start` (a path, or a bare worktree name). Preflight then checks the dists in the tree `start` will launch from and reports it as `distCheckedRoot`; without it, preflight validated the invoking checkout while `start` used another — a false green.
+   - Read `checkStates` as the authoritative result. Legacy `checks` booleans remain for older
+     clients, but both `FAIL` and `UNKNOWN` project to `false`. Every gating state must be `PASS`
+     before `ready` can be `true`; unreadable files and indeterminate probes never become `OK`.
 3. Start the stack with `justsearch.dev.start`.
    - Use the tool's wait options instead of a separate wait-ready tool.
    - `waitTimeoutMs` may need to be higher than the default on cold machines or after clean builds.
@@ -64,6 +112,10 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
 6. Use `justsearch.dev.stop` when the run should be shut down.
 
 ## Prerequisites
+
+Starting the required MCP itself needs only the tracked checkout, Git, and Node.js 24 or newer. A
+root npm installation is still required to regenerate its third-party runtime or run repository
+JavaScript development checks; it is not a task-creation prerequisite.
 
 Build the Worker distribution and UI assets before relying on the dev stack:
 
