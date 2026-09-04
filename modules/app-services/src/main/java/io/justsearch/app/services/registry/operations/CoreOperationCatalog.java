@@ -136,6 +136,13 @@ public final class CoreOperationCatalog implements OperationCatalog {
       new OperationRef("core.export-diagnostics");
 
   /**
+   * Head-local allowlist-only support summary returned transiently for an explicit clipboard copy.
+   * LOW risk, no confirmation, no Worker or Inference availability requirement.
+   */
+  public static final OperationRef COPY_DIAGNOSTIC_SUMMARY =
+      new OperationRef("core.copy-diagnostic-summary");
+
+  /**
    * Slice 3a-2-c LibraryView Add Folder migration. LOW risk (additive). Args:
    * {@code {"path": string, "collection"?: string}}. Maps to
    * IndexingService.addWatchedRoot.
@@ -326,6 +333,7 @@ public final class CoreOperationCatalog implements OperationCatalog {
       reindex(),
       reconcileRoot(),
       exportDiagnostics(),
+      copyDiagnosticSummary(),
       addWatchedRoot(),
       removeWatchedRoot(),
       previewExcludes(),
@@ -667,6 +675,28 @@ public final class CoreOperationCatalog implements OperationCatalog {
         // user self-service support flow, not an admin action. The state-mutating
         // siblings (clear-failed-jobs, index-gc, restart-worker) deliberately
         // remain Audience.OPERATOR.
+        Audience.USER);
+  }
+
+  private static Operation copyDiagnosticSummary() {
+    return new Operation(
+        COPY_DIAGNOSTIC_SUMMARY,
+        Presentation.forId(COPY_DIAGNOSTIC_SUMMARY),
+        Interface.of(
+            "{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}",
+            "{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\"}},\"required\":[\"summary\"]}"),
+        new OperationPolicy(
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.METADATA_ONLY,
+            RetryPolicy.noRetry(),
+            Set.of(),
+            false),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(COPY_DIAGNOSTIC_SUMMARY),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.UI),
         Audience.USER);
   }
 

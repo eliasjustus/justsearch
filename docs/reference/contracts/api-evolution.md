@@ -22,12 +22,32 @@ Frontend and backend are co-shipped in the Tauri bundle. There is no version ske
 | Add new field to response body | Safe | None |
 | Add new endpoint | Safe | None |
 | Add new query parameter (optional) | Safe | None |
-| Remove a response field | **Breaking** | Add `Deprecation: true` header (RFC 9745) for at least one release, then remove |
-| Rename a response field | **Breaking** | Add new field alongside old, deprecate old, remove after one release |
+| Remove a response field | **Breaking** | Keep the old field during the applicable deprecation window, document its replacement, then remove |
+| Rename a response field | **Breaking** | Add the new field alongside the old one, deprecate the old one, then remove it after the applicable window |
 | Change a field's type | **Breaking** | Version the endpoint with a suffix (e.g., `/api/settings/v2`) |
-| Remove an endpoint | **Breaking** | Add `Deprecation: true` + `Sunset` header (RFC 8594), remove after one release |
+| Remove an endpoint | **Breaking** | Add lifecycle metadata to `RouteContractPolicy`, keep the route through the applicable window, then remove it |
 
-**Endpoint removal policy:** The agent guide states "No legacy endpoints — Don't resurrect removed APIs." Once removed, an endpoint stays removed. Before removal, signal deprecation for at least one release cycle.
+**Endpoint removal policy:** The agent guide states "No legacy endpoints — Don't resurrect removed APIs." Once removed, an endpoint stays removed. Public-contract routes have a minimum 90-day window from `deprecatedSince` to `sunsetAt`. A shorter pre-1.0 window requires an explicit rationale and an absolute decision-document URI in the same policy row. Reference-client and internal routes may use a shorter project decision, but still require explicit lifecycle metadata while the route exists.
+
+### HTTP lifecycle authority and projections
+
+`modules/ui/src/main/java/io/justsearch/ui/api/RouteContractPolicy.java` is the single authority for
+per-route stability, schemas, SDK exposure, and lifecycle metadata. Lifecycle rows are immutable,
+validated at startup/tests, and must resolve to exactly one registered `METHOD + route pattern`.
+The production lifecycle catalog is currently empty: no live HTTP route is deprecated merely to
+demonstrate the mechanism.
+
+For a deprecated route, every response—including an exception-mapped response—carries:
+
+- `Deprecation: @<unix-seconds>` (RFC 9745);
+- optional `Sunset: <HTTP-date>` (RFC 8594); and
+- `Link: <documentation-uri>; rel="deprecation"`.
+
+The route-manifest schema `2.0` projects `stability`, schemas, SDK operation identity, and lifecycle
+metadata. The full and SDK OpenAPI documents project `deprecated`, `externalDocs`,
+`x-deprecated-since`, optional `x-sunset`, and `x-justsearch-replacement` from the same row. Allowed
+browser origins can read `Deprecation`, `Sunset`, and `Link` through CORS; this changes response
+visibility only and does not change Host, Origin, loopback-bind, or mutation-token admission.
 
 ## gRPC Rules
 

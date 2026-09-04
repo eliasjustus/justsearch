@@ -11,6 +11,26 @@ This doc answers: "Where is the source of truth for JustSearch API schemas and s
 
 ## HTTP (Local API)
 
+### Route contract policy and SDK projection
+
+`modules/ui/src/main/java/io/justsearch/ui/api/RouteContractPolicy.java` is the declarative route
+contract overlay keyed by HTTP method and route pattern. It records response schemas and status
+codes, stability, optional lifecycle metadata, and marks the small public subset eligible for
+generated SDKs with a stable operation id. Route-manifest schema `2.0`, the full OpenAPI document,
+the SDK OpenAPI document, and HTTP lifecycle headers all project from that one policy. Security
+metadata is derived from `ApiSecurityFilters`, not copied into a parallel allowlist.
+
+`SdkOpenApiProjection` applies that policy to routes discovered from the real `RuntimeApiRoutes`
+and lifecycle route registrars. Its committed, byte-stable output is
+`packages/runtime-client/openapi/runtime-client.openapi.json`; tests reject duplicate operation
+ids, policy rows with no registered route, public routes without complete response mappings, and
+internal routes leaking into the SDK. Canonical response schemas live in `SSOT/schemas/` and are
+served by `SchemaController` as well as embedded into the SDK projection.
+
+The projection currently contains exactly six read-only operations: runtime manifest and mirror,
+readiness, liveness, health, and status. See [Runtime Contract](runtime-contract.md#generated-node-client)
+for package scope and regeneration commands.
+
 ### Lifecycle schema v1 (minimum stable subset)
 
 **Source of truth:** `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java`
@@ -240,6 +260,7 @@ Substrate endpoints:
 - `GET /infra/capabilities` — LSP-shape capability handshake. Returns `serverCapabilities` declaring the three primitive types (Operation/Resource/Prompt) with `dynamicRegistration`, `messageCatalogUrl`, `endpoint`, and `current` schema version. Includes monotonic `catalogVersion` (long) + `protocolVersion: "1.0"` and per-sub-API `contractVersions` (per tempdoc 521-followup §γ2/§ε1, `host.selection: "1.0"`, `host.ai: "1.0"`, plus all other `host.*` sub-interfaces). Existing fields (`schema_versions`, `prompt_templates`, `plugins`, `source`) preserved (additive change). Returns 503 if `appFacadeBootstrap.capabilitiesHandler()` hasn't completed initialization yet.
 - `GET /infra/capabilities/stream` (SSE) — Capability change stream. Initial `snapshot` event carries current `catalogVersion`; `capability_changed` events emit on broadcast; heartbeat ticks the FE's lastSeen every 30s. No replay buffer — disconnect/reconnect requires fresh snapshot.
 - `GET /api/registry/operations` — Operation catalog (admin seeds + agent tools when knowledgeClient is wired). Returns `{$schema, schemaVersion, catalogVersion, namespace, primitive, entries[]}`. Each entry is a generated single-authority projection of the `UIOperationView` wire record (record → JSON Schema `operation-wire.v1.json` → {TS, Zod}, precise/required per tempdoc 560 §4c); `consumers` is a flat `{consumerId, audience}` list.
+- `core.copy-diagnostic-summary` — Head-local, LOW-risk/NONE-confirmation, USER-audience operation. It returns one transient `summary` string built by `DiagnosticsService` from an explicit typed allowlist (build/runtime-contract versions, platform, lifecycle reason codes, safe GPU capability, and parseable crash timestamp/process/exception type). It has no Worker or Inference capability requirement and uses `METADATA_ONLY` audit policy, so operation history records identity/outcome but never the summary payload.
 - `POST /api/undo/{id}` — Undo a reversible Operation dispatch. Body: `{executionId: string}`. Returns `OperationInvocationResponse`. Fails with `HANDLER_FAILURE` if `!op.policy().undoSupported()`. The `executionId` is the handler-opaque batch key returned in `OperationResult.executionId` from the original dispatch. Emits an `UNDONE` history entry on success. Per G157 (slice g157-suggested-action-primitive).
 - `GET /api/registry/resources` — Resource catalog. Entries are a generated single-authority projection of the `UIResourceView` wire record (`resource.v1.json` → {TS, Zod}, precise/required; tempdoc 560 §4c), with the same flat `{consumerId, audience}` consumer shape. V1 ships core OBSERVABLE resources (health-events, runtime-context, indexing/failed-jobs, capabilities, etc.) — not empty. Tempdoc 560 §29 Phase 2: plugin-contributed Resources (from a TRUSTED plugin's `Installation`) are composed in and served here too.
 - `GET /api/registry/prompts` — Prompt catalog. Tempdoc 560 §29 Phase 2: serves core + plugin-contributed Prompts (a TRUSTED plugin's `Installation` prompts are merged into the served catalog by `SubstrateGraphAssembler`); core prompts are empty in V1, so the catalog is plugin-only until a core prompt ships.
@@ -432,6 +453,12 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
 **Transport:** Streamable HTTP at `/mcp` on the existing Javalin server (loopback-only) — `POST` carries the whole JSON-RPC surface, `DELETE` ends the session named by `Mcp-Session-Id`, and `GET` returns `405` with `Allow: POST, DELETE, OPTIONS` (no server-initiated SSE stream is offered; see [MCP production server](mcp-production-server.md#transport)). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+
+`initialize` also advertises the experimental, versioned
+`io.justsearch/tool-lifecycle` capability. A validated closed catalog projects deprecation data into
+namespaced tool `_meta` plus a description fallback without changing standard annotations. The
+production catalog is empty, so no current tool is deprecated and the tool-surface version does not
+change.
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 

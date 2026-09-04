@@ -20,7 +20,7 @@ import tools.jackson.databind.json.JsonMapper;
  * semantics therefore have one Java implementation.
  *
  * <p>Scope (honest): a <em>structural</em> export — paths, methods, path-parameters, tags, capability
- * gates, owning module, and (for documented wire routes, §D.3a + the {@link RouteResponseSchemas} map)
+ * gates, owning module, and (for documented wire routes, §D.3a + {@link RouteContractPolicy})
  * a per-route response-schema {@code $ref} into {@code components.schemas}. <em>Request</em> bodies and
  * response schemas for the long tail of undocumented routes remain out of scope (a per-route schema
  * authority for all ~200 routes is a separate charter — handler annotations would be a second source
@@ -52,5 +52,4 @@ final class OpenApiController {
       throw new IllegalStateException("OpenAPI serialization failed", e);
     }
   }
-
 }

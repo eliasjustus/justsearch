@@ -254,6 +254,15 @@ pattern:
    ZIP including status snapshots, logs, telemetry NDJSON, and policy
    snapshots.
 
+For a pasteable bug-report aid, Help & Support also exposes
+`core.copy-diagnostic-summary`. This is deliberately not derived from the ZIP: the app-services
+composer emits only a deterministic typed allowlist (build and Runtime Contract versions, platform,
+lifecycle states and known reason codes, safe GPU capability, and parseable crash
+timestamp/process/exception type), sanitizes and caps values, and caps the whole UTF-8 payload at
+8 KiB. It reads no logs, stack traces, exception messages, environment dump, debug state, or runtime
+manifest. The UI copies the transient operation result directly and renders only fixed receipt text;
+the `METADATA_ONLY` operation audit records no summary payload.
+
 V2 (2026-04-28) extends the pattern with three named-question events
 consuming the same substrate, all following the existing
 `OperationalMetrics.ThroughputMonitor` discipline (rolling-window state

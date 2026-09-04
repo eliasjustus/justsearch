@@ -159,9 +159,9 @@
     {
       "id": "adr-0015-six-mcp-tools",
       "adr": "0015",
-      "premise": "The MCP surface is a small curated tool list, because small models pick badly from long lists. The count IS the decision: 6 tools (answer, search, browse, ingest, status, runtime_manifest).",
+      "premise": "The MCP surface is a small curated tool list, because small models pick badly from long lists. The count IS the decision: the canonical production ToolDefinition registry has 6 tools (answer, search, browse, ingest, status, runtime_manifest).",
       "kind": "grep-present",
-      "pattern": "tool\\(\\s*\"justsearch_[a-z_]+\"",
+      "pattern": "new\\s+ToolDefinition\\(\\s*\"justsearch_[a-z_]+\"",
       "paths": [
         "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java"
       ],

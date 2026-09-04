@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to JustSearch! This document provides guidelines and instructions for contributing.
 
-> **The short version.** Clone the repo, run `./gradlew.bat build`, run the tests, pick a good-first-issue,
+> **The short version.** Clone the repo, run the bootstrap below, build and test, pick a good-first-issue,
 > open a PR, and sign the CLA once when the bot prompts you on your first PR. That's it. You do **not**
 > need Claude Code, Codex, the agent hooks, the dev-stack
 > tooling, or the governance/discipline gates to contribute — those are *how the maintainer develops*,
@@ -45,9 +45,21 @@ readable while contributors can work naturally on branches.
 
 ## Development Setup
 
+Choose either contributor environment:
+
+- **Native Windows:** install Node first if necessary with
+  `./scripts/setup/bootstrap-node-win.ps1`, then run `node scripts/setup/bootstrap.mjs`. The
+  PowerShell script is only the pre-Node step; the Node script performs the shared repository setup.
+- **Dev container / Codespaces:** reopen the repository in the checked-in dev container. Its Ubuntu
+  24.04 environment pins Temurin 25, Node 24, Python 3.13, and stable Rust. The container runs the
+  same bootstrap and the onramp doctor after creation.
+
+The dev container is a CPU-only contributor environment. It does not add Linux product support,
+package the desktop application for Linux, mount models, or require a GPU.
+
 ### Prerequisites
 
-**To build + test the code** (the contributor front door — this is all you need to send a PR):
+**For native development** (the dev container supplies these automatically):
 
 - Windows 10/11
 - A JVM to launch the Gradle wrapper. The checked-in Daemon JVM criteria selects and, when necessary,
@@ -55,8 +67,15 @@ readable while contributors can work naturally on branches.
   `JAVA_HOME` and `PATH` on JDK 25 is still recommended so direct `java`/`javac` use and non-Gradle tooling
   agree; the dev-runner also resolves a suitable JDK explicitly for the Head and Worker processes.
 - Node.js 20+ (for the `modules/ui-web` frontend) — `scripts/setup/bootstrap-node-win.ps1` can install it for you
+- Python 3.13+ for the repository's Python-backed checks and evaluation tooling
+- Rust stable only when working on the optional Tauri shell under `modules/shell`; its absence does
+  not block core Java/web contribution
 
-That's it. `./gradlew build` (compile + unit tests) does **not** require the Rust/Tauri toolchain (the desktop
+Run `node scripts/setup/bootstrap.mjs --check` for a non-mutating prerequisite and lockfile check,
+or `node scripts/setup/bootstrap.mjs` to install the repository's pinned JavaScript dependencies.
+The bootstrap never chooses a host package manager or edits your shell profile.
+
+The core build does **not** require the Rust/Tauri toolchain (the desktop
 shell in `modules/shell` builds separately, only for packaging the installer), a **GPU**, or the **~9 GB model
 download** — the models are fetched on first *run* of the app, not to build or test it.
 
@@ -68,15 +87,11 @@ download** — the models are fetched on first *run* of the app, not to build or
 
 ### Building
 
-```powershell
-# Full build with tests
-./gradlew.bat build
-
-# Build without tests (faster)
-./gradlew.bat build -x test
-
-# Run the desktop UI
-./gradlew.bat :modules:ui:run
+```text
+# Windows                         # Dev container / Unix
+./gradlew.bat build               ./gradlew build
+./gradlew.bat build -x test       ./gradlew build -x test
+./gradlew.bat :modules:ui:run     ./gradlew :modules:ui:run
 ```
 
 ### First run from source (the onramp)
@@ -88,7 +103,7 @@ complete success:
 - **Tier 0 — keyword search, zero download.** Start the dev stack, index the bundled demo corpus
   (`examples/onramp-corpus/`), and a keyword query returns a real result — no models, no GPU.
 - **Tier 1 — semantic/hybrid search.** Add the ONNX models (~3.5 GB) for meaning-based retrieval.
-- **Tier 2 — cited AI answers.** Add the chat model **and** a GPU runtime (`./gradlew.bat
+- **Tier 2 — cited AI answers.** Add the chat model **and** a GPU runtime (`gradlew[.bat]
   :modules:ui:stageLlamaCudaVariant`, once, at the main checkout) for grounded, cited answers.
 
 `node scripts/dev/doctor.mjs` reports which tier your environment is at and the single next step to
@@ -97,14 +112,10 @@ stack, indexes the demo corpus, and asserts a first result end-to-end.
 
 ### Testing
 
-```powershell
-# Run all tests
+```text
+# Replace gradlew.bat with ./gradlew in the dev container or on Unix.
 ./gradlew.bat test
-
-# Run specific module tests
 ./gradlew.bat :modules:adapters-lucene:test
-
-# Full verification (recommended before PR)
 ./gradlew.bat build
 ```
 
@@ -117,7 +128,9 @@ Code style is enforced automatically:
 - **TypeScript**: ESLint + Prettier
 
 To fix formatting issues:
-```powershell
+
+```text
+# Replace gradlew.bat with ./gradlew in the dev container or on Unix.
 ./gradlew.bat spotlessApply
 ```
 

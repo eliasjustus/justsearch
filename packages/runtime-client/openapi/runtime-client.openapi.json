@@ -1,0 +1,650 @@
+{
+  "components" : {
+    "schemas" : {
+      "api-error-response" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "error" : {
+            "type" : "string"
+          },
+          "errorClass" : {
+            "type" : "string"
+          },
+          "errorCode" : {
+            "type" : "string"
+          },
+          "i18nKey" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string"
+          },
+          "retryable" : {
+            "type" : "boolean"
+          }
+        },
+        "required" : [ "error", "errorCode" ],
+        "title" : "JustSearch API error response",
+        "type" : "object"
+      },
+      "lifecycle-snapshot" : {
+        "$defs" : {
+          "component" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "reason_code" : {
+                "type" : [ "string", "null" ]
+              },
+              "state" : {
+                "$ref" : "#/components/schemas/lifecycle-snapshot/$defs/state"
+              }
+            },
+            "required" : [ "state" ],
+            "type" : "object"
+          },
+          "state" : {
+            "enum" : [ "LIFECYCLE_STATE_STARTING", "LIFECYCLE_STATE_READY", "LIFECYCLE_STATE_DEGRADED", "LIFECYCLE_STATE_ERROR", "LIFECYCLE_STATE_STOPPING", "LIFECYCLE_STATE_STOPPED" ],
+            "type" : "string"
+          }
+        },
+        "additionalProperties" : true,
+        "properties" : {
+          "components" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "head" : {
+                "$ref" : "#/components/schemas/lifecycle-snapshot/$defs/component"
+              },
+              "inference" : {
+                "$ref" : "#/components/schemas/lifecycle-snapshot/$defs/component"
+              },
+              "worker" : {
+                "$ref" : "#/components/schemas/lifecycle-snapshot/$defs/component"
+              }
+            },
+            "required" : [ "head", "worker", "inference" ],
+            "type" : "object"
+          },
+          "lifecycle" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "message" : {
+                "type" : [ "string", "null" ]
+              },
+              "reason_code" : {
+                "type" : [ "string", "null" ]
+              },
+              "state" : {
+                "$ref" : "#/components/schemas/lifecycle-snapshot/$defs/state"
+              }
+            },
+            "required" : [ "state" ],
+            "type" : "object"
+          },
+          "observed_at" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "schema_version" : {
+            "const" : 1
+          }
+        },
+        "required" : [ "schema_version", "observed_at", "lifecycle", "components" ],
+        "title" : "JustSearch lifecycle snapshot",
+        "type" : "object"
+      },
+      "runtime-live-response" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "alive" : {
+            "const" : true
+          },
+          "instanceId" : {
+            "type" : [ "string", "null" ]
+          },
+          "pid" : {
+            "type" : [ "integer", "null" ]
+          }
+        },
+        "required" : [ "alive", "pid", "instanceId" ],
+        "title" : "JustSearch runtime liveness response",
+        "type" : "object"
+      },
+      "runtime-manifest-public" : {
+        "$defs" : {
+          "ai" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "contextWindow" : {
+                "$ref" : "#/components/schemas/runtime-manifest-public/$defs/contextWindow"
+              },
+              "pendingReason" : {
+                "type" : "string"
+              },
+              "phase" : {
+                "type" : "string"
+              },
+              "readyAt" : {
+                "type" : "string"
+              },
+              "required" : {
+                "type" : "boolean"
+              },
+              "serverBuildActual" : {
+                "type" : "string"
+              },
+              "serverBuildExpected" : {
+                "type" : "string"
+              },
+              "thinkingSupport" : {
+                "type" : "string"
+              }
+            },
+            "required" : [ "required" ],
+            "type" : "object"
+          },
+          "chat" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "mmprojActive" : {
+                "type" : "boolean"
+              },
+              "modelFile" : {
+                "type" : "string"
+              },
+              "profileId" : {
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "constituents" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "lifecycleSchemaVersion" : {
+                "type" : "integer"
+              },
+              "manifestSchemaVersion" : {
+                "type" : "integer"
+              },
+              "mcpProtocolVersion" : {
+                "type" : "string"
+              },
+              "mcpToolSurfaceVersion" : {
+                "type" : "string"
+              }
+            },
+            "required" : [ "manifestSchemaVersion", "lifecycleSchemaVersion", "mcpProtocolVersion", "mcpToolSurfaceVersion" ],
+            "type" : "object"
+          },
+          "contextWindow" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "freeVramBytes" : {
+                "type" : "integer"
+              },
+              "kvType" : {
+                "type" : "string"
+              },
+              "reason" : {
+                "type" : "string"
+              },
+              "rung" : {
+                "type" : "integer"
+              },
+              "slots" : {
+                "type" : "integer"
+              }
+            },
+            "required" : [ "rung", "slots" ],
+            "type" : "object"
+          },
+          "mode" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "intent" : {
+                "type" : "string"
+              },
+              "realized" : {
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "reachability" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "transports" : {
+                "items" : {
+                  "$ref" : "#/components/schemas/runtime-manifest-public/$defs/transport"
+                },
+                "type" : "array"
+              }
+            },
+            "required" : [ "transports" ],
+            "type" : "object"
+          },
+          "runtimeContract" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "constituents" : {
+                "$ref" : "#/components/schemas/runtime-manifest-public/$defs/constituents"
+              },
+              "version" : {
+                "pattern" : "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+                "type" : "string"
+              }
+            },
+            "required" : [ "version" ],
+            "type" : "object"
+          },
+          "transport" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "audience" : {
+                "enum" : [ "public" ],
+                "type" : "string"
+              },
+              "kind" : {
+                "type" : "string"
+              },
+              "url" : {
+                "type" : "string"
+              }
+            },
+            "required" : [ "audience" ],
+            "type" : "object"
+          },
+          "worker" : {
+            "additionalProperties" : true,
+            "properties" : {
+              "grpcPort" : {
+                "maximum" : 65535,
+                "minimum" : 1,
+                "type" : "integer"
+              },
+              "indexBasePath" : {
+                "type" : "string"
+              },
+              "readyAt" : {
+                "type" : "string"
+              },
+              "spawnError" : {
+                "type" : "string"
+              },
+              "state" : {
+                "enum" : [ "pending", "ready", "failed" ],
+                "type" : "string"
+              }
+            },
+            "required" : [ "state" ],
+            "type" : "object"
+          }
+        },
+        "additionalProperties" : true,
+        "properties" : {
+          "ai" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/ai"
+          },
+          "chat" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/chat"
+          },
+          "dataDir" : {
+            "type" : "string"
+          },
+          "head" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "apiBaseUrl" : {
+                "pattern" : "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]+)?$",
+                "type" : "string"
+              },
+              "apiPort" : {
+                "maximum" : 65535,
+                "minimum" : 1,
+                "type" : "integer"
+              },
+              "buildStamp" : {
+                "type" : "string"
+              },
+              "readyAt" : {
+                "type" : "string"
+              }
+            },
+            "required" : [ "apiPort", "apiBaseUrl", "readyAt" ],
+            "type" : "object"
+          },
+          "instanceId" : {
+            "minLength" : 1,
+            "type" : "string"
+          },
+          "lifecycle" : {
+            "type" : [ "string", "null" ]
+          },
+          "mode" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/mode"
+          },
+          "pid" : {
+            "type" : "integer"
+          },
+          "reachability" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/reachability"
+          },
+          "runtimeContract" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/runtimeContract"
+          },
+          "schemaVersion" : {
+            "const" : 1
+          },
+          "startedAt" : {
+            "type" : "string"
+          },
+          "worker" : {
+            "$ref" : "#/components/schemas/runtime-manifest-public/$defs/worker"
+          }
+        },
+        "required" : [ "schemaVersion", "instanceId", "pid", "startedAt", "dataDir", "head" ],
+        "title" : "JustSearch public runtime manifest",
+        "type" : "object"
+      },
+      "runtime-ready-response" : {
+        "additionalProperties" : false,
+        "properties" : {
+          "instanceId" : {
+            "type" : [ "string", "null" ]
+          },
+          "lifecycle" : {
+            "type" : [ "string", "null" ]
+          },
+          "ready" : {
+            "type" : "boolean"
+          }
+        },
+        "required" : [ "ready", "lifecycle", "instanceId" ],
+        "title" : "JustSearch runtime readiness response",
+        "type" : "object"
+      }
+    }
+  },
+  "info" : {
+    "description" : "The six read-only, loopback-only Runtime Contract operations supported by @justsearch/runtime-client. This is intentionally smaller than the full local API.",
+    "title" : "JustSearch Runtime Client API",
+    "version" : "0.1.0"
+  },
+  "openapi" : "3.1.0",
+  "paths" : {
+    "/.well-known/justsearch/manifest.json" : {
+      "get" : {
+        "operationId" : "getWellKnownRuntimeManifest",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Sanitized internal application failure."
+          },
+          "503" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Valid lifecycle-unavailable response."
+          }
+        },
+        "summary" : "GET /.well-known/justsearch/manifest.json",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    },
+    "/api/health" : {
+      "get" : {
+        "operationId" : "getLifecycleHealth",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          },
+          "503" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
+            "description" : "Valid lifecycle-unavailable response."
+          }
+        },
+        "summary" : "GET /api/health",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    },
+    "/api/runtime/live" : {
+      "get" : {
+        "operationId" : "getRuntimeLiveness",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/runtime-live-response"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          }
+        },
+        "summary" : "GET /api/runtime/live",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    },
+    "/api/runtime/manifest" : {
+      "get" : {
+        "operationId" : "getRuntimeManifest",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          },
+          "500" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Sanitized internal application failure."
+          },
+          "503" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Valid lifecycle-unavailable response."
+          }
+        },
+        "summary" : "GET /api/runtime/manifest",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    },
+    "/api/runtime/ready" : {
+      "get" : {
+        "operationId" : "getRuntimeReadiness",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/runtime-ready-response"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          },
+          "503" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/runtime-ready-response"
+                }
+              }
+            },
+            "description" : "Valid lifecycle-unavailable response."
+          }
+        },
+        "summary" : "GET /api/runtime/ready",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    },
+    "/api/status" : {
+      "get" : {
+        "operationId" : "getLifecycleStatus",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
+            "description" : "Successful response."
+          },
+          "403" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/api-error-response"
+                }
+              }
+            },
+            "description" : "Rejected because the Host header is not loopback."
+          }
+        },
+        "summary" : "GET /api/status",
+        "tags" : [ "runtime-contract" ],
+        "x-justsearch-security" : {
+          "loopbackHostRequired" : true,
+          "mcpOriginValidated" : false,
+          "sessionTokenRequired" : false
+        },
+        "x-justsearch-stability" : "public-contract"
+      }
+    }
+  },
+  "x-justsearch-runtime-contract" : {
+    "supportedVersions" : [ "0.2.0" ]
+  }
+}

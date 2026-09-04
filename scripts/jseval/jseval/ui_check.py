@@ -1885,6 +1885,14 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.get_by_role("heading", name="Index", exact=True).scroll_into_view_if_needed()
         await asyncio.sleep(0.5)
 
+    async def setup_help_narrow(page):
+        # Tempdoc 899 review closeout: retain a real small-viewport proof for the Help
+        # operation controls instead of relying on a one-off screenshot at the default width.
+        await page.set_viewport_size({"width": 760, "height": 720})
+        await _view_setup("help")(page)
+        await page.get_by_text("Copy Diagnostic Summary", exact=True).scroll_into_view_if_needed()
+        await asyncio.sleep(0.3)
+
     views = [
         "home",
         "search",
@@ -1921,6 +1929,7 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # --- Isolated: main views (dark + light) ---
         *[Step(f"{v}", setup=_view_setup(v), isolated=True) for v in views],
         *[Step(f"{v}-light", setup=_view_setup(v, "light"), isolated=True, color_scheme="light") for v in views],
+        Step("help-narrow", setup=setup_help_narrow, isolated=True),
 
         # --- Isolated: density/mode variants ---
         Step("search-results-light",   setup=_density_setup("comfort"), isolated=True, color_scheme="light"),

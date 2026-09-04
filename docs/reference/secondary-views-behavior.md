@@ -471,8 +471,9 @@ Two-column layout on large screens (single column on small).
 ### Header
 
 - Title: "Help & Support" with HelpCircle icon
-- Subtitle: "Diagnostics export and local-first transparency."
-- **Export diagnostics** button — calls `exportDiagnostics(apiBase)`. Disabled in demo mode. Shows saved path on success, error message on failure.
+- Subtitle: "Copy a redacted summary or export the full local diagnostics bundle."
+- **Copy diagnostic summary** operation — available while Worker/Inference are offline. Copies the bounded allowlist-only summary directly from the operation response; the summary is never rendered or persisted. A fixed local receipt appears only after the clipboard write succeeds, with fixed failure text otherwise.
+- **Export diagnostics** operation — exports the full redacted ZIP and shows the saved path on success or an error on failure.
 
 ### Left column
 
@@ -486,28 +487,23 @@ Two-column layout on large screens (single column on small).
 
 Expanded answers show below the question with a chevron rotation animation.
 
-Note: the Help surface's shortcuts list (`shell-v0/views/HelpSurface.ts`) should be re-checked — a known issue had `/` listed twice with different descriptions, displaying the same key twice in the UI.
-
 **Quick troubleshooting** — Glass card with 3 bullet points:
 - Stale results → Reindex in Library (Advanced) or Health
 - Stuck indexing → Restart worker in Health
-- Bug report → Export diagnostics first
+- Bug report → Copy diagnostic summary, review it, then paste it into the optional issue field
 
 ### Right column
 
-**Keyboard shortcuts** — 9 entries in a divided glass card:
+**Keyboard shortcuts** — only bindings that actually fire are listed:
 
 | Key | Description |
 |-----|-------------|
-| `/` | Focus search bar |
-| `/` | Enter command mode (when search is focused) _(duplicate key — see note)_ |
-| `??` | Enter AI chat mode |
-| `Ctrl+Enter` | Open selected file |
-| `↑ ↓` | Navigate results |
-| `Space` | Toggle file selection |
-| `Ctrl+A` | Select all results |
-| `Escape` | Clear selection / close panel |
-| `Alt` | Show all keyboard hints |
+| `Ctrl / ⌘ + K` | Open the command palette |
+| `Enter` | Run the search when the search box is focused |
+| `Esc` | Clear the search box or close an open panel/drawer |
+| `Ctrl / ⌘ + Z` | Undo |
+| `Ctrl / ⌘ + Shift + Z` | Redo |
+| `J / K` | Step through a visible conversation transcript |
 
 **Local-first info** — Glass card with Shield icon: "Your files stay on this machine. Search and indexing run locally, and the UI only talks to the local backend over loopback."
 

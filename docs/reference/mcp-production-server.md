@@ -204,6 +204,20 @@ All 6 tools validate their arguments against a declared JSON Schema at the MCP b
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
 
+### Tool lifecycle extension
+
+MCP has no standard tool-deprecation fields, so JustSearch advertises the versioned experimental
+capability `capabilities.experimental["io.justsearch/tool-lifecycle"] = {"version":"1.0"}`.
+Lifecycle data comes from a closed, validated catalog beside the six tool declarations: every
+catalog row must resolve to exactly one live tool, and duplicate or orphaned rows fail fast.
+
+When a tool is deprecated, `tools/list` adds only namespaced top-level `_meta` keys:
+`io.justsearch/deprecated`, `io.justsearch/deprecatedSince`, optional
+`io.justsearch/sunsetAt`, and `io.justsearch/replacement`. The standard `annotations` object is left
+unchanged. A short deprecation sentence is also prepended to the description for clients that ignore
+extensions. The production catalog is currently empty, so no shipped tool emits this metadata and
+the curated tool-surface version remains `0.6.0`.
+
 ## Response shape (tempdoc 725)
 
 The human-readable `content` text on `justsearch_search` and `justsearch_answer` carries several

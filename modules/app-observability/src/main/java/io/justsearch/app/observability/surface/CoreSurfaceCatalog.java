@@ -350,9 +350,12 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   /** Slice 449 phase 7c — TABULAR Resource that backs Library's row data. */
   private static final ResourceRef RES_INDEXED_ROOTS = new ResourceRef("core.indexed-roots");
 
-  /** Slice 451 phase 9 — Help's only backend interaction. */
+  /** Slice 451 phase 9 — Help's full diagnostics-bundle interaction. */
   private static final OperationRef OP_EXPORT_DIAGNOSTICS =
       new OperationRef("core.export-diagnostics");
+  /** Tempdoc 899 D5 — Help's bounded, transient bug-report summary interaction. */
+  private static final OperationRef OP_COPY_DIAGNOSTIC_SUMMARY =
+      new OperationRef("core.copy-diagnostic-summary");
 
   /** Slice 452 phase 9 — Brain's set of consumed Operations. */
   private static final OperationRef OP_START_AI_INSTALL = new OperationRef("core.start-ai-install");
@@ -405,7 +408,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
               Placement.DEEPLINK,
               new SurfaceConsumes(
                   /* resources */ Set.of(),
-                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS),
+                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS, OP_COPY_DIAGNOSTIC_SUMMARY),
                   /* prompts */ Set.of(),
                   /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
               HELP_MOUNT_TAG,
