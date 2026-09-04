@@ -1,7 +1,7 @@
 ---
 title: "Hermetic bootstrap and truthful failure architecture for the required justsearch-dev MCP"
 type: tempdocs
-status: "IMPLEMENTED — independent review fixes verified 2026-09-04; publication in progress"
+status: "PUBLISHED — PR #636 merged 2026-09-04"
 created: 2026-09-04
 updated: 2026-09-04
 author: Codex session 01a06b3b
@@ -1035,8 +1035,9 @@ same `INVALID_DIST_FROM` and `checksRun: false` contract.
 
 ### 15.4 Remaining work and unverified assumptions
 
-No implementation work remains in this tempdoc. Remote CI on the workflow's pinned Node runtime is
-not yet evidence because this branch has not been published; publication was explicitly authorized
-and is in progress. Bootstrap stderr display remains client-dependent under
-the MCP stdio contract, which is why the implementation also writes the best-effort local
-diagnostic. No claim depends on stderr being presented in the Codex UI.
+No implementation work remains in this tempdoc. PR #636's exact-head workflow run `33857684221`
+passed on source SHA `594f9661ba442ec5f6d640c3e4b1ca41ccbdd2ac`; merge-group run `33859412501`
+then passed on integrated SHA `b9811a6d4838a23f15da7c2ce1267fa8319bd2b7`, which GitHub merged to
+public `main` on 2026-09-04. Bootstrap stderr display remains client-dependent under the MCP stdio
+contract, which is why the implementation also writes the best-effort local diagnostic. No claim
+depends on stderr being presented in the Codex UI.
