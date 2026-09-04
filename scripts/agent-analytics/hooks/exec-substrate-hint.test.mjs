@@ -113,7 +113,10 @@ try {
     try { fs.unlinkSync(marker); } catch { /* none yet */ }
     const first = runHook('gh run watch 1 &', session);
     const second = runHook('gh run watch 2 &', session);
-    assert.ok(JSON.parse(first).hookSpecificOutput.additionalContext.length > 0);
+    const hint = JSON.parse(first).hookSpecificOutput.additionalContext;
+    assert.ok(hint.includes('checks-wait'));
+    assert.ok(hint.includes('merge-wait'));
+    assert.ok(hint.includes('run-wait-sha'));
     assert.equal(second.trim(), '', 'second wait-shaped command in the same session must stay silent');
     try { fs.unlinkSync(marker); } catch { /* cleanup */ }
   });

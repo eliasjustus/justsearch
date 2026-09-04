@@ -13,6 +13,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { loadPublicCiLocalRepro, localReproCommandMap } from './lib/public-ci-local-repro.mjs';
+
 const KIND = 'justsearch-ci-evidence-digest.v1';
 const RUN_FIELDS = [
   'conclusion',
@@ -39,58 +41,7 @@ const UNIT_ARTIFACTS = new Map([
 const BUILD_ATTRIBUTION_ARTIFACT = 'build-attribution';
 const BUILD_ATTRIBUTION_KIND = 'justsearch-build-attribution.v1';
 
-const LOCAL_REPRO_COMMANDS = new Map([
-  [
-    'Public claims',
-    [
-      'npm ci',
-      'node scripts/ci/check-workflow-triggers.mjs',
-      'node scripts/ci/verify-test-evidence-policy.mjs',
-      'node scripts/ci/check-root-readme.mjs',
-      'node scripts/ci/check-codex-agent-parity.mjs',
-      'node scripts/ci/check-always-loaded-budget.mjs',
-      'node scripts/ci/check-readme-benchmark-numbers.mjs',
-      'node scripts/docs/check-frontend-stack-claims.mjs',
-      'node scripts/docs/check-model-freshness.mjs',
-      'node scripts/docs/check-privacy-claims.mjs',
-      'node scripts/docs/verify-canonical-doc-links.mjs',
-      'node scripts/architecture/module-deps.mjs --check-canonical',
-      'npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"',
-      'node scripts/docs/llmstxt-generate.mjs --check',
-      'node scripts/docs/skills-sync.mjs --check',
-    ],
-  ],
-  [
-    'License and notices',
-    [
-      'npm ci --prefix modules/ui-web',
-      './gradlew.bat checkLicense --no-configuration-cache --no-parallel',
-      'node scripts/codegen/dump-cargo-licenses.mjs',
-      'cmd /c "cd modules\\ui-web && npx --yes license-checker --production --json --relativeOnly > ..\\..\\build\\npm-licenses.json"',
-      'node scripts/ci/check-notices-regen.mjs',
-    ],
-  ],
-  ['Build (no model blobs)', ['./gradlew.bat assemble -PskipWebBuild=false']],
-  [
-    'Unit tests (app-ui)',
-    [
-      './gradlew.bat :modules:app-agent:test :modules:app-agent-api:test :modules:app-api:test :modules:app-api-tck:test :modules:app-config:test :modules:app-launcher:test :modules:app-observability:test :modules:app-services:test :modules:app-util:test :modules:ui:test -PskipWebBuild=true --console=plain',
-    ],
-  ],
-  [
-    'Unit tests (search-worker)',
-    [
-      './gradlew.bat :modules:adapters-lucene:test :modules:configuration:test :modules:core:test :modules:core-contracts:test :modules:indexer-worker:test :modules:indexing:test :modules:ipc-common:test :modules:worker-core:test :modules:worker-services:test -PskipWebBuild=true --console=plain',
-    ],
-  ],
-  [
-    'Unit tests (platform-contracts)',
-    [
-      './gradlew.bat :modules:ai-backend:test :modules:api-contract-projection-java:test :modules:app-inference:test :modules:benchmarks:test :modules:dead-code-audit:test :modules:extension-substrate:test :modules:gpu-bridge:test :modules:infra-core:test :modules:ort-common:test :modules:prompt-support:test :modules:reranker:test :modules:ssot-tools:test :modules:system-tests:test :modules:telemetry:test :modules:test-support:test -PskipWebBuild=true --console=plain',
-    ],
-  ],
-  ['Secret scan', ['gitleaks dir . --config .gitleaks.toml --redact']],
-]);
+const LOCAL_REPRO_COMMANDS = localReproCommandMap(loadPublicCiLocalRepro());
 
 function repoRootFromCwd() {
   for (let dir = process.cwd(); ; dir = path.dirname(dir)) {

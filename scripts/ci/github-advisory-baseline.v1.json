@@ -1,6 +1,6 @@
 {
   "schema": "github-advisory-baseline.v1",
-  "generated_at": "2026-09-04T08:44:49.582Z",
+  "generated_at": "2026-09-04T11:05:50.854Z",
   "source_report": "tmp/github-advisory-report.json",
   "targets": {
     "root": {
@@ -47,6 +47,15 @@
         { "ghsa_id": "GHSA-RGW5-RVV9-X895", "severity": "high" },
         { "ghsa_id": "GHSA-V2HH-GCRM-F6HX", "severity": "high" }
       ]
+    },
+    "shell": {
+      "advisories": []
+    },
+    "runtime-client": {
+      "advisories": []
+    },
+    "wire-contract": {
+      "advisories": []
     }
   }
 }

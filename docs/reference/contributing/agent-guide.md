@@ -526,8 +526,10 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
   until checks register on the branch, then decodes `gh pr checks`'s
   documented 0=pass/1=fail/8=pending bitwise exit contract instead of
-  guessing at it (tempdoc 743 P-K). `gh run watch <run-id> --exit-status` is
-  still the equivalent for a specific workflow run (no wrapper yet). Watching
+  guessing at it (tempdoc 743 P-K). For a specific landed commit, use
+  `node scripts/dev/run-gh.mjs run-wait-sha <sha> --workflow CI --branch main
+  --event push`; it owns registration polling, emits only transitions, and
+  has a bounded timeout. Watching
   immediately after *any* push (not just the batch case further below) can
   race check registration — `checks-wait`'s pre-poll is exactly that
   mitigation; see the registration-race bullet in Batch-publishing below and
@@ -554,6 +556,12 @@ longer applies once a PR is enqueued). Practical sequence:
   push's checks take a few seconds to appear; `gh pr checks <N> --watch` called
   immediately can return `"no checks reported"` (nonzero exit — **not** a CI
   failure; keep waiting), same as before the queue.
+- **Validate the candidate-side boundary before pushing** — `node
+  scripts/ci/run-publish-preflight.mjs --check` proves that every required
+  status context is classified in the versioned local-reproduction inventory.
+  `--list` shows which contexts have a deterministic local subset and which are
+  honestly hosted-only; `--run` executes the local subsets. Hosted-only never
+  waives the corresponding GitHub check.
 - **Enqueue with `gh pr merge <N>` — no strategy flag.** Under the queue this does
   not merge directly; it adds the PR to the queue. The queue runs its own
   `merge-group` CI pass against the PR merged with the latest `main` and merges
@@ -566,11 +574,14 @@ longer applies once a PR is enqueued). Practical sequence:
   checkpoints.** The queue merges unattended, so there is no second human look
   at the comment freshness or title/body before publication. Run both and fix
   every finding before enqueuing — not after.
-- **Confirm the merge landed before any cleanup** — `gh pr view <N> --json state`
-  must read `MERGED`; an unattended queue merge gives no other confirmation moment.
+- **Confirm the merge landed before any cleanup** — use `node
+  scripts/dev/run-gh.mjs merge-wait <N>`. It performs the bounded queue poll,
+  emits only state transitions, and returns the landed SHA on `MERGED`.
 - **Check main's *final* HEAD is green** — after the queue merges, watch push-CI on
-  main's newest commit (`gh run watch`); superseded push runs show `cancelled`
-  (concurrency), only the newest matters.
+  the landed SHA with `run-wait-sha`. A completed non-success result, including
+  cancellation, is not green. If a later main push supersedes and cancels that
+  run, inspect it and explicitly wait on main's newest SHA. Keep this post-merge
+  check: merge-group success has not guaranteed same-SHA main success historically.
 
 **Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
 fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR

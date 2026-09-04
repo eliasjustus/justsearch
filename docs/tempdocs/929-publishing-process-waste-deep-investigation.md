@@ -600,3 +600,101 @@ not one safe atomic change and should not be assigned as one broad implementatio
 The practical recommendation is to implement the first three slices independently,
 measure ten ordinary publications, and then re-derisk the final two. The easy-looking
 terminal-condition change is currently riskier than the larger-looking audit cleanup.
+
+## 9. Implementation plan — approved for autonomous execution 2026-09-04
+
+The implementation is intentionally split into independently verifiable slices. It
+does not remove merge-group evidence, final-main green closeout, or any required check.
+
+### P1 — complete advisory authority before suppressing duplicate transport
+
+- [x] Extend `REQUIRED_ADVISORY_TARGETS` to every active production lockfile: root,
+  UI, shell, runtime-client, and wire-contract.
+- [x] Regenerate the advisory report and baseline using the expanded authority; add
+  producer and enforcer tests proving missing targets fail closed.
+- [x] Add a static CI guard that rejects active `npm ci`/`npm install` commands without
+  an explicit audit policy, while allowing intentional fixture text.
+- [x] Only after those checks are green, set `--audit=false` on covered installs in
+  required, release, docs, and onramp workflows.
+
+### P2 — make one-process waiting the paved publication path
+
+- [x] Extend `run-gh.mjs` with bounded, transition-only waits for merge completion and
+  an exact-SHA workflow run, preserving its existing exit-code contract.
+- [x] Unit-test registration races, state transitions, closed-unmerged PRs, timeout,
+  failed runs, cancelled runs, and exact-SHA selection.
+- [x] Update the publish skill source, canonical guide, and hook guidance to use the new
+  modes; regenerate synced skill sections and inspect the prompt-surface inventory. The
+  Codex skill is independently owned in the current canonical ownership map and was not
+  overwritten by a nonexistent projection command; it links to the updated canonical guide.
+
+### P3 — make local candidate readiness an explicit subset contract
+
+- [x] Move local-reproduction commands out of the evidence renderer into a versioned
+  manifest shared by reporting and execution.
+- [x] Add a runner that executes the deterministic candidate subset, labels hosted-only
+  required contexts honestly, and fails on manifest/policy drift.
+- [x] Include the locally reproducible governance/projection failures observed in the
+  sample without claiming CLA, hosted OS, or runner-environment equivalence.
+
+### P4 — govern latency through the existing wall-time seam
+
+- [x] Refresh advisory budgets from a current measured window and record measurement
+  date, source window, review date, and hard-timeout headroom.
+- [x] Extend the budget reporter/tests to flag expired evidence, missing required lanes,
+  and advisory ceilings that no longer leave meaningful hard-timeout headroom.
+- [x] Keep the signal advisory; do not turn runner variance into a merge blocker.
+
+### P5 — retire the proven dormant selective-CI representation
+
+- [x] Delete `module-filter.yml` and `resolve-affected-modules.mjs` after a final
+  repository-wide reference check confirms they have no consumer or test.
+- [x] Confirm no live comment, workflow, test, or canonical doc references the deleted
+  files. Dated tempdocs retain their historical references. Any future selective-CI design
+  must introduce a new governed authority and shadow-validation contract.
+
+### P6 — validation and evidence-gated follow-up
+
+- [x] Run focused unit/fixture checks for every changed surface, governance preflight,
+  docs/skill regeneration checks, and the full Gradle suite required after the
+  `origin/main` merge; run frontend checks if the merged or implementation diff touches
+  `modules/ui-web`.
+- [ ] Record commands and outcomes here and commit the completed implementation.
+- [x] Defer final-main detachment and selective lane activation. Reconsider only after
+  ten ordinary publications satisfy §6.2 and a fresh derisk pass raises confidence.
+
+## 10. Implementation outcome — 2026-09-04
+
+The safe slices P1–P5 are implemented. Final-main validation and every required hosted
+check remain intact. Selective CI was not activated; its two unreferenced legacy files
+were deleted after a repository-wide consumer check found only dated-history mentions.
+
+The full Windows test run exposed an additional candidate-side waste source that Linux
+CI could not show: `SdkOpenApiProjectionTest` compared a committed LF snapshot with
+Jackson's platform-native CRLF rendering and deterministically failed by exactly one byte
+per line. `SdkOpenApiProjection.write` now normalizes the generated artifact to UTF-8 LF.
+The original regression test passed unchanged, then the complete test and build suites
+passed. This is a concrete example of why the local contract must describe a subset and
+why platform-specific evidence remains necessary.
+
+Verification evidence:
+
+- `node scripts/ci/report-github-advisories.mjs` produced all five target rows: root
+  (62 advisories), UI (21), shell (0), runtime-client (0), wire-contract (0).
+- `node scripts/governance/run.mjs --gate npm-audit --mode gate` passed with zero
+  findings; the enforcer fixture now proves an omitted target fails closed.
+- Workflow audit-policy checks and fixtures passed; every active workflow install now
+  declares `--audit=false`.
+- `run-gh.test.mjs` passed 32 checks, including deterministic timeout and registration
+  transitions. Live read-only smokes returned PR 640's landed SHA and successful exact-SHA
+  main run 33862965941.
+- The local-reproduction manifest validator passed with all ten required contexts
+  classified; the evidence-digest fixture passed against the shared manifest.
+- The refreshed 20-successful-run window has no lane above its new advisory ceiling.
+  The previously absent Windows lane measured median 123s / max 329s; Rust measured
+  median 97s / max 295s. Budget, attribution, and trend fixtures passed.
+- Agent analytics passed 65/65 files; governance passed 34/34 files. Canonical-link,
+  `llms.txt`, skill-sync, module-dependency, runtime-config, and prompt-surface checks
+  passed; the prompt inventory reported zero suspicious tokens.
+- `./gradlew.bat test` passed after the cross-platform snapshot fix.
+- `./gradlew.bat build -x test` passed after the final code change (251 actionable tasks).

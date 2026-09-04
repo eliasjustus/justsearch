@@ -210,16 +210,17 @@ dropped id would report a pass for a gate that never ran).
 `governance/registry.v1.json`; the table above names the representative
 ratchet-file gates.)
 
-The historical **`npm-audit`** gate id now reads exact versions from the root and `ui-web`
-package locks and queries GitHub's Global Security Advisories API with bounded, retryable,
-paginated GETs. Its baseline is a set of accepted high/critical GHSA identities plus each
-accepted severity. A new identity or upward severity change cannot be cancelled by a
-different advisory disappearing, which was possible under the superseded count baseline.
-Provider or target unavailability fails closed. The matching `npm ci` steps use
-`--audit=false` because npm's install-time advisory POST is duplicate evidence with an
-independent five-minute transport timeout. Repository vulnerability alerts and automated
-security updates provide ambient monitoring; the kernel gate remains the per-PR lockfile
-fact.
+The historical **`npm-audit`** gate id reads exact versions from the root, `ui-web`,
+shell, runtime-client, and wire-contract package locks and queries GitHub's Global
+Security Advisories API with bounded, retryable, paginated GETs. Its baseline is a
+set of accepted high/critical GHSA identities plus each accepted severity. A new
+identity or upward severity change cannot be cancelled by a different advisory
+disappearing, which was possible under the superseded count baseline. Provider or
+target unavailability fails closed. Matching workflow installs use `--audit=false`
+because npm's install-time advisory POST is duplicate evidence with an independent
+transport timeout; `check-workflow-npm-audit-policy.mjs` prevents an implicit audit
+from returning. Repository vulnerability alerts and automated security updates
+provide ambient monitoring; the kernel gate remains the per-PR lockfile fact.
 
 The **`test-efficacy`** gate (tempdoc 555) ratchets per-seam mutation **test-strength**
 (killed/covered, with `TIMED_OUT` as killed) plus a per-seam `maxNoCoverage` ceiling, over the

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { enforceNpmAudit } from './enforcer.mjs';
-import { sha256 } from '../../../ci/lib/github-advisory-report.mjs';
+import { REQUIRED_ADVISORY_TARGETS, sha256 } from '../../../ci/lib/github-advisory-report.mjs';
 
 const baselinePath = 'scripts/ci/github-advisory-baseline.v1.json';
 const reportPath = 'tmp/github-advisory-report.json';
@@ -16,6 +16,10 @@ const gate = {
 };
 const rootLockfile = '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n';
 const uiLockfile = '{"lockfileVersion":3,"packages":{"node_modules/ui-example":{"version":"1.0.0"}}}\n';
+const lockfiles = Object.fromEntries(REQUIRED_ADVISORY_TARGETS.map((target) => [
+  target.lockfile,
+  target.targetId === 'root' ? rootLockfile : target.targetId === 'ui-web' ? uiLockfile : '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n',
+]));
 const advisory = (severity = 'high') => ({
   ghsa_id: 'GHSA-35JH-R3H4-6JHM', severity,
   html_url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm',
@@ -23,20 +27,22 @@ const advisory = (severity = 'high') => ({
 const report = (rootAdvisories = [], overrides = {}) => ({
   schema: 'github-advisory-report.v1',
   source: { provider: 'github-global-security-advisories', api_version: '2026-03-10' },
-  targets: [
-    {
-      target_id: 'root', lockfile: 'package-lock.json', available: true, lockfile_sha256: sha256(rootLockfile),
-      package_versions: 1, advisories: rootAdvisories, ...overrides,
-    },
-    {
-      target_id: 'ui-web', lockfile: 'modules/ui-web/package-lock.json', available: true, lockfile_sha256: sha256(uiLockfile),
-      package_versions: 1, advisories: [],
-    },
-  ],
+  targets: REQUIRED_ADVISORY_TARGETS.map((target) => ({
+    target_id: target.targetId,
+    lockfile: target.lockfile,
+    available: true,
+    lockfile_sha256: sha256(lockfiles[target.lockfile]),
+    package_versions: 1,
+    advisories: target.targetId === 'root' ? rootAdvisories : [],
+    ...(target.targetId === 'root' ? overrides : {}),
+  })),
 });
 const baseline = (rootAdvisories = []) => ({
   schema: 'github-advisory-baseline.v1',
-  targets: { root: { advisories: rootAdvisories }, 'ui-web': { advisories: [] } },
+  targets: Object.fromEntries(REQUIRED_ADVISORY_TARGETS.map((target) => [
+    target.targetId,
+    { advisories: target.targetId === 'root' ? rootAdvisories : [] },
+  ])),
 });
 
 function put(root, relative, value) {
@@ -51,8 +57,7 @@ async function runFixture({ currentReport, liveBaseline, priorBaseline = liveBas
     put(root, reportPath, currentReport);
     put(root, baselinePath, liveBaseline);
     put(root, `_baseline/${baselinePath}`, priorBaseline);
-    put(root, 'package-lock.json', rootLockfile);
-    put(root, 'modules/ui-web/package-lock.json', uiLockfile);
+    for (const [lockfile, text] of Object.entries(lockfiles)) put(root, lockfile, text);
     if (changeset) put(root, 'gates/npm-audit/.changesets/fixture.md', changeset);
     const result = await enforceNpmAudit({
       repoRoot: root, gate, fixtureMode: true, fixtureRoot: root, baselineRef: 'fixture', rebalance,
@@ -103,6 +108,12 @@ const unavailable = await runFixture({
 });
 assert.equal(unavailable.verdict, 'fail');
 assert.ok(unavailable.findings.some((finding) => finding.ruleId === 'npm-audit/report-unavailable'));
+
+const missingTargetReport = report([]);
+missingTargetReport.targets = missingTargetReport.targets.filter((target) => target.target_id !== 'wire-contract');
+const missingTarget = await runFixture({ currentReport: missingTargetReport, liveBaseline: baseline([]) });
+assert.equal(missingTarget.verdict, 'fail');
+assert.ok(missingTarget.findings.some((finding) => /wire-contract advisory evidence is unavailable/.test(finding.message)));
 
 const stale = await runFixture({
   currentReport: report([], { lockfile_sha256: 'c'.repeat(64) }), liveBaseline: baseline([]),

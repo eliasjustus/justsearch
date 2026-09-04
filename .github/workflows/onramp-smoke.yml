@@ -38,7 +38,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install pinned Dev Container CLI
-        run: npm install --global @devcontainers/cli@0.89.0
+        run: npm install --global @devcontainers/cli@0.89.0 --audit=false
 
       - name: Start dev container
         run: >-
@@ -119,7 +119,7 @@ jobs:
       # deps so the spawn is clean — mirrors the proven local run).
       - name: Install frontend deps
         working-directory: modules/ui-web
-        run: npm ci
+        run: npm ci --audit=false
 
       # Pre-build so the smoke's stack-start budget isn't spent on a cold, from-scratch Gradle build.
       # `dev-runner start` runs `assemble -PskipWebBuild=true` (dev-runner.cjs:1010-1013) as its

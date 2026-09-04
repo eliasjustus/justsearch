@@ -6,6 +6,9 @@ export const GITHUB_API_VERSION = '2026-03-10';
 export const REQUIRED_ADVISORY_TARGETS = Object.freeze([
   Object.freeze({ targetId: 'root', lockfile: 'package-lock.json' }),
   Object.freeze({ targetId: 'ui-web', lockfile: 'modules/ui-web/package-lock.json' }),
+  Object.freeze({ targetId: 'shell', lockfile: 'modules/shell/package-lock.json' }),
+  Object.freeze({ targetId: 'runtime-client', lockfile: 'packages/runtime-client/package-lock.json' }),
+  Object.freeze({ targetId: 'wire-contract', lockfile: 'scripts/wire-contract/package-lock.json' }),
 ]);
 
 const SEVERITIES = new Set(['unknown', 'low', 'moderate', 'high', 'critical']);

@@ -33,6 +33,7 @@ import { enforceTestEfficacy } from '../gates/test-efficacy/enforcer.mjs';
 import { enforceTestToCode } from '../gates/test-to-code/enforcer.mjs';
 import { enforceStyleLiteralRatchet } from '../gates/style-literal-ratchet/enforcer.mjs';
 import { enforceAtomForkRatchet } from '../gates/atom-fork-ratchet/enforcer.mjs';
+import { REQUIRED_ADVISORY_TARGETS, sha256 } from '../../ci/lib/github-advisory-report.mjs';
 import { explainRule } from './explain.mjs';
 
 const tmpDirs = [];
@@ -130,34 +131,36 @@ await firesFor('dead-code-jvm', 'dead-code-jvm/declared-growth-without-repin', (
 }, null);
 
 await firesFor('npm-audit', 'npm-audit/declared-regression-without-repin', () => {
+  const lockfiles = Object.fromEntries(REQUIRED_ADVISORY_TARGETS.map((target) => [
+    target.lockfile,
+    target.targetId === 'root'
+      ? '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n'
+      : target.targetId === 'ui-web'
+        ? '{"lockfileVersion":3,"packages":{"node_modules/ui-example":{"version":"1.0.0"}}}\n'
+        : '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n',
+  ]));
   const baseline = JSON.stringify({
     schema: 'github-advisory-baseline.v1',
-    targets: { root: { advisories: [] }, 'ui-web': { advisories: [] } },
+    targets: Object.fromEntries(REQUIRED_ADVISORY_TARGETS.map((target) => [target.targetId, { advisories: [] }])),
   });
   const root = scaffold({
     'tmp/github-advisories.json': JSON.stringify({
       schema: 'github-advisory-report.v1',
       source: { provider: 'github-global-security-advisories', api_version: '2026-03-10' },
-      targets: [{
-        target_id: 'root',
-        lockfile: 'package-lock.json',
+      targets: REQUIRED_ADVISORY_TARGETS.map((target) => ({
+        target_id: target.targetId,
+        lockfile: target.lockfile,
         available: true,
-        lockfile_sha256: '4579aec81bdbde4e6eb0b61d1547c4ffd2cde788ce2713e0f1b2989712123524',
+        lockfile_sha256: sha256(lockfiles[target.lockfile]),
         package_versions: 1,
-        advisories: [{ ghsa_id: 'GHSA-35JH-R3H4-6JHM', severity: 'high', html_url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm' }],
-      }, {
-        target_id: 'ui-web',
-        lockfile: 'modules/ui-web/package-lock.json',
-        available: true,
-        lockfile_sha256: '35be7134993f06d40974c585faaa025ccdce2a09e98bd3565db95b092bdede9e',
-        package_versions: 1,
-        advisories: [],
-      }],
+        advisories: target.targetId === 'root'
+          ? [{ ghsa_id: 'GHSA-35JH-R3H4-6JHM', severity: 'high', html_url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm' }]
+          : [],
+      })),
     }),
     'scripts/ci/github-advisory-baseline.v1.json': baseline,
     '_baseline/scripts/ci/github-advisory-baseline.v1.json': baseline,
-    'package-lock.json': '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n',
-    'modules/ui-web/package-lock.json': '{"lockfileVersion":3,"packages":{"node_modules/ui-example":{"version":"1.0.0"}}}\n',
+    ...lockfiles,
     'gates/npm-audit/.changesets/f.md': changeset('declared-regression'),
   });
   return call(enforceNpmAudit, root, {
