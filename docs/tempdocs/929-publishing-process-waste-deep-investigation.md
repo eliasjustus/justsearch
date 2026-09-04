@@ -1,7 +1,7 @@
 ---
 title: "Publishing-process waste: transcript-wide deep investigation"
 type: tempdocs
-status: "INVESTIGATION COMPLETE — recommendations are evidence-backed but not implemented"
+status: "DERISK COMPLETE — recommendations revised; no process changes implemented"
 created: 2026-09-04
 updated: 2026-09-04
 charter: "identify the dominant avoidable time, attention, and token costs in recent JustSearch publication work; distinguish current defects from historical or already-remediated friction; and evaluate alternative process designs"
@@ -94,9 +94,9 @@ node scripts/dev/run-gh.mjs run view <run-id> --json createdAt,updatedAt,event,s
 
 | Case | User-visible duration | Primary time consumers | Avoidable portion supported by the case evidence |
 |---|---:|---|---:|
-| PR #623 | 52.6m | full local build/test; PR CI; queue; post-merge current-main wait; cache defect correction | Directional only; the defect correction was real work, while the synchronous current-main tail was policy |
+| PR #623 | 52.6m | full local build/test; PR CI; queue; post-merge current-main wait; cache defect correction | Directional only; the defect correction was real work, while the current-main tail is a policy cost that cannot yet be removed safely |
 | PR #630 | 72.7m | ~30m clean publication branch/reconciliation/local verification; ~22m three CI-discovered governance fixes; ~7m evidence-only second run; ~8m merge group; ~11m post-merge flake | 15–20m stated by the session retrospective, plus a strong case for moving the exact hosted-equivalent gate set earlier |
-| PR #632 | ~53m final publication, after a separate ~96m remediation interval | 8m34s stale PR run; 12m17s caught-up PR run; 18m03s queue; 10m55s replacement current-main run | ~4m stale-base detection; 9–11m synchronous post-merge tail; repeated five-minute npm advisory stalls across the required runs |
+| PR #632 | ~53m final publication, after a separate ~96m remediation interval | 8m34s stale PR run; 12m17s caught-up PR run; 18m03s queue; 10m55s replacement current-main run | ~4m stale-base detection; repeated five-minute npm advisory stalls; the 9–11m post-merge tail is detachable only after §8's repeatability prerequisite |
 | PR #633/#635 | 140m | 128m (91%) serialized GitHub CI: 15m timeout, unchanged retry, 20m retry, merge group, failed main, corrective PR, second merge group | ~55m from the unchanged retry plus undersized first timeout correction; monitoring added 211 polls and ~130 progress messages |
 | PR #634 | 162.3m | 22.6m PR wait; 17.7m merge-group watch; 11.2m current-main watch; a superseded/failed 17.6m watch; exact-SHA native and 29m34s devcontainer proof | Cannot be compared to an ordinary publish: proof acquisition was authorized product work, not publication ceremony |
 | PR #636 | 140.6m | three required-check waits totaling ~43m; a 10m local npm advisory/gate run; further merge/current-main validation | Directional: the slow advisory/install path and repeated full evidence cycles dominate, but the hermetic fix itself was substantive |
@@ -188,14 +188,17 @@ global, so path filtering cannot simply replace the matrix. But the observed fix
 means small publication units have extremely poor evidence-per-minute economics and
 encourage batching unrelated work merely to amortize ceremony.
 
-### F3 — Current-main confirmation is conflated with proof of the published change
+### F3 — Current-main confirmation mixes publication proof with repeatability monitoring
 
 The merge-group SHA is the integrated commit that lands for an ordinary queued squash
-merge. Waiting synchronously for the newest `main` run instead answers a different
-question: "is the repository's latest state green after subsequent merges?" In #632,
-the landed-SHA run was superseded and the publisher waited for a replacement run that
-also contained #636. That is useful repository monitoring, but it no longer proves
-only #632 and should not hold #632's publication response open.
+merge. Waiting for the landed SHA on `main` primarily asks a different question: "does
+the same evidence repeat in the post-merge environment?" The derisk pass found that
+this is not yet vacuous: two of 21 exact-SHA pairs were green in merge-group CI and red
+on `main`. Waiting for the *newest* `main` run after the landed-SHA run is superseded
+asks an even broader question: "is the repository green after subsequent merges?" In
+#632, that replacement also contained #636. The process can acknowledge that #632
+landed without delay, but it should retain final-main closeout until repeatability
+defects are eliminated and it has an owned asynchronous failure path.
 
 ### F4 — Timeouts are being treated as capacity instead of failed budgets
 
@@ -284,10 +287,12 @@ The tradeoff is more visible phase transitions and potentially more user-facing 
 
 Each waste has one of four remedies:
 
-- **eliminate** work that adds no distinct evidence (same-SHA synchronous replay);
-- **move left** failures that can be found before the first push (exact local parity);
+- **eliminate** work proven to add no distinct evidence after repeatability is
+  established;
+- **move left** failures covered by the deterministic local subset before the first
+  push;
 - **parallelize** independent facts whose current sequencing is incidental;
-- **detach** useful monitoring that need not block the publication response.
+- **detach** useful monitoring only after it has an owned asynchronous response path.
 
 "Make CI faster" is too coarse because these levers have different safety arguments.
 
@@ -363,10 +368,13 @@ evidence, not redundant PR replay.
 [merge-queue behavior](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/merging-a-pull-request-with-a-merge-queue))
 
 The same documentation does not make a later `push` run on `main` part of the merge
-queue's admission evidence. Given this repository's enforced queue and no-bypass
-rules, treating the green integrated merge-group SHA plus confirmed landing as the
-publication terminal condition is a repository-policy inference, not a GitHub claim.
-Ambient current-main health remains valuable, but it can be monitored asynchronously.
+queue's admission evidence. Treating the green integrated merge-group SHA plus
+confirmed landing as the publication terminal condition would therefore be a
+repository-policy decision, not a GitHub requirement. The derisk evidence in §8 shows
+that making that decision now would be premature: current-main replay still catches
+same-SHA nondeterminism. Landing can be acknowledged immediately, but green closeout
+should remain until that failure class is removed or an owned asynchronous response
+contract replaces it.
 
 ### 5.3 Safe selective CI is possible, but whole-workflow path filtering is the wrong tool
 
@@ -399,34 +407,38 @@ forecast with statistical confidence bounds.
 
 | Rank | Intervention | Expected leverage | Safety risk | Evidence required before adoption |
 |---:|---|---|---|---|
-| 1 | Disable install-time npm audit at every CI install and retain one explicit lockfile-authoritative audit gate | Very high: removes a recurring five-minute plateau from multiple jobs and every PR/merge-group/main cycle | Medium if any lockfile loses authoritative coverage | Enumerate every lockfile and audit owner; add a regression scan for bare `npm ci`; show hosted install p95 below 60s while the explicit audit still fails on a planted vulnerable fixture |
-| 2 | Add a candidate-ready gate that runs the exact hosted-equivalent governance checks before the first push, from a current-base clean publication branch | High: prevents the 15–22m remote discovery/replay pattern in #630 and #633 | Low–medium; local/hosted drift could create false confidence | One command must enumerate the same governed checks as CI; inject known failures from #630/#633 and prove they fail locally before push |
-| 3 | End synchronous publication after green merge-group evidence and confirmed landing; detach current-main health monitoring | High for user-visible latency: removes roughly 9–11m in #632 and avoids coupling to later merges | Medium; a push-only packaging or deployment fact could be missed | Inventory every `push: main`-only fact; retain synchronous waiting only for facts required to make the publication claim; alert asynchronously on later main failures |
-| 4 | Replace conversational polling with one bounded, transition-only waiter | High token/attention savings; low direct wall-clock savings | Low; missed state transitions or approval prompts | Replay #633's event stream and show the same terminal result and actionable failures with at least 90% fewer wakeups/messages |
-| 5 | Govern timeouts as latency budgets with attribution and expiry | Medium: prevents unchanged retries and repeated ceiling raises | Medium; an overly rigid budget can block legitimate growth | Record job/step p50, p95, and timeout headroom; require a named cause and review date for increases; verify the alert fires before the hard ceiling |
-| 6 | Prototype selective expensive lanes behind an always-triggered, governed risk classifier | Potentially very high for tiny changes, but least proven | High: a false low-risk classification can skip needed evidence | Closed risk classes with owners, conservative fallback to full matrix, mutation fixtures for cross-cutting projections, and a shadow period comparing selected versus full results |
+| 1 | First expand the explicit advisory authority to every active lockfile, then disable install-time audit at every covered install | Very high: removes a recurring five-minute plateau from multiple jobs and every PR/merge-group/main cycle | Medium until coverage is complete; low afterward | Cover root, UI, runtime-client, wire-contract, and shell lockfiles; add a regression scan for uncovered installs; show hosted install p95 below 60s while the explicit gate still fails on a planted advisory fixture |
+| 2 | Make the existing bounded watcher the mandatory observation path and add merge-queue/current-main transition support | High token/attention savings; low direct wall-clock savings | Low; the existing PR waiter and supervisor already have tested state/timeout contracts | Replay #633's event stream and show the same terminal result and actionable failures with at least 90% fewer wakeups/messages |
+| 3 | Build a generated candidate-ready manifest for the deterministic local subset of hosted checks, from a current-base clean publication branch | High: prevents part of the 15–22m remote discovery/replay pattern in #630 and #633 | Medium; "exact hosted parity" is not achievable locally for CLA, runner-OS, and hosted-environment facts | Generate rather than hand-copy the mapping; inject the known #630/#633 locally reproducible failures; identify every required check with no local analogue instead of implying full parity |
+| 4 | Extend the existing CI wall-time budgets with attribution, expiry, and a pre-timeout alert | Medium: prevents unchanged retries and repeated ceiling raises | Medium; stale budgets can create noise and hard gates can block legitimate growth | Refresh p50/p95 from recent runs, reconcile the current 30m hard timeout with the stale 120s advisory budget, and prove the alert fires before the hard ceiling without becoming a merge gate |
+| 5 | Separate immediate "landed" acknowledgement from final green-current-main closeout; do not yet remove the latter | Modest user-experience gain now; larger only after CI becomes repeatable | High if final monitoring is dropped today: exact-SHA post-merge failures exist | Classify and eliminate green-merge-group/red-main counterexamples, establish an owned asynchronous failure channel, and only then reconsider whether final green can be detached |
+| 6 | Prototype selective expensive lanes behind an always-triggered, governed risk classifier | Potentially very high for tiny changes, but least proven | High: a false low-risk classification can skip needed evidence | Do not reuse the dormant module-filter files as authority; define closed risk classes with owners, preserve all required check names, fall back to the full matrix, and shadow selections against full results |
 
 ### 6.1 Recommended sequence
 
-Start with intervention 1 because the causal evidence is strongest and it changes no
-test coverage. Then implement 2 and 3 together: moving reproducible failures left
-only pays fully when unrelated post-merge health is also detached. Intervention 4 can
-proceed independently because it changes observation mechanics, not merge criteria.
-Treat 5 as a guard against regression. Do not implement 6 until the cheaper fixed-tax
-removals have been measured; the classifier's safety burden may not be worth carrying
-if the full matrix becomes fast enough.
+Start with intervention 1 because the causal evidence is strongest, but make expanded
+lockfile coverage an atomic prerequisite rather than assuming the current authority is
+complete. Intervention 2 can proceed independently because it changes observation
+mechanics, not merge criteria. Build 3 as a generated deterministic-subset contract,
+not a claim that one local command can reproduce hosted Windows, CLA, or runner facts.
+Intervention 4 should extend the existing wall-time reporting seam. Keep final-main
+monitoring while the exact-SHA counterexamples in §8 remain unexplained. Do not
+implement 6 until cheaper fixed-tax removals have been measured and its classifier has
+an owner; the dormant filter files are not a trustworthy starting authority.
 
 ### 6.2 Measurement contract
 
 For the next ten ordinary publications, record timestamps for candidate-ready,
 first push, first hosted red/green, enqueue, own merge-group green, landing, and any
-post-landing health event. Report both the critical path and detached monitoring. The
-initial success criteria are:
+post-landing health event. Report landing acknowledgement separately from final-main
+closeout so the cost is visible without prematurely detaching it. The initial success
+criteria are:
 
 - no implicit audit call and no unexplained approximately-300-second install step;
 - zero hosted failures that the candidate-ready command reproduces unchanged;
-- publication response within two minutes of confirmed landing when no required
-  post-landing fact exists;
+- immediate landed acknowledgement within two minutes of confirmed landing, while
+  final closeout continues to wait for current-main evidence until §8's repeatability
+  prerequisite is satisfied;
 - unchanged status produces no model wakeup;
 - timeout increases carry a measured step-level cause;
 - no increase in post-merge regressions, bypasses, or false-green required checks.
@@ -438,18 +450,153 @@ against different work.
 
 ## 7. Closure and deferred work
 
-This investigation, theorization, and external research pass is complete. It changes
-no publication behavior. The recommendations remain proposals until separate design
-and implementation work supplies the validation evidence in §6.
+This investigation, theorization, external research, and derisk pass is complete. It
+changes no publication behavior. The recommendations remain proposals until separate
+design and implementation work supplies the validation evidence in §6 and §8.
 
 Unverified assumptions and deferred checks are explicit:
 
 - the candidate-ready gate's prevented-run savings are extrapolated from historical
   failures; they have not been measured prospectively;
-- detaching current-main monitoring is safe only after an inventory proves there is no
-  push-only fact required for the publication claim;
+- detaching current-main monitoring is unsafe today: two sampled exact SHAs went from
+  green merge-group evidence to a red current-main run;
 - job-level selective CI is platform-feasible but has no repository risk classifier,
   shadow comparison, or false-negative evidence yet;
 - the next-ten-publications measurement contract has not begun;
 - Markdown lint was unavailable in this isolated worktree because dependencies were
   not installed; the repository's lint script excludes `docs/tempdocs/**` in any case.
+
+## 8. Derisk pass — 2026-09-04
+
+### 8.1 Confidence-building plan executed
+
+The derisk pass investigated rather than implemented. It:
+
+1. enumerated every npm lockfile and compared it with the explicit advisory report's
+   configured targets;
+2. compared the publication skill, CI evidence digest, required hosted contexts, and
+   actual workflow commands to test the local-parity assumption;
+3. read the live repository ruleset and branch protection, paired recent merge-group
+   and `main` runs by exact SHA, and inspected every green-to-red counterexample;
+4. traced the proposed selective-CI substrate to determine whether it is live and
+   tested;
+5. inspected and tested the existing waiting and wall-time-budget primitives.
+
+### 8.2 Findings that changed the plan
+
+#### D1 — audit retirement has a real coverage prerequisite
+
+`REQUIRED_ADVISORY_TARGETS` currently names only `package-lock.json` and
+`modules/ui-web/package-lock.json`. Using the report producer's own package-coordinate
+parser, the other active lockfiles contain dependencies outside that authority:
+
+| Lockfile | Package coordinates | Not covered by root + UI |
+|---|---:|---:|
+| `modules/shell/package-lock.json` | 12 | 12 |
+| `packages/runtime-client/package-lock.json` | 135 | 78 |
+| `scripts/wire-contract/package-lock.json` | 8 | 8 |
+
+Runtime-client and wire-contract are installed in required CI; shell is installed in
+the release workflow. Turning off their install-time audits before expanding the
+explicit authority would create a coverage regression. The safe first slice is one
+atomic change: expand the target register/baseline/tests, then suppress duplicate
+install-time transport, then add a bare-install coverage guard.
+
+#### D2 — green merge-group evidence does not yet make the final-main run dispensable
+
+The live `main-merge-queue` ruleset is active, has no bypass actors, uses squash, and
+has a 45-minute check-response timeout. Branch protection exactly matches the ten
+checks declared by `workflow-signal-policy.v1.json`. In 21 recent cases where both run
+types were available, the merge-group and landed `main` run used the exact same SHA.
+That is stronger equivalence than the initial report assumed.
+
+However, two of those 21 SHAs passed merge-group CI and then failed current-main CI:
+
+- SHA `0b26fa46`: merge-group run
+  [33742666437](https://github.com/justsearch-app/justsearch/actions/runs/33742666437)
+  was green; `main` run
+  [33743262129](https://github.com/justsearch-app/justsearch/actions/runs/33743262129)
+  failed because the registry snapshot was absent and three gates would have inspected
+  nothing.
+- SHA `b6d0861e`: merge-group run
+  [33668360411](https://github.com/justsearch-app/justsearch/actions/runs/33668360411)
+  was green; `main` run
+  [33668996606](https://github.com/justsearch-app/justsearch/actions/runs/33668996606)
+  failed the dead-code gate.
+
+Three additional paired `main` runs were cancelled by concurrency. The failures look
+like repeatability/input-production defects rather than new tree content, but that is
+precisely why same-SHA replay currently adds information. The plan must retain final
+monitoring until these structural nondeterminisms are fixed and a prospective window
+shows the failure class gone. It can still acknowledge landing immediately without
+claiming full green closeout.
+
+#### D3 — local candidate readiness must be a subset contract, not "exact parity"
+
+The advisory CI evidence digest has local-reproduction entries for seven of ten
+required contexts. It has none for Windows-native tests, shell Rust tests, or CLA, and
+its Public-claims recipe is a hand-maintained subset of a much larger live job. The
+publication skill says "full repository verification" but has no single generated
+command that proves parity with the hosted workflow.
+
+Therefore the implementable claim is narrower: generate a manifest of deterministic
+checks that can run locally, prove the known locally reproducible misses are included,
+and list hosted-only facts explicitly. This can move failures left without creating a
+false promise that local green replaces CI.
+
+#### D4 — most of the waiter already exists
+
+`run-gh.mjs checks-wait` already owns the registration race, required-only filtering,
+bitwise GitHub CLI verdicts, and a bounded timeout. `run-watcher.mjs` already provides
+durable supervised process state. Their 24 and 17 tests passed respectively. The gap
+is adoption plus a queue/run transition layer, not a new event system. This raises
+implementation confidence and lowers the appropriate scope.
+
+#### D5 — timeout governance should extend the existing telemetry seam
+
+The repository already emits per-run attribution, has a warn-only budget policy, and
+has a trend analyzer. Its Public-claims advisory ceiling is still 120 seconds while
+the workflow's hard timeout is now 30 minutes and a recent successful merge-group run
+took 191 seconds. The trend workflow is manual-only. The right implementation seam is
+to refresh and govern this existing policy, not create another latency registry.
+
+#### D6 — the apparent selective-CI substrate is dormant residue
+
+`scripts/ci/module-filter.yml` says it is used by `dorny/paths-filter`, and
+`resolve-affected-modules.mjs` expects that output. Neither is referenced by any live
+workflow or test. Git history shows `dorny/paths-filter` was removed from CI one commit
+after the initial public release, while the configuration file continued to receive
+edits. Selective CI must not silently reactivate this stale representation. It needs a
+new authority decision, tests, fixed required-check-name behavior, and a full-matrix
+shadow phase—or the residue should be retired in the eventual implementation sweep.
+
+### 8.3 Verification evidence
+
+- Live policy: `node scripts/ci/check-branch-protection.mjs --repo
+  justsearch-app/justsearch --branch main --json` — pass, ten expected and ten actual
+  required contexts, `strict=false`.
+- Live ruleset: `GET /repos/justsearch-app/justsearch/rulesets/20851694` — active,
+  squash queue, no bypass actor, 45-minute response timeout.
+- Waiter tests: `node scripts/dev/run-gh.test.mjs` — 24 passed;
+  `node scripts/dev/run-watcher.test.mjs` — 17 passed.
+- Budget reporter: `node scripts/ci/test-report-ci-walltime-budget.mjs` — pass.
+- Advisory coverage counts were produced with `packageSpecsFromLockfileText`, the
+  exact parser used by `report-github-advisories.mjs`.
+
+### 8.4 Confidence and implementation routing
+
+Overall confidence for implementing the **revised staged program** is **7/10**. It is
+not one safe atomic change and should not be assigned as one broad implementation:
+
+| Slice | Confidence | Difficulty | Recommended Codex setting |
+|---|---:|---|---|
+| Complete advisory coverage, suppress duplicate install audits, add coverage guard | 8.5/10 | Medium | `gpt-5.6-sol`, high |
+| Enforce existing waiter and add merge/run transition observation | 8/10 | Medium | `gpt-5.6-terra`, high |
+| Extend wall-time budgets and timeout attribution | 7.5/10 | Medium | `gpt-5.6-terra`, high |
+| Generated deterministic candidate-ready manifest | 6/10 | Medium–high | `gpt-5.6-sol`, high |
+| Detach final-main closeout after eliminating repeatability failures | 4.5/10 today | High evidence risk | `gpt-5.6-sol`, xhigh, only after prerequisite evidence |
+| Selective expensive CI lanes | 3.5/10 today | High | `gpt-5.6-sol`, xhigh, separate design/derisk cycle |
+
+The practical recommendation is to implement the first three slices independently,
+measure ten ordinary publications, and then re-derisk the final two. The easy-looking
+terminal-condition change is currently riskier than the larger-looking audit cleanup.
