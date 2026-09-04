@@ -27,14 +27,16 @@ function ensureUnderRepo(repoRoot, absolutePath, label = 'path') {
 }
 
 export function resolveRepoRoot() {
-  const env = process.env.JUSTSEARCH_REPO_ROOT || process.env.justsearch_repo_root;
+  const env = process.env.JUSTSEARCH_DEV_MCP_REPO_ROOT
+    || process.env.JUSTSEARCH_REPO_ROOT
+    || process.env.justsearch_repo_root;
   const repoRoot = env ? path.resolve(process.cwd(), env) : process.cwd();
 
   const devRunnerPath = path.join(repoRoot, 'scripts', 'dev', 'dev-runner.cjs');
   if (!fileExists(devRunnerPath)) {
     throw new Error(
       `Repo root not found (missing scripts/dev/dev-runner.cjs). ` +
-        `Set JUSTSEARCH_REPO_ROOT or run from repo root. Looked at: ${devRunnerPath}`,
+        `Set JUSTSEARCH_DEV_MCP_REPO_ROOT/JUSTSEARCH_REPO_ROOT or run from repo root. Looked at: ${devRunnerPath}`,
     );
   }
 
@@ -116,5 +118,4 @@ export function ensureLoopbackUrl(urlStr, label = 'url') {
   }
   return u;
 }
-
 
