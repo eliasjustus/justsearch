@@ -386,6 +386,7 @@ final class ApiSecurityFilters {
       }
       ctx.header("Access-Control-Allow-Origin", origin);
       ctx.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+      ctx.header("Access-Control-Expose-Headers", "Deprecation, Sunset, Link");
       ctx.res().addHeader("Vary", "Origin");
     });
 

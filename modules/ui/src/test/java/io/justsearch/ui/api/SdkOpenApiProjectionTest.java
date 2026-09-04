@@ -48,11 +48,14 @@ class SdkOpenApiProjectionTest {
         new RouteContractPolicy.Contract(
             "GET",
             "/different",
-            RouteContractPolicy.Stability.PUBLIC_STABLE,
+            RouteContractPolicy.Stability.PUBLIC_CONTRACT,
             first.sdkOperationId(),
+            null,
             List.of(),
             Map.of(200, "runtime-live-response.v1.json"),
-            ApiSecurityFilters.contractSecurity("GET", "/different"));
+            ApiSecurityFilters.contractSecurity("GET", "/different"),
+            null,
+            null);
     assertThrows(
         IllegalArgumentException.class,
         () -> RouteContractPolicy.index(List.of(first, duplicateOperation)));
@@ -64,6 +67,17 @@ class SdkOpenApiProjectionTest {
     registered.add("GET /api/runtime/manifest");
     assertThrows(
         IllegalStateException.class,
-        () -> RouteContractPolicy.validateSdkRoutes(java.util.Set.copyOf(registered)));
+        () -> RouteContractPolicy.validateSdkRoutes(registered));
+  }
+
+  @Test
+  void duplicateLiveSdkRouteFailsClosed() {
+    List<String> registered =
+        RouteContractPolicy.sdkContracts().stream().map(RouteContractPolicy.Contract::key).toList();
+    List<String> duplicated = new ArrayList<>(registered);
+    duplicated.add(registered.getFirst());
+    assertThrows(
+        IllegalStateException.class,
+        () -> RouteContractPolicy.validateSdkRoutes(duplicated));
   }
 }

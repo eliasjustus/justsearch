@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ui.api;
 
+import java.net.URI;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -22,13 +26,42 @@ final class RouteContractPolicy {
 
   enum Stability {
     INTERNAL,
-    PUBLIC_STABLE
+    REFERENCE_CLIENT,
+    PUBLIC_CONTRACT;
+
+    String manifestValue() {
+      return name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+    }
   }
 
-  record QueryParameter(String name, boolean required, String schemaType) {
+  record QueryParameter(String name, boolean required, String schemaReference) {
     QueryParameter {
       requireText(name, "query parameter name");
-      requireText(schemaType, "query parameter schema type");
+      requireText(schemaReference, "query parameter schema reference");
+    }
+  }
+
+  record Lifecycle(
+      Instant deprecatedSince,
+      Instant sunsetAt,
+      String replacement,
+      URI documentationUri) {
+    Lifecycle {
+      if (deprecatedSince == null) {
+        throw new IllegalArgumentException("deprecatedSince is required");
+      }
+      requireText(replacement, "replacement");
+      requireAbsoluteUri(documentationUri, "lifecycle documentation URI");
+      if (sunsetAt != null && !sunsetAt.isAfter(deprecatedSince)) {
+        throw new IllegalArgumentException("sunsetAt must be after deprecatedSince");
+      }
+    }
+  }
+
+  record PreOneException(String rationale, URI decisionDocumentUri) {
+    PreOneException {
+      requireText(rationale, "pre-1.0 exception rationale");
+      requireAbsoluteUri(decisionDocumentUri, "pre-1.0 decision-document URI");
     }
   }
 
@@ -37,9 +70,12 @@ final class RouteContractPolicy {
       String path,
       Stability stability,
       String sdkOperationId,
+      String requestSchema,
       List<QueryParameter> queryParameters,
       Map<Integer, String> responseSchemas,
-      ApiSecurityFilters.ContractSecurity security) {
+      ApiSecurityFilters.ContractSecurity security,
+      Lifecycle lifecycle,
+      PreOneException preOneException) {
     Contract {
       method = requireText(method, "method").toUpperCase(java.util.Locale.ROOT);
       path = requireText(path, "path");
@@ -49,6 +85,7 @@ final class RouteContractPolicy {
       if (stability == null) {
         throw new IllegalArgumentException("stability is required for " + method + " " + path);
       }
+      if (requestSchema != null) requireText(requestSchema, "request schema");
       queryParameters = List.copyOf(queryParameters == null ? List.of() : queryParameters);
       responseSchemas =
           Collections.unmodifiableMap(
@@ -67,13 +104,14 @@ final class RouteContractPolicy {
       }
       if (sdkOperationId != null) {
         requireText(sdkOperationId, "sdk operation id");
-        if (stability != Stability.PUBLIC_STABLE) {
-          throw new IllegalArgumentException("SDK operation must be PUBLIC_STABLE: " + key());
+        if (stability != Stability.PUBLIC_CONTRACT) {
+          throw new IllegalArgumentException("SDK operation must be PUBLIC_CONTRACT: " + key());
         }
         if (!queryParameters.isEmpty()) {
           throw new IllegalArgumentException("v0.1 SDK operations do not accept query parameters: " + key());
         }
       }
+      validateLifecycle(stability, lifecycle, preOneException, key());
     }
 
     String key() {
@@ -100,34 +138,37 @@ final class RouteContractPolicy {
         path,
         stability,
         sdkOperationId,
+        null,
         List.of(),
         responses,
-        ApiSecurityFilters.contractSecurity(method, path));
+        ApiSecurityFilters.contractSecurity(method, path),
+        null,
+        null);
   }
 
-  private static Contract internal(String method, String path, String responseSchema) {
-    return contract(method, path, Stability.INTERNAL, null, Map.of(200, responseSchema));
+  private static Contract referenceClient(String method, String path, String responseSchema) {
+    return contract(method, path, Stability.REFERENCE_CLIENT, null, Map.of(200, responseSchema));
   }
 
   static final List<Contract> CONTRACTS =
       List.of(
-          internal("GET", "/api/knowledge/search", "knowledge-search-response.v1.json"),
-          internal("POST", "/api/knowledge/search", "knowledge-search-response.v1.json"),
-          internal("GET", "/api/ai/runtime/status", "ai-runtime-status-response.v1.json"),
-          internal("GET", "/api/policy/effective", "effective-policy.v1.json"),
-          internal("GET", "/api/runtime-context", "runtime-context.v1.json"),
-          internal("GET", "/api/operation-history", "operation-history-entry.v1.json"),
-          internal("GET", "/api/registry/resources", "resource.v1.json"),
-          internal(
+          referenceClient("GET", "/api/knowledge/search", "knowledge-search-response.v1.json"),
+          referenceClient("POST", "/api/knowledge/search", "knowledge-search-response.v1.json"),
+          referenceClient("GET", "/api/ai/runtime/status", "ai-runtime-status-response.v1.json"),
+          referenceClient("GET", "/api/policy/effective", "effective-policy.v1.json"),
+          referenceClient("GET", "/api/runtime-context", "runtime-context.v1.json"),
+          referenceClient("GET", "/api/operation-history", "operation-history-entry.v1.json"),
+          referenceClient("GET", "/api/registry/resources", "resource.v1.json"),
+          referenceClient(
               "GET", "/api/indexing-jobs/failed", "failed-indexing-jobs-response.v1.json"),
-          internal(
+          referenceClient(
               "GET",
               "/api/indexing-jobs/failed/by-prefix",
               "failed-indexing-jobs-response.v1.json"),
           contract(
               "GET",
               "/api/runtime/manifest",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getRuntimeManifest",
               Map.of(
                   200, "runtime-manifest-public.v1.json",
@@ -137,7 +178,7 @@ final class RouteContractPolicy {
           contract(
               "GET",
               "/.well-known/justsearch/manifest.json",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getWellKnownRuntimeManifest",
               Map.of(
                   200, "runtime-manifest-public.v1.json",
@@ -147,7 +188,7 @@ final class RouteContractPolicy {
           contract(
               "GET",
               "/api/runtime/ready",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getRuntimeReadiness",
               Map.of(
                   200, "runtime-ready-response.v1.json",
@@ -156,13 +197,13 @@ final class RouteContractPolicy {
           contract(
               "GET",
               "/api/runtime/live",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getRuntimeLiveness",
               Map.of(200, "runtime-live-response.v1.json", 403, "api-error-response.v1.json")),
           contract(
               "GET",
               "/api/health",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getLifecycleHealth",
               Map.of(
                   200, "lifecycle-snapshot.v1.json",
@@ -171,7 +212,7 @@ final class RouteContractPolicy {
           contract(
               "GET",
               "/api/status",
-              Stability.PUBLIC_STABLE,
+              Stability.PUBLIC_CONTRACT,
               "getLifecycleStatus",
               Map.of(200, "lifecycle-snapshot.v1.json", 403, "api-error-response.v1.json")));
 
@@ -210,19 +251,68 @@ final class RouteContractPolicy {
     return Collections.unmodifiableSet(names);
   }
 
-  static void validateSdkRoutes(Set<String> registeredMethodPaths) {
-    List<String> orphaned = new ArrayList<>();
-    for (Contract contract : sdkContracts()) {
-      if (!registeredMethodPaths.contains(contract.key())) orphaned.add(contract.key());
+  static void validateSdkRoutes(Collection<String> registeredMethodPaths) {
+    validateSdkRoutes(registeredMethodPaths, CONTRACTS);
+  }
+
+  static void validateSdkRoutes(
+      Collection<String> registeredMethodPaths, Collection<Contract> contracts) {
+    validateLiveRoutes(
+        registeredMethodPaths,
+        contracts.stream().filter(Contract::sdkExposed).toList(),
+        "SDK");
+  }
+
+  static void validateLifecycleRoutes(
+      Collection<String> registeredMethodPaths, Collection<Contract> contracts) {
+    validateLiveRoutes(
+        registeredMethodPaths,
+        contracts.stream().filter(contract -> contract.lifecycle() != null).toList(),
+        "lifecycle");
+  }
+
+  private static void validateLiveRoutes(
+      Collection<String> registeredMethodPaths, Collection<Contract> required, String label) {
+    List<String> invalid = new ArrayList<>();
+    for (Contract contract : required) {
+      long count = registeredMethodPaths.stream().filter(contract.key()::equals).count();
+      if (count != 1) invalid.add(contract.key() + " (matches=" + count + ")");
     }
-    if (!orphaned.isEmpty()) {
-      throw new IllegalStateException("SDK contract rows are not registered: " + orphaned);
+    if (!invalid.isEmpty()) {
+      throw new IllegalStateException(label + " contract rows must resolve exactly once: " + invalid);
+    }
+  }
+
+  private static void validateLifecycle(
+      Stability stability, Lifecycle lifecycle, PreOneException exception, String key) {
+    if (lifecycle == null) {
+      if (exception != null) {
+        throw new IllegalArgumentException("pre-1.0 exception requires lifecycle metadata: " + key);
+      }
+      return;
+    }
+    boolean insidePublicFloor =
+        stability == Stability.PUBLIC_CONTRACT
+            && lifecycle.sunsetAt() != null
+            && Duration.between(lifecycle.deprecatedSince(), lifecycle.sunsetAt()).compareTo(Duration.ofDays(90)) < 0;
+    if (insidePublicFloor && exception == null) {
+      throw new IllegalArgumentException("public-contract sunset inside 90-day floor requires pre-1.0 exception: " + key);
+    }
+    if (!insidePublicFloor && exception != null) {
+      throw new IllegalArgumentException("pre-1.0 exception is allowed only for a short public-contract sunset: " + key);
     }
   }
 
   private static String requireText(String value, String label) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(label + " must be non-blank");
+    }
+    return value;
+  }
+
+  private static URI requireAbsoluteUri(URI value, String label) {
+    if (value == null || !value.isAbsolute()) {
+      throw new IllegalArgumentException(label + " must be absolute");
     }
     return value;
   }

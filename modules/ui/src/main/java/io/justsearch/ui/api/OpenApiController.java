@@ -52,5 +52,4 @@ final class OpenApiController {
       throw new IllegalStateException("OpenAPI serialization failed", e);
     }
   }
-
 }

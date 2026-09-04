@@ -63,6 +63,9 @@ class RouteManifestControllerTest {
     assertEquals("TestKnowledgeModule", search.owningModule());
     // Response schema from the declarative RouteContractPolicy (§D.3a schema dimension).
     assertEquals("knowledge-search-response.v1.json", search.responseSchema());
+    assertEquals("reference-client", search.stability());
+    assertEquals(null, search.sdkOperationId());
+    assertEquals(null, search.lifecycle());
 
     // GET under a get-exempt rule → no required capability.
     RouteEntry status = find(routes, "GET", "/api/knowledge/status");

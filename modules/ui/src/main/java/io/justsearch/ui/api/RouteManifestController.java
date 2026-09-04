@@ -51,16 +51,34 @@ final class RouteManifestController {
   private static final Logger log = LoggerFactory.getLogger(RouteManifestController.class);
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
-  private static final String SCHEMA_VERSION = "1.0";
+  private static final String SCHEMA_VERSION = "2.0";
 
-  /** One route's machine-readable descriptor. {@code owningModule}/{@code responseSchema} may be null. */
+  record LifecycleEntry(
+      String deprecatedSince, String sunsetAt, String replacement, String documentationUri) {
+    static LifecycleEntry from(RouteContractPolicy.Lifecycle lifecycle) {
+      if (lifecycle == null) return null;
+      return new LifecycleEntry(
+          lifecycle.deprecatedSince().toString(),
+          lifecycle.sunsetAt() == null ? null : lifecycle.sunsetAt().toString(),
+          lifecycle.replacement(),
+          lifecycle.documentationUri().toString());
+    }
+  }
+
+  /** One route's machine-readable descriptor. Contract fields are null when no policy row exists. */
   record RouteEntry(
       String method,
       String path,
       String cohort,
       String owningModule,
       List<String> requiredCapabilities,
-      String responseSchema) {}
+      String responseSchema,
+      String stability,
+      String sdkOperationId,
+      String requestSchema,
+      List<RouteContractPolicy.QueryParameter> queryParameters,
+      Map<Integer, String> responseSchemas,
+      LifecycleEntry lifecycle) {}
 
   private final Supplier<Javalin> appSupplier;
   private final Supplier<List<ApiModule>> modulesSupplier;
@@ -104,6 +122,13 @@ final class RouteManifestController {
 
   /** Enumerate the live app's HTTP routes and tag each with cohort, owning module, caps, schema. */
   static List<RouteEntry> build(Javalin app, List<ApiModule> modules) {
+    return build(app, modules, RouteContractPolicy.index(RouteContractPolicy.CONTRACTS));
+  }
+
+  static List<RouteEntry> build(
+      Javalin app,
+      List<ApiModule> modules,
+      Map<String, RouteContractPolicy.Contract> contractPolicy) {
     Map<String, String> ownerByPath = new HashMap<>();
     for (ApiModule m : modules) {
       for (String path : m.ownedRoutePaths()) {
@@ -111,6 +136,12 @@ final class RouteManifestController {
       }
     }
     var router = app.unsafeConfig().pvt.internalRouter;
+    List<String> liveKeys =
+        router.allHttpHandlers().stream()
+            .filter(pe -> pe.getEndpoint().getMethod().isHttpMethod())
+            .map(pe -> pe.getEndpoint().getMethod().name() + " " + pe.getEndpoint().getPath())
+            .toList();
+    RouteContractPolicy.validateLifecycleRoutes(liveKeys, contractPolicy.values());
     return router.allHttpHandlers().stream()
         .filter(pe -> pe.getEndpoint().getMethod().isHttpMethod())
         .map(
@@ -128,15 +159,22 @@ final class RouteManifestController {
                     RouteCapabilityPolicy.requiredFor(method, path).stream()
                         .map(Enum::name)
                         .toList();
+                RouteContractPolicy.Contract contract = contractPolicy.get(method + " " + path);
                 return new RouteEntry(
                     method,
                     path,
                     RouteCohorts.cohortOf(path),
                     ownerByPath.get(path),
                     caps,
-                    java.util.Optional.ofNullable(RouteContractPolicy.forRoute(method, path))
+                    java.util.Optional.ofNullable(contract)
                         .map(RouteContractPolicy.Contract::primaryResponseSchema)
-                        .orElse(null));
+                        .orElse(null),
+                    contract == null ? null : contract.stability().manifestValue(),
+                    contract == null ? null : contract.sdkOperationId(),
+                    contract == null ? null : contract.requestSchema(),
+                    contract == null ? null : contract.queryParameters(),
+                    contract == null ? null : contract.responseSchemas(),
+                    contract == null ? null : LifecycleEntry.from(contract.lifecycle()));
               } catch (RuntimeException e) {
                 log.warn(
                     "Route manifest: skipping un-classifiable route {} {} — {}",

@@ -9,6 +9,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,10 +22,12 @@ class LocalApiCorsPolicyTest {
   private HttpClient client;
   private Javalin app;
   private int port;
+  private ExecutorService executor;
 
   @BeforeEach
   void setup() {
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+    executor = Executors.newSingleThreadExecutor();
   }
 
   @AfterEach
@@ -31,6 +35,9 @@ class LocalApiCorsPolicyTest {
     if (app != null) {
       app.stop();
       app = null;
+    }
+    if (executor != null) {
+      executor.shutdownNow();
     }
   }
 
@@ -58,6 +65,9 @@ class LocalApiCorsPolicyTest {
     assertEquals(
         "Content-Type", resp.headers().firstValue("Access-Control-Allow-Headers").orElse(null));
     assertEquals("3600", resp.headers().firstValue("Access-Control-Max-Age").orElse(null));
+    assertEquals(
+        "Deprecation, Sunset, Link",
+        resp.headers().firstValue("Access-Control-Expose-Headers").orElse(null));
   }
 
   @Test
@@ -77,6 +87,7 @@ class LocalApiCorsPolicyTest {
 
     assertEquals(403, resp.statusCode());
     assertTrue(resp.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+    assertTrue(resp.headers().firstValue("Access-Control-Expose-Headers").isEmpty());
   }
 
   @Test
@@ -155,34 +166,13 @@ class LocalApiCorsPolicyTest {
   private void startCorsTestServer(boolean prodMode) {
     app = Javalin.create(cfg -> { cfg.showJavalinBanner = false; cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper()); });
 
-    // Mirror LocalApiServer CORS behavior, but keep the app minimal and hermetic.
-    app.before(
-        ctx -> {
-          String origin = ApiSecurityFilters.resolveAllowedOrigin(ctx.header("Origin"), prodMode);
-          if (origin == null) {
-            return;
-          }
-          ctx.header("Access-Control-Allow-Origin", origin);
-          ctx.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-          ctx.res().addHeader("Vary", "Origin");
-        });
-
-    app.options(
-        "/*",
-        ctx -> {
-          String origin = ApiSecurityFilters.resolveAllowedOrigin(ctx.header("Origin"), prodMode);
-          if (origin == null) {
-            ctx.status(403);
-            return;
-          }
-
-          String requestHeaders = ctx.header("Access-Control-Request-Headers");
-          ctx.header(
-              "Access-Control-Allow-Headers",
-              requestHeaders == null || requestHeaders.isBlank() ? "Content-Type" : requestHeaders);
-          ctx.header("Access-Control-Max-Age", "3600");
-          ctx.status(200);
-        });
+    new ApiSecurityFilters(
+            prodMode,
+            prodMode ? "test-session-token" : null,
+            new EventBuffer(),
+            executor,
+            null)
+        .install(app);
 
     app.get("/api/status", ctx -> ctx.json(Map.of("status", "ok")));
 

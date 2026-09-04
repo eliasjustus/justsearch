@@ -425,7 +425,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     },
     "/api/health" : {
@@ -470,7 +470,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     },
     "/api/runtime/live" : {
@@ -505,7 +505,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     },
     "/api/runtime/manifest" : {
@@ -560,7 +560,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     },
     "/api/runtime/ready" : {
@@ -605,7 +605,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     },
     "/api/status" : {
@@ -640,7 +640,7 @@
           "mcpOriginValidated" : false,
           "sessionTokenRequired" : false
         },
-        "x-justsearch-stability" : "public-stable"
+        "x-justsearch-stability" : "public-contract"
       }
     }
   },

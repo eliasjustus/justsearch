@@ -9,7 +9,6 @@ import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
@@ -24,15 +23,22 @@ final class SdkOpenApiProjection {
   private SdkOpenApiProjection() {}
 
   static Map<String, Object> build(Javalin app, List<ApiModule> modules) {
-    List<RouteManifestController.RouteEntry> liveRoutes = RouteManifestController.build(app, modules);
-    Set<String> liveKeys =
-        liveRoutes.stream().map(r -> r.method() + " " + r.path()).collect(java.util.stream.Collectors.toSet());
-    RouteContractPolicy.validateSdkRoutes(liveKeys);
+    return build(app, modules, RouteContractPolicy.index(RouteContractPolicy.CONTRACTS));
+  }
+
+  static Map<String, Object> build(
+      Javalin app,
+      List<ApiModule> modules,
+      Map<String, RouteContractPolicy.Contract> contractPolicy) {
+    List<RouteManifestController.RouteEntry> liveRoutes =
+        RouteManifestController.build(app, modules, contractPolicy);
+    List<String> liveKeys = liveRoutes.stream().map(r -> r.method() + " " + r.path()).toList();
+    RouteContractPolicy.validateSdkRoutes(liveKeys, contractPolicy.values());
 
     Map<String, Map<String, Object>> paths = new TreeMap<>();
     Map<String, Object> schemas = new TreeMap<>();
     for (var route : liveRoutes) {
-      Contract contract = RouteContractPolicy.forRoute(route.method(), route.path());
+      Contract contract = contractPolicy.get(route.method() + " " + route.path());
       if (contract == null || !contract.sdkExposed()) continue;
       paths
           .computeIfAbsent(route.path(), ignored -> new LinkedHashMap<>())
@@ -68,7 +74,9 @@ final class SdkOpenApiProjection {
     operation.put("operationId", contract.sdkOperationId());
     operation.put("summary", contract.method() + " " + contract.path());
     operation.put("tags", List.of("runtime-contract"));
-    operation.put("x-justsearch-stability", "public-stable");
+    operation.put("x-justsearch-stability", contract.stability().manifestValue());
+    OpenApiRenderer.projectLifecycle(
+        operation, RouteManifestController.LifecycleEntry.from(contract.lifecycle()));
     operation.put(
         "x-justsearch-security",
         Map.of(

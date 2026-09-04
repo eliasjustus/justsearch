@@ -54,6 +54,43 @@ class OpenApiSnapshotExporterTest {
   }
 
   @Test
+  void exportsVersionTwoLifecycleMetadata() throws Exception {
+    Path input = temporaryDirectory.resolve("routes-v2.json");
+    Files.writeString(
+        input,
+        """
+        {
+          "schemaVersion": "2.0",
+          "count": 1,
+          "routes": [{
+            "method": "GET",
+            "path": "/api/things/{id}",
+            "cohort": "things",
+            "owningModule": null,
+            "requiredCapabilities": [],
+            "responseSchema": "thing.v1.json",
+            "stability": "public-contract",
+            "sdkOperationId": "getThing",
+            "requestSchema": null,
+            "queryParameters": [],
+            "responseSchemas": {"200": "thing.v1.json"},
+            "lifecycle": {
+              "deprecatedSince": "2026-01-01T00:00:00Z",
+              "sunsetAt": "2026-05-01T00:00:00Z",
+              "replacement": "GET /api/replacement/{id}",
+              "documentationUri": "https://docs.justsearch.example/deprecations/things"
+            }
+          }]
+        }
+        """);
+
+    String rendered = OpenApiSnapshotExporter.renderSnapshot(input);
+    assertTrue(rendered.contains("\"operationId\": \"getThing\""));
+    assertTrue(rendered.contains("\"deprecated\": true"));
+    assertTrue(rendered.contains("\"x-sunset\": \"2026-05-01T00:00:00Z\""));
+  }
+
+  @Test
   void rejectsAStaleDeclaredCount() throws Exception {
     Path input = temporaryDirectory.resolve("routes.json");
     Files.writeString(input, "{\"count\":2,\"routes\":[]}");
