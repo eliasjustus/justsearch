@@ -196,7 +196,7 @@ the same evidence repeat in the post-merge environment?" The derisk pass found t
 this is not yet vacuous: two of 21 exact-SHA pairs were green in merge-group CI and red
 on `main`. Waiting for the *newest* `main` run after the landed-SHA run is superseded
 asks an even broader question: "is the repository green after subsequent merges?" In
-#632, that replacement also contained #636. The process can acknowledge that #632
+In PR #632, that replacement also contained #636. The process can acknowledge that #632
 landed without delay, but it should retain final-main closeout until repeatability
 defects are eliminated and it has an owned asynchronous failure path.
 
