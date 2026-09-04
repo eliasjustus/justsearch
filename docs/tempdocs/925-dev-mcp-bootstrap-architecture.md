@@ -1022,6 +1022,11 @@ cross-process diagnostic erasure, and prefix-only external-import validation. Ea
 the owning boundary and now has a runnable regression. The always-loaded prompt budget and all
 other repository governance checks listed above pass on the publication base.
 
+The first remote run then exposed one publication-only governance omission: the generated bundle
+contains three upstream dependency TODO comments but had no `todo-fixme` ratchet row. Tempdoc 925's
+declared-growth changeset now pins exactly those three inert vendor comments; the complete 14-gate
+hermetic kernel passes locally before the replacement CI run.
+
 ### 15.4 Remaining work and unverified assumptions
 
 No implementation work remains in this tempdoc. Remote CI on the workflow's pinned Node runtime is
