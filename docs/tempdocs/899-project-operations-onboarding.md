@@ -902,6 +902,15 @@ projection is a snapshot-generator implementation whose Gradle entry point alrea
 test runtime classpath, so it was moved from `main` to `test` and its obsolete dead-code exemptions
 were removed instead of expanding the accepted-dead baseline.
 
+The next publication run also correctly rejected ADR-0015's stale executable premise: tempdoc 899
+had replaced six inline MCP tool registrations with the typed
+`McpToolSurface.PRODUCTION_TOOL_DEFINITIONS` registry, while the ADR probe still counted the old
+call syntax and therefore found zero tools. The six-tool decision remains true. ADR-0015 was
+re-examined and amended with current `McpToolSurface.java:373-496` evidence, and
+`adr-0015-six-mcp-tools` now counts the six canonical `ToolDefinition` entries. The focused
+`node scripts/governance/run.mjs --gate adr-coverage --mode gate` rerun passed with zero failures;
+the remaining 51 findings are the gate's existing informational ADR/risk notices.
+
 ### D1 session closeout
 
 The D1 implementation is committed on `codex/899-project-operations-onboarding` as `2207733f`,
