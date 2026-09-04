@@ -897,6 +897,11 @@ also remains intentionally unexecuted; URL resolution and all failure/security s
 container workflow is run.** No unresolved code finding remains from the independent review; the
 remaining deduction is execution-environment evidence, not design uncertainty.
 
+Publication CI correctly rejected `SdkOpenApiProjection` as a production-unreferenced class. The
+projection is a snapshot-generator implementation whose Gradle entry point already runs on the
+test runtime classpath, so it was moved from `main` to `test` and its obsolete dead-code exemptions
+were removed instead of expanding the accepted-dead baseline.
+
 ### D1 session closeout
 
 The D1 implementation is committed on `codex/899-project-operations-onboarding` as `2207733f`,

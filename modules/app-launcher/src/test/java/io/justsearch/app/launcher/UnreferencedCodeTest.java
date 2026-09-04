@@ -139,7 +139,7 @@ class UnreferencedCodeTest {
           Map.entry("AgentSession.budgetGateHeld", "AgentSessionBudgetTest (577 R2 budget held-gate accessor)"),
           Map.entry("AgentSession.contextGateHeld", "AgentSessionBudgetTest (577 R3 context held-gate accessor)"),
           Map.entry("RouteContractPolicy.declaredSchemaFiles", "RouteContractPolicyCoverageTest (899 SDK schema-closure test)"),
-          Map.entry("SdkOpenApiProjection.write", "SdkOpenApiFixture (899 SDK snapshot generator test seam)"),
+          Map.entry("RouteContractPolicy.validateSdkRoutes", "SDK snapshot projection and policy tests (899 test-source callers)"),
           Map.entry("NdjsonAppendStore.storeFile", "called from GplJobCoordinator (app-services); ArchUnit resolves the call through the generic NdjsonAppendStore<T> to the erased type"),
           // Tempdoc 638 F6 — pre-existing red-gate violations inherited from main merges (607/626
           // visual-extraction + incremental-indexing). Classified by caller analysis; non-dead ones
@@ -158,10 +158,7 @@ class UnreferencedCodeTest {
    * Keyed by simple class name, value is the reason for exemption. Same conventions as {@link
    * #KNOWN_UNREFERENCED}.
    */
-  private static final Map<String, String> KNOWN_UNREFERENCED_CLASSES =
-      Map.ofEntries(
-          Map.entry(
-              "SdkOpenApiProjection", "SdkOpenApiFixture and projection tests (899 test-source callers)"));
+  private static final Map<String, String> KNOWN_UNREFERENCED_CLASSES = Map.of();
 
   // =========================================================================
   // Dead class detection

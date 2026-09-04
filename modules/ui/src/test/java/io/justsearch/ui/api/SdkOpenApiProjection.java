@@ -15,7 +15,6 @@ import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Builds the self-contained OpenAPI 3.1 input for {@code @justsearch/runtime-client}. */
-@SuppressWarnings("unused") // Its callers are generation/tests, which the production dead-code scan excludes.
 final class SdkOpenApiProjection {
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
@@ -64,7 +63,6 @@ final class SdkOpenApiProjection {
     return doc;
   }
 
-  @SuppressWarnings("unused") // Called by the test-runtime snapshot writer.
   static byte[] write(Javalin app, List<ApiModule> modules) throws IOException {
     return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(build(app, modules));
   }
