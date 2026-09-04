@@ -234,6 +234,11 @@ jobs:
       - name: Test managed PR review record
         run: node scripts/ci/test-pr-review-record.mjs
 
+      - name: Test bounded npm-audit reporting and retained ratchet
+        run: |
+          node scripts/ci/test-report-npm-audit.mjs
+          node scripts/ci/test-check-npm-audit-ratchet.mjs
+
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
       # of it. A loosened collision rule fails silently -- the regression is the case that STOPS

@@ -29,6 +29,10 @@ const RULE_DESCRIPTIONS = {
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { repinFinding, repinRuleDescription, REPIN_REGRESSION_RULE_SUFFIX } from '../../lib/declared-growth-repin.mjs';
 import { readPriorBaselineText } from '../../lib/prior-baseline.mjs';
+import {
+  auditTargetUnavailableReason,
+  NPM_AUDIT_REQUIRED_TARGET_IDS,
+} from '../../../ci/lib/npm-audit-report.mjs';
 
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical', 'total'];
 
@@ -96,6 +100,20 @@ export async function enforceNpmAudit(options) {
           uri: gate.baseline.path,
         },
       ],
+      verdict: 'fail',
+      ruleDescriptions: RULE_DESCRIPTIONS,
+    };
+  }
+
+  const availabilityFindings = validateAuditReportAvailability(
+    rawReport,
+    [...new Set([...NPM_AUDIT_REQUIRED_TARGET_IDS, ...Object.keys(rawBaseline.targets ?? {})])],
+  );
+  if (availabilityFindings.length > 0) {
+    return {
+      toolName: 'justsearch-npm-audit',
+      toolVersion: '0.1.0',
+      findings: availabilityFindings,
       verdict: 'fail',
       ruleDescriptions: RULE_DESCRIPTIONS,
     };
@@ -252,6 +270,27 @@ export async function enforceNpmAudit(options) {
     ruleDescriptions: RULE_DESCRIPTIONS,
     rebalanceWrites: Object.keys(rebalanceWrites).map(target => ({ file: target, before: '', after: '' })),
   };
+}
+
+export function validateAuditReportAvailability(report, requiredTargets) {
+  const rows = new Map(
+    (Array.isArray(report?.targets) ? report.targets : [])
+      .map((row) => [String(row?.target_id ?? '').trim(), row])
+      .filter(([id]) => id),
+  );
+  const findings = [];
+  for (const target of requiredTargets) {
+    const row = rows.get(target);
+    const detail = auditTargetUnavailableReason(row);
+    if (detail === null) continue;
+    findings.push({
+      ruleId: 'npm-audit/report-unavailable',
+      level: 'error',
+      message: `${target} audit evidence is unavailable: ${detail}`,
+      uri: 'tmp/npm-audit-report.json',
+    });
+  }
+  return findings;
 }
 
 function readPriorBaseline({ fixtureMode, fixtureRoot, repoRoot, baselineRef, baselineFilePath }) {

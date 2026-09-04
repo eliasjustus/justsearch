@@ -1659,3 +1659,29 @@ merge queue accept it. The permanent public commit uses the concise PR body, whi
 single managed review-record comment carries the detailed scope, verification, and review
 state. The post-land 30-merge audit remains an elapsed-data obligation rather than work that
 can be completed in this publication run.
+
+Publication exposed a separate hosted-CI transport defect before merge: two consecutive
+`Public claims` attempts reached the unchanged `Build kernel gate inputs` step and then
+hit the job's 15-minute ceiling. The preceding module-dependency generator had already
+printed its completion path; the next command was the npm-audit reporter, whose three
+synchronous registry calls had no deadline. The publication candidate now bounds each
+audit call at 30 seconds and makes missing, timed-out, signalled, or unparseable target
+evidence fail the npm-audit gate. This prevents both an indefinite job-level timeout and
+the more dangerous fallback where unavailable evidence normalized to zero advisories.
+
+The refute-first review of that recovery found three additional fail-open shapes and one
+retained-consumer gap before the fix was published. The shared report validator now
+requires complete non-negative integer vulnerability and dependency counts; root and
+`ui-web` lockfiles are explicitly required, while only the retired `ssot-tools` target may
+be reported as non-applicable. Both the discipline-gate enforcer and the retained legacy
+ratchet reject unavailable or incomplete evidence, and `--write-baseline` cannot turn a
+transport failure into a zero baseline. The fixture self-test and focused producer plus
+legacy-consumer regression suites exercise those contracts in hosted CI.
+
+Final verification passed the producer and retained-ratchet suites, the npm-audit fixture
+self-test, all 33 governance tests, all 65 agent-analytics tests, workflow/history policy,
+ADR coverage, canonical-link and generated-document checks, and every focused publication
+record suite. A second independent refute-first pass found no actionable issue. A real
+local run while the registry advisory endpoint remained unavailable terminated both
+required audits at their 30-second bounds and produced two `report-unavailable` errors;
+the negative control therefore fails explicitly and cannot publish zero evidence.

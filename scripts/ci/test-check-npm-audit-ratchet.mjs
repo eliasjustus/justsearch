@@ -32,15 +32,40 @@ function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+const dependencyCounts = {
+  prod: 1,
+  dev: 2,
+  optional: 0,
+  peer: 0,
+  peerOptional: 0,
+  total: 3,
+};
+
+function auditTarget(target_id, vulnerabilities, overrides = {}) {
+  return {
+    target_id,
+    applicable: true,
+    available: true,
+    parsed: true,
+    exit_code: 0,
+    signal: null,
+    command_error: null,
+    parse_error: null,
+    vulnerabilities,
+    dependencies: dependencyCounts,
+    ...overrides,
+  };
+}
+
 function makeAuditReport({ rootHigh = 10, uiHigh = 9, toolsHigh = 0, rootCritical = 0, uiCritical = 0, toolsCritical = 0 }) {
   return {
     schema: 'npm-audit-report.v1',
     generated_at: '2026-02-20T00:00:00.000Z',
     policy: 'warn-only',
     targets: [
-      {
-        target_id: 'root',
-        vulnerabilities: {
+      auditTarget(
+        'root',
+        {
           info: 0,
           low: 2,
           moderate: 1,
@@ -48,10 +73,10 @@ function makeAuditReport({ rootHigh = 10, uiHigh = 9, toolsHigh = 0, rootCritica
           critical: rootCritical,
           total: rootHigh + rootCritical + 3,
         },
-      },
-      {
-        target_id: 'ui-web',
-        vulnerabilities: {
+      ),
+      auditTarget(
+        'ui-web',
+        {
           info: 0,
           low: 0,
           moderate: 1,
@@ -59,10 +84,10 @@ function makeAuditReport({ rootHigh = 10, uiHigh = 9, toolsHigh = 0, rootCritica
           critical: uiCritical,
           total: uiHigh + uiCritical + 1,
         },
-      },
-      {
-        target_id: 'ssot-tools',
-        vulnerabilities: {
+      ),
+      auditTarget(
+        'ssot-tools',
+        {
           info: 0,
           low: 0,
           moderate: 0,
@@ -70,7 +95,7 @@ function makeAuditReport({ rootHigh = 10, uiHigh = 9, toolsHigh = 0, rootCritica
           critical: toolsCritical,
           total: toolsHigh + toolsCritical,
         },
-      },
+      ),
     ],
   };
 }
@@ -191,6 +216,62 @@ function testWriteBaseline(tempRoot) {
   assert.equal(baseline.targets['ssot-tools'].high, 2);
 }
 
+function testUnavailableReportRejected(tempRoot) {
+  const reportPath = path.join(tempRoot, 'unavailable', 'audit-report.json');
+  const baselinePath = path.join(tempRoot, 'unavailable', 'baseline.json');
+  const report = makeAuditReport({});
+  report.targets[0] = {
+    ...report.targets[0],
+    available: false,
+    parsed: false,
+    command_error: 'network timeout',
+  };
+  writeJson(reportPath, report);
+  writeJson(baselinePath, makeBaseline());
+
+  const result = runNode([
+    gateScript,
+    '--report',
+    reportPath,
+    '--baseline',
+    baselinePath,
+    '--mode',
+    'gate',
+  ]);
+  assert.notEqual(result.status, 0, 'unavailable evidence must fail the retained ratchet');
+  assert.match(result.stderr, /root audit evidence is unavailable: network timeout/);
+
+  const writeResult = runNode([
+    gateScript,
+    '--report',
+    reportPath,
+    '--baseline',
+    baselinePath,
+    '--write-baseline',
+  ]);
+  assert.notEqual(writeResult.status, 0, 'unavailable evidence must not write a baseline');
+}
+
+function testPartialReportCannotEraseBaselineTargets(tempRoot) {
+  const reportPath = path.join(tempRoot, 'partial', 'audit-report.json');
+  const baselinePath = path.join(tempRoot, 'partial', 'baseline.json');
+  const report = makeAuditReport({});
+  report.targets = report.targets.filter((target) => target.target_id === 'root');
+  writeJson(reportPath, report);
+  writeJson(baselinePath, makeBaseline());
+
+  const result = runNode([
+    gateScript,
+    '--report',
+    reportPath,
+    '--baseline',
+    baselinePath,
+    '--write-baseline',
+  ]);
+  assert.notEqual(result.status, 0, 'partial evidence must not erase baseline targets');
+  assert.deepEqual(readJson(baselinePath), makeBaseline(), 'baseline must remain unchanged');
+}
+
 function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-npm-audit-ratchet-'));
   try {
@@ -198,6 +279,8 @@ function main() {
     testIncreaseGateFail(tempRoot);
     testIncreaseWarnPass(tempRoot);
     testWriteBaseline(tempRoot);
+    testUnavailableReportRejected(tempRoot);
+    testPartialReportCannotEraseBaselineTargets(tempRoot);
     // eslint-disable-next-line no-console
     console.log('check-npm-audit-ratchet tests: PASS');
   } finally {
@@ -206,4 +289,3 @@ function main() {
 }
 
 main();
-

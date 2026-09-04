@@ -12,6 +12,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
+import {
+  auditTargetUnavailableReason,
+  NPM_AUDIT_REQUIRED_TARGET_IDS,
+} from './lib/npm-audit-report.mjs';
+
 const SEVERITY_ORDER = ['info', 'low', 'moderate', 'high', 'critical', 'total'];
 
 function usage(code = 1) {
@@ -185,6 +190,22 @@ function normalizeCurrentReport(rawReport) {
   return { targets, aggregate };
 }
 
+function assertAvailableAuditTargets(rawReport, requiredTargets = []) {
+  const rows = new Map();
+  for (const row of Array.isArray(rawReport?.targets) ? rawReport.targets : []) {
+    const targetId = String(row?.target_id || '').trim();
+    if (!targetId) throw new Error('npm audit report contains a target without target_id');
+    const reason = auditTargetUnavailableReason(row);
+    if (reason !== null) throw new Error(`${targetId} audit evidence is unavailable: ${reason}`);
+    rows.set(targetId, row);
+  }
+  for (const targetId of requiredTargets) {
+    if (!rows.has(targetId)) {
+      throw new Error(`${targetId} audit evidence is unavailable: required audit target is missing from the report`);
+    }
+  }
+}
+
 function compareSeveritySet({ baseline, current, severities }) {
   const allTargetIds = [...new Set([...Object.keys(baseline.targets), ...Object.keys(current.targets)])].sort();
   const targetRows = [];
@@ -299,6 +320,18 @@ async function main() {
   }
 
   if (args.writeBaseline) {
+    let existingTargets = [];
+    try {
+      const existingBaseline = await readJson(baselineAbs);
+      if (existingBaseline?.schema === 'npm-audit-ratchet-baseline.v1') {
+        existingTargets = Object.keys(existingBaseline.targets ?? {});
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    assertAvailableAuditTargets(rawReport, [
+      ...new Set([...NPM_AUDIT_REQUIRED_TARGET_IDS, ...existingTargets]),
+    ]);
     const baselineDoc = buildBaselineFromReport(rawReport, toPosix(path.relative(cwd, reportAbs)));
     await writeJson(baselineAbs, baselineDoc);
     process.stdout.write(`Wrote npm audit ratchet baseline to ${baselineAbs}\n`);
@@ -309,6 +342,10 @@ async function main() {
   if (rawBaseline?.schema !== 'npm-audit-ratchet-baseline.v1') {
     throw new Error(`Unsupported baseline schema in ${args.baseline}: expected npm-audit-ratchet-baseline.v1`);
   }
+
+  assertAvailableAuditTargets(rawReport, [
+    ...new Set([...NPM_AUDIT_REQUIRED_TARGET_IDS, ...Object.keys(rawBaseline.targets ?? {})]),
+  ]);
 
   const baseline = normalizeBaseline(rawBaseline);
   const current = normalizeCurrentReport(rawReport);
@@ -355,9 +392,8 @@ main().catch((error) => {
   })();
   const message = error instanceof Error ? (error.stack || error.message) : String(error);
   process.stderr.write(`[check-npm-audit-ratchet] ${message}\n`);
-  if (modeFromArgs === 'gate') {
+  if (modeFromArgs === 'gate' || process.argv.includes('--write-baseline')) {
     process.exit(1);
   }
   process.exit(0);
 });
-

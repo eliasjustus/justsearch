@@ -19,6 +19,8 @@ export const NPM_AUDIT_RULE_DESCRIPTIONS = {
     'npm-audit baseline file not found (initialize with --rebalance after a clean audit)',
   'npm-audit/schema-mismatch':
     'npm-audit report or baseline does not match the expected schema',
+  'npm-audit/report-unavailable':
+    'A required npm-audit target was missing, timed out, terminated, or returned unparseable evidence',
   'npm-audit/silent-baseline-shift':
     'Baseline JSON was relaxed in this PR without a declared changeset (the same silent escape-hatch class tempdoc 530 §Layer 1 closes)',
   'npm-audit/declared-baseline-shift':
