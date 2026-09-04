@@ -678,6 +678,13 @@ The original regression test passed unchanged, then the complete test and build 
 passed. This is a concrete example of why the local contract must describe a subset and
 why platform-specific evidence remains necessary.
 
+The first PR run exposed one further fixture-projection omission: the governance
+kernel's npm-audit self-test fixtures still modeled only the original root and UI
+targets after the production authority expanded to five lockfiles. The positive and
+negative fixtures now carry all five target rows, matching lockfile fixtures, and
+baseline projections. The hosted failure was reproduced locally before the fix; the
+kernel self-test and all 34 governance test files then passed.
+
 Verification evidence:
 
 - `node scripts/ci/report-github-advisories.mjs` produced all five target rows: root
@@ -697,5 +704,8 @@ Verification evidence:
 - Agent analytics passed 65/65 files; governance passed 34/34 files. Canonical-link,
   `llms.txt`, skill-sync, module-dependency, runtime-config, and prompt-surface checks
   passed; the prompt inventory reported zero suspicious tokens.
+- `node scripts/governance/run.mjs --self-test --mode gate` passed after synchronizing
+  the npm-audit fixtures with the five-target authority; PR run 33869071096 was the
+  discovery evidence for the previously missing fixture rows.
 - `./gradlew.bat test` passed after the cross-platform snapshot fix.
 - `./gradlew.bat build -x test` passed after the final code change (251 actionable tasks).
