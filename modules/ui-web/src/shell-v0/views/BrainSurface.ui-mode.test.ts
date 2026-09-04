@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import './BrainSurface.js';
 import {
   __resetUiModeForTest,
   getUiMode,
   setUiMode,
+  UI_MODE_INTENT_HEADER,
 } from '../state/uiModeState.js';
 
 interface BrainHost extends HTMLElement {
@@ -14,7 +15,7 @@ interface BrainHost extends HTMLElement {
 }
 
 const realFetch = globalThis.fetch;
-let posts: Array<{ url: string; body: string }> = [];
+let posts: Array<{ url: string; body: string; intent: string | null }> = [];
 let postStatus = 200;
 let deferPosts = false;
 let postResolvers: Array<(response: Response) => void> = [];
@@ -42,8 +43,17 @@ beforeEach(() => {
     const url = String(input);
     const method = init?.method ?? 'GET';
     if (url.endsWith('/api/settings/v2') && method === 'POST') {
-      posts.push({ url, body: String(init?.body ?? '') });
-      if (deferPosts) return new Promise<Response>((resolve) => postResolvers.push(resolve));
+      posts.push({
+        url,
+        body: String(init?.body ?? ''),
+        intent: new Headers(init?.headers).get(UI_MODE_INTENT_HEADER),
+      });
+      if (deferPosts) {
+        return new Promise<Response>((resolve, reject) => {
+          postResolvers.push(resolve);
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        });
+      }
       return response();
     }
     if (url.endsWith('/api/settings/v2')) {
@@ -59,6 +69,7 @@ beforeEach(() => {
 afterEach(() => {
   document.body.innerHTML = '';
   globalThis.fetch = realFetch;
+  vi.useRealTimers();
   __resetUiModeForTest();
 });
 
@@ -73,11 +84,20 @@ describe('BrainSurface shared detail level', () => {
       'Simple',
       'Detailed',
     ]);
+    expect(modeButtons(el).map((button) => button.type)).toEqual(['button', 'button']);
+    expect(modeButtons(el).map((button) => button.getAttribute('aria-pressed'))).toEqual([
+      'true',
+      'false',
+    ]);
 
     setUiMode('advanced');
     await el.updateComplete;
     expect(modeButtons(el).find((button) => button.textContent?.trim() === 'Detailed')?.classList)
       .toContain('active');
+    expect(modeButtons(el).map((button) => button.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'true',
+    ]);
   });
 
   it('does not let its settings refresh overwrite a newer shared choice', async () => {
@@ -104,6 +124,7 @@ describe('BrainSurface shared detail level', () => {
     expect(getUiMode()).toBe('advanced');
     expect(posts).toHaveLength(1);
     expect(JSON.parse(posts[0]!.body)).toEqual({ ui: { mode: 'advanced' } });
+    expect(posts[0]!.intent).toMatch(/:1$/);
   });
 
   it('rolls the shared projection back when persistence rejects the change', async () => {
@@ -147,5 +168,25 @@ describe('BrainSurface shared detail level', () => {
 
     expect(getUiMode()).toBe('simple');
     expect(simple?.classList).toContain('active');
+  });
+
+  it('aborts a hung save, clears Brain busy state, and rolls back', async () => {
+    deferPosts = true;
+    const el = document.createElement('jf-brain-surface') as BrainHost;
+    el.apiBase = '';
+    document.body.appendChild(el);
+    await settle(el);
+    vi.useFakeTimers();
+
+    modeButtons(el).find((button) => button.textContent?.trim() === 'Detailed')?.click();
+    await Promise.resolve();
+    expect((el as unknown as { busy: { mode: boolean } }).busy.mode).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await el.updateComplete;
+
+    expect((el as unknown as { busy: { mode: boolean } }).busy.mode).toBe(false);
+    expect(getUiMode()).toBe('simple');
+    expect(el.shadowRoot?.textContent).toContain("Couldn't save detail level: the request timed out.");
   });
 });

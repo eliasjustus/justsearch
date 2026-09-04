@@ -3,7 +3,7 @@ title: "UI naming convergence: Detailed mode and canonical Ask"
 type: tempdocs
 status: complete
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-04
 parent: 893-hygiene-registers
 related:
   - 504-systematic-ux-audit
@@ -102,13 +102,17 @@ authorities; a new abstraction would exceed the problem.
   presentation authority, and backend-unavailable fallback presentation still says **Search**.
 - Legacy Ask, free-chat, and extract surface IDs remain routable, but split-pane discovery excludes
   them and canonicalized identity prevents Search from pairing beside a legacy interaction primary.
-- Focused frontend verification passed after review: `BrainSurface.ui-mode`, `Shell`, `Stage`, and
-  router-resolution tests (54 tests). The final `npm run test:unit:run -- --silent --reporter=dot`
-  run passed 469 files and 6,278 tests.
+- Focused frontend verification passed after review, including shared ordering, timeout, reload,
+  Settings, Brain, Shell, Stage, and router-resolution regressions. The final
+  `npm run test:unit:run` run passed 470 files and 6,287 tests.
 - TypeScript typecheck passed. Surface composition, interaction-surface, surface-altitude,
   intent-tier, and UI-step-coverage gates passed.
+- The full `:modules:ui:test` task and `:modules:ui:spotlessJavaCheck` passed. The settings contract
+  tests prove whole-document transaction serialization and stale-mode suppression without dropping
+  unrelated fields.
 - Documentation index/skill regeneration completed; llms, skills, canonical-link, module-dependency,
-  runtime-config-matrix, and Markdown checks passed.
+  and runtime-config-matrix checks passed. The optional repository-wide Markdown lint remains red on
+  its recorded heading-case backlog; it identified no newly edited heading or front-matter defect.
 - Instrumented captures `tmp/ui-shot/home.measure.json` and
   `tmp/ui-shot/ai-brain-advanced.measure.json` show the **Search** heading and accessible
   **Simple / Detailed** controls with no overflow or axe violations. The full accessibility sweep
@@ -134,3 +138,32 @@ The refute-first review found four material issues. All in-scope objections were
    links. They now document each existing persistence lifecycle and the actual header control.
 
 No F-22 or F-25 implementation work remains. Publishing is deliberately separate authorization.
+
+## Fresh review follow-up plan
+
+The 2026-09-04 refute-first review upheld the naming and Search-routing results but found three
+release objections in the shared disclosure-mode lifecycle:
+
+- [x] Move mode-write sequencing from Brain into the shared `uiModeState` authority and route Brain,
+  the top bar, and Settings through it, so successful cross-control writes persist in intent order.
+- [x] Prevent Settings' delayed local load from overwriting a newer shared choice; merge the current
+  authority value back into Settings' local snapshot.
+- [x] Expose Brain's selected mode through `aria-pressed`, not only its visual `active` class.
+- [x] Add regression coverage for shared write ordering, delayed Settings load, and Brain's accessible
+  selected state; rerun focused and full frontend verification plus the UI/documentation gates.
+- [x] Serialize the backend's whole-document `/api/settings/v2` transaction so a concurrent non-mode
+  patch cannot restore an older `ui.mode` value (or lose the unrelated patch).
+- [x] Bound every queued mode write with an aborting 10-second timeout, pass its signal through all
+  three fetch adapters, and prove a timed-out request cannot wedge later intent or Brain's busy state.
+- [x] Keep intent ordering valid across reloads and concurrent shell windows by persisting one origin
+  client ID and atomically allocating its sequence with Web Locks; cover the reload boundary.
+
+The review found no security or privacy issue. The compatibility routing, split-pane filtering,
+Search presentation fallback, and user-facing Simple/Detailed vocabulary were independently upheld.
+
+The final independent challenge found and closed two further ordering edges: page-local client IDs
+did not survive reload, and a suspended Web Lock holder could initially bypass the timeout. The final
+authority persists one origin client ID and sequence, allocates with Web Locks, and covers both lock
+allocation and the network request with the same aborting timeout. Reload and deliberately held-lock
+regressions passed. The reviewer then reported no remaining release objection and judged the reviewed
+scope release-ready.

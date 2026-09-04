@@ -50,7 +50,14 @@ import { unavailableBecause } from '../state/availability.js';
 import '../components/Control.js';
 // 569 §14 — host authorities the global presentation-intent Effect listeners drive.
 import { applyAppearance } from '../state/themeState.js';
-import { setUiMode, getUiMode, subscribeUiMode, type UiMode } from '../state/uiModeState.js';
+import {
+  enqueueUiModePersistence,
+  UI_MODE_INTENT_HEADER,
+  setUiMode,
+  getUiMode,
+  subscribeUiMode,
+  type UiMode,
+} from '../state/uiModeState.js';
 import { applyPresentation, listPresentations } from '../state/presentationState.js';
 import './OverlayHost.js';
 import '../components/DragOverlay.js';
@@ -1967,12 +1974,19 @@ export class Shell extends JfElement {
     // Persist best-effort so the choice survives restart, independent of whether SettingsSurface (which
     // owns the jf-save-settings listener) is mounted — the topbar must not depend on it. Same endpoint +
     // `{ ui: {...} }` body shape SettingsSurface uses (SettingsSurface.saveSettingsListener).
-    void this.hostApi_?.data
-      .fetch('/api/settings/v2', {
+    const data = this.hostApi_?.data;
+    if (!data) return;
+    void enqueueUiModePersistence((signal, intent) =>
+      data.fetch('/api/settings/v2', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          [UI_MODE_INTENT_HEADER]: intent,
+        },
         body: JSON.stringify({ ui: { mode } }),
-      })
+        signal,
+      }),
+    )
       .catch(() => {
         /* best-effort persist; the in-session store update already applied */
       });

@@ -41,7 +41,10 @@ import {
   type PackImportStatus,
 } from '../state/aiStateStore.js';
 import {
+  enqueueUiModePersistence,
+  UI_MODE_INTENT_HEADER,
   getUiMode,
+  getUiModeRevision,
   setUiMode,
   subscribeUiMode,
   type UiMode,
@@ -543,7 +546,6 @@ export class BrainSurface extends JfElement {
   private _unifiedAiState: UnifiedAiState | null = null;
   private unsubAi: (() => void) | null = null;
   private uiModeUnsub: (() => void) | null = null;
-  private modeSaveQueue: Promise<void> = Promise.resolve();
   private modeSaveRevision = 0;
   private memberTabUnsub: (() => void) | null = null;
   private pollDiagnostics: number | null = null;
@@ -1309,40 +1311,48 @@ export class BrainSurface extends JfElement {
   private async setMode(mode: UiMode): Promise<void> {
     if (getUiMode() === mode) return;
     const previous = getUiMode();
-    const revision = ++this.modeSaveRevision;
+    const localRevision = ++this.modeSaveRevision;
     this.settings = { ...this.settings, mode };
     setUiMode(mode);
+    const globalRevision = getUiModeRevision();
     this.busy = { ...this.busy, mode: true };
 
-    // Serialize mode writes so response ordering cannot persist an older click after a newer one.
-    // Unlike withBusy(), queued clicks are real user intents and must not be mistaken for failures.
-    this.modeSaveQueue = this.modeSaveQueue.then(async () => {
-      let failure: string | null = null;
-      try {
-        const response = await authorizedFetch(this.base() + '/api/settings/v2', {
+    // The shared uiMode authority serializes writes from Brain, Settings, and the top bar. A local
+    // queue was insufficient: a later top-bar click could otherwise persist before this request.
+    let failure: string | null = null;
+    try {
+      const response = await enqueueUiModePersistence((signal, intent) =>
+        authorizedFetch(this.base() + '/api/settings/v2', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            [UI_MODE_INTENT_HEADER]: intent,
+          },
           body: JSON.stringify({ ui: { mode } }),
-        });
-        if (!response.ok) failure = `Couldn't save detail level (HTTP ${response.status}).`;
-      } catch (err) {
-        failure = err instanceof Error ? err.message : String(err);
-      }
+          signal,
+        }),
+      );
+      if (!response.ok) failure = `Couldn't save detail level (HTTP ${response.status}).`;
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
 
-      // Only the newest Brain-authored intent controls the visible error/rollback. An older queued
-      // failure cannot undo or obscure a later choice that is still waiting to persist.
-      if (revision === this.modeSaveRevision) {
-        if (failure !== null && getUiMode() === mode) {
-          this.runtimeError = failure;
-          this.settings = { ...this.settings, mode: previous };
-          setUiMode(previous);
-        } else if (failure === null) {
-          this.runtimeError = null;
-        }
-        this.busy = { ...this.busy, mode: false };
+    // Only the newest Brain-authored request owns Brain's busy/error lifecycle. Rollback additionally
+    // requires this intent still to be the newest GLOBAL choice; another control must never be undone.
+    if (localRevision === this.modeSaveRevision) {
+      if (
+        failure !== null
+        && globalRevision === getUiModeRevision()
+        && getUiMode() === mode
+      ) {
+        this.runtimeError = failure;
+        this.settings = { ...this.settings, mode: previous };
+        setUiMode(previous);
+      } else if (failure === null) {
+        this.runtimeError = null;
       }
-    });
-    await this.modeSaveQueue;
+      this.busy = { ...this.busy, mode: false };
+    }
   }
 
   // ---------- Install actions ----------
@@ -1595,11 +1605,18 @@ export class BrainSurface extends JfElement {
         </div>
         <div class="row">
           <div class="mode-toggle" role="group" aria-label="Detail level">
-            <button class=${mode === 'simple' ? 'active' : ''} @click=${() => this.setMode('simple')}>
+            <button
+              type="button"
+              class=${mode === 'simple' ? 'active' : ''}
+              aria-pressed=${mode === 'simple' ? 'true' : 'false'}
+              @click=${() => this.setMode('simple')}
+            >
               Simple
             </button>
             <button
+              type="button"
               class=${mode === 'advanced' ? 'active' : ''}
+              aria-pressed=${mode === 'advanced' ? 'true' : 'false'}
               @click=${() => this.setMode('advanced')}
             >
               Detailed
