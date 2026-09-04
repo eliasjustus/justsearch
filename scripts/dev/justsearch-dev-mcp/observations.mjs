@@ -167,24 +167,14 @@ export function probeLoopbackHttpStatus(
 }
 
 /**
- * A reachable inference listener is only an orphan when ownership absence is proven. A corrupt
- * run record or a reachable-but-unhealthy API leaves attribution unknown rather than inventing it.
+ * A port probe proves listener presence, not process identity. Until a repository-owned process
+ * record identifies the listener, a reachable inference-port service is not a proven orphan.
  */
 export function classifyInferenceOrphan({
-  runState,
-  pidsAlive = false,
-  apiObservation,
   inferenceObservation,
 } = {}) {
   if (!inferenceObservation) return undefined;
   if (inferenceObservation.state === PROBE_OBSERVATION.REFUSED) return false;
-  if (inferenceObservation.state !== PROBE_OBSERVATION.REACHABLE) return null;
-  if (runState === 'ABSENT') return true;
-  if (
-    runState === 'ACTIVE'
-    && !pidsAlive
-    && apiObservation?.state === PROBE_OBSERVATION.REFUSED
-  ) return true;
   return null;
 }
 

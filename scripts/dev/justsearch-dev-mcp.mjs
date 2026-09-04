@@ -10,14 +10,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const MIN_NODE_MAJOR = 24;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..');
-const DIAGNOSTIC_PATH = path.join(REPO_ROOT, 'tmp', 'justsearch-dev-mcp', 'bootstrap-failure.json');
+const DIAGNOSTIC_DIR = path.join(REPO_ROOT, 'tmp', 'justsearch-dev-mcp');
+const DIAGNOSTIC_PATH = path.join(DIAGNOSTIC_DIR, 'bootstrap-failure.json');
+const INSTANCE_ID = `${process.pid}-${randomUUID()}`;
+const INSTANCE_DIAGNOSTIC_PATH = path.join(DIAGNOSTIC_DIR, `bootstrap-failure.${INSTANCE_ID}.json`);
+const DIAGNOSTIC_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const SERVER_MODULE = 'scripts/dev/justsearch-dev-mcp/server.mjs';
 let terminating = false;
+
+// The bootstrap's own location is the revision-affinity authority. A generic environment value
+// may be useful to other scripts, but must never redirect this required MCP into another checkout.
+process.env.JUSTSEARCH_DEV_MCP_REPO_ROOT = REPO_ROOT;
 
 function sanitizeMessage(error) {
   let message = String(error?.message || error || 'unknown error').replace(/\s+/g, ' ').trim();
@@ -41,10 +50,38 @@ function classifyBootFailure(error, phase) {
   return 'DEV_MCP_BOOT_MAIN_FAILED';
 }
 
+function writeDiagnosticFile(target, record) {
+  const temporary = `${target}.${INSTANCE_ID}.tmp`;
+  fs.mkdirSync(DIAGNOSTIC_DIR, { recursive: true });
+  fs.writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    if (process.platform !== 'win32') throw error;
+    fs.rmSync(target, { force: true });
+    fs.renameSync(temporary, target);
+  } finally {
+    try { fs.rmSync(temporary, { force: true }); } catch { /* best effort */ }
+  }
+}
+
+function pruneOldInstanceDiagnostics() {
+  try {
+    const cutoff = Date.now() - DIAGNOSTIC_RETENTION_MS;
+    for (const entry of fs.readdirSync(DIAGNOSTIC_DIR, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^bootstrap-failure\..+\.json$/.test(entry.name)) continue;
+      const target = path.join(DIAGNOSTIC_DIR, entry.name);
+      if (fs.statSync(target).mtimeMs < cutoff) fs.rmSync(target, { force: true });
+    }
+  } catch { /* retention is best effort */ }
+}
+
 function writeDiagnostic({ code, error, phase }) {
   const record = {
     code,
     timestamp: new Date().toISOString(),
+    pid: process.pid,
+    instanceId: INSTANCE_ID,
     node: process.versions.node,
     platform: process.platform,
     arch: process.arch,
@@ -53,20 +90,13 @@ function writeDiagnostic({ code, error, phase }) {
     phase,
     message: sanitizeMessage(error),
   };
-  const temporary = `${DIAGNOSTIC_PATH}.${process.pid}.tmp`;
   try {
-    fs.mkdirSync(path.dirname(DIAGNOSTIC_PATH), { recursive: true });
-    fs.writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    try {
-      fs.renameSync(temporary, DIAGNOSTIC_PATH);
-    } catch (error) {
-      if (process.platform !== 'win32') throw error;
-      fs.rmSync(DIAGNOSTIC_PATH, { force: true });
-      fs.renameSync(temporary, DIAGNOSTIC_PATH);
-    }
-  } catch {
-    try { fs.rmSync(temporary, { force: true }); } catch { /* best effort */ }
-  }
+    pruneOldInstanceDiagnostics();
+    // The unique record cannot be erased by another concurrently healthy or failing MCP. The
+    // stable file is only a convenient pointer to the most recently observed failure.
+    writeDiagnosticFile(INSTANCE_DIAGNOSTIC_PATH, record);
+    try { writeDiagnosticFile(DIAGNOSTIC_PATH, record); } catch { /* instance record is authoritative */ }
+  } catch { /* diagnostics are best effort */ }
   return record;
 }
 
@@ -105,7 +135,7 @@ try {
   const { main } = await import('./justsearch-dev-mcp/server.mjs');
   phase = 'main';
   await main();
-  try { fs.rmSync(DIAGNOSTIC_PATH, { force: true }); } catch { /* stale record cleanup is best effort */ }
+  pruneOldInstanceDiagnostics();
 } catch (error) {
   reportFailure({ code: classifyBootFailure(error, phase), error, phase });
   // Import/main failures may leave partially-created handles behind. Terminate after the

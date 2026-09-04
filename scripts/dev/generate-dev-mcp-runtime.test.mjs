@@ -97,6 +97,28 @@ try {
       /non-builtin external import\(s\): fs/,
     );
   });
+  await fsp.writeFile(
+    path.join(REPO_ROOT, relativeEntry),
+    "export { readFile } from 'node:fs';\n",
+    'utf8',
+  );
+  await check('a real but unapproved Node builtin external fails closed', async () => {
+    await assert.rejects(
+      () => generateDevMcpRuntime({ entryRel: relativeEntry }),
+      /unapproved external import\(s\): node:fs/,
+    );
+  });
+  await fsp.writeFile(
+    path.join(REPO_ROOT, relativeEntry),
+    "export * from 'node:definitely-not-a-builtin';\n",
+    'utf8',
+  );
+  await check('an invented node-prefixed external fails closed', async () => {
+    await assert.rejects(
+      () => generateDevMcpRuntime({ entryRel: relativeEntry }),
+      /unknown node builtin external import\(s\): node:definitely-not-a-builtin/,
+    );
+  });
 
   const badPackageRoot = path.join(temporaryRoot, 'node_modules', 'bad-license');
   await fsp.mkdir(badPackageRoot, { recursive: true });

@@ -158,11 +158,11 @@ try {
     assert.equal(result.state, PROBE_OBSERVATION.REACHABLE);
   });
 
-  await check('reachable inference with no run is a proven orphan', async () => {
+  await check('reachable inference with no run has unknown process identity', async () => {
     assert.equal(classifyInferenceOrphan({
       runState: 'ABSENT',
       inferenceObservation: { state: PROBE_OBSERVATION.REACHABLE },
-    }), true);
+    }), null);
   });
   await check('reachable inference beside an unhealthy reachable API has unknown ownership', async () => {
     assert.equal(classifyInferenceOrphan({
@@ -172,13 +172,13 @@ try {
       inferenceObservation: { state: PROBE_OBSERVATION.REACHABLE },
     }), null);
   });
-  await check('reachable inference after a proven dead active run is an orphan', async () => {
+  await check('reachable inference after a dead active run still has unknown process identity', async () => {
     assert.equal(classifyInferenceOrphan({
       runState: 'ACTIVE',
       pidsAlive: false,
       apiObservation: { state: PROBE_OBSERVATION.REFUSED },
       inferenceObservation: { state: PROBE_OBSERVATION.REACHABLE },
-    }), true);
+    }), null);
   });
   await check('reachable inference with an unreadable run record has unknown ownership', async () => {
     assert.equal(classifyInferenceOrphan({

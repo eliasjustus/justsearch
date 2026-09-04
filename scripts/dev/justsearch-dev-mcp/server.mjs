@@ -1970,7 +1970,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.preflight',
     {
-      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, no inference orphans. `checkStates` distinguishes PASS, FAIL, UNKNOWN and SKIPPED; every gating check must be PASS for ready:true. Pass the SAME distFrom you will pass to start — the dist checks then run against the tree start will launch from (a bare worktree name resolves against .claude/worktrees). The checked root is reported as `distCheckedRoot`.',
+      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, and the inference port available. `checkStates` distinguishes PASS, FAIL, UNKNOWN and SKIPPED; every gating check must be PASS for ready:true. Pass the SAME distFrom you will pass to start — the dist checks then run against the tree start will launch from (a bare worktree name resolves against .claude/worktrees). The checked root is reported as `distCheckedRoot`.',
       inputSchema: PreflightInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -2122,7 +2122,7 @@ export async function main() {
         );
       }
 
-      // 4. No inference orphan (llama-server on default port)
+      // 4. Inference port available. A response proves occupancy, not listener identity.
       const inferenceObservation = await probeLoopbackHttpStatus(
         `http://127.0.0.1:${INFERENCE_PORT}/health`,
         { timeoutMs: 2_000 },
@@ -2133,8 +2133,8 @@ export async function main() {
         setCheck(
           'noInferenceOrphan',
           'FAIL',
-          `Inference listener answered on port ${INFERENCE_PORT} (HTTP ${inferenceObservation.statusCode ?? '?'}). `
-            + 'Use the existing run or justsearch.dev.stop; do not assume the port/GPU is free.',
+          `A listener answered on inference port ${INFERENCE_PORT} (HTTP ${inferenceObservation.statusCode ?? '?'}). `
+            + 'Do not assume the port/GPU is free; identify its owning process before cleanup.',
         );
       } else {
         setCheck(
@@ -2195,7 +2195,7 @@ export async function main() {
         checkStates,
         // Tempdoc 844 B1: self-describing — which tree the dist checks looked at, and how it was
         // resolved. `distCheckedRoot` is what `start` will launch from for the same distFrom;
-        // the remaining checks (models, stale run, inference orphan) are machine/shared-state
+        // the remaining checks (models, stale run, inference-port availability) are machine/shared-state
         // scoped and are unaffected by distFrom.
         distCheckedRoot: distCheckRoot,
         distFrom: distRoot.distFrom,
@@ -2210,7 +2210,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.quick_health',
     {
-      description: 'Fast orientation — call after compaction or at session start. `runState` is ACTIVE, ABSENT, or UNKNOWN; compatibility field `running` is null when register/probe evidence cannot establish true or false. Typed `probes` distinguish reachable, refused, timed-out, and unexpected failures. The default detail:"summary" spawns no subprocess. `foreignRuns` lists JustSearch runs this dev-runner did NOT start — `[]` means "probed, found none", `null` means "did not probe or could not complete the probe", so a free-looking verdict is never a claim about the whole machine. Each entry says how it is known: `source:"registered"` = its producer (e.g. `jseval`, on 33221) declared it, so it carries identity (`producer`, `repoRoot`, `pid`, `gpuBound`) and a verified `state` — `live` (port answered), `unreachable` (port silent, pid alive), `stale` (port silent, pid gone: a leaked record, nothing is running, remove `recordFile`), `unreadable` (record unparseable). `source:"observed"` = a port answered with nothing declaring it; all that is known is that something is listening. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
+      description: 'Fast orientation — call after compaction or at session start. `runState` is ACTIVE, ABSENT, or UNKNOWN; compatibility field `running` is null when register/probe evidence cannot establish true or false. Typed `probes` distinguish reachable, refused, timed-out, and unexpected failures. The default detail:"summary" spawns no subprocess. `foreignRuns` lists registered or observed listener candidates outside the positively identified owned listener — `[]` means "probed, found none", `null` means "did not probe or could not complete the probe". Each entry carries `attribution:"unowned"` only when non-ownership is proven; corrupt/unknown owned-run state yields `attribution:"unknown"`. `source:"registered"` carries producer identity and a verified liveness `state`; `source:"observed"` proves only that a port answered. An inference-port response alone never authorizes process cleanup. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
       inputSchema: QuickHealthInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -2339,7 +2339,7 @@ export async function main() {
         }
       }
 
-      // Check for inference orphan — only when no active run or backend is dead
+      // Observe inference-port availability when no active run is proven or its backend is dead.
       if (probe && (runState !== 'ACTIVE' || httpReady === false)) {
         const inferenceObservation = await probeLoopbackHttpStatus(
           `http://127.0.0.1:${INFERENCE_PORT}/health`,
@@ -2347,9 +2347,6 @@ export async function main() {
         );
         probes.inference = inferenceObservation;
         inferenceOrphan = classifyInferenceOrphan({
-          runState,
-          pidsAlive,
-          apiObservation: probes.api,
           inferenceObservation,
         });
       }
@@ -2399,14 +2396,14 @@ export async function main() {
       // into an explicit "stale record" rather than a phantom live backend.
       const foreignRuns = await probeForeignRuns({
         enabled: probe,
-        hasActiveRun: runState !== 'ABSENT',
+        ownedRunState: runState,
         ownedApiPort: apiPort,
         aiActive,
         registerDir: resolveForeignRegisterDir(mainRepoRoot),
         probe: probeStatusCodeOrThrow,
       });
       const foreignRunsNotice = foreignRuns && foreignRuns.length > 0
-        ? `${foreignRuns.length} JustSearch run(s) on this machine were NOT started by this dev-runner `
+        ? `${foreignRuns.length} registered or observed listener candidate(s) are outside the positively identified owned listener `
           + `(${foreignRuns.map((f) => (f.source === 'registered'
             ? `${f.port ?? '?'}:${f.producer || 'registered'}/${f.state}`
             : `${f.port}:${f.kind}/${f.attribution}`)).join(', ')}). `
@@ -2533,26 +2530,6 @@ export async function main() {
     },
   );
 
-  /** Probe inference port for orphaned llama-server and kill it if found. */
-  async function probeAndKillInferenceOrphan() {
-    try {
-      const sc = await httpGetStatusCode(`http://127.0.0.1:${INFERENCE_PORT}/health`, 2000);
-      if (sc !== 200) return null;
-      const { stdout } = await execFileP('powershell',
-        ['-NoProfile', '-Command',
-         `(Get-NetTCPConnection -LocalPort ${INFERENCE_PORT} -State Listen -ErrorAction SilentlyContinue).OwningProcess`],
-        { timeout: 5000 });
-      const pid = parseInt(stdout.trim(), 10);
-      if (pid > 0) {
-        await execFileP('taskkill', ['/PID', String(pid), '/F'], { timeout: 5000 });
-        return { killed: true, pid };
-      }
-      return { killed: false, error: 'Could not determine PID' };
-    } catch {
-      return null; // no orphan or probe failed
-    }
-  }
-
   mcpServer.registerTool(
     'justsearch.dev.acquire_when_free',
     {
@@ -2607,7 +2584,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.stop',
     {
-      description: 'Stop the running dev stack and optionally clean its data directory. Also detects and kills orphaned inference processes.',
+      description: 'Stop the active dev stack and optionally clean its data directory. Only processes identified by the dev-runner ownership record are eligible for cleanup; an unattributed inference-port listener is never killed.',
       inputSchema: StopInputSchema,
       annotations: { destructiveHint: true, openWorldHint: false },
     },
@@ -2615,12 +2592,6 @@ export async function main() {
       const input = StopInputSchema.parse(rawArgs);
       const effectiveRunId = input.runId ?? await resolveRunId(mainRepoRoot, undefined);
       if (!effectiveRunId) {
-        // No active run — but check for orphaned inference server before giving up
-        const orphan = await probeAndKillInferenceOrphan();
-        if (orphan?.killed) {
-          return toToolResult({ ok: true, inferenceOrphanKilled: orphan.pid,
-            message: `No active run, but killed orphaned inference server (PID ${orphan.pid}) on port ${INFERENCE_PORT}.` });
-        }
         return toToolResult({ ok: false, error: { code: 'NO_ACTIVE_RUN', message: 'No active run to stop. Call quick_health to verify state.' } });
       }
       const clean = input.clean ?? 'none';
@@ -2681,16 +2652,6 @@ export async function main() {
         } catch (cleanErr) {
           out.cleanup = { ok: false, error: { message: cleanErr?.message || String(cleanErr) } };
         }
-      }
-
-      // Probe for orphaned inference server (C2 fix)
-      const orphan = await probeAndKillInferenceOrphan();
-      if (orphan?.killed) {
-        out.inferenceOrphan = true;
-        out.inferenceOrphanKilled = orphan.pid;
-      } else if (orphan && !orphan.killed) {
-        out.inferenceOrphan = true;
-        out.inferenceOrphanError = orphan.error;
       }
 
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_stop_result', tool: 'justsearch.dev.stop', runId: effectiveRunId, ok: out.ok, exitCode });

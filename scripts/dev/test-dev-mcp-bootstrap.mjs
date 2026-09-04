@@ -73,9 +73,14 @@ function configuredLauncher(fixture) {
   return { command, args: JSON.parse(argsText) };
 }
 
-function startClient(fixture, cwd) {
+function startClient(fixture, cwd, env = {}) {
   const { command, args } = configuredLauncher(fixture);
-  const child = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(command, args, {
+    cwd,
+    env: { ...process.env, ...env },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
   const pending = new Map();
   let nextId = 1;
   let buffer = '';
@@ -129,8 +134,8 @@ function startClient(fixture, cwd) {
   };
 }
 
-async function connectClient(fixture, cwd) {
-  const client = startClient(fixture, cwd);
+async function connectClient(fixture, cwd, env = {}) {
+  const client = startClient(fixture, cwd, env);
   const initialized = await client.request('initialize', {
     protocolVersion: '2025-06-18',
     capabilities: {},
@@ -193,7 +198,47 @@ async function assertNegativeBootstrap(fixture, expectedCode) {
   assert.equal(diagnostic.code, expectedCode);
   assert.equal(diagnostic.repoRoot, fixture);
   assert.equal(diagnostic.module, 'scripts/dev/justsearch-dev-mcp/server.mjs');
+  assert.equal(diagnostic.pid > 0, true);
+  assert.match(diagnostic.instanceId, new RegExp(`^${diagnostic.pid}-`));
+  const diagnosticNames = await fsp.readdir(path.join(fixture, 'tmp', 'justsearch-dev-mcp'));
+  assert.equal(
+    diagnosticNames.some((name) => name === `bootstrap-failure.${diagnostic.instanceId}.json`),
+    true,
+  );
   return { result, diagnostic };
+}
+
+async function startLoopbackService(statusCode = 200) {
+  const source = [
+    "const http = require('node:http');",
+    `const server = http.createServer((_req, res) => { res.writeHead(${statusCode}, { 'content-type': 'application/json' }); res.end('{}'); });`,
+    "server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));",
+  ].join('');
+  const child = spawn(process.execPath, ['-e', source], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  const port = await new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => reject(new Error(`loopback service did not start; stderr=${stderr}`)), 5_000);
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      const newline = stdout.indexOf('\n');
+      if (newline === -1) return;
+      clearTimeout(timer);
+      resolve(Number.parseInt(stdout.slice(0, newline), 10));
+    });
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      if (!Number.isInteger(Number.parseInt(stdout, 10))) {
+        clearTimeout(timer);
+        reject(new Error(`loopback service exited ${code}; stderr=${stderr}`));
+      }
+    });
+  });
+  return { child, port, close: () => { try { child.kill(); } catch { /* already exited */ } } };
 }
 
 const scratchRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'justsearch-dev-bootstrap-'));
@@ -201,8 +246,15 @@ try {
   const healthy = await makeFixture(scratchRoot, 'healthy');
   assertNoNodeModulesAncestor(healthy);
   const diagnosticPath = path.join(healthy, 'tmp', 'justsearch-dev-mcp', 'bootstrap-failure.json');
+  const otherInstanceDiagnosticPath = path.join(
+    healthy,
+    'tmp',
+    'justsearch-dev-mcp',
+    'bootstrap-failure.other-instance.json',
+  );
   await fsp.mkdir(path.dirname(diagnosticPath), { recursive: true });
   await fsp.writeFile(diagnosticPath, '{"code":"STALE"}\n', 'utf8');
+  await fsp.writeFile(otherInstanceDiagnosticPath, '{"code":"OTHER_INSTANCE"}\n', 'utf8');
 
   await check('exact config launcher initializes without any node_modules ancestor', async () => {
     const client = await connectClient(healthy, healthy);
@@ -214,8 +266,11 @@ try {
       client.close();
     }
   });
-  await check('successful bootstrap removes a stale failure record', async () => {
-    assert.equal(fs.existsSync(diagnosticPath), false);
+  await check('successful bootstrap preserves another instance failure record', async () => {
+    assert.equal(fs.existsSync(diagnosticPath), true);
+    assert.equal(await fsp.readFile(diagnosticPath, 'utf8'), '{"code":"STALE"}\n');
+    assert.equal(fs.existsSync(otherInstanceDiagnosticPath), true);
+    assert.equal(await fsp.readFile(otherInstanceDiagnosticPath, 'utf8'), '{"code":"OTHER_INSTANCE"}\n');
   });
   await check('exact config launcher resolves the Git root from a module subdirectory', async () => {
     const moduleDirectory = path.join(healthy, 'scripts', 'dev', 'justsearch-dev-mcp');
@@ -224,6 +279,16 @@ try {
       const listed = await client.request('tools/list', {});
       assert.equal(listed.result?.tools?.length, 12);
       assert.equal(client.protocolViolation, null);
+    } finally {
+      client.close();
+    }
+  });
+  await check('bootstrap checkout wins over a hostile generic repo-root override', async () => {
+    const hostile = await makeFixture(scratchRoot, 'hostile-root');
+    const client = await connectClient(healthy, healthy, { JUSTSEARCH_REPO_ROOT: hostile });
+    try {
+      const preflight = await callTool(client, 'justsearch.dev.preflight');
+      assert.equal(path.resolve(preflight.distCheckedRoot), path.resolve(healthy));
     } finally {
       client.close();
     }
@@ -255,6 +320,32 @@ try {
       client.close();
     }
   });
+  await check('malformed active state keeps a reachable registered backend ownership unknown', async () => {
+    const service = await startLoopbackService(503);
+    const registerDir = path.join(healthy, 'tmp', 'dev-runner', 'foreign');
+    const recordPath = path.join(registerDir, 'bootstrap-test.json');
+    await fsp.mkdir(registerDir, { recursive: true });
+    await fsp.writeFile(recordPath, JSON.stringify({
+      schemaVersion: 1,
+      recordId: 'bootstrap-test',
+      producer: 'bootstrap-test',
+      pid: service.child.pid,
+      ports: { api: service.port },
+    }), 'utf8');
+    const client = await connectClient(healthy, healthy);
+    try {
+      const health = await callTool(client, 'justsearch.dev.quick_health', { probe: true });
+      const observed = health.foreignRuns.find((run) => run.recordId === 'bootstrap-test');
+      assert.equal(health.runState, 'UNKNOWN');
+      assert.equal(observed.state, 'live');
+      assert.equal(observed.liveness.portAnswered, true);
+      assert.equal(observed.attribution, 'unknown');
+    } finally {
+      client.close();
+      service.close();
+      await fsp.rm(recordPath, { force: true });
+    }
+  });
   await fsp.rm(activePath, { force: true });
   await check('genuinely absent active.json remains a proven ABSENT/false state', async () => {
     const client = await connectClient(healthy, healthy);
@@ -264,6 +355,21 @@ try {
       assert.equal(health.running, false);
     } finally {
       client.close();
+    }
+  });
+  await check('stop never kills an unattributed listener on the inference port', async () => {
+    const service = await startLoopbackService(200);
+    const client = await connectClient(healthy, healthy, { JUSTSEARCH_SERVER_PORT: String(service.port) });
+    try {
+      const stopped = await callTool(client, 'justsearch.dev.stop');
+      assert.equal(stopped.ok, false);
+      assert.equal(stopped.error.code, 'NO_ACTIVE_RUN');
+      assert.equal(service.child.exitCode, null);
+      const response = await fetch(`http://127.0.0.1:${service.port}/health`);
+      assert.equal(response.status, 200);
+    } finally {
+      client.close();
+      service.close();
     }
   });
 

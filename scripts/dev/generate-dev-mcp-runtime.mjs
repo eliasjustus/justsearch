@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { builtinModules } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { build, version as esbuildVersion } from 'esbuild';
@@ -24,6 +25,8 @@ export const RUNTIME_REL = 'scripts/dev/justsearch-dev-mcp/runtime.generated.mjs
 export const LEGAL_REL = 'scripts/dev/justsearch-dev-mcp/runtime.generated.LEGAL.txt';
 const LOCK_REL = 'package-lock.json';
 const ALLOWED_LICENSES = new Set(['MIT', 'ISC', 'BSD-2-Clause', 'BSD-3-Clause', 'Apache-2.0']);
+const NODE_BUILTINS = new Set(builtinModules.map((name) => name.replace(/^node:/, '')));
+const ALLOWED_EXTERNAL_IMPORTS = new Set(['node:process']);
 const LICENSE_FILE_RE = /^(?:licen[cs]e|copying|notice)(?:\..+)?$/i;
 
 function normalizeLf(text) {
@@ -160,10 +163,24 @@ function assertExternalImports(metafile) {
     }
   }
   const unique = [...new Set(external)].sort();
-  const forbidden = unique.filter((specifier) => !specifier.startsWith('node:'));
-  if (forbidden.length > 0) {
+  const nonBuiltin = unique.filter((specifier) => !specifier.startsWith('node:'));
+  if (nonBuiltin.length > 0) {
     throw new Error(
-      `generate-dev-mcp-runtime: non-builtin external import(s): ${forbidden.join(', ')}`,
+      `generate-dev-mcp-runtime: non-builtin external import(s): ${nonBuiltin.join(', ')}`,
+    );
+  }
+  const unknownBuiltins = unique.filter(
+    (specifier) => specifier.startsWith('node:') && !NODE_BUILTINS.has(specifier.slice('node:'.length)),
+  );
+  if (unknownBuiltins.length > 0) {
+    throw new Error(
+      `generate-dev-mcp-runtime: unknown node builtin external import(s): ${unknownBuiltins.join(', ')}`,
+    );
+  }
+  const unapproved = unique.filter((specifier) => !ALLOWED_EXTERNAL_IMPORTS.has(specifier));
+  if (unapproved.length > 0) {
+    throw new Error(
+      `generate-dev-mcp-runtime: unapproved external import(s): ${unapproved.join(', ')}`,
     );
   }
   return unique;

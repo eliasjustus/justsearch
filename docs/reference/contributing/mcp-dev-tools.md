@@ -17,8 +17,9 @@ For the operational side — shared-stack ownership and contention, worktree FE 
 
 `justsearch-dev` is a required, revision-local server. It must initialize from a freshly checked-out
 Git worktree with Node.js 24 or newer, even before that worktree has a root `node_modules` directory.
-The application server and `dev-runner.cjs` always come from the caller's checkout; another
-checkout is never used as a dependency fallback.
+The application server and `dev-runner.cjs` always come from the caller's checkout. The bootstrap
+pins that checkout before loading application code, so an inherited `JUSTSEARCH_REPO_ROOT` cannot
+redirect lifecycle behavior into another revision; another checkout is never used as a fallback.
 
 The external startup dependency boundary is a generated projection:
 
@@ -41,8 +42,10 @@ node scripts/dev/test-dev-mcp-bootstrap.mjs
 
 The bootstrap before `server.mjs` uses Node built-ins only. It dynamically imports the application
 so import failures cross a real error boundary, emits no stdout on failure, and writes a
-best-effort diagnostic to `tmp/justsearch-dev-mcp/bootstrap-failure.json`. A successful launch
-removes any stale record.
+best-effort per-instance diagnostic under `tmp/justsearch-dev-mcp/bootstrap-failure.<instance>.json`.
+`bootstrap-failure.json` is a convenient pointer to the most recently observed failure, not a
+current-health verdict. A successful concurrent launch does not erase another instance's evidence;
+old per-instance records are pruned after seven days. Use `quick_health` to establish current state.
 
 | Bootstrap code | Meaning |
 |---|---|
@@ -61,7 +64,7 @@ The dev MCP surface exposes exactly these **12** tools:
 |------|---------|
 | `justsearch.dev.start` | Start the backend and frontend dev stack. Readiness waiting is part of this tool via its wait options. |
 | `justsearch.dev.stop` | Stop the active dev run and clean up owned processes. |
-| `justsearch.dev.quick_health` | Fast orientation check with typed run/probe state, plus `foreignRuns` — backends it did not start. `detail: "full"` adds the dev-runner process/port/readiness payload. |
+| `justsearch.dev.quick_health` | Fast orientation check with typed run/probe state, plus `foreignRuns` — registered or observed listeners outside the positively identified owned listener. `detail: "full"` adds the dev-runner process/port/readiness payload. |
 | `justsearch.dev.preflight` | Run dev preflight checks with typed `PASS`/`FAIL`/`UNKNOWN`/`SKIPPED` outcomes. Takes `distFrom` so the dist checks run against the tree `start` will launch from. |
 | `justsearch.dev.acquire_when_free` | Block until the shared stack is acquirable, then return how to take it (the documented remedy for `OWNER_CONFLICT`). |
 | `justsearch.dev.tail_log` | Read recent backend, frontend, or runner log lines. |
@@ -94,7 +97,7 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
    - `probes.api`, `probes.worker`, and `probes.inference`, when present, distinguish
      `REACHABLE`, `REFUSED`, `TIMED_OUT`, and `ERROR`. A timeout is not a connection refusal.
    - Add `detail: "full"` when process state, ports, or runner metadata matter; it is the only mode that spawns a subprocess.
-   - Read `foreignRuns` before concluding the machine is free. It lists JustSearch-shaped backends this dev-runner did **not** start (a `jseval` backend on `33221`, a bare `runHeadless`, an unattributed llama-server). The tri-state is load-bearing: `[]` = probed and found none, `null` = did not probe (`probe: false`), a non-empty array = these are running and none is the owned run. Ownership verdicts and `running` describe the dev-runner's own run only — before tempdoc 844 that made a "free" verdict precede a 100%-GPU neighbour and contaminated a measurement round.
+   - Read `foreignRuns` before concluding the machine is free. It lists registered or observed JustSearch-shaped listener candidates outside the positively identified owned listener (a `jseval` backend on `33221`, a bare `runHeadless`, an unattributed listener on the inference port). The tri-state is load-bearing: `[]` = probed and found none, `null` = did not probe (`probe: false`), and a non-empty array carries `attribution: "unowned"` only when non-ownership is proven. If the owned run record is corrupt or unreadable, attribution stays `"unknown"`. Ownership verdicts and `running` describe the dev-runner's own run only — before tempdoc 844 a false "free" verdict preceded a 100%-GPU neighbour and contaminated a measurement round.
    - `foreignRuns` merges two sources and says which is which. `source: "registered"` means the producer declared the run in the foreign-run register (below) — the entry then carries identity (`producer`, `repoRoot`, `pid`, `dataDir`, `sessionId`, `gpuBound`) and a `state` that was *verified*, not assumed: `live` (its declared port answered), `unreachable` (port silent, pid alive — booting or wedged), `stale` (port silent **and** pid gone: a record whose producer was killed before it could clean up, so nothing is running — delete `recordFile` if it is yours), `unreadable` (the record file could not be parsed). A `live` entry additionally carries `identityStale: true` when the port answers but the recorded pid is gone — the listener is verified, the identity behind it is not. `source: "observed"` means only that a port answered with nothing declaring it. A registered port is never also listed as observed.
 2. Run `justsearch.dev.preflight` if the stack is not running.
    - Pass the **same** `distFrom` you will pass to `start` (a path, or a bare worktree name). Preflight then checks the dists in the tree `start` will launch from and reports it as `distCheckedRoot`; without it, preflight validated the invoking checkout while `start` used another — a false green.
@@ -109,7 +112,9 @@ The **EvidenceBundle format itself is live and load-bearing** — only the two M
    - `hotReload` **defaults true** (tempdoc 844): the Worker gets a JDWP listener on a per-run port, recorded in `run.json`. Pass `hotReload: false` to opt out; `reload` then refuses with `HOT_RELOAD_NOT_ENABLED` rather than reporting a push it could not make.
 4. Use `justsearch.dev.fetch_api_json` for common read-only diagnostics.
 5. Use `justsearch.dev.api_call` only when the endpoint is in the explicit allowlist.
-6. Use `justsearch.dev.stop` when the run should be shut down.
+6. Use `justsearch.dev.stop` when the run should be shut down. It cleans up only processes whose
+   identity is established by the dev-runner ownership record. A response from an unattributed
+   inference-port listener is reported as unknown and is never, by itself, authority to kill it.
 
 ## Prerequisites
 

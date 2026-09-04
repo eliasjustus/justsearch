@@ -1,7 +1,7 @@
 ---
 title: "Hermetic bootstrap and truthful failure architecture for the required justsearch-dev MCP"
 type: tempdocs
-status: "IMPLEMENTED — verification complete 2026-09-04; ready for review"
+status: "IMPLEMENTED — independent review fixes verified 2026-09-04; publication in progress"
 created: 2026-09-04
 updated: 2026-09-04
 author: Codex session 01a06b3b
@@ -534,8 +534,9 @@ line endings/order. Its committed outputs are:
   whose source appears in esbuild's metafile.
 
 The generator supports normal write mode and `--check`. Check mode builds into a temporary directory,
-requires that every external import is a Node built-in, verifies that every bundled package has an
-allowed license and notice text, and byte-compares both outputs. The generated bundle carries a
+requires that every external import is both a real Node built-in and in the explicit allowlist,
+verifies that every bundled package has an allowed license and notice text, and byte-compares both
+outputs. The generated bundle carries a
 header naming its generator and the locked SDK/Zod versions; it is never edited manually.
 
 `server.mjs` and `schemas.mjs` import from this generated local module. All other MCP files,
@@ -559,15 +560,16 @@ Change `justsearch-dev-mcp.mjs` into a Node-built-ins-only bootstrap:
 2. dynamically import `server.mjs` and await `main()`;
 3. on failure, classify at least missing generated runtime, unsupported Node, import/syntax failure,
    and server-main rejection under stable `DEV_MCP_BOOT_*` codes;
-4. write a concise single-line stderr summary and best-effort JSON diagnostic at
-   `tmp/justsearch-dev-mcp/bootstrap-failure.json` in the caller checkout;
-5. include code, timestamp, Node/platform versions, caller root, failing module where known, and a
+4. write a concise single-line stderr summary, a best-effort per-instance JSON diagnostic, and a
+   stable latest-failure pointer under `tmp/justsearch-dev-mcp/` in the caller checkout;
+5. include code, timestamp, process/instance identity, Node/platform versions, caller root, failing module where known, and a
    bounded/sanitized message; never record environment values or credentials;
 6. exit non-zero without emitting any stdout.
 
-The diagnostic record is a supplement, not proof that Codex displays stderr. A successful launch
-removes an old bootstrap-failure record best-effort so stale evidence is not mistaken for the current
-session.
+The diagnostic record is a supplement, not proof that Codex displays stderr. The stable
+`bootstrap-failure.json` is failure history, not a current-health verdict; a successful concurrent
+launch must not erase another instance's failure. Unique instance records make that ownership
+explicit and are pruned after a bounded retention period. `quick_health` owns current state.
 
 True uncaught exceptions and unhandled rejections after initialization log once and terminate the
 server. The current handlers that log and continue are removed. A required control plane restarts
@@ -630,7 +632,8 @@ Four proof layers are required:
 3. **Negative bootstrap tests in disposable fixtures**
    - absent bundle, corrupt bundle, and unsupported runtime produce stable codes, no stdout, nonzero
      exit, bounded stderr, and a sanitized diagnostic record;
-   - a later successful launch removes the stale record.
+   - a concurrent successful launch preserves the failing instance's record and the stable
+     latest-failure pointer; aged per-instance records are pruned by bounded retention.
 4. **Observation truth tests**
    - missing, malformed, symlink, oversized, denied/unreadable, and valid active/run records map to
      the designed states;
@@ -895,7 +898,7 @@ main checkout's dependency tree, or adding a hand-written degraded MCP protocol.
 | Notice projection omits a license file or new transitive package | metafile-to-package coverage assertion, allowed-license test fixtures, byte-checked legal output |
 | Generated output depends on checkout path or host line endings | two isolated checkout paths in the generator test, normalized output, byte comparison |
 | Nullable `quick_health.running` breaks a consumer that assumed boolean | repository consumer sweep, schema/doc updates, surface-honesty and projection-live tests |
-| Failure record leaks a path/message secret or becomes stale | sanitization/bounds unit tests and successful-start removal test |
+| Failure record leaks a path/message secret or is erased by a concurrent success | sanitization/bounds tests, per-instance identity, bounded retention, and concurrent-success preservation test |
 | Fail-fast handlers terminate on a recoverable handler exception | SDK request-error tests plus a deliberate post-initialization fatal-process test |
 | Host probe classifications vary by platform | injected error-code matrix plus Windows CI execution |
 | Codex does not surface stderr or refresh as expected | manual authenticated `codex exec --ephemeral` acceptance from a fresh worktree |
@@ -926,15 +929,18 @@ state lies are separate defects in the same required control-plane reliability b
 
 The approved design is implemented on `codex/925-dev-mcp-bootstrap-architecture`:
 
-- `scripts/dev/justsearch-dev-mcp.mjs` is now a Node-built-ins-only launcher. It checks Node 24,
+- `scripts/dev/justsearch-dev-mcp.mjs` is now a Node-built-ins-only launcher. It pins its own
+  checkout as the MCP root even when a conflicting generic repo-root environment value is inherited,
+  checks Node 24,
   installs fatal handlers before the first application import, dynamically imports `server.mjs`,
   exits promptly after import/main failure even if partial initialization left handles behind, and
   emits one bounded/sanitized stderr line plus the best-effort
-  `tmp/justsearch-dev-mcp/bootstrap-failure.json` diagnostic. Successful initialization removes a
-  stale diagnostic.
+  per-instance `tmp/justsearch-dev-mcp/bootstrap-failure.<instance>.json` diagnostic plus a stable
+  latest-failure pointer. Successful initialization preserves concurrent failure evidence; instance
+  records older than seven days are pruned best-effort.
 - `runtime-entry.mjs`, `runtime.generated.mjs`, and `runtime.generated.LEGAL.txt` establish the
   revision-local SDK/Zod boundary. `generate-dev-mcp-runtime.mjs` uses exact esbuild `0.28.2`,
-  permits only explicit `node:` externals, derives the package/legal closure from the esbuild
+  permits only real Node built-ins from an explicit external allowlist, derives the package/legal closure from the esbuild
   metafile, rejects unapproved or missing license evidence, writes deterministic outputs, and has a
   byte-checking `--check` mode.
 - `server.mjs` and `schemas.mjs` import the tracked generated runtime instead of resolving root npm
@@ -944,8 +950,10 @@ The approved design is implemented on `codex/925-dev-mcp-bootstrap-architecture`
   `REACHABLE`/`REFUSED`/`TIMED_OUT`/`ERROR`. `preflight.checkStates` is authoritative and every
   gating check must be `PASS`; its legacy booleans map all non-pass states to `false`.
   `quick_health.runState` is `ACTIVE`/`ABSENT`/`UNKNOWN`, and compatibility `running` is nullable.
-  A reachable inference listener is called an orphan only when the absence of an owner is proven;
-  corrupt ownership state or a reachable-but-unhealthy API yields `null`.
+  A reachable inference-port listener remains ownership-unknown until a repository-owned process
+  record identifies it; port evidence never authorizes cleanup. Foreign backend probes treat every
+  HTTP response, including 503, as reachable, and corrupt owned-run state keeps both observed and
+  registered listener attribution `unknown`.
 - The existing twelve-tool inventory, shared-stack ownership authority, and runner admission path
   are unchanged. The harness was updated to distinguish `running: null` from `false`.
 
@@ -973,17 +981,20 @@ block, so retaining the compact row avoids creating a second detailed authority.
 
 All new and directly affected suites pass after a clean `npm ci`:
 
-- generated runtime: 11/11 from `node scripts/dev/generate-dev-mcp-runtime.test.mjs`, plus
+- generated runtime: 13/13 from `node scripts/dev/generate-dev-mcp-runtime.test.mjs`, plus
   `node scripts/dev/generate-dev-mcp-runtime.mjs --check`;
-- dependency-free bootstrap: 12/12 from `node scripts/dev/test-dev-mcp-bootstrap.mjs`, including
+- dependency-free bootstrap: 15/15 from `node scripts/dev/test-dev-mcp-bootstrap.mjs`, including
   exact `.codex/config.toml`, root and nested CWD,
-  malformed/absent run state, missing/corrupt runtime, unsupported Node, partial-handle
+  hostile ambient repo-root override, malformed/absent run state, concurrent diagnostic ownership,
+  an innocent inference-port listener that survives `stop`, missing/corrupt runtime, unsupported Node, partial-handle
   termination, both post-main fatal paths, stdout cleanliness, bounded diagnostics, and credential
   redaction;
 - typed observations: 21/21 from `node scripts/dev/test-dev-mcp-observations.mjs` across JSON/file
   failures, reachable/refused/timeout/error probes, default HTTP port behavior, legacy-adapter
   truth, and inference ownership attribution;
-- `node scripts/dev/test-dev-mcp-surface-honesty.mjs`: 78/78;
+- `node scripts/dev/test-dev-mcp-surface-honesty.mjs`: 82/82, including registered and
+  unregistered foreign backends that answer with a non-ready HTTP 503 and unknown attribution when
+  the owned-run record is not trustworthy;
   `node scripts/dev/test-dev-mcp-projection-live.mjs`: 16 assertions;
   `node scripts/dev/test-ownership-verdict.mjs`: 40/40;
 - canonical inventory sync and repository governance pass via
@@ -1000,23 +1011,21 @@ All new and directly affected suites pass after a clean `npm ci`:
   `node scripts/governance/run.mjs --gate hook-integrity --mode gate`.
 
 The deployment-topology test creates its Git fixture in the OS temporary directory outside every
-`node_modules` ancestor and parses the real required launcher rather than duplicating it. The final
-authenticated acceptance additionally moved this worktree's root `node_modules` aside, ran
-`codex exec --ephemeral` from the worktree, and observed a real `justsearch-dev` `quick_health`
-tool call returning `runState: ABSENT` and `running: false`; the Codex process exited 0 with final
-sentinel `DEV_MCP_ACCEPTANCE_OK ABSENT false`. The package tree was restored in a `finally` block
-and its hold path is absent.
+`node_modules` ancestor and parses the real required launcher rather than duplicating it. A
+session-local authenticated `codex exec --ephemeral` smoke also returned `runState: ABSENT` and
+`running: false`, but no independently auditable transcript was retained. It is therefore only
+corroboration; the reproducible dependency-free fixture is the publication evidence.
 
-One unrelated repository-wide check remains red on the branch base:
-`check-always-loaded-budget.mjs` reports `CLAUDE.md` at 22,626 bytes against a 22,589-byte ceiling
-(+37 bytes). This implementation has a zero-byte `CLAUDE.md` diff and did not change the baseline
-or weaken the ratchet. It is recorded here so the verification claim does not turn a pre-existing
-failure into a false green.
+The independent refute-first review found five real blockers before publication: port-only process
+termination, ambient-environment revision redirection, non-200/unknown-state foreign-listener lies,
+cross-process diagnostic erasure, and prefix-only external-import validation. Each was corrected at
+the owning boundary and now has a runnable regression. The always-loaded prompt budget and all
+other repository governance checks listed above pass on the publication base.
 
 ### 15.4 Remaining work and unverified assumptions
 
 No implementation work remains in this tempdoc. Remote CI on the workflow's pinned Node runtime is
-not yet evidence because this branch has not been published; pushing, review, and merge require a
-separate owner-authorized publication pass. Bootstrap stderr display remains client-dependent under
+not yet evidence because this branch has not been published; publication was explicitly authorized
+and is in progress. Bootstrap stderr display remains client-dependent under
 the MCP stdio contract, which is why the implementation also writes the best-effort local
 diagnostic. No claim depends on stderr being presented in the Codex UI.

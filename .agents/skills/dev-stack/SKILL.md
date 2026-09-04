@@ -22,7 +22,9 @@ starting backends, debugging port issues, or running pipeline profiling.
 
 - **Cold start:** ~6s to port emit, ~38s to Worker ready
 - **Default MCP timeout:** `waitTimeoutMs` is 60s
-- **Orphaned backends hold ports** — kill via `powershell -Command "Stop-Process -Id <PID> -Force"`
+- **Occupied ports require identity evidence** — use `justsearch.dev.stop` for a dev-runner-owned
+  process. Never kill an unattributed listener from port evidence alone; identify its owning
+  lifecycle first and use that lifecycle's cleanup path.
 - **jseval's `--llm` flag cold start** (`python -m jseval run --start-backend --llm`, not a `dev.start` option) may fail once: Worker port discovery (15s timeout) races with GGUF model load (~5GB disk read). Retry succeeds because OS file cache is warm. Not a code bug.
 - **`--clean none`** preserves embedding progress across backend restarts
 - **`RERANK_MODEL_PATH`** must be absolute (Gradle `runHeadless` CWD differs from repo root)

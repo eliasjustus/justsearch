@@ -116,7 +116,9 @@ If project MCP, skills, or hooks are all absent, check project trust first. If
 only MCP is absent, run `codex mcp list` from the repository root and validate
 `.codex/config.toml`. Then run `node scripts/dev/justsearch-dev-mcp.mjs` and
 inspect `tmp/justsearch-dev-mcp/bootstrap-failure.json`; bootstrap errors use
-stable `DEV_MCP_BOOT_*` codes and emit no protocol output on stdout. A missing
+stable `DEV_MCP_BOOT_*` codes and emit no protocol output on stdout. The stable
+file points to the most recently observed failure; per-instance records beside it retain
+concurrent failures, and `quick_health` is the current-state authority. A missing
 or stale generated runtime is repaired from an installed checkout with
 `node scripts/dev/generate-dev-mcp-runtime.mjs`, followed by its `--check`
 mode. If hooks misbehave, set
