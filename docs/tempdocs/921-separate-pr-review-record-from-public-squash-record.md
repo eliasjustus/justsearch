@@ -1,7 +1,7 @@
 ---
 title: "Separate the PR review record from the public squash record"
 type: tempdocs
-status: "IMPLEMENTED LOCALLY (2026-09-04) — commit-safe PR body plus one managed review-record comment; publication remains separately authorized"
+status: "PUBLISHED VIA PR #632 (2026-09-04) — commit-safe PR body plus one managed review-record comment; 30-merge audit remains time-gated"
 created: 2026-09-03
 updated: 2026-09-04
 charter: "make rich agent PR evidence compatible with concise, durable public main history"
@@ -1649,3 +1649,13 @@ authority rather than the superseded co-located-body or custom-transport proposa
 body is permanently commit-safe, one managed comment owns mutable review evidence, the
 ordinary queue and `PR_BODY` setting remain intact, no write-capable workflow or required
 check was introduced, and the 30-merge measurement remains explicitly time-gated.
+
+## 24. Publication outcome — 2026-09-04
+
+The user separately authorized publication. PR #632 is the publication vehicle for this
+tempdoc and its implementation. The `PUBLISHED` status above is intentionally part of that
+same squash candidate: this revision can appear on `main` only after the required checks and
+merge queue accept it. The permanent public commit uses the concise PR body, while the PR's
+single managed review-record comment carries the detailed scope, verification, and review
+state. The post-land 30-merge audit remains an elapsed-data obligation rather than work that
+can be completed in this publication run.
