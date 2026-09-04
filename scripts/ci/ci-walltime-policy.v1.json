@@ -2,56 +2,82 @@
   "kind": "justsearch-ci-walltime-policy.v1",
   "version": 1,
   "budgetsAreAdvisory": true,
-  "note": "Warn-only per-job wall-clock ceilings for the public CI run (tempdoc 668). Ceilings are seeded from the measured median x ~1.25 over a 15-run sample of successful `main` runs (2026-07-01); per-lane CV was ~6-10%, so a 1.25x-median ceiling rarely false-alarms while still catching a real regression. These are ADVISORY ONLY: the CI checks themselves remain the pass/fail authority, and this budget never fails a run. Ceilings are a property of the hosted-runner environment over time, not of a release, so they are hand-set here (mirroring unit-test-shard-policy.v1.json) rather than projected from a release record. Refresh deliberately when the runner image or lane membership changes; do not chase per-run noise.",
+  "measuredAt": "2026-09-04",
+  "reviewBy": "2026-12-04",
+  "evidenceWindow": "20 most recent successful main CI runs fetched 2026-09-04",
+  "note": "Warn-only ceilings refreshed from the current hosted-runner distribution. They surface sustained drift, missing required lanes, stale evidence, and less than 20% headroom before a workflow hard timeout. Required CI checks remain the pass/fail authority.",
   "lanes": [
     {
       "job": "Unit tests (app-ui)",
       "requiredCheck": "Unit tests (app-ui)",
       "owner": "app and UI hosted unit evidence",
-      "notes": "Critical path in 12/15 sampled runs; median ~600s.",
-      "advisoryBudgets": { "maxWallSeconds": 750 }
+      "hardTimeoutSeconds": 1500,
+      "notes": "Recent median 111s, observed max 390s.",
+      "advisoryBudgets": { "maxWallSeconds": 450 }
     },
     {
       "job": "Unit tests (search-worker)",
       "requiredCheck": "Unit tests (search-worker)",
       "owner": "search and worker hosted unit evidence",
-      "notes": "Median ~528s.",
-      "advisoryBudgets": { "maxWallSeconds": 660 }
+      "hardTimeoutSeconds": 1500,
+      "notes": "Recent median 89s, observed max 330s.",
+      "advisoryBudgets": { "maxWallSeconds": 390 }
     },
     {
       "job": "Unit tests (platform-contracts)",
       "requiredCheck": "Unit tests (platform-contracts)",
       "owner": "platform, inference, contract, and governance hosted unit evidence",
-      "notes": "Median ~511s.",
-      "advisoryBudgets": { "maxWallSeconds": 640 }
+      "hardTimeoutSeconds": 1500,
+      "notes": "Recent median 92s, observed max 248s.",
+      "advisoryBudgets": { "maxWallSeconds": 360 }
     },
     {
       "job": "Build (no model blobs)",
       "requiredCheck": "Build (no model blobs)",
       "owner": "no-model assemble and web-bundle build",
-      "notes": "Median ~475s; likely next long pole after the app-ui shard.",
-      "advisoryBudgets": { "maxWallSeconds": 595 }
+      "hardTimeoutSeconds": 1500,
+      "notes": "Recent median 131s, observed max 498s.",
+      "advisoryBudgets": { "maxWallSeconds": 600 }
     },
     {
       "job": "License and notices",
       "requiredCheck": "License and notices",
       "owner": "license allowlist and NOTICE projection",
-      "notes": "Median ~322s; never the critical path in the sample.",
-      "advisoryBudgets": { "maxWallSeconds": 405 }
+      "hardTimeoutSeconds": 1200,
+      "notes": "Recent median 175s, observed max 668s.",
+      "advisoryBudgets": { "maxWallSeconds": 780 }
     },
     {
       "job": "Public claims",
       "requiredCheck": "Public claims",
       "owner": "public-claim and docs projection checks",
-      "notes": "Fast Node/docs lane; median ~20s.",
-      "advisoryBudgets": { "maxWallSeconds": 120 }
+      "hardTimeoutSeconds": 1800,
+      "notes": "Recent median 133s, observed max 1060s; the former 120s ceiling was already below the median.",
+      "advisoryBudgets": { "maxWallSeconds": 1200 }
+    },
+    {
+      "job": "Windows-native tests",
+      "requiredCheck": "Windows-native tests",
+      "owner": "Windows-only tagged tests and release signing contract",
+      "hardTimeoutSeconds": 900,
+      "notes": "Recent median 123s, observed max 329s; added to close required-lane coverage.",
+      "advisoryBudgets": { "maxWallSeconds": 390 }
+    },
+    {
+      "job": "Shell crate tests (Rust)",
+      "requiredCheck": "Shell crate tests (Rust)",
+      "owner": "MSVC shell crate tests",
+      "hardTimeoutSeconds": 1800,
+      "notes": "Recent median 97s, observed max 295s; added to close required-lane coverage.",
+      "advisoryBudgets": { "maxWallSeconds": 360 }
     },
     {
       "job": "Secret scan",
       "requiredCheck": "Secret scan",
       "owner": "gitleaks public history scan",
-      "notes": "Fast lane; median ~10s.",
-      "advisoryBudgets": { "maxWallSeconds": 90 }
+      "hardTimeoutSeconds": 300,
+      "notes": "Recent median 18s, observed max 22s.",
+      "advisoryBudgets": { "maxWallSeconds": 60 }
     }
   ]
 }

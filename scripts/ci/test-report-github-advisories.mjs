@@ -4,6 +4,7 @@ import {
   buildAffectsBatches,
   packageSpecsFromLockfileText,
   queryGitHubAdvisories,
+  REQUIRED_ADVISORY_TARGETS,
   unavailableAdvisoryTargetReason,
 } from './lib/github-advisory-report.mjs';
 import { collectAdvisoryTarget } from './report-github-advisories.mjs';
@@ -18,6 +19,17 @@ const lockfile = JSON.stringify({
 });
 assert.deepEqual(packageSpecsFromLockfileText(lockfile), ['@scope/inner@2.0.0', 'lodash@4.17.20']);
 assert.throws(() => packageSpecsFromLockfileText('{}'), /package-lock schema/);
+assert.deepEqual(
+  REQUIRED_ADVISORY_TARGETS.map(({ targetId, lockfile: path }) => [targetId, path]),
+  [
+    ['root', 'package-lock.json'],
+    ['ui-web', 'modules/ui-web/package-lock.json'],
+    ['shell', 'modules/shell/package-lock.json'],
+    ['runtime-client', 'packages/runtime-client/package-lock.json'],
+    ['wire-contract', 'scripts/wire-contract/package-lock.json'],
+  ],
+  'every production npm lockfile must have one explicit advisory target',
+);
 
 const batches = buildAffectsBatches(['a@1.0.0', 'b@1.0.0', 'c@1.0.0'], { maxSpecs: 2 });
 assert.deepEqual(batches, [['a@1.0.0', 'b@1.0.0'], ['c@1.0.0']]);

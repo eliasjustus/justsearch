@@ -12,6 +12,21 @@
       "target_id": "ui-web", "lockfile": "modules/ui-web/package-lock.json", "available": true,
       "lockfile_sha256": "35be7134993f06d40974c585faaa025ccdce2a09e98bd3565db95b092bdede9e",
       "package_versions": 1, "advisories": []
+    },
+    {
+      "target_id": "shell", "lockfile": "modules/shell/package-lock.json", "available": true,
+      "lockfile_sha256": "64766e77f299990847b4bc834d97affbc97de4a9f8797ff1c390bbeb09aafd28",
+      "package_versions": 1, "advisories": []
+    },
+    {
+      "target_id": "runtime-client", "lockfile": "packages/runtime-client/package-lock.json", "available": true,
+      "lockfile_sha256": "4fa65c589a97bc41fa54015c8a5b1a26759b6033e9e8c8f3e4496b3f5c468a6d",
+      "package_versions": 1, "advisories": []
+    },
+    {
+      "target_id": "wire-contract", "lockfile": "scripts/wire-contract/package-lock.json", "available": true,
+      "lockfile_sha256": "cc8d13c4be08cdbd2155db089b16a0049fd0d86b45513de4b9672b3691db4bad",
+      "package_versions": 1, "advisories": []
     }
   ]
 }

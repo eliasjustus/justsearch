@@ -6,6 +6,7 @@ import io.justsearch.app.api.runtime.RuntimeContract;
 import io.justsearch.ui.api.RouteContractPolicy.Contract;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -64,7 +65,8 @@ final class SdkOpenApiProjection {
   }
 
   static byte[] write(Javalin app, List<ApiModule> modules) throws IOException {
-    return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(build(app, modules));
+    String rendered = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(build(app, modules));
+    return rendered.replace("\r\n", "\n").replace('\r', '\n').getBytes(StandardCharsets.UTF_8);
   }
 
   private static Map<String, Object> operation(Contract contract, Map<String, Object> schemas) {

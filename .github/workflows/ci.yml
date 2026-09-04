@@ -140,6 +140,18 @@ jobs:
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
 
+      - name: Test workflow npm audit policy
+        run: node scripts/ci/test-check-workflow-npm-audit-policy.mjs
+
+      - name: Workflow npm install audit policy guard
+        run: node scripts/ci/check-workflow-npm-audit-policy.mjs
+
+      - name: Test publish preflight contract
+        run: node scripts/ci/test-run-publish-preflight.mjs
+
+      - name: Required-check local reproduction inventory is complete
+        run: node scripts/ci/run-publish-preflight.mjs --check
+
       - name: Test platform lifecycle evidence policy
         run: node scripts/ci/check-platform-lifecycle.test.mjs
 
@@ -353,7 +365,7 @@ jobs:
       # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
       - name: Wire contract gate (protobuf breaking changes)
         run: |
-          npm ci --prefix scripts/wire-contract
+          npm ci --prefix scripts/wire-contract --audit=false
           node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
           node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
@@ -553,7 +565,7 @@ jobs:
           cache-dependency-path: modules/ui-web/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix modules/ui-web
+        run: npm ci --prefix modules/ui-web --audit=false
 
       - name: Enforce the license allowlist
         run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
@@ -602,10 +614,10 @@ jobs:
             packages/runtime-client/package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --audit=false
 
       - name: Install runtime client generator dependencies
-        run: npm ci --prefix packages/runtime-client --ignore-scripts
+        run: npm ci --prefix packages/runtime-client --ignore-scripts --audit=false
 
       - name: Runtime client generated source is in sync
         run: npm --prefix packages/runtime-client run check:regen
@@ -1016,7 +1028,7 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, integration-tests, secret-scan]
+    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan]
     if: always()
     steps:
       - name: Checkout

@@ -16,9 +16,11 @@ function policy(overrides = {}) {
     kind: 'justsearch-ci-walltime-policy.v1',
     version: 1,
     budgetsAreAdvisory: true,
+    measuredAt: '2026-09-01',
+    reviewBy: '2026-12-01',
     lanes: [
-      { job: 'Unit tests (app-ui)', requiredCheck: 'Unit tests (app-ui)', owner: 'app', advisoryBudgets: { maxWallSeconds: 750 } },
-      { job: 'License and notices', requiredCheck: 'License and notices', owner: 'license', advisoryBudgets: { maxWallSeconds: 405 } },
+      { job: 'Unit tests (app-ui)', requiredCheck: 'Unit tests (app-ui)', owner: 'app', hardTimeoutSeconds: 1500, advisoryBudgets: { maxWallSeconds: 750 } },
+      { job: 'License and notices', requiredCheck: 'License and notices', owner: 'license', hardTimeoutSeconds: 1200, advisoryBudgets: { maxWallSeconds: 405 } },
     ],
     ...overrides,
   };
@@ -42,7 +44,7 @@ function attribution(jobs) {
       { name: 'Unit tests (app-ui)', wallSeconds: 600 },
       { name: 'License and notices', wallSeconds: 300 },
     ]),
-    policy: policy(),
+    policy: policy(), now: new Date('2026-09-04T00:00:00Z'),
   });
   assert.equal(report.kind, 'justsearch-ci-walltime-budget.v1');
   assert.equal(report.advisory, true);
@@ -54,7 +56,7 @@ function attribution(jobs) {
 {
   const report = buildWalltimeBudgetReport({
     attribution: attribution([{ name: 'Unit tests (app-ui)', wallSeconds: 800 }]),
-    policy: policy(),
+    policy: policy({ lanes: [policy().lanes[0]] }), now: new Date('2026-09-04T00:00:00Z'),
   });
   assert.deepEqual(report.warnings.map((w) => w.code), ['walltime-over-budget']);
   assert.equal(report.warnings[0].actualSeconds, 800);
@@ -66,7 +68,7 @@ function attribution(jobs) {
 {
   const report = buildWalltimeBudgetReport({
     attribution: attribution([{ name: 'Secret scan', wallSeconds: 9 }]),
-    policy: policy(),
+    policy: policy({ lanes: [] }), now: new Date('2026-09-04T00:00:00Z'),
   });
   assert.equal(report.warningCount, 0);
   assert.equal(report.lanes[0].ceilingSeconds, null);
@@ -75,8 +77,26 @@ function attribution(jobs) {
 
 // Empty attribution → empty-attribution warning.
 {
-  const report = buildWalltimeBudgetReport({ attribution: attribution([]), policy: policy() });
+  const report = buildWalltimeBudgetReport({ attribution: attribution([]), policy: policy({ lanes: [] }), now: new Date('2026-09-04T00:00:00Z') });
   assert.equal(report.warnings[0].code, 'empty-attribution');
+}
+
+// Stale evidence, missing required lanes, and ceilings too close to hard timeouts stay advisory.
+{
+  const report = buildWalltimeBudgetReport({
+    attribution: attribution([]),
+    policy: policy({
+      reviewBy: '2026-08-01',
+      lanes: [{ job: 'Required', requiredCheck: 'Required', hardTimeoutSeconds: 100, advisoryBudgets: { maxWallSeconds: 90 } }],
+    }),
+    now: new Date('2026-09-04T00:00:00Z'),
+  });
+  assert.deepEqual(report.warnings.map((warning) => warning.code), [
+    'stale-policy-evidence',
+    'missing-required-lane',
+    'insufficient-timeout-headroom',
+    'empty-attribution',
+  ]);
 }
 
 // CLI path.
@@ -89,7 +109,7 @@ function attribution(jobs) {
     const outJson = path.join(root, 'out/budget.json');
     fs.mkdirSync(path.dirname(policyPath), { recursive: true });
     fs.mkdirSync(path.dirname(attrPath), { recursive: true });
-    fs.writeFileSync(policyPath, `${JSON.stringify(policy(), null, 2)}\n`, 'utf8');
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy({ lanes: [policy().lanes[0]] }), null, 2)}\n`, 'utf8');
     fs.writeFileSync(attrPath, `${JSON.stringify(attribution([{ name: 'Unit tests (app-ui)', wallSeconds: 900 }]), null, 2)}\n`, 'utf8');
     const res = spawnSync(process.execPath, [
       scriptPath,
