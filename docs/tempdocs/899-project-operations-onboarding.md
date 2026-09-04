@@ -970,9 +970,9 @@ Teardown is narrow and explicit: `RouteResponseSchemas` is already removed and t
 generator left no artifact. D2's starter-issue targets remain intentionally unimplemented. D5 may
 remove only a proven-dead direct frontend export helper and stale prose that describes that helper.
 
-Implementation will use disjoint bounded subagents for the succession prose, MCP-only code, and
-diagnostics backend while this lane owns the shared HTTP policy/projections and final UI/docs
-integration. Each slice is reviewed and committed separately before the final combined verification.
+Implementation used disjoint bounded subagents for the succession prose, MCP-only code, and
+diagnostics backend while this lane owned the shared HTTP policy/projections and final UI/docs
+integration. Each slice was reviewed and committed separately before the final combined verification.
 
 ### Repository implementation and verification evidence (2026-09-04)
 
@@ -1013,3 +1013,12 @@ The only open evidence dependency is the unchecked D1 container-host proof above
 draft-only by design: a founder must recheck current labels, ownership, and issue collisions before
 opening the five issues. This branch remains local and unpushed; no push, pull request, workflow
 dispatch, npm publication, or merge was performed.
+
+### Session closeout (2026-09-04)
+
+`world-state.mjs` reported `codex/899-project-operations-onboarding` clean after implementation
+commit `1ce5a0b5`, local/unpushed, ahead 311 and behind 6 relative to its configured comparison ref.
+The main checkout remained dirty with unrelated concurrent work and was not modified or staged by
+this lane. The required ownership-aware closeout sweep pruned nothing: it left one other-session
+`ui-shot` as contention, retained one already-gone `ui-shot` identity-mismatch record, and reported
+the ownerless `otlp-sink` singleton as designed. No helper owned by this session remained live.
