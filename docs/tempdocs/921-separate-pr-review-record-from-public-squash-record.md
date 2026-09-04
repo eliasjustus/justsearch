@@ -1748,8 +1748,8 @@ authorities indefinitely.
   covered lockfiles, and update module filters and expected-state guidance.
 - [x] Update canonical gate documentation and ADR-0044's fact-lane consequences, regenerate
   derived docs/skills, and run focused plus complete governance verification.
-- [ ] Enable and read back GitHub vulnerability alerts and automated security updates,
-  refresh PR #632's managed review record and public body, then resume the authorized
+- [x] Enable and read back GitHub vulnerability alerts and automated security updates.
+- [ ] Refresh PR #632's managed review record and public body, then resume the authorized
   publication flow.
 
 ### 25.2 Implementation evidence
