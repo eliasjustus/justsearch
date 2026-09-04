@@ -238,10 +238,6 @@ final class RouteContractPolicy {
     return BY_KEY.get(method.toUpperCase(java.util.Locale.ROOT) + " " + path);
   }
 
-  static List<Contract> sdkContracts() {
-    return CONTRACTS.stream().filter(Contract::sdkExposed).toList();
-  }
-
   @SuppressWarnings("unused") // Called from RouteContractPolicyCoverageTest; tests are excluded by the dead-code scan.
   static Set<String> declaredSchemaFiles() {
     Set<String> names = new LinkedHashSet<>();
@@ -249,10 +245,6 @@ final class RouteContractPolicy {
       names.addAll(contract.responseSchemas().values());
     }
     return Collections.unmodifiableSet(names);
-  }
-
-  static void validateSdkRoutes(Collection<String> registeredMethodPaths) {
-    validateSdkRoutes(registeredMethodPaths, CONTRACTS);
   }
 
   static void validateSdkRoutes(

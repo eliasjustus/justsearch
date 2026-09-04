@@ -130,10 +130,12 @@ not per release. Mirrors the internal `contracts/wire/CHANGELOG.md` convention.
 
 ## Surface classification
 
-The v1 boundary. This table is authored here (not yet mechanically projected
-per-route — the manifest's `audience` axis already classifies the contract's
-discovery transports, and a per-route classification gate is a possible future
-step, not required for a three-surface core).
+The v1 boundary. This table defines the promise, while `RouteContractPolicy`
+mechanically classifies the HTTP rows represented in the route manifest. Route-manifest schema
+`2.0` projects each covered route's `stability` (`public-contract`, `reference-client`, or
+`internal`) together with its schemas, SDK operation identity, and any lifecycle metadata. The
+policy is intentionally a covered subset of the live router, not a claim that every internal route
+is part of the Runtime Contract.
 
 | Tier | Surfaces | Promise |
 |---|---|---|

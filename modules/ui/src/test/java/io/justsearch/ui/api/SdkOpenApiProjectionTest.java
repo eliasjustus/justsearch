@@ -39,7 +39,7 @@ class SdkOpenApiProjectionTest {
 
   @Test
   void duplicateRouteAndOperationIdsFailClosed() {
-    RouteContractPolicy.Contract first = RouteContractPolicy.sdkContracts().getFirst();
+    RouteContractPolicy.Contract first = sdkContracts().getFirst();
     assertThrows(
         IllegalArgumentException.class,
         () -> RouteContractPolicy.index(List.of(first, first)));
@@ -67,17 +67,23 @@ class SdkOpenApiProjectionTest {
     registered.add("GET /api/runtime/manifest");
     assertThrows(
         IllegalStateException.class,
-        () -> RouteContractPolicy.validateSdkRoutes(registered));
+        () -> RouteContractPolicy.validateSdkRoutes(registered, RouteContractPolicy.CONTRACTS));
   }
 
   @Test
   void duplicateLiveSdkRouteFailsClosed() {
     List<String> registered =
-        RouteContractPolicy.sdkContracts().stream().map(RouteContractPolicy.Contract::key).toList();
+        sdkContracts().stream().map(RouteContractPolicy.Contract::key).toList();
     List<String> duplicated = new ArrayList<>(registered);
     duplicated.add(registered.getFirst());
     assertThrows(
         IllegalStateException.class,
-        () -> RouteContractPolicy.validateSdkRoutes(duplicated));
+        () -> RouteContractPolicy.validateSdkRoutes(duplicated, RouteContractPolicy.CONTRACTS));
+  }
+
+  private static List<RouteContractPolicy.Contract> sdkContracts() {
+    return RouteContractPolicy.CONTRACTS.stream()
+        .filter(RouteContractPolicy.Contract::sdkExposed)
+        .toList();
   }
 }

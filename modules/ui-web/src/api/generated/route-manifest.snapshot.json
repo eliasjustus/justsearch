@@ -2,7 +2,7 @@
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
   "count": 243,
   "namespace": "meta-routes",
-  "routeDigest": "sha256:9a1ee92e4593d204692792f458554f87ad4165ce51634e76059a1981af0047e6",
+  "routeDigest": "sha256:19ce45ab68f79176ba3a1704a083d6a4c12050ea32c77723fcf44424d5d7391f",
   "routes": [
     {
       "method": "GET",
@@ -10,7 +10,13 @@
       "cohort": "agent",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -18,7 +24,13 @@
       "cohort": "agent",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -29,7 +41,13 @@
         "WORKER",
         "INFERENCE"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -37,7 +55,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -45,7 +69,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -53,7 +83,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -61,7 +97,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -69,7 +111,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -77,7 +125,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -85,7 +139,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -93,7 +153,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -101,7 +167,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -109,7 +181,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -117,7 +195,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -125,7 +209,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -133,7 +223,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -141,7 +237,13 @@
       "cohort": "agent",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -149,7 +251,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -157,7 +265,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -165,7 +279,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -173,7 +293,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -181,7 +307,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -189,7 +321,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -197,7 +335,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -205,7 +349,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -213,7 +363,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -221,7 +377,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -229,7 +391,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -237,7 +405,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -245,7 +419,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -253,7 +433,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -261,7 +447,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -269,7 +461,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -277,7 +475,13 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -285,7 +489,15 @@
       "cohort": "ai-runtime",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": "ai-runtime-status-response.v1.json"
+      "responseSchema": "ai-runtime-status-response.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "ai-runtime-status-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -293,7 +505,13 @@
       "cohort": "boot",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -301,7 +519,15 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": "effective-policy.v1.json"
+      "responseSchema": "effective-policy.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "effective-policy.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -309,7 +535,13 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -317,7 +549,13 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -325,7 +563,13 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -333,7 +577,13 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -341,7 +591,13 @@
       "cohort": "config",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -349,7 +605,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -357,7 +619,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -365,7 +633,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -373,7 +647,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -381,7 +661,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -389,7 +675,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -397,7 +689,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -405,7 +703,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -413,7 +717,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -421,7 +731,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -429,7 +745,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -437,7 +759,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -445,7 +773,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -453,7 +787,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -461,7 +801,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -469,7 +815,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -477,7 +829,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -485,7 +843,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -493,7 +857,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -501,7 +871,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -509,7 +885,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -517,7 +899,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -525,7 +913,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -533,7 +927,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -541,7 +941,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -549,7 +955,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -557,7 +969,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -565,7 +983,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -573,7 +997,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -581,7 +1011,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -589,7 +1025,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -597,7 +1039,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -605,7 +1053,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -613,7 +1067,13 @@
       "cohort": "conversation",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -621,7 +1081,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -629,7 +1095,13 @@
       "cohort": "debug",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -637,7 +1109,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -645,7 +1123,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -653,7 +1137,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -661,7 +1151,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -669,7 +1165,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -677,7 +1179,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -685,7 +1193,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -693,7 +1207,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -701,7 +1221,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -709,7 +1235,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -717,7 +1249,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -725,7 +1263,13 @@
       "cohort": "debug",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -733,7 +1277,13 @@
       "cohort": "debug",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -741,7 +1291,13 @@
       "cohort": "governance",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -749,7 +1305,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -757,7 +1319,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -765,7 +1333,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -773,7 +1347,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -781,7 +1361,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -789,7 +1375,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -797,7 +1389,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -805,7 +1403,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -813,7 +1417,13 @@
       "cohort": "i18n",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -821,7 +1431,13 @@
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -829,7 +1445,13 @@
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -839,7 +1461,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -849,7 +1477,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -859,7 +1493,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -867,7 +1507,13 @@
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -877,7 +1523,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -887,7 +1539,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -897,7 +1555,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -907,7 +1571,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -917,7 +1587,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -927,7 +1603,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -937,7 +1619,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -947,7 +1635,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -955,7 +1649,13 @@
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -965,7 +1665,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -973,7 +1679,13 @@
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -981,7 +1693,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -989,7 +1707,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -997,7 +1721,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1005,7 +1735,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1013,7 +1749,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1021,7 +1763,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1029,7 +1777,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1037,7 +1791,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1045,7 +1805,13 @@
       "cohort": "inference",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1053,7 +1819,13 @@
       "cohort": "infra",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1061,7 +1833,13 @@
       "cohort": "infra",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1069,7 +1847,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1077,7 +1861,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1085,7 +1875,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1093,7 +1889,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -1101,7 +1903,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1109,7 +1917,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1117,7 +1931,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1125,7 +1945,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1133,7 +1959,13 @@
       "cohort": "interaction",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1141,7 +1973,13 @@
       "cohort": "knowledge",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1151,7 +1989,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1161,7 +2005,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1171,7 +2021,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1181,7 +2037,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1191,7 +2053,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1201,7 +2069,13 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1209,7 +2083,15 @@
       "cohort": "knowledge",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": "knowledge-search-response.v1.json"
+      "responseSchema": "knowledge-search-response.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "knowledge-search-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1219,7 +2101,15 @@
       "requiredCapabilities": [
         "WORKER"
       ],
-      "responseSchema": "knowledge-search-response.v1.json"
+      "responseSchema": "knowledge-search-response.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "knowledge-search-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1227,7 +2117,13 @@
       "cohort": "knowledge",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1235,7 +2131,13 @@
       "cohort": "knowledge",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1243,7 +2145,13 @@
       "cohort": "knowledge",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1251,7 +2159,13 @@
       "cohort": "mcp",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -1259,7 +2173,13 @@
       "cohort": "mcp",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1267,7 +2187,13 @@
       "cohort": "mcp",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1275,7 +2201,13 @@
       "cohort": "mcp",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1283,7 +2215,13 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1291,7 +2229,13 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1299,7 +2243,13 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1307,7 +2257,13 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1315,7 +2271,17 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "lifecycle-snapshot.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getLifecycleHealth",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "lifecycle-snapshot.v1.json",
+        "403": "api-error-response.v1.json",
+        "503": "lifecycle-snapshot.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1323,7 +2289,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1331,7 +2303,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1339,7 +2317,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1347,7 +2331,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1355,7 +2345,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1363,7 +2359,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1371,7 +2373,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1379,7 +2387,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1387,7 +2401,13 @@
       "cohort": "observability",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1395,7 +2415,16 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "lifecycle-snapshot.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getLifecycleStatus",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "lifecycle-snapshot.v1.json",
+        "403": "api-error-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1403,7 +2432,13 @@
       "cohort": "observability",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1411,7 +2446,13 @@
       "cohort": "openai-compat",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1419,7 +2460,13 @@
       "cohort": "openai-compat",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "OPTIONS",
@@ -1427,7 +2474,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1435,7 +2488,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1443,7 +2502,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1451,7 +2516,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1459,7 +2530,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1467,7 +2544,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1475,7 +2558,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1483,7 +2572,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1491,7 +2586,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1499,7 +2600,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1507,7 +2614,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1515,7 +2628,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1523,7 +2642,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1531,7 +2656,13 @@
       "cohort": "other",
       "owningModule": "LifecycleApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1539,7 +2670,13 @@
       "cohort": "other",
       "owningModule": "MetaApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1547,7 +2684,13 @@
       "cohort": "other",
       "owningModule": "MetaApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1555,7 +2698,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1563,7 +2712,13 @@
       "cohort": "other",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1571,7 +2726,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1579,7 +2740,13 @@
       "cohort": "other",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1587,7 +2754,13 @@
       "cohort": "other",
       "owningModule": "UpgradeApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1595,7 +2768,13 @@
       "cohort": "other",
       "owningModule": "UpgradeApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1603,7 +2782,13 @@
       "cohort": "other",
       "owningModule": "UpgradeApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1611,7 +2796,13 @@
       "cohort": "other",
       "owningModule": "UpgradeApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1619,7 +2810,13 @@
       "cohort": "plugins",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1627,7 +2824,13 @@
       "cohort": "plugins",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -1635,7 +2838,13 @@
       "cohort": "plugins",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1643,7 +2852,13 @@
       "cohort": "plugins",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1651,7 +2866,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1659,7 +2880,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1667,7 +2894,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1675,7 +2908,15 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": "resource.v1.json"
+      "responseSchema": "resource.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "resource.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1683,7 +2924,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1691,7 +2938,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1699,7 +2952,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1707,7 +2966,13 @@
       "cohort": "registry",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1715,7 +2980,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1723,7 +2994,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1731,7 +3008,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1739,7 +3022,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1747,7 +3036,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1755,7 +3050,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1763,7 +3064,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "DELETE",
@@ -1771,7 +3078,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1779,7 +3092,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1787,7 +3106,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1795,7 +3120,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1803,7 +3134,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1811,7 +3148,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1819,7 +3162,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1827,7 +3176,15 @@
       "cohort": "resource",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": "failed-indexing-jobs-response.v1.json"
+      "responseSchema": "failed-indexing-jobs-response.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "failed-indexing-jobs-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1835,7 +3192,15 @@
       "cohort": "resource",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": "failed-indexing-jobs-response.v1.json"
+      "responseSchema": "failed-indexing-jobs-response.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "failed-indexing-jobs-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1843,7 +3208,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1851,7 +3222,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1859,7 +3236,15 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": "operation-history-entry.v1.json"
+      "responseSchema": "operation-history-entry.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "operation-history-entry.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1867,7 +3252,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1875,7 +3266,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1883,7 +3280,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "POST",
@@ -1891,7 +3294,13 @@
       "cohort": "resource",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1899,7 +3308,18 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "runtime-manifest-public.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getWellKnownRuntimeManifest",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "runtime-manifest-public.v1.json",
+        "403": "api-error-response.v1.json",
+        "500": "api-error-response.v1.json",
+        "503": "api-error-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1907,7 +3327,15 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": "runtime-context.v1.json"
+      "responseSchema": "runtime-context.v1.json",
+      "stability": "reference-client",
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "runtime-context.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1915,7 +3343,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1923,7 +3357,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1931,7 +3371,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1939,7 +3385,16 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "runtime-live-response.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getRuntimeLiveness",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "runtime-live-response.v1.json",
+        "403": "api-error-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "HEAD",
@@ -1947,7 +3402,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1955,7 +3416,18 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "runtime-manifest-public.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getRuntimeManifest",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "runtime-manifest-public.v1.json",
+        "403": "api-error-response.v1.json",
+        "500": "api-error-response.v1.json",
+        "503": "api-error-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1963,7 +3435,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1971,7 +3449,17 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": "runtime-ready-response.v1.json",
+      "stability": "public-contract",
+      "sdkOperationId": "getRuntimeReadiness",
+      "requestSchema": null,
+      "queryParameters": [],
+      "responseSchemas": {
+        "200": "runtime-ready-response.v1.json",
+        "403": "api-error-response.v1.json",
+        "503": "runtime-ready-response.v1.json"
+      },
+      "lifecycle": null
     },
     {
       "method": "HEAD",
@@ -1979,7 +3467,13 @@
       "cohort": "runtime",
       "owningModule": "ResourceApiModule",
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     },
     {
       "method": "GET",
@@ -1987,8 +3481,14 @@
       "cohort": "schema",
       "owningModule": null,
       "requiredCapabilities": [],
-      "responseSchema": null
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
     }
   ],
-  "schemaVersion": "1.0"
+  "schemaVersion": "2.0"
 }

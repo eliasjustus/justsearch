@@ -120,6 +120,14 @@ final class RouteManifestController {
     return paths;
   }
 
+  /** The live router's HTTP method-and-pattern keys, preserving duplicates for exact-one checks. */
+  static List<String> handlerMethodPaths(Javalin app) {
+    return app.unsafeConfig().pvt.internalRouter.allHttpHandlers().stream()
+        .filter(pe -> pe.getEndpoint().getMethod().isHttpMethod())
+        .map(pe -> pe.getEndpoint().getMethod().name() + " " + pe.getEndpoint().getPath())
+        .toList();
+  }
+
   /** Enumerate the live app's HTTP routes and tag each with cohort, owning module, caps, schema. */
   static List<RouteEntry> build(Javalin app, List<ApiModule> modules) {
     return build(app, modules, RouteContractPolicy.index(RouteContractPolicy.CONTRACTS));
@@ -136,11 +144,7 @@ final class RouteManifestController {
       }
     }
     var router = app.unsafeConfig().pvt.internalRouter;
-    List<String> liveKeys =
-        router.allHttpHandlers().stream()
-            .filter(pe -> pe.getEndpoint().getMethod().isHttpMethod())
-            .map(pe -> pe.getEndpoint().getMethod().name() + " " + pe.getEndpoint().getPath())
-            .toList();
+    List<String> liveKeys = handlerMethodPaths(app);
     RouteContractPolicy.validateLifecycleRoutes(liveKeys, contractPolicy.values());
     return router.allHttpHandlers().stream()
         .filter(pe -> pe.getEndpoint().getMethod().isHttpMethod())

@@ -53,7 +53,8 @@ final class DiagnosticsServiceImplRedactionTest {
     Files.createDirectories(settings.getParent());
     Files.writeString(settings, input);
 
-    Path zip = service(() -> null).exportDiagnostics();
+    Path zip =
+        new DiagnosticsServiceImpl(null, null, () -> null, () -> null).exportDiagnostics();
     String redacted;
     try (ZipFile zipFile = new ZipFile(zip.toFile())) {
       ZipEntry entry = zipFile.getEntry("ui/settings.json");

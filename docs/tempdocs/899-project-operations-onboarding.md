@@ -1,7 +1,7 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "SDK D6 S1+S2 LIVE-VERIFIED; D1 IMPLEMENTED, CONTAINER EXECUTION PENDING (2026-09-04)"
+status: "D1-D6 REPOSITORY DELIVERABLES IMPLEMENTED/VERIFIED; EXTERNAL D1 CONTAINER PROOF AND FOUNDER PUBLICATION ACTIONS PENDING (2026-09-04)"
 created: 2026-09-02
 updated: 2026-09-04
 lane: 887 L17
@@ -920,42 +920,42 @@ proof as explicit external evidence rather than manufacturing a substitute.
   URL-grammar draft to cover its current generator overclaim and the stale Java test name, then
   defer only the live label, ownership, and collision recheck to the founder's issue-opening pass.
   Do not create `.github/labels.yml` or convert the feature-request template in this workstream.
-- [ ] **Implement HTTP lifecycle signaling in the shared D6 authority.** Extend
+- [x] **Implement HTTP lifecycle signaling in the shared D6 authority.** Extend
   `RouteContractPolicy` with canonical stability and validated immutable lifecycle metadata,
   including the 90-day public floor and bounded pre-1.0 exception. Require closed-world exact-one
   route resolution. Add one matched-route response filter, project policy data into route manifest
   schema 2.0 and both OpenAPI documents, and expose `Deprecation`, `Sunset`, and `Link` only through
   already-admitted CORS responses. Keep all production lifecycle rows empty and prove behavior with
   fake deprecated routes, including exception-mapped responses and negative fixtures.
-- [ ] **Implement the MCP lifecycle extension.** Add a validated, empty production lifecycle
+- [x] **Implement the MCP lifecycle extension.** Add a validated, empty production lifecycle
   catalog beside the existing six tool declarations. Project the versioned experimental capability,
   namespaced top-level `_meta`, and description fallback without changing standard annotations or
   the tool-surface version. Cover duplicate, orphaned, and duplicate-live-tool failures with injected
   test fixtures; no production tool is deprecated for demonstration.
-- [ ] **Add the succession map without storing secrets.** Extend `MAINTAINING.md` only, link rather
+- [x] **Add the succession map without storing secrets.** Extend `MAINTAINING.md` only, link rather
   than duplicate the release runbook, inventory every known custody surface by name, and leave
   founder-fillable placeholders for people, roles, providers, and private recovery-package location.
   Include rehearsal-only `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` with an explicit requirement that it
   remain unset in production. Do not change CODEOWNERS, workflows, credentials, or release policy.
-- [ ] **Build the privacy-bounded diagnostic summary backend.** Extend the diagnostics service with
+- [x] **Build the privacy-bounded diagnostic summary backend.** Extend the diagnostics service with
   a deterministic allowlist-only composer and an 8 KiB UTF-8 ceiling, using typed lifecycle,
   runtime-contract, safe GPU, platform, and crash-metadata sources only. Add the LOW/NONE,
   UI/USER, `METADATA_ONLY` `core.copy-diagnostic-summary` operation with no Worker or Inference
   capabilities, and prove hostile values, controls, limits, omission, malformed crash input, and ZIP
   path redaction. Never place the summary in effects, history, logs, receipts, or persistence.
-- [ ] **Integrate and validate the clipboard UX.** Mount the operation beside Export Diagnostics and
+- [x] **Integrate and validate the clipboard UX.** Mount the operation beside Export Diagnostics and
   directly await the existing clipboard utility; emit only fixed success or failure receipts after
   the real result. Add frontend tests, the optional fenced bug-report field with a review warning,
   and a supported-browser check for activation, offline availability, privacy, accessibility, and
   narrow layout. Remove the direct `exportDiagnostics()` frontend helper only if a final repository-
   wide search proves it unreferenced; retain Export Diagnostics, its API, debug state, and runtime
   manifest.
-- [ ] **Reconcile canonical truth and generated projections.** Update API evolution, runtime,
+- [x] **Reconcile canonical truth and generated projections.** Update API evolution, runtime,
   MCP, diagnostics, Help-surface, API-map, and security-threat-model documentation in the same
   change. Regenerate/check route and SDK OpenAPI snapshots, generated clients, `llms.txt`, and skill
   projections through their owning scripts. The CORS change exposes lifecycle metadata after the
   existing allowlist and must not broaden Host, Origin, or mutation-token admission.
-- [ ] **Verify, independently refute, and close out.** Run focused backend/frontend tests, generated-
+- [x] **Verify, independently refute, and close out.** Run focused backend/frontend tests, generated-
   artifact checks, documentation/governance checks, the relevant multi-module test/build gates, and
   live browser/API verification on an owned stack. Obtain an independent refute-first review, fix
   every valid finding, update this evidence ledger, and commit explicit paths. Do not push, open a
@@ -973,3 +973,43 @@ remove only a proven-dead direct frontend export helper and stale prose that des
 Implementation will use disjoint bounded subagents for the succession prose, MCP-only code, and
 diagnostics backend while this lane owns the shared HTTP policy/projections and final UI/docs
 integration. Each slice is reviewed and committed separately before the final combined verification.
+
+### Repository implementation and verification evidence (2026-09-04)
+
+The planned repository work is complete. Bounded subagents implemented the disjoint succession,
+MCP-lifecycle, and diagnostics-backend slices; this lane integrated the shared HTTP policy,
+projections, Help-surface clipboard UX, canonical documentation, and generated artifacts. Production
+HTTP and MCP lifecycle catalogs remain intentionally empty: tests inject deprecated fixtures rather
+than deprecating a live contract for demonstration.
+
+Verification evidence:
+
+- `./gradlew.bat test` passed after the final review fixes: 186 actionable tasks, build successful.
+- `./gradlew.bat build -x test` passed after the final review fixes: 251 actionable tasks, build
+  successful. `spotlessApply` and `git diff --check` also passed.
+- Focused route lifecycle, route manifest, and route policy tests passed after correcting `Sunset`
+  to strict IMF-fixdate and moving exact-one lifecycle validation ahead of the server bind.
+- The runtime client passed `check:regen`, 7/7 package tests, and `check:pack` with 20 files verified.
+- The Help surface passed its focused 5/5 tests, changed-file ESLint, typecheck, policy-axis liveness,
+  UI-step coverage, and all 40 governed UI gates. The full Vitest run passed 6270/6271 tests; its
+  sole failure was the pinned full-suite `EnvelopeStream` heartbeat flake, which passed 24/24 in
+  isolation. Repository-wide ESLint retained 24 unrelated pre-existing findings; every changed
+  frontend file is clean.
+- The operation-surface, execution-surface, and register-guard-resolution governance gates passed
+  with zero findings. Route/client generation, `llms.txt`, skill projection, canonical-link,
+  module-dependency, runtime-config-matrix, and privacy-claim checks passed.
+- Live verification used owned run `3cde1704-d3ea-47cb-96ce-286a96898cf9`. Help rendered both
+  diagnostics actions, Copy Diagnostic Summary produced a fixed success receipt, and the action
+  ledger retained only operation id, outcome, and transport. The accessibility/layout capture is
+  `scripts/jseval/tmp/ui-shot/help.png` with its adjacent `.measure.json`; it reported zero axe
+  violations and no overflow. The owned stack stopped cleanly; its report is
+  `tmp/dev-runner/runs/3cde1704-d3ea-47cb-96ce-286a96898cf9/stop-report.json`.
+- Independent refute-first review found no exploitable security or privacy issue. It identified two
+  medium lifecycle defects: single-digit RFC 1123 sunset dates and validation deferred until route-
+  manifest access. Both were fixed and covered by the final focused and full Gradle passes. Its low
+  documentation objection is resolved by this checked acceptance ledger.
+
+The only open evidence dependency is the unchecked D1 container-host proof above. D2 remains
+draft-only by design: a founder must recheck current labels, ownership, and issue collisions before
+opening the five issues. This branch remains local and unpushed; no push, pull request, workflow
+dispatch, npm publication, or merge was performed.

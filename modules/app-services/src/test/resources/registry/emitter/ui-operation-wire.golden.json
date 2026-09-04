@@ -347,6 +347,53 @@
   "audience" : "USER",
   "consumers" : [ ]
 }, {
+  "id" : "core.copy-diagnostic-summary",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.copy-diagnostic-summary.label",
+    "descriptionKey" : "ops.copy-diagnostic-summary.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { },
+      "additionalProperties" : false
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "summary" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "summary" ]
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
   "id" : "core.add-watched-root",
   "type" : "operation",
   "presentation" : {

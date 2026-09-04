@@ -25,6 +25,14 @@ What actually happened.
 - JustSearch Version: [e.g., 1.0.0]
 - GPU (if applicable): [e.g., RTX 3060 12GB]
 
+## Diagnostic Summary (optional)
+In Help & Support, choose **Copy diagnostic summary**. Review the local, redacted summary before
+posting it, remove anything you do not want to share, then paste it inside the fence:
+
+```text
+
+```
+
 ## Screenshots
 If applicable, add screenshots.
 

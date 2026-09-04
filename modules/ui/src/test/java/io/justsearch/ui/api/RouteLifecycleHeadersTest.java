@@ -86,7 +86,7 @@ class RouteLifecycleHeadersTest {
         "@" + deprecated.getEpochSecond(),
         response.headers().firstValue("Deprecation").orElse(null));
     assertEquals(
-        "Fri, 1 May 2026 00:00:00 GMT",
+        "Fri, 01 May 2026 00:00:00 GMT",
         response.headers().firstValue("Sunset").orElse(null));
     assertEquals(
         "<https://docs.justsearch.example/deprecations/fake>; rel=\"deprecation\"",

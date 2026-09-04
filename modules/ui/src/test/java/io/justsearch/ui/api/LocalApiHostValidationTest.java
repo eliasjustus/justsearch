@@ -66,7 +66,10 @@ class LocalApiHostValidationTest {
   @DisplayName("Live: every SDK GET route rejects a foreign Host with the declared 403 body")
   void everySdkGetWithForeignHostIsForbidden() throws Exception {
     startHostGuardedServer();
-    for (RouteContractPolicy.Contract contract : RouteContractPolicy.sdkContracts()) {
+    for (RouteContractPolicy.Contract contract :
+        RouteContractPolicy.CONTRACTS.stream()
+            .filter(RouteContractPolicy.Contract::sdkExposed)
+            .toList()) {
       assertTrue(
           contract.responseSchemas().containsKey(403),
           () -> contract.key() + " must declare the global Host rejection");

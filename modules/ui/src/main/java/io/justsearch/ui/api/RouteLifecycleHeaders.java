@@ -4,10 +4,15 @@ package io.justsearch.ui.api;
 import io.javalin.Javalin;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.function.BiFunction;
 
 /** Emits lifecycle response headers from the route-pattern contract authority. */
 final class RouteLifecycleHeaders {
+  private static final DateTimeFormatter IMF_FIXDATE =
+      DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.ENGLISH)
+          .withZone(ZoneOffset.UTC);
+
   private RouteLifecycleHeaders() {}
 
   static void install(Javalin app) {
@@ -30,10 +35,7 @@ final class RouteLifecycleHeaders {
           RouteContractPolicy.Lifecycle lifecycle = contract.lifecycle();
           ctx.header("Deprecation", "@" + lifecycle.deprecatedSince().getEpochSecond());
           if (lifecycle.sunsetAt() != null) {
-            ctx.header(
-                "Sunset",
-                DateTimeFormatter.RFC_1123_DATE_TIME.format(
-                    lifecycle.sunsetAt().atZone(ZoneOffset.UTC)));
+            ctx.header("Sunset", IMF_FIXDATE.format(lifecycle.sunsetAt()));
           }
           ctx.res()
               .addHeader(

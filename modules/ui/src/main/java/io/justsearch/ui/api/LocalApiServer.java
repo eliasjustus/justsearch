@@ -579,6 +579,8 @@ public class LocalApiServer {
     securityFilters.install(this.app);
     RouteLifecycleHeaders.install(this.app);
     setupRoutes();
+    RouteContractPolicy.validateLifecycleRoutes(
+        RouteManifestController.handlerMethodPaths(this.app), RouteContractPolicy.CONTRACTS);
 
     this.app.start("127.0.0.1", bindPort);
   }
