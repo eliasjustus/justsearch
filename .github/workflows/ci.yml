@@ -45,10 +45,11 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 10 -> 15: this job installs modules/ui-web and builds the kernel gate inputs (Knip,
-    # GitHub advisory evidence, module-deps). The advisory producer is bounded and fails closed;
-    # a job timeout must never stand in for its transport verdict.
-    timeout-minutes: 15
+    # 15 -> 20: this required lane exhausted the former limit while building kernel gate inputs
+    # after every earlier check had passed. The replacement GitHub advisory producer is bounded
+    # and fails closed; leave the rest of the runner/install variance enough headroom so a job
+    # timeout does not stand in for an individual check's verdict.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7
