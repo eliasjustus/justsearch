@@ -18,4 +18,3 @@ attribution list is in THIRD_PARTY_NOTICES. Principal components:
   Bundled ML models: chat (Apache-2.0), citation-scorer (Apache-2.0), embedding (Apache-2.0), ner (AFL-3.0), reranker (Apache-2.0), splade (Apache-2.0)
   Tesseract OCR + bundled MSYS2/mingw-w64 libraries — see THIRD_PARTY_NOTICES
   NVIDIA CUDA runtime (CUDA Toolkit EULA) and cuDNN (cuDNN SLA) — GPU builds only
-

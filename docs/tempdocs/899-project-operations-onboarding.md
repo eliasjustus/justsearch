@@ -538,7 +538,7 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   `tmp/dev-runner/runs/663985c3-c434-4b19-b30f-edc4a060f921/stop-report.json`; this ledger preserves
   the run identity, reviewed commit, endpoint, exact smoke result, and teardown outcome as durable
   branch evidence. The temporary resolver junction used to expose the existing
-  `F:\scoop\apps\temurin25-jdk\current` installation to the long-lived MCP process was removed, its
+  machine-local Scoop Temurin 25 installation to the long-lived MCP process was removed, its
   target was preserved, and the disposable worktree was removed after the stack stopped.
 - The independent refute-first review found three issues, all fixed before closeout: nested manifest
   objects now expose their actual typed public fields while retaining the contract's additive-field
@@ -553,7 +553,7 @@ clipboard workstreams remain separate changes because they do not gate the six-o
   `LocalApiHostValidationTest` installs the production filter set and exercises all six SDK routes.
 - The prior JDK-resolution blocker was environmental and is closed: the resolver's standard Scoop
   fallback assumes `%USERPROFILE%\scoop`, while this host's existing installation is rooted at
-  `F:\scoop`. A temporary user-path junction let the unmodified runner resolve that JDK for this run;
+  the machine-local Scoop root. A temporary user-path junction let the unmodified runner resolve that JDK for this run;
   no repository code, global environment, or machine installation was changed. Canonical runtime-
   contract and security documentation had already been updated in the reviewed implementation
   commits, and both refute-first review rounds were complete before this final live proof.
