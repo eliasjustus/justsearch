@@ -1,7 +1,7 @@
 ---
 title: "Publishing-process waste: transcript-wide deep investigation"
 type: tempdocs
-status: "DERISK COMPLETE — recommendations revised; no process changes implemented"
+status: "PUBLISHED — safe publication-feedback improvements landed in PR #641"
 created: 2026-09-04
 updated: 2026-09-04
 charter: "identify the dominant avoidable time, attention, and token costs in recent JustSearch publication work; distinguish current defects from historical or already-remediated friction; and evaluate alternative process designs"
@@ -196,7 +196,7 @@ the same evidence repeat in the post-merge environment?" The derisk pass found t
 this is not yet vacuous: two of 21 exact-SHA pairs were green in merge-group CI and red
 on `main`. Waiting for the *newest* `main` run after the landed-SHA run is superseded
 asks an even broader question: "is the repository green after subsequent merges?" In
-#632, that replacement also contained #636. The process can acknowledge that #632
+In PR #632, that replacement also contained #636. The process can acknowledge that #632
 landed without delay, but it should retain final-main closeout until repeatability
 defects are eliminated and it has an owned asynchronous failure path.
 
@@ -709,3 +709,24 @@ Verification evidence:
   discovery evidence for the previously missing fixture rows.
 - `./gradlew.bat test` passed after the cross-platform snapshot fix.
 - `./gradlew.bat build -x test` passed after the final code change (251 actionable tasks).
+
+## 11. Publication outcome — 2026-09-04
+
+The safe P1–P5 implementation was published through
+[PR #641](https://github.com/justsearch-app/justsearch/pull/641). The first exact-head
+PR run, `33869071096`, found that the governance kernel's npm-audit self-test fixtures
+still modeled only two of the expanded five-target advisory authority. That candidate-
+owned failure was reproduced locally and fixed by adding the missing shell,
+runtime-client, and wire-contract report, lockfile, and baseline fixture projections.
+The kernel self-test and all 34 governance test files then passed locally.
+
+Corrected source commit `a97c3c9e` passed every required PR context in CI run
+`33869620693`; the managed review record and squash-message preview both passed before
+enqueue. Merge-group CI run `33870222179` and CLA run `33870222191` passed on integrated
+SHA `a25ce47f6330ea5ad802a8bf54e9596847a80e65`. The merge queue landed that exact SHA as
+`ci: reduce publication feedback waste (#641)`, and post-merge main CI run `33870587060`
+passed on the same SHA.
+
+The publication is therefore complete. The evidence-gated follow-ups remain unchanged:
+do not detach final-main validation or activate selective CI until ten ordinary
+publications satisfy §6.2 and a fresh derisk pass supports the change.
