@@ -136,7 +136,7 @@ export function planReviewRecordUpsert({ repoSlug, pr, actor, comments, reviewBo
     author_association: null,
     body: desiredBody,
   };
-  const projection = buildSquashMessageProjection({ repoSlug, pr, reviewComment: candidate });
+  const projection = buildSquashMessageProjection({ repoSlug, pr, reviewComment: candidate, syntheticReviewComment: !existing });
   errors.push(...projection.errors);
   const action = existing ? (normalizeLf(existing.body) === desiredBody ? 'noop' : 'update') : 'create';
   const lock = {

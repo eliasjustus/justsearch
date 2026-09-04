@@ -53,10 +53,18 @@ for (const [body, id] of [
   ['- [ ] later', 'public-checklist'],
   ['## Review record\n\nAuthorship: agent', 'public-review-residue'],
   ['Testing: Node tests passed.', 'public-review-residue'],
+  ['## Test plan\n\nNode tests passed.', 'public-review-residue'],
+  ['## Tests\n\nNode tests passed.', 'public-review-residue'],
+  ['## Verification\n\nNode tests passed.', 'public-review-residue'],
   ['Explain why this durable change was needed.', 'public-template-residue'],
   ['Generated with Claude Code', 'public-provider-banner'],
 ]) {
   assert(ids(report({ body })).includes(id), `${JSON.stringify(body)} should produce ${id}`);
+}
+
+{
+  const fenced = report({ body: `Durable example.\n\n\`\`\`markdown\n## Testing\n\`\`\`\n\nSession-Id: ${SESSION}` });
+  assert(!ids(fenced).includes('public-review-residue'));
 }
 
 {

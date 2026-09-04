@@ -120,6 +120,27 @@ function plan(gateway, body = reviewBody()) {
 
 {
   const gateway = fakeGateway();
+  const created = plan(gateway);
+  await executeReviewRecordPlan({ gateway, plan: created, confirm: created.fingerprint });
+  gateway.state.comments[0].id = null;
+  gateway.state.comments[0].user = {};
+  gateway.state.comments[0].author_association = 'NONE';
+  const checked = checkReviewSnapshot({ repoSlug: REPO, pr: gateway.state.pr, comments: gateway.state.comments });
+  assert(checked.errors.some((item) => item.id === 'invalid-review-comment-id'));
+  assert(checked.errors.some((item) => item.id === 'missing-review-owner'));
+  assert(checked.errors.some((item) => item.id === 'untrusted-review-owner'));
+  const malformedUpdate = plan(gateway, reviewBody('Changed after malformed transport data.'));
+  assert.equal(malformedUpdate.commentId, null);
+  assert(malformedUpdate.errors.some((item) => item.id === 'invalid-review-comment-id'));
+  await assert.rejects(
+    () => executeReviewRecordPlan({ gateway, plan: malformedUpdate, confirm: malformedUpdate.fingerprint }),
+    /validation error/,
+  );
+  assert.equal(gateway.state.updates, 0);
+}
+
+{
+  const gateway = fakeGateway();
   const dryRun = plan(gateway);
   gateway.state.pr.head.sha = 'b'.repeat(40);
   await assert.rejects(

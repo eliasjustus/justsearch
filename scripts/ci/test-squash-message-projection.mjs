@@ -86,12 +86,26 @@ for (const [snippet, errorId] of [
   ['Generated with Claude Code', 'public-provider-banner'],
   ['## Review record\n\nAuthorship: agent', 'public-review-residue'],
   ['## Testing\n\nNode tests passed.', 'public-review-residue'],
+  ['## Test plan\n\nNode tests passed.', 'public-review-residue'],
+  ['## Tests\n\nNode tests passed.', 'public-review-residue'],
+  ['## Verification\n\nNode tests passed.', 'public-review-residue'],
   ['Explain why this durable change was needed.', 'public-template-residue'],
 ]) {
   const body = `${snippet}\n\nSession-Id: ${SESSION}`;
   const pullRequest = pr({ body });
   const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
   assert(ids(result.errors).includes(errorId), `${snippet} should produce ${errorId}`);
+}
+
+for (const opaqueReviewText of [
+  '```markdown\n## Testing\n```',
+  '> ## Testing',
+  '```text\nVerification: Node tests passed.\n```',
+]) {
+  const body = `Durable example.\n\n${opaqueReviewText}\n\nSession-Id: ${SESSION}`;
+  const pullRequest = pr({ body });
+  const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
+  assert(!ids(result.errors).includes('public-review-residue'), `${JSON.stringify(opaqueReviewText)} is not top-level review structure`);
 }
 
 {
@@ -104,6 +118,11 @@ for (const [snippet, errorId] of [
   assert(ids(project({}, staleBody).errors).includes('review-public-body-stale'));
   const untrusted = { ...current, author_association: 'NONE' };
   assert(ids(project({}, untrusted).errors).includes('untrusted-review-owner'));
+  const malformed = { ...current, id: null, user: {}, author_association: 'NONE' };
+  const malformedIds = ids(project({}, malformed).errors);
+  assert(malformedIds.includes('invalid-review-comment-id'));
+  assert(malformedIds.includes('missing-review-owner'));
+  assert(malformedIds.includes('untrusted-review-owner'));
 }
 
 {

@@ -1609,6 +1609,17 @@ found that pagination and actor-permission transport tests could pass without ex
 their required arguments; those tests now pin the exact calls. The final independent pass
 reported no remaining actionable issue.
 
+A later explicit `review-changes` pass found two additional boundary defects. The public
+residue detector used raw text and both missed common top-level Test plan / Tests /
+Verification headings and falsely rejected the same text inside a Markdown fence. The
+managed-comment validator also inferred its synthetic pre-create case from a missing
+comment ID, so malformed fetched data could bypass the trusted-association check and plan
+an update with a null ID. Both are fixed: residue classification now uses top-level
+Markdown tokens, while synthetic validation is an explicit internal mode and fetched
+comments require a positive integer ID, named author, and trusted association. Regression
+fixtures cover the previously missed headings, opaque fence/blockquote text, malformed
+live comment shape, and the no-mutation failure path.
+
 Post-fix verification passed:
 
 - all three focused publication-record suites, including CLI exit behavior, paginated and
@@ -1631,3 +1642,10 @@ no credential, machine-local path, or internal-only URL.
 The implementation is ready for a local commit. Publication and the 30-merge post-land
 audit remain open because they require separate authorization and elapsed production data,
 respectively.
+
+The subsequent `review-tempdoc-fit` pass reread the complete tempdoc and found no current
+design mismatch. The implementation follows §§19–23's permanent-storage-separation
+authority rather than the superseded co-located-body or custom-transport proposals: the PR
+body is permanently commit-safe, one managed comment owns mutable review evidence, the
+ordinary queue and `PR_BODY` setting remain intact, no write-capable workflow or required
+check was introduced, and the 30-merge measurement remains explicitly time-gated.

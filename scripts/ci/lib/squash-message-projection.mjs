@@ -23,7 +23,8 @@ const INTERNAL_FENCE_RE = /^```(?:stack|base|stack-log|base-log)\s*$/im;
 const SESSION_DECLARATION_LINE_RE = /^Session-Id:[^\r\n]*$/i;
 const OPAQUE_SESSION_DECLARATION_RE = /^\s*(?:>\s*|[-*+]\s+)?Session-Id:[^\r\n]*$/i;
 const MARKER_RE = /^<!-- justsearch-review-record:v1 pr=(\d+) head=([0-9a-f]{40}) public-body-sha256=([0-9a-f]{64}) -->$/;
-const REVIEW_RESIDUE_RE = /^(?:#{2,3}\s+(?:Review record|Scope and risk|Verification evidence|Review state|Testing)\s*|(?:Authorship|Testing|Tests|Verification):\s*\S.*)$/im;
+const REVIEW_HEADING_RE = /^(?:review(?: record| state)?|scope and risk|verification(?: evidence)?|test(?:ing|s)?(?: plan)?|checks?)$/i;
+const REVIEW_LABEL_RE = /^(?:Authorship|Review|Testing|Tests|Test plan|Verification|Checks):\s*\S.*$/i;
 const TEMPLATE_RESIDUE_RE = /(?:Explain why this durable change was needed|Describe one observable outcome|Describe verification or `Not run: <reason>`|<session-uuid>)/i;
 const REVIEW_TEMPLATE_RESIDUE_RE = /(?:agent \| human \| mixed \| trusted-bot|Describe the affected surface|List reproducible checks and results|State unresolved findings and decisions)/i;
 
@@ -51,6 +52,19 @@ function headingTokens(markdown, tokens = md.parse(markdown, {})) {
     headings.push({ tag: token.tag, name: inline.content.trim(), start: token.map[0], end: token.map[1] });
   }
   return headings;
+}
+
+function hasTopLevelReviewResidue(markdown) {
+  const tokens = md.parse(markdown, {});
+  if (headingTokens(markdown, tokens).some((heading) => REVIEW_HEADING_RE.test(heading.name))) return true;
+  const lines = markdown.split('\n');
+  for (const token of tokens) {
+    if (token.type !== 'paragraph_open' || token.level !== 0 || !token.map) continue;
+    for (let line = token.map[0]; line < token.map[1]; line += 1) {
+      if (REVIEW_LABEL_RE.test(lines[line]?.trim() ?? '')) return true;
+    }
+  }
+  return false;
 }
 
 function topLevelAuthorshipDeclarations(reviewText) {
@@ -160,13 +174,13 @@ function validatePublicBody(pullRequest, errors, warnings) {
   if (PROCESS_MARKER_RE.test(`${pullRequest.expectedLandedSubject}\n${body}`)) errors.push(finding('public-process-marker', 'Public title/body contains a WIP, review-round, or stack-state marker.'));
   if (INTERNAL_LINE_RE.test(body) || INTERNAL_FENCE_RE.test(body)) errors.push(finding('public-stack-base-log', 'Public PR body contains a reserved stack/base log marker.'));
   if (/Generated with Claude Code|claude\.ai\/code\/session/i.test(body)) errors.push(finding('public-provider-banner', 'Public PR body contains a provider banner or provider session URL.'));
-  if (REVIEW_RESIDUE_RE.test(body)) errors.push(finding('public-review-residue', 'Public PR body contains review-record structure.'));
+  if (hasTopLevelReviewResidue(body)) errors.push(finding('public-review-residue', 'Public PR body contains review-record structure.'));
   if (TEMPLATE_RESIDUE_RE.test(body)) errors.push(finding('public-template-residue', 'Public PR body still contains pull-request template placeholders.'));
   if (SHA_RE.test(body)) warnings.push(finding('public-raw-sha', 'Public PR body contains a raw 40-character SHA; confirm it is durable context.'));
   return { body, nonblankLines };
 }
 
-function validateReviewComment(pullRequest, reviewComment, errors) {
+function validateReviewComment(pullRequest, reviewComment, errors, { synthetic = false } = {}) {
   if (!reviewComment) {
     errors.push(finding('missing-review-record', 'Expected exactly one managed review-record comment; found 0.'));
     return { authorship: null, marker: null, association: null };
@@ -175,7 +189,14 @@ function validateReviewComment(pullRequest, reviewComment, errors) {
   if (body.length > 12_000) errors.push(finding('review-record-too-large', `Managed review record is ${body.length} characters; maximum is 12000.`));
   if (REVIEW_TEMPLATE_RESIDUE_RE.test(body)) errors.push(finding('review-template-residue', 'Managed review record still contains template choices or placeholder prose.'));
   const association = reviewComment.author_association ?? reviewComment.authorAssociation ?? null;
-  if (reviewComment.id != null && !TRUSTED_REVIEW_ASSOCIATIONS.has(association)) {
+  const authorLogin = reviewComment.user?.login ?? reviewComment.authorLogin ?? null;
+  if (!synthetic && (!Number.isSafeInteger(reviewComment.id) || reviewComment.id <= 0)) {
+    errors.push(finding('invalid-review-comment-id', 'Fetched managed review record must have a positive integer comment ID.'));
+  }
+  if (!synthetic && (typeof authorLogin !== 'string' || authorLogin.trim() === '')) {
+    errors.push(finding('missing-review-owner', 'Fetched managed review record must identify its author.'));
+  }
+  if (!synthetic && !TRUSTED_REVIEW_ASSOCIATIONS.has(association)) {
     errors.push(finding('untrusted-review-owner', `Managed review record author association must be one of: ${[...TRUSTED_REVIEW_ASSOCIATIONS].join(', ')}.`));
   }
   const lines = body.split('\n');
@@ -221,12 +242,12 @@ function validateReviewComment(pullRequest, reviewComment, errors) {
   return { authorship, marker, association };
 }
 
-export function buildSquashMessageProjection({ repoSlug = null, pr, reviewComment = null }) {
+export function buildSquashMessageProjection({ repoSlug = null, pr, reviewComment = null, syntheticReviewComment = false }) {
   const pullRequest = normalizePullRequest(pr);
   const errors = [];
   const warnings = [];
   const { body, nonblankLines } = validatePublicBody(pullRequest, errors, warnings);
-  const { authorship, marker, association } = validateReviewComment(pullRequest, reviewComment, errors);
+  const { authorship, marker, association } = validateReviewComment(pullRequest, reviewComment, errors, { synthetic: syntheticReviewComment });
   const sessionIds = AUTHORSHIP_CLASSES.has(authorship) ? validateSessionDeclarations(body, authorship, errors) : [];
   if (authorship === 'trusted-bot' && !TRUSTED_BOT_LOGINS.has(pullRequest.authorLogin)) errors.push(finding('untrusted-bot-actor', `trusted-bot is limited to PRs authored by: ${[...TRUSTED_BOT_LOGINS].join(', ')}.`));
   return {
