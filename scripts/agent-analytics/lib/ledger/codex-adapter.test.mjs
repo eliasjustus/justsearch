@@ -12,7 +12,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listCodexCalls, processCodexEntries } from './codex-adapter.mjs';
+import {
+  codexToolOutputText, listCodexCalls, listCodexToolExchanges,
+  processCodexEntries, processCodexToolExchanges,
+} from './codex-adapter.mjs';
 import { isCall, isToolEvent } from './record.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -163,6 +166,43 @@ run('exactly 2 tool events total (shell_command, apply_patch) -- agent_message e
   assert.equal(toolEvents.length, 2);
 });
 
+// --- raw tool exchanges for attribution readers ----------------------------
+
+run('codexToolOutputText flattens desktop numeric-key text blocks in order', () => {
+  const output = {
+    0: { type: 'input_text', text: 'header' },
+    1: { type: 'input_text', text: 'body' },
+  };
+  assert.equal(codexToolOutputText(output), 'header\nbody');
+});
+
+run('processCodexToolExchanges pairs full input/output and retains a missing output', () => {
+  const entries = [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'exchange-session', cwd: 'F:\\JustSearch', model_provider: 'openai' } },
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'done', name: 'exec', input: 'Get-Content .agents/skills/example/SKILL.md' } },
+    { timestamp: '2026-08-03T00:00:02.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'done', output: { 0: { type: 'input_text', text: 'first' }, 1: { type: 'input_text', text: 'second' } } } },
+    { timestamp: '2026-08-03T00:00:03.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'pending', name: 'shell_command', arguments: '{"command":"cat .agents/skills/pending/SKILL.md"}' } },
+  ];
+  const result = processCodexToolExchanges(entries, { file: 'fixture.jsonl' });
+  assert.equal(result.exchanges.length, 2);
+  assert.equal(result.exchanges[0].outputText, 'first\nsecond');
+  assert.equal(result.exchanges[0].missingOutput, false);
+  assert.equal(result.exchanges[0].project, 'F:\\JustSearch');
+  assert.equal(result.exchanges[1].callId, 'pending');
+  assert.equal(result.exchanges[1].missingOutput, true);
+  assert.equal(result.exchanges[1].outputText, null);
+});
+
+run('listCodexToolExchanges uses the same fixture discovery and project filter', () => {
+  const raw = listCodexToolExchanges({ codexHome: FIXTURE_CODEX_HOME, projectFilter: /fixtureproject/i });
+  assert.equal(raw.sessions.length, 1);
+  assert.equal(raw.filesScanned, 1);
+  assert.equal(raw.exchanges.length, 2);
+  assert.ok(raw.exchanges.some((exchange) => exchange.name === 'shell_command'));
+  const applyExchange = raw.exchanges.find((exchange) => exchange.name === 'apply_patch');
+  assert.ok(applyExchange.outputText.length > 65536, 'raw attribution output must not inherit the neutral ToolEvent cap');
+});
+
 // --- resilience --------------------------------------------------------------
 
 run('listCodexCalls returns an empty result for a nonexistent codexHome, never throws', () => {
@@ -170,6 +210,12 @@ run('listCodexCalls returns an empty result for a nonexistent codexHome, never t
   const missing = path.join(tmp, 'does-not-exist');
   const r = listCodexCalls({ codexHome: missing });
   assert.deepEqual(r, { calls: [], toolEvents: [], sessions: [], skipped: [] });
+});
+
+run('listCodexToolExchanges returns an empty result for a nonexistent codexHome', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-test-'));
+  const r = listCodexToolExchanges({ codexHome: path.join(tmp, 'does-not-exist') });
+  assert.deepEqual(r, { exchanges: [], sessions: [], skipped: [], filesScanned: 0 });
 });
 
 run('a rollout file under an "archived_sessions" directory is skipped (walk-level, not skip-list)', () => {

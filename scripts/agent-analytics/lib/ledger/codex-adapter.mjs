@@ -107,6 +107,64 @@ function outputStringOf(payload) {
   }
 }
 
+/**
+ * Flatten the text-bearing portions of a Codex tool result without retaining
+ * its wrapper shape. Desktop custom tools commonly return an object whose
+ * numeric keys contain `input_text` blocks, while CLI tools more often return
+ * a plain string. Attribution readers need the text itself; the neutral
+ * ToolEvent above deliberately keeps only its capped size.
+ */
+export function codexToolOutputText(output) {
+  const pieces = [];
+  const seen = new Set();
+
+  function visit(value) {
+    if (typeof value === 'string') {
+      pieces.push(value);
+      return;
+    }
+    if (value == null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+
+    if (typeof value.text === 'string') {
+      pieces.push(value.text);
+      return;
+    }
+    if (Object.hasOwn(value, 'output')) {
+      visit(value.output);
+      return;
+    }
+    if (Object.hasOwn(value, 'content')) {
+      visit(value.content);
+      return;
+    }
+
+    const numericKeys = Object.keys(value)
+      .filter((key) => /^\d+$/.test(key))
+      .sort((a, b) => Number(a) - Number(b));
+    if (numericKeys.length > 0) {
+      for (const key of numericKeys) visit(value[key]);
+      return;
+    }
+
+    // Unknown structured outputs are uncommon, but JSON text is a more useful
+    // fail-closed representation than silently discarding them.
+    try {
+      pieces.push(JSON.stringify(value));
+    } catch {
+      // Cyclic/host objects are not valid rollout JSON; ignore only this leaf.
+    }
+  }
+
+  visit(output);
+  return pieces.join('\n');
+}
+
 function inputStringOf(payload) {
   if (payload.type === 'function_call') return payload.arguments ?? '';
   const input = payload.input;
@@ -128,6 +186,69 @@ function inputStringOf(payload) {
 function findSessionId(entries) {
   const metaEntry = entries.find((e) => e.type === 'session_meta');
   return metaEntry?.payload?.id || null;
+}
+
+/**
+ * Pair raw Codex tool inputs with their full text outputs. This is the narrow
+ * escape hatch for attribution readers whose question cannot be answered from
+ * the privacy-safer, size-only ToolEvent projection. Callers must aggregate in
+ * memory and must not persist `input` or `outputText`.
+ */
+export function processCodexToolExchanges(entries, { file } = {}) {
+  const sessionId = findSessionId(entries);
+  if (!sessionId) {
+    return { exchanges: [], session: null, skip: { file, reason: 'no usable sessionId (missing or empty session_meta.payload.id)' } };
+  }
+
+  const metaEntry = entries.find((entry) => entry.type === 'session_meta');
+  const project = metaEntry?.payload?.cwd ?? null;
+  const pendingByCallId = new Map();
+  const exchanges = [];
+
+  for (const entry of entries) {
+    if (entry.type !== 'response_item' || !entry.payload) continue;
+    const p = entry.payload;
+
+    if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+      pendingByCallId.set(p.call_id, {
+        sessionId,
+        project,
+        file,
+        callId: p.call_id,
+        name: p.name,
+        input: inputStringOf(p),
+        outputText: null,
+        rawOutputChars: null,
+        missingOutput: true,
+        startedTs: entry.timestamp ?? null,
+        completedTs: null,
+      });
+      continue;
+    }
+
+    if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+      const pending = pendingByCallId.get(p.call_id);
+      if (!pending) continue;
+      exchanges.push({
+        ...pending,
+        outputText: codexToolOutputText(p.output),
+        rawOutputChars: outputStringOf(p).length,
+        missingOutput: false,
+        completedTs: entry.timestamp ?? null,
+      });
+      pendingByCallId.delete(p.call_id);
+    }
+  }
+
+  // A read-like call at EOF with no result is evidence too. Preserve it so an
+  // attribution reader can distinguish "never returned" from "returned no
+  // matching bytes" instead of silently dropping the attempt.
+  exchanges.push(...pendingByCallId.values());
+  return {
+    exchanges,
+    session: { harness: 'codex-cli', sessionId, project },
+    skip: null,
+  };
 }
 
 /**
@@ -338,6 +459,27 @@ function processCodexFile(file) {
   return processCodexEntries(entries, { file });
 }
 
+function rolloutFilesInWindow({ codexHome, sinceMs, untilMs }) {
+  const home = codexHome ?? DEFAULT_CODEX_HOME;
+  const sessionsRoot = path.join(home, 'sessions');
+  const discovered = [];
+  walkRolloutFiles(sessionsRoot, discovered);
+
+  const files = [];
+  for (const file of discovered) {
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    if (sinceMs != null && stat.mtimeMs < sinceMs) continue;
+    if (untilMs != null && stat.mtimeMs > untilMs) continue;
+    files.push(file);
+  }
+  return files;
+}
+
 /**
  * Every Codex CLI `Call`/`ToolEvent` this machine holds, across every
  * session under `${codexHome}/sessions`, in the `sinceMs`/`untilMs` mtime
@@ -349,11 +491,7 @@ function processCodexFile(file) {
  * PROPAGATES — this function does not swallow it.
  */
 export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, projectFilter = null } = {}) {
-  const home = codexHome ?? DEFAULT_CODEX_HOME;
-  const sessionsRoot = path.join(home, 'sessions');
-
-  const files = [];
-  walkRolloutFiles(sessionsRoot, files);
+  const files = rolloutFilesInWindow({ codexHome, sinceMs, untilMs });
 
   const calls = [];
   const toolEvents = [];
@@ -361,15 +499,6 @@ export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, proj
   const skipped = [];
 
   for (const file of files) {
-    let stat;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      continue;
-    }
-    if (sinceMs != null && stat.mtimeMs < sinceMs) continue;
-    if (untilMs != null && stat.mtimeMs > untilMs) continue;
-
     const result = processCodexFile(file);
     if (result.skip) {
       skipped.push(result.skip);
@@ -383,4 +512,30 @@ export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, proj
   }
 
   return { calls, toolEvents, sessions, skipped };
+}
+
+/**
+ * Full raw tool exchanges for Codex attribution readers. Discovery/windowing
+ * exactly matches `listCodexCalls`; unlike that neutral projection, outputs
+ * are not capped. Nothing is written to disk here.
+ */
+export function listCodexToolExchanges({ codexHome, sinceMs = null, untilMs = null, projectFilter = null } = {}) {
+  const files = rolloutFilesInWindow({ codexHome, sinceMs, untilMs });
+  const exchanges = [];
+  const sessions = [];
+  const skipped = [];
+
+  for (const file of files) {
+    const entries = parseLines(file);
+    const result = processCodexToolExchanges(entries, { file });
+    if (result.skip) {
+      skipped.push(result.skip);
+      continue;
+    }
+    if (projectFilter && !(result.session.project && projectFilter.test(result.session.project))) continue;
+    exchanges.push(...result.exchanges);
+    sessions.push(result.session);
+  }
+
+  return { exchanges, sessions, skipped, filesScanned: files.length };
 }
