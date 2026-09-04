@@ -45,11 +45,11 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 15 -> 20: this required lane exhausted the former limit while building kernel gate inputs
-    # after every earlier check had passed. The replacement GitHub advisory producer is bounded
-    # and fails closed; leave the rest of the runner/install variance enough headroom so a job
-    # timeout does not stand in for an individual check's verdict.
-    timeout-minutes: 20
+    # 15 -> 20 -> 30: this required lane exhausted both former limits while building kernel
+    # gate inputs after every earlier check had passed. The replacement GitHub advisory producer
+    # is independently bounded and fails closed; leave remaining runner/install variance enough
+    # headroom so a timeout does not turn every PR red instead of reporting a failed check.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
