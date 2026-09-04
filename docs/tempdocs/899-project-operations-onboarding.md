@@ -1,7 +1,7 @@
 ---
 title: "Project operations: cross-platform contributor onramp, contract lifecycle signals, succession, and diagnostic handoff"
 type: tempdocs
-status: "D1-D6 REPOSITORY DELIVERABLES IMPLEMENTED/VERIFIED; EXTERNAL D1 CONTAINER PROOF AND FOUNDER PUBLICATION ACTIONS PENDING (2026-09-04)"
+status: "D1-D6 REPOSITORY DELIVERABLES IMPLEMENTED, VERIFIED, AND PUBLISHED; D2 ISSUE DRAFTS REMAIN FOUNDER-OWNED (2026-09-04)"
 created: 2026-09-02
 updated: 2026-09-04
 lane: 887 L17
@@ -925,12 +925,12 @@ and reported the ownerless `otlp-sink` singleton as designed; none belonged to t
 ### Active remaining implementation plan (2026-09-04)
 
 This plan owns every remaining repository change in tempdoc 899. It preserves the existing D6
-route-contract authority, keeps D2 draft-only, and leaves the unavailable D1 container execution
-proof as explicit external evidence rather than manufacturing a substitute.
+route-contract authority and keeps D2 draft-only. The D1 container execution proof was subsequently
+obtained through the authorized hosted workflow recorded in the publication outcome below.
 
 - [x] **Reconcile completed and deferred scope.** D6 is complete and live-verified. D1 is
-  implemented except for the container-capable execution proof. D2's deliverable is the five issue
-  drafts already recorded here, not opening issues or implementing their starter work. Refine the
+  implemented and its container-capable execution proof is recorded below. D2's deliverable is the
+  five issue drafts already recorded here, not opening issues or implementing their starter work. Refine the
   URL-grammar draft to cover its current generator overclaim and the stale Java test name, then
   defer only the live label, ownership, and collision recheck to the founder's issue-opening pass.
   Do not create `.github/labels.yml` or convert the feature-request template in this workstream.
@@ -975,9 +975,10 @@ proof as explicit external evidence rather than manufacturing a substitute.
   every valid finding, update this evidence ledger, and commit explicit paths. Do not push, open a
   pull request, dispatch the manual devcontainer workflow, publish npm, or merge without separate
   authorization.
-- [ ] **Obtain the external D1 proof when an authorized container host is available.** Run the
-  checked-in manual devcontainer job or the equivalent local Dev Container CLI proof and record its
-  build, toolchain, doctor, and Tier-0 result. This is an evidence dependency, not remaining code.
+- [x] **Obtain the external D1 proof on an authorized container host.** Hosted Onramp Smoke run
+  `33856241515` passed the native lane in 9m14s and the devcontainer lane in 29m34s. The container
+  started, verified its toolchains and bootstrap check mode, built the required distributions, ran
+  the Tier-0 first-success smoke, and removed the container successfully.
 
 Teardown is narrow and explicit: `RouteResponseSchemas` is already removed and the proposed
 `RouteLifecyclePolicy` never existed; no second lifecycle authority will be created. The losing SDK
@@ -1023,10 +1024,10 @@ Verification evidence:
   manifest access. Both were fixed and covered by the final focused and full Gradle passes. Its low
   documentation objection is resolved by this checked acceptance ledger.
 
-The only open evidence dependency is the unchecked D1 container-host proof above. D2 remains
-draft-only by design: a founder must recheck current labels, ownership, and issue collisions before
-opening the five issues. This branch remains local and unpushed; no push, pull request, workflow
-dispatch, npm publication, or merge was performed.
+At this pre-publication checkpoint, the only open evidence dependency was the unchecked D1
+container-host proof above. D2 remained draft-only by design: a founder must recheck current labels,
+ownership, and issue collisions before opening the five issues. This branch was local and unpushed;
+no push, pull request, workflow dispatch, npm publication, or merge had been performed.
 
 ### Session closeout (2026-09-04)
 
@@ -1077,11 +1078,11 @@ Fresh closure evidence:
   rejection noise independently observed on the pre-change/main artifact; those are pre-existing
   and outside this Help/diagnostics change.
 
-These fixes close every valid implementation objection from the review. The only remaining item in
-tempdoc 899 is still the explicitly external D1 container-host execution proof; D2 remains the
-founder-owned draft/publication pass by design. No shipped frontend presentation behavior or
-loopback/inbound-access policy changed in this follow-up, so the governing frontend-kernel and
-security threat-model documents require no update.
+These fixes closed every valid implementation objection from the review. At this review checkpoint,
+the only remaining item in tempdoc 899 was the external D1 container-host execution proof; D2
+remained the founder-owned draft/publication pass by design. No shipped frontend presentation
+behavior or loopback/inbound-access policy changed in this follow-up, so the governing frontend-
+kernel and security threat-model documents require no update.
 
 ### Review follow-up closeout
 
@@ -1092,3 +1093,27 @@ main checkout remained untouched. The ownership-aware session-closeout sweep suc
 both same-session `ui-shot` Vite helpers (ports 5174 and 5175) and only reported the intentional
 ownerless `otlp-sink` singleton. No push, pull request, workflow dispatch, publication, or merge was
 performed.
+
+### Publication outcome (2026-09-04)
+
+The implementation was transplanted onto current public main in the clean publication worktree and
+published through [PR #634](https://github.com/justsearch-app/justsearch/pull/634). Candidate commit
+`fd58584b` passed all required PR checks in CI run `33856234406`; the squash-message preview reported
+zero warnings and retained the required session attribution. Exact-candidate Onramp Smoke run
+`33856241515` passed both the native first-success lane (9m14s) and the devcontainer first-success
+lane (29m34s), including container toolchains, bootstrap check mode, distribution builds, Tier-0
+smoke, and cleanup.
+
+Publication CI found and closed two real governance defects before merge. `SdkOpenApiProjection`
+was moved from the production source set to the test source set instead of expanding the dead-code
+baseline. ADR-0015 was then re-examined append-only because its probe counted the superseded inline
+MCP registration syntax; the decision still pins six tools, and the probe now counts the canonical
+typed production registry. Both the platform-contracts and Public claims lanes passed afterward.
+
+Merge-group CI run `33858750284` passed on synthetic commit `1cf5fca4`, and the merge queue landed
+that same commit as `feat(operations): complete project onboarding surface (#634)`. The first
+post-merge main run was cancelled only because a subsequent queued merge advanced main. Replacement
+main CI run `33860368773` passed on `b9811a6d`, which contains the 899 squash. D1's external evidence
+dependency and the publication NOGO are therefore closed. D2 remains intentionally limited to the
+five issue drafts in this tempdoc; opening those public issues still requires a current founder
+recheck of labels, ownership, and collisions.
