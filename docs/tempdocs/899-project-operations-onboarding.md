@@ -1068,3 +1068,13 @@ tempdoc 899 is still the explicitly external D1 container-host execution proof; 
 founder-owned draft/publication pass by design. No shipped frontend presentation behavior or
 loopback/inbound-access policy changed in this follow-up, so the governing frontend-kernel and
 security threat-model documents require no update.
+
+### Review follow-up closeout
+
+The review fixes are committed locally as `d0f2cce6` on
+`codex/899-project-operations-onboarding`. The post-commit world-state check reported the worktree
+clean, local/unpushed, ahead 313 and behind 6 relative to its configured comparison ref; the dirty
+main checkout remained untouched. The ownership-aware session-closeout sweep successfully reaped
+both same-session `ui-shot` Vite helpers (ports 5174 and 5175) and only reported the intentional
+ownerless `otlp-sink` singleton. No push, pull request, workflow dispatch, publication, or merge was
+performed.
