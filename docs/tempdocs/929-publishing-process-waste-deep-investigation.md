@@ -659,7 +659,8 @@ does not remove merge-group evidence, final-main green closeout, or any required
   docs/skill regeneration checks, and the full Gradle suite required after the
   `origin/main` merge; run frontend checks if the merged or implementation diff touches
   `modules/ui-web`.
-- [ ] Record commands and outcomes here and commit the completed implementation.
+- [x] Record commands and outcomes here and commit the completed implementation
+  (`5d46ca41`, `ci: reduce publication feedback waste`).
 - [x] Defer final-main detachment and selective lane activation. Reconsider only after
   ten ordinary publications satisfy §6.2 and a fresh derisk pass raises confidence.
 
