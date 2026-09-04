@@ -8,6 +8,7 @@ import io.justsearch.app.api.status.GpuStatusView;
 import io.justsearch.app.api.status.StatusResponse;
 import io.justsearch.configuration.SystemAccess;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -131,10 +132,25 @@ final class DiagnosticSummaryComposer {
 
   private static CrashMetadata readCrash(Path report) {
     try {
-      if (!Files.isRegularFile(report) || Files.size(report) > MAX_CRASH_REPORT_BYTES) {
+      if (!Files.isRegularFile(report)) {
         return null;
       }
-      JsonNode root = MAPPER.readTree(Files.readString(report, StandardCharsets.UTF_8));
+      try (InputStream input = Files.newInputStream(report)) {
+        return readCrash(input);
+      }
+    } catch (IOException | RuntimeException ignored) {
+      return null;
+    }
+  }
+
+  /** Parse one already-open report without ever reading beyond the crash-report byte ceiling. */
+  static CrashMetadata readCrash(InputStream input) {
+    try {
+      byte[] json = input.readNBytes(Math.toIntExact(MAX_CRASH_REPORT_BYTES + 1));
+      if (json.length > MAX_CRASH_REPORT_BYTES) {
+        return null;
+      }
+      JsonNode root = MAPPER.readTree(json);
       if (root == null || !root.isObject() || !"crash-report.v1".equals(text(root, "schema"))) {
         return null;
       }

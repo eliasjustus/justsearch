@@ -10,6 +10,7 @@ import io.justsearch.app.api.lifecycle.LifecycleSnapshotV1;
 import io.justsearch.app.api.runtime.RuntimeContract;
 import io.justsearch.app.api.status.GpuStatusView;
 import io.justsearch.contract.wire.LifecycleState;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -154,6 +155,18 @@ final class DiagnosticSummaryComposerTest {
     Files.writeString(crashes.resolve("crash-oversized.json"), "x".repeat(70 * 1024));
 
     assertNull(DiagnosticSummaryComposer.latestCrash(crashes));
+  }
+
+  @Test
+  void oversizedOpenCrashHandleIsReadOnlyThroughTheBoundedWindow() {
+    int ceiling = 64 * 1024;
+    ByteArrayInputStream growingHandle =
+        new ByteArrayInputStream("x".repeat(ceiling * 2).getBytes(StandardCharsets.UTF_8));
+    int availableBefore = growingHandle.available();
+
+    assertNull(DiagnosticSummaryComposer.readCrash(growingHandle));
+
+    assertEquals(ceiling + 1, availableBefore - growingHandle.available());
   }
 
   @Test

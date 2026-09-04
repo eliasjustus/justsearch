@@ -1022,3 +1022,49 @@ The main checkout remained dirty with unrelated concurrent work and was not modi
 this lane. The required ownership-aware closeout sweep pruned nothing: it left one other-session
 `ui-shot` as contention, retained one already-gone `ui-shot` identity-mismatch record, and reported
 the ownerless `otlp-sink` singleton as designed. No helper owned by this session remained live.
+
+### Review-changes follow-up (2026-09-04)
+
+A fresh independent refute-first review accepted the HTTP lifecycle, MCP lifecycle, succession,
+generated-artifact, and overall integration claims, and found no P0/P1 defect. It identified three
+remaining evidence gaps before the implementation-complete claim could stand:
+
+1. **Bound the crash-report read on the opened handle.** The first implementation checked
+   `Files.size()` and then called `Files.readString()`, leaving a growth/path-replacement window
+   between those operations. `DiagnosticSummaryComposer` now opens the report once and reads at
+   most 64 KiB + 1 byte from that handle before parsing. The package seam test supplies a 128 KiB
+   stream, proves rejection, and proves exactly 65,537 bytes were consumed.
+2. **Exercise every frontend privacy sink through the real operation path.** The Help regression
+   now seeds the operation catalog, dispatches through `jf-operation`/`jf-op-button`, returns a
+   hostile sentinel from the mocked invoke response, and proves the sentinel reaches only the
+   clipboard callback. It is absent from rendered text and fixed receipts, console calls,
+   `localStorage`, the in-memory effect journal, and the serialized journal archive.
+3. **Retain a meaningful narrow-layout proof.** The deterministic UI fixture formerly served an
+   empty operation catalog, so a fixture-backed Help capture could not render either diagnostics
+   action. It now carries only the two schema-valid Help operations, and the registered
+   `help-narrow` step captures the action region at 760x720. Its measurement reports zero axe
+   violations and `overflowX=false`/`overflowY=false`; both Copy Diagnostic Summary and Export
+   Diagnostics are visible in the PNG.
+
+Fresh closure evidence:
+
+- `:modules:app-services:test --tests "*DiagnosticSummaryComposerTest*"` passed (72 actionable
+  tasks), including the bounded-open-handle regression.
+- `HelpSurface.test.ts` passed 6/6; changed-file ESLint and the full UI TypeScript typecheck passed.
+- The complete Gradle suite passed with 186 actionable tasks, and `build -x test` passed with 251
+  actionable tasks. The complete frontend suite passed 468 files / 6,272 tests with no failure.
+- `test_ui_fixtures.py` plus `test_ui_step_index.py` passed 17/17, and an earlier isolated step-index
+  run passed 4/4. The final fixture/step/schema set passed 20/20, and the self-covering UI-step
+  coverage gate passed.
+- The retained narrow proof is
+  `scripts/jseval/tmp/ui-shot-899-help-narrow/help-narrow.png` with adjacent
+  `help-narrow.measure.json` (760x720, zero axe violations, no document overflow). Its demo-shell
+  console output contains the same `jf-control` self-check and transition-timeout/unhandled-
+  rejection noise independently observed on the pre-change/main artifact; those are pre-existing
+  and outside this Help/diagnostics change.
+
+These fixes close every valid implementation objection from the review. The only remaining item in
+tempdoc 899 is still the explicitly external D1 container-host execution proof; D2 remains the
+founder-owned draft/publication pass by design. No shipped frontend presentation behavior or
+loopback/inbound-access policy changed in this follow-up, so the governing frontend-kernel and
+security threat-model documents require no update.
