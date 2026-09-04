@@ -88,9 +88,9 @@ Primary code anchors:
 Worktree and branch:
 
 ```text
-F:\justsearch-public-worktrees\925-dev-mcp-bootstrap-architecture
+worktree: 925-dev-mcp-bootstrap-architecture
 codex/925-dev-mcp-bootstrap-architecture
-base: 189719e08966b654bc214955bf7766f7df72b473 (current committed main)
+base: the then-current local main; publication was later replayed onto current origin/main
 ```
 
 Precondition and exact-launcher result:
