@@ -1685,3 +1685,97 @@ record suite. A second independent refute-first pass found no actionable issue. 
 local run while the registry advisory endpoint remained unavailable terminated both
 required audits at their 30-second bounds and produced two `report-unavailable` errors;
 the negative control therefore fails explicitly and cannot publish zero evidence.
+
+## 25. Hosted advisory transport redesign — 2026-09-04
+
+The bounded npm transport fix proved the gate could fail closed, but the next hosted run
+showed that bounded failure was not sufficient availability: npm's bulk advisory POST
+accepted the request body and returned no response within either the install's five-minute
+fetch timeout or the reporter's explicit deadline. A separate hosted run on an older
+revision also proved the pre-fix parser had converted the same transport-error JSON into a
+false zero-advisory success. This is a source-authority problem, not a timeout-tuning
+problem.
+
+The durable design preserves the externally stable `npm-audit` kernel gate id and its
+classified changeset protocol, but supersedes all of its provider-specific evidence and
+count-only state:
+
+- exact package versions come from the two existing required lockfiles (`root` and
+  `modules/ui-web`);
+- bounded, retryable GET requests query GitHub's Global Security Advisories API in
+  URL-length-safe batches, with complete pagination and the workflow's read-only
+  `GITHUB_TOKEN`;
+- the report records provider identity, lockfile digest, package-version cardinality, and
+  deduplicated advisory identities; an unavailable target is explicit evidence and fails
+  the gate;
+- the baseline accepts individual high/critical GHSA identities per target and pins each
+  accepted severity. A new identity or an upward severity change is a regression, so an
+  unrelated advisory disappearing can no longer cancel a new one through an unchanged
+  count;
+- a declared regression must repin that same advisory identity in the same change. A
+  directly added baseline identity remains a classified baseline shift, preserving the
+  kernel's no-silent-relaxation invariant;
+- the old npm JSON producer, count baseline, compatibility ratchet, fixtures, and their
+  workflow/module-filter references are removed in the same change. The historical gate
+  id remains only to avoid needless churn in SARIF and changeset routing; its title and
+  canonical documentation name the current GitHub-advisory evidence source.
+
+CI installs for these already-covered lockfiles use `--audit=false`, eliminating the
+duplicate best-effort POST that consumed five minutes before the authoritative gate ran.
+Repository vulnerability alerts and automated security updates become the ambient
+monitoring layer; the per-PR gate remains the deterministic lockfile fact lane. Automatic
+version-update configuration, advisory issue creation, and a scheduled compatibility run
+of npm's provider-specific endpoint are intentionally out of scope because they would add
+separate policy and notification authorities without improving the merge fact.
+
+This is broader than PR-publication tooling: the reusable principle is that a required
+security fact must be backed by a bounded, observable evidence protocol and compared by
+stable defect identity rather than aggregate count. The retirement condition is either a
+repository-native dependency-review signal with equivalent lockfile coverage and baseline
+semantics, or loss of the Global Advisory API's unauthenticated/read-only contract. In
+either case, replace this source in place; do not run two required vulnerability
+authorities indefinitely.
+
+### 25.1 Remaining implementation plan
+
+- [x] Replace the npm POST producer with the batched GitHub advisory producer and injected
+  transport tests covering pagination, retry, timeout, malformed data, target absence,
+  deduplication, and lockfile extraction.
+- [x] Replace count comparison with advisory-identity/severity comparison, migrate the
+  governed baseline and fixtures, require same-change repinning, and remove the retained
+  legacy ratchet.
+- [x] Wire the new artifact into `Public claims`, disable duplicate install audits for the
+  covered lockfiles, and update module filters and expected-state guidance.
+- [x] Update canonical gate documentation and ADR-0044's fact-lane consequences, regenerate
+  derived docs/skills, and run focused plus complete governance verification.
+- [ ] Enable and read back GitHub vulnerability alerts and automated security updates,
+  refresh PR #632's managed review record and public body, then resume the authorized
+  publication flow.
+
+### 25.2 Implementation evidence
+
+The producer queried the real root and `ui-web` lockfiles successfully with the current
+GitHub API version in about two seconds, covering 312 and 364 unique package versions and
+returning 62 and 21 deduplicated advisories respectively. The initial high/critical
+identity baseline contains 22 root and 15 `ui-web` GHSAs. These values are evidence about
+the migration snapshot, not future count thresholds; only the recorded identities and
+their accepted severities govern later runs.
+
+Focused tests cover batching, pagination, deduplication, transient retry, non-transient
+HTTP failure, explicit timeout signals, malformed payloads, package-lock parsing, missing
+targets, duplicate/stale report evidence, new identities, severity escalation, declared
+but unpinned regressions, silent and declared baseline shifts, and the rule that rebalance
+cannot accept a new advisory. The live gate passed against a freshly regenerated report.
+
+GitHub returned `204 No Content` for enabling and reading back repository vulnerability
+alerts. Automated security fixes returned enabled and unpaused, and the repository's
+`security_and_analysis.dependabot_security_updates.status` read-back is `enabled`. The
+immediate Dependabot alert list was empty; that is not used as proof of coverage because
+initial dependency-graph indexing is asynchronous.
+
+Verification passed all 34 governance test files and every gate fixture, all 65
+agent-analytics test files, workflow-trigger/history/hook/Codex parity checks, ADR coverage,
+governance-dashboard freshness, generated docs/skills, canonical links, module-dependency
+and runtime-config projections, prompt-surface inventory, the focused
+`WireShapeMandateTest`, and the full multi-module Gradle test task. The remaining checkbox
+is now only the already-authorized PR-record refresh and publication sequence.

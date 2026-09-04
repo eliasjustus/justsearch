@@ -1,28 +1,18 @@
-/**
- * SARIF rule descriptions for the npm-audit gate (tempdoc 530).
- */
+/** SARIF rule descriptions for the historical npm-audit gate id. */
 
 export const NPM_AUDIT_RULE_DESCRIPTIONS = {
-  'npm-audit/within-baseline': 'Severity counts within baseline',
-  'npm-audit/silent-regression':
-    'Tracked-severity count increased above baseline without a declared changeset',
-  'npm-audit/declared-regression':
-    'Severity count increase covered by an explicit declared-regression changeset',
-  'npm-audit/lockfile-import': 'Regression imported via lockfile sync; classification supplied',
-  'npm-audit/emergency-override':
-    'Regression permitted via emergency-override classification (manual review required)',
-  'npm-audit/rebalance-available':
-    'Severity counts dropped below baseline; baseline may be rebalanced',
-  'npm-audit/rebalanced':
-    'Baseline automatically rebalanced (counts updated to current values)',
-  'npm-audit/baseline-missing':
-    'npm-audit baseline file not found (initialize with --rebalance after a clean audit)',
-  'npm-audit/schema-mismatch':
-    'npm-audit report or baseline does not match the expected schema',
-  'npm-audit/report-unavailable':
-    'A required npm-audit target was missing, timed out, terminated, or returned unparseable evidence',
-  'npm-audit/silent-baseline-shift':
-    'Baseline JSON was relaxed in this PR without a declared changeset (the same silent escape-hatch class tempdoc 530 §Layer 1 closes)',
-  'npm-audit/declared-baseline-shift':
-    'Baseline JSON was relaxed; classification covers the shift',
+  'npm-audit/within-baseline': 'Advisory identity and severity are within the accepted baseline',
+  'npm-audit/silent-regression': 'A new high/critical advisory or severity escalation lacks a declared changeset',
+  'npm-audit/declared-regression-without-repin': 'Declared advisory regression was not repinned in the same change',
+  'npm-audit/lockfile-import-without-repin': 'Imported advisory regression was not repinned in the same change',
+  'npm-audit/emergency-override-without-repin': 'Emergency advisory override was not repinned in the same change',
+  'npm-audit/rebalance-available': 'An accepted advisory resolved or decreased in severity; baseline may be rebalanced',
+  'npm-audit/rebalanced': 'Resolved or improved advisory identities were removed from the baseline',
+  'npm-audit/baseline-missing': 'Advisory identity baseline file is missing',
+  'npm-audit/schema-mismatch': 'Advisory report or baseline does not match the required schema',
+  'npm-audit/report-unavailable': 'A required lockfile target lacks complete GitHub advisory evidence',
+  'npm-audit/baseline-entry-not-current': 'A newly accepted baseline identity is absent from current evidence',
+  'npm-audit/silent-baseline-shift': 'An advisory identity or severity was accepted without a declared changeset',
+  'npm-audit/declared-baseline-shift': 'An advisory identity or severity acceptance is covered by a changeset',
+  'npm-audit/changeset-mismatch': 'A changeset exists without a matching advisory regression or baseline expansion',
 };

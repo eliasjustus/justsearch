@@ -45,9 +45,9 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 10 -> 15: this job now installs modules/ui-web and builds the kernel gate inputs (knip,
-    # npm audit, module-deps). The producers themselves measure ~8s combined; the install is the
-    # cost, and a job that times out is a red for every PR rather than a signal about one.
+    # 10 -> 15: this job installs modules/ui-web and builds the kernel gate inputs (Knip,
+    # GitHub advisory evidence, module-deps). The advisory producer is bounded and fails closed;
+    # a job timeout must never stand in for its transport verdict.
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -112,7 +112,9 @@ jobs:
           python -m unittest discover -s scripts/sandbox -p "test_*.py" -v
 
       - name: Install root dependencies
-        run: npm ci
+        # The identity gate below is the authoritative audit for this lockfile. npm's install-time
+        # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
+        run: npm ci --audit=false
 
       # Tempdoc 745 D6. These ~26 files (743's baseline-economics/record-merge suites
       # included) previously ran in CI NOWHERE — manual-only, i.e. only when someone
@@ -234,10 +236,8 @@ jobs:
       - name: Test managed PR review record
         run: node scripts/ci/test-pr-review-record.mjs
 
-      - name: Test bounded npm-audit reporting and retained ratchet
-        run: |
-          node scripts/ci/test-report-npm-audit.mjs
-          node scripts/ci/test-check-npm-audit-ratchet.mjs
+      - name: Test bounded advisory reporting
+        run: node scripts/ci/test-report-github-advisories.mjs
 
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
@@ -255,7 +255,8 @@ jobs:
       # registered, baselined and unable to notice anything, because this job built none of their
       # inputs. gates/dead-code/baseline.txt had gone untouched since 2026-07-16 while 27 findings
       # accumulated behind it. The inputs are cheap -- measured locally at 0.2s (module-deps),
-      # 2.7s (knip) and 4.5s (npm audit) -- so the reason they were missing was wiring, not budget.
+      # 2.7s (knip) and 4.5s (the original npm audit) -- so the reason they were missing was wiring,
+      # not budget. Tempdoc 921 later replaced that unreliable POST with bounded GitHub advisory GETs.
       # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
       # builds it rather than here.
       # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
@@ -287,11 +288,13 @@ jobs:
           node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
 
       - name: Build kernel gate inputs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          npm ci --prefix modules/ui-web
+          npm ci --prefix modules/ui-web --audit=false
           node scripts/docs/generate-runtime-config-matrix.mjs
           node scripts/architecture/module-deps.mjs
-          node scripts/ci/report-npm-audit.mjs
+          node scripts/ci/report-github-advisories.mjs
           npm --prefix modules/ui-web run knip:report
 
       - name: Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)

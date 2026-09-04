@@ -91,7 +91,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Conflict Ledger](reference/contributing/conflict-ledger.md): The going-forward register for design conflicts, intentional reframes, and unresolved authority questions — plus the implementer≠resolver closure protocol that governs how they are resolved.
 - [Cross-Component Checklist](reference/contributing/cross-component-checklist.md): Checklist for features spanning build, shell, backend, and frontend.
 - [Development Philosophy](reference/contributing/development-philosophy.md): Issue tracking tiers, observation workflow, and documentation update rules.
-- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-audit, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634.
+- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-advisory identities, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634.
 - [Logging Conventions](reference/contributing/logging-conventions.md): Conventions for log statements, exception handling, MDC usage, and query redaction.
 - [MCP Dev Tools Reference](reference/contributing/mcp-dev-tools.md): Dev orchestration tools for starting, monitoring, and verifying the JustSearch dev stack.
 - [Reliability Budget](reference/contributing/reliability-budget.md): Warn-only reliability hotspot report generated from local gate summaries.

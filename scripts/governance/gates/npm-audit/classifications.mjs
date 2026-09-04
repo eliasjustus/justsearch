@@ -1,8 +1,8 @@
 /**
  * npm-audit gate classification vocabulary — tempdoc 530.
  *
- * Used when a PR raises a tracked-severity (default: high, critical) vulnerability
- * count above its baseline. Without a changeset, the gate fails with
+ * Used when a PR adds a tracked-severity (default: high, critical) advisory identity
+ * or raises an accepted identity's severity. Without a changeset, the gate fails with
  * `npm-audit/silent-regression`.
  */
 

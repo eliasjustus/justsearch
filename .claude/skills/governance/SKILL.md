@@ -1,5 +1,5 @@
 ---
-description: "TRIGGER when: editing baseline files (scripts/ci/npm-audit-ratchet-baseline.v1.json, docs/reference/contributing/tier-register.md), authoring changesets under gates/<id>/.changesets/, running the discipline-gate kernel, or seeing a SARIF ruleId from prose-tier-register / npm-audit / consumer-drift / ssot-catalog-sync and unsure what to do. Loads the kernel's protocol + classification grammar + CLI subcommands."
+description: "TRIGGER when: editing baseline files (scripts/ci/github-advisory-baseline.v1.json, docs/reference/contributing/tier-register.md), authoring changesets under gates/<id>/.changesets/, running the discipline-gate kernel, or seeing a SARIF ruleId from prose-tier-register / npm-audit / consumer-drift / ssot-catalog-sync and unsure what to do. Loads the kernel's protocol + classification grammar + CLI subcommands."
 user-invocable: true
 ---
 

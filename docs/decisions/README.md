@@ -194,7 +194,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0041](0041-catalog-category-format.md) | Catalog Category format — protobuf enums + metadata | Accepted (format superseded in part by tempdoc 564) | 2026-06-09 |
 | [0042](0042-runtime-witness-consumer-presence.md) | Live-registry witness — consumer-presence over the live ContributionRegistry | Accepted | 2026-06-11 |
 | [0043](0043-multilingual-by-construction-no-per-language-levers.md) | Multilingual by construction — no per-language levers | Accepted | 2026-06-15 |
-| [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted | 2026-06-27 |
+| [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted, amended 2026-09-04 | 2026-06-27 |
 | [0045](0045-public-main-history-publication.md) | Public main history publication (commit-safe PR body plus managed review comment) | Accepted, amended 2026-09-04 | 2026-06-28 |
 | [0046](0046-local-api-trust-boundary.md) | Local API trust boundary | Accepted | 2026-09-02 |
 | [0047](0047-context-window-is-a-derived-resource.md) | Context window is a derived resource | Accepted | 2026-09-02 |

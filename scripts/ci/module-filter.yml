@@ -55,12 +55,10 @@ npm_audit_scope:
   - 'package-lock.json'
   - 'modules/ui-web/package.json'
   - 'modules/ui-web/package-lock.json'
-  - 'scripts/ci/report-npm-audit.mjs'
-  - 'scripts/ci/lib/npm-audit-report.mjs'
-  - 'scripts/ci/check-npm-audit-ratchet.mjs'
-  - 'scripts/ci/npm-audit-ratchet-baseline.v1.json'
-  - 'scripts/ci/test-report-npm-audit.mjs'
-  - 'scripts/ci/test-check-npm-audit-ratchet.mjs'
+  - 'scripts/ci/report-github-advisories.mjs'
+  - 'scripts/ci/lib/github-advisory-report.mjs'
+  - 'scripts/ci/github-advisory-baseline.v1.json'
+  - 'scripts/ci/test-report-github-advisories.mjs'
 app-launcher:
   - 'modules/app-launcher/**'
 test-support:

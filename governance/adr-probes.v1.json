@@ -399,6 +399,13 @@
       "script": "scripts/ci/check-workflow-triggers.mjs"
     },
     {
+      "id": "adr-0044-advisory-fact-lane-bounded",
+      "adr": "0044",
+      "premise": "The required npm lockfile advisory fact uses bounded GitHub Global Advisory requests and identity-based regression tests rather than npm's bulk POST or aggregate counts.",
+      "kind": "gate",
+      "script": "scripts/ci/test-report-github-advisories.mjs"
+    },
+    {
       "id": "adr-0045-history-policy-checked",
       "adr": "0045",
       "premise": "Public main receives curated squash commits only; the repository's history-publication settings are machine-checked.",

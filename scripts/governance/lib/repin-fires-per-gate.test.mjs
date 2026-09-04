@@ -131,45 +131,40 @@ await firesFor('dead-code-jvm', 'dead-code-jvm/declared-growth-without-repin', (
 
 await firesFor('npm-audit', 'npm-audit/declared-regression-without-repin', () => {
   const baseline = JSON.stringify({
-    schema: 'npm-audit-ratchet-baseline.v1',
-    targets: { root: { info: 0, low: 0, moderate: 0, high: 2, critical: 0, total: 2 } },
+    schema: 'github-advisory-baseline.v1',
+    targets: { root: { advisories: [] }, 'ui-web': { advisories: [] } },
   });
   const root = scaffold({
-    'tmp/npm-audit.json': JSON.stringify({
-      schema: 'npm-audit-report.v1',
+    'tmp/github-advisories.json': JSON.stringify({
+      schema: 'github-advisory-report.v1',
+      source: { provider: 'github-global-security-advisories', api_version: '2026-03-10' },
       targets: [{
         target_id: 'root',
+        lockfile: 'package-lock.json',
         available: true,
-        applicable: true,
-        parsed: true,
-        exit_code: 1,
-        signal: null,
-        command_error: null,
-        parse_error: null,
-        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 9, critical: 0, total: 9 },
-        dependencies: { prod: 1, dev: 1, optional: 0, peer: 0, peerOptional: 0, total: 2 },
+        lockfile_sha256: '4579aec81bdbde4e6eb0b61d1547c4ffd2cde788ce2713e0f1b2989712123524',
+        package_versions: 1,
+        advisories: [{ ghsa_id: 'GHSA-35JH-R3H4-6JHM', severity: 'high', html_url: 'https://github.com/advisories/GHSA-35jh-r3h4-6jhm' }],
       }, {
         target_id: 'ui-web',
+        lockfile: 'modules/ui-web/package-lock.json',
         available: true,
-        applicable: true,
-        parsed: true,
-        exit_code: 0,
-        signal: null,
-        command_error: null,
-        parse_error: null,
-        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
-        dependencies: { prod: 1, dev: 1, optional: 0, peer: 0, peerOptional: 0, total: 2 },
+        lockfile_sha256: '35be7134993f06d40974c585faaa025ccdce2a09e98bd3565db95b092bdede9e',
+        package_versions: 1,
+        advisories: [],
       }],
     }),
-    'scripts/ci/npm-audit-ratchet-baseline.v1.json': baseline,
-    '_baseline/scripts/ci/npm-audit-ratchet-baseline.v1.json': baseline,
+    'scripts/ci/github-advisory-baseline.v1.json': baseline,
+    '_baseline/scripts/ci/github-advisory-baseline.v1.json': baseline,
+    'package-lock.json': '{"lockfileVersion":3,"packages":{"node_modules/example":{"version":"1.0.0"}}}\n',
+    'modules/ui-web/package-lock.json': '{"lockfileVersion":3,"packages":{"node_modules/ui-example":{"version":"1.0.0"}}}\n',
     'gates/npm-audit/.changesets/f.md': changeset('declared-regression'),
   });
   return call(enforceNpmAudit, root, {
     id: 'npm-audit',
-    baseline: { path: 'scripts/ci/npm-audit-ratchet-baseline.v1.json' },
+    baseline: { path: 'scripts/ci/github-advisory-baseline.v1.json' },
     changesetsDir: 'gates/npm-audit/.changesets',
-    config: { reportPath: 'tmp/npm-audit.json', trackedSeverities: ['high', 'critical'] },
+    config: { reportPath: 'tmp/github-advisories.json', trackedSeverities: ['high', 'critical'] },
   });
 });
 

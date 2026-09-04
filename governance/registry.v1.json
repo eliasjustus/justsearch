@@ -82,27 +82,27 @@
     },
     {
       "id": "npm-audit",
-      "title": "npm audit severity-count ratchet (high/critical)",
+      "title": "NPM lockfile advisory-identity ratchet (GitHub high/critical advisories)",
       "enforcer": "scripts/governance/gates/npm-audit/enforcer.mjs",
       "ruleDescriptions": "scripts/governance/gates/npm-audit/rule-descriptions.mjs",
       "changesetsDir": "gates/npm-audit/.changesets",
       "classifications": "scripts/governance/gates/npm-audit/classifications.mjs",
       "baseline": {
         "kind": "ratchet-file",
-        "path": "scripts/ci/npm-audit-ratchet-baseline.v1.json",
+        "path": "scripts/ci/github-advisory-baseline.v1.json",
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/npm-audit-report.json",
+        "reportPath": "tmp/github-advisory-report.json",
         "trackedSeverities": [
           "high",
           "critical"
         ],
         "inputs": [
           {
-            "path": "tmp/npm-audit-report.json",
-            "producer": "node scripts/ci/report-npm-audit.mjs",
+            "path": "tmp/github-advisory-report.json",
+            "producer": "node scripts/ci/report-github-advisories.mjs",
             "class": "required"
           }
         ]
