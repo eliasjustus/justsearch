@@ -68,6 +68,44 @@ the apparatus is visible and documented, never forced on a contributor.
 - **Telemetry** — local-only OpenTelemetry capture of agent sessions, for measuring
   agent-assisted development. It never leaves the machine.
 
+## Succession and emergency handover
+
+This is a public custody map, not a credential store. Follow the
+[`cut-a-release` runbook](docs/how-to/cut-a-release.md) for release execution and key-rotation
+constraints; do not duplicate those procedures here. Never commit credential values, personal
+emails, account IDs, private URLs, recovery codes, or the contents of the private recovery package.
+Every bracketed field below is deliberately founder-fillable and limited to an identity, role,
+active provider or mode, custodian, or private location class.
+
+| Responsibility | Named service or surface | Minimum successor role | Active credential/provider mode | Repository secret and variable names | Recovery or rotation checkpoint | Custodian |
+|---|---|---|---|---|---|---|
+| GitHub organization ownership | `justsearch-app` organization | [FOUNDER TO FILL: minimum successor role] | GitHub organization ownership | None | Confirm the successor can reach organization ownership and recovery settings. | [FOUNDER TO FILL: custodian identity] |
+| Repository administration and releases | `justsearch-app/justsearch`, Actions, and GitHub Releases | [FOUNDER TO FILL: minimum successor role] | GitHub repository administration | None | Confirm repository administration, Actions, and release access without changing policy. | [FOUNDER TO FILL: custodian identity] |
+| Ruleset and merge-queue custody | `main-merge-queue` ruleset, required checks, and merge queue | [FOUNDER TO FILL: minimum successor role] | GitHub ruleset administration | None | Confirm the successor can inspect and administer the ruleset and its bypass custody. | [FOUNDER TO FILL: custodian identity] |
+| Release-asset repository | `justsearch-releases` | [FOUNDER TO FILL: minimum successor role] | [FOUNDER TO FILL: active repository access mode] | None | Confirm access to upload the signed mirrors and native packs named by the release runbook. | [FOUNDER TO FILL: custodian identity] |
+| npm ownership and 2FA | npm scope `@justsearch`; packages `@justsearch/plugin-api` and `@justsearch/runtime-client` | [FOUNDER TO FILL: minimum npm role] | [FOUNDER TO FILL: active npm ownership and 2FA mode] | No repository secret or variable is currently declared. | Confirm package/scope ownership and 2FA recovery; rotate any future publish credential through npm and never store it in Git. | [FOUNDER TO FILL: custodian identity] |
+| Windows Authenticode signing | `build-installer.yml`, `sign-vendored-mirrors.yml`, and the configured signing provider | [FOUNDER TO FILL: minimum release-signing role] | [FOUNDER TO FILL: active signing provider and `pfx`, `store`, or `command` mode] | Secrets: `JUSTSEARCH_CODESIGN_MODE`, `JUSTSEARCH_CODESIGN_PFX_B64`, `JUSTSEARCH_CODESIGN_PFX_PASSWORD`, `JUSTSEARCH_CODESIGN_THUMBPRINT`, `JUSTSEARCH_CODESIGN_TIMESTAMP_URL`, `JUSTSEARCH_CODESIGN_COMMAND`. Variable: `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED`. Local/script controls: `JUSTSEARCH_CODESIGN_PFX_PATH`, `JUSTSEARCH_CODESIGN_STORE`, `JUSTSEARCH_REQUIRE_SIGNING`. | Rotate at the provider and repository, then verify a signed non-tag candidate as directed by the release runbook. `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` is rehearsal-only and must be unset in production. | [FOUNDER TO FILL: custodian identity] |
+| Tauri updater artifact signing | Updater signature emitted by the release workflow | [FOUNDER TO FILL: minimum updater-signing role] | [FOUNDER TO FILL: active updater key-storage/signing mode] | Secrets: `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY`, `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD`. Workflow aliases: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Variables: `JUSTSEARCH_UPDATE_ARTIFACT_PUBLIC_KEY`, `JUSTSEARCH_UPDATE_ARTIFACT_KEY_ID`. | Follow the release runbook; trust-root replacement requires a designed bridge/dual-root release, not an ordinary variable edit. | [FOUNDER TO FILL: custodian identity] |
+| Authenticated release metadata and update endpoint | `release.v1.json`, metadata trust root, and descriptor endpoint | [FOUNDER TO FILL: minimum release-metadata role] | [FOUNDER TO FILL: active metadata key-storage/signing mode] | Secret: `JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM`. Variables: `JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PEM`, `JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY`, `JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID`, `JUSTSEARCH_RELEASE_DESCRIPTOR_URL`. Workflow-local paths: `JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH`, `JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH`. | Follow the release runbook and preserve the authenticated update chain; never rotate a trust root as a one-variable change. | [FOUNDER TO FILL: custodian identity] |
+| CLA administration | `cla.yml` and the `cla-signatures` branch | [FOUNDER TO FILL: minimum CLA-administration role] | Built-in `GITHUB_TOKEN`; `PERSONAL_ACCESS_TOKEN` is an optional compatibility path, not a current requirement. | `GITHUB_TOKEN`; optional secret `PERSONAL_ACCESS_TOKEN`. | Confirm signature-branch access; rotate or remove the optional PAT through GitHub if that compatibility path is enabled. | [FOUNDER TO FILL: custodian identity] |
+| Upstream model accounts and terms | `model-registry.v2.json` sources and their upstream terms pages | [FOUNDER TO FILL: minimum model-distribution role] | [FOUNDER TO FILL: active upstream provider/account mode] | No upstream-model credential secret or variable is referenced by the tracked repository. | Confirm account recovery and current redistribution terms for every provider before changing a registry source. | [FOUNDER TO FILL: custodian identity] |
+| Private recovery package | Account-recovery and emergency-handover material; contents stay outside Git | [FOUNDER TO FILL: minimum emergency-recovery role] | [FOUNDER TO FILL: active protection/access mode] | None; never commit it. | After any custody or credential rotation, update the package and re-check authorized recovery access. | [FOUNDER TO FILL: custodian identity] |
+
+Private recovery-package location class: [FOUNDER TO FILL: private location class only; never a
+path, account ID, or URL].
+
+Run a succession dry run twice each year:
+
+1. A second maintainer identifies every service, current custodian, and required role above without
+   relying on the founder's active session.
+2. Check the presence and intended scope of every named secret and variable without reading or
+   copying its value; also confirm npm ownership, 2FA recovery, and model-provider terms access.
+3. Rotate one non-production credential and confirm the corresponding recovery record was updated.
+4. Run the existing non-tag branch candidate dispatch according to the release runbook; do not
+   publish the candidate.
+5. Locate the private recovery package and prove authorized access without copying its contents into
+   the repository or dry-run record.
+
 ## Public main publication
 
 Public `main` is a curated project-history surface, not the transcript of an
