@@ -230,7 +230,7 @@ that architectural invariants and generated files are out of scope.
 |---|---|---|
 | Add `--help` and unknown-option handling to the onramp doctor | `scripts/dev/doctor.mjs` | Establish a side-effect-free main guard/CLI test seam; `--help` exits 0 without probing hardware/files; an unknown option exits nonzero with usage; focused Node tests cover both. |
 | Unit-test the onramp tier decision matrix (after the doctor CLI seam lands) | `scripts/dev/doctor.mjs` (`deriveTier`) | Reuse the first issue's main guard/export seam. Cover no artifacts, embedding only, full artifacts with and without verified GPU, and contradictory inputs; production output stays unchanged. Extract only the smallest pure helper needed for testing. |
-| Expand URL-grammar fixtures for scalar, array, and enum arguments | `scripts/ci/url-grammar-fixtures/generate.mjs:137`, adjacent README/fixture | Add the missing small deterministic sampler; do not claim an existing schema walker. Cover the named shapes for both operation `inputSchema` and surface `stateSchema`, then pass existing parser/fixture checks. No URL grammar redesign. |
+| Expand URL-grammar fixtures for scalar, array, and enum arguments | `scripts/ci/url-grammar-fixtures/generate.mjs:137`, adjacent README/fixture | Add the missing small deterministic sampler; do not claim an existing schema walker. First correct the generator prose that currently overclaims these variants and the README command that names `MarkdownTextExtractorConformanceTest` instead of the real `MarkdownUrlExtractorConformanceTest`. Cover the named shapes for both operation `inputSchema` and surface `stateSchema`, then pass existing parser/fixture checks. No URL grammar redesign. |
 | Add one fabricated non-Markdown document to the Tier-0 onramp corpus | `examples/onramp-corpus/`, `scripts/dev/test-onramp-first-success.mjs` | Add a license-clean plain-text or HTML fixture with a unique token and prove it is indexed/searchable in the existing smoke without models. Do not broaden the extraction matrix. |
 | Convert the feature-request template to a validated GitHub issue form | `.github/ISSUE_TEMPLATE/feature_request.md`, `CONTRIBUTING.md`, `NON-GOALS.md`, `SUPPORT.md` | Required problem/alternative fields, scope reminder, no private data prompt, valid YAML, old Markdown template removed, and both direct template links updated without changing security-report routing. |
 
@@ -907,3 +907,69 @@ dispatch the manual workflow, or publish.
 The required session-closeout process sweep reaped nothing. It left one live `ui-shot` owned by
 another session as contention, retained one already-gone `ui-shot` record after identity mismatch,
 and reported the ownerless `otlp-sink` singleton as designed; none belonged to this D1 work.
+
+### Active remaining implementation plan (2026-09-04)
+
+This plan owns every remaining repository change in tempdoc 899. It preserves the existing D6
+route-contract authority, keeps D2 draft-only, and leaves the unavailable D1 container execution
+proof as explicit external evidence rather than manufacturing a substitute.
+
+- [x] **Reconcile completed and deferred scope.** D6 is complete and live-verified. D1 is
+  implemented except for the container-capable execution proof. D2's deliverable is the five issue
+  drafts already recorded here, not opening issues or implementing their starter work. Refine the
+  URL-grammar draft to cover its current generator overclaim and the stale Java test name, then
+  defer only the live label, ownership, and collision recheck to the founder's issue-opening pass.
+  Do not create `.github/labels.yml` or convert the feature-request template in this workstream.
+- [ ] **Implement HTTP lifecycle signaling in the shared D6 authority.** Extend
+  `RouteContractPolicy` with canonical stability and validated immutable lifecycle metadata,
+  including the 90-day public floor and bounded pre-1.0 exception. Require closed-world exact-one
+  route resolution. Add one matched-route response filter, project policy data into route manifest
+  schema 2.0 and both OpenAPI documents, and expose `Deprecation`, `Sunset`, and `Link` only through
+  already-admitted CORS responses. Keep all production lifecycle rows empty and prove behavior with
+  fake deprecated routes, including exception-mapped responses and negative fixtures.
+- [ ] **Implement the MCP lifecycle extension.** Add a validated, empty production lifecycle
+  catalog beside the existing six tool declarations. Project the versioned experimental capability,
+  namespaced top-level `_meta`, and description fallback without changing standard annotations or
+  the tool-surface version. Cover duplicate, orphaned, and duplicate-live-tool failures with injected
+  test fixtures; no production tool is deprecated for demonstration.
+- [ ] **Add the succession map without storing secrets.** Extend `MAINTAINING.md` only, link rather
+  than duplicate the release runbook, inventory every known custody surface by name, and leave
+  founder-fillable placeholders for people, roles, providers, and private recovery-package location.
+  Include rehearsal-only `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` with an explicit requirement that it
+  remain unset in production. Do not change CODEOWNERS, workflows, credentials, or release policy.
+- [ ] **Build the privacy-bounded diagnostic summary backend.** Extend the diagnostics service with
+  a deterministic allowlist-only composer and an 8 KiB UTF-8 ceiling, using typed lifecycle,
+  runtime-contract, safe GPU, platform, and crash-metadata sources only. Add the LOW/NONE,
+  UI/USER, `METADATA_ONLY` `core.copy-diagnostic-summary` operation with no Worker or Inference
+  capabilities, and prove hostile values, controls, limits, omission, malformed crash input, and ZIP
+  path redaction. Never place the summary in effects, history, logs, receipts, or persistence.
+- [ ] **Integrate and validate the clipboard UX.** Mount the operation beside Export Diagnostics and
+  directly await the existing clipboard utility; emit only fixed success or failure receipts after
+  the real result. Add frontend tests, the optional fenced bug-report field with a review warning,
+  and a supported-browser check for activation, offline availability, privacy, accessibility, and
+  narrow layout. Remove the direct `exportDiagnostics()` frontend helper only if a final repository-
+  wide search proves it unreferenced; retain Export Diagnostics, its API, debug state, and runtime
+  manifest.
+- [ ] **Reconcile canonical truth and generated projections.** Update API evolution, runtime,
+  MCP, diagnostics, Help-surface, API-map, and security-threat-model documentation in the same
+  change. Regenerate/check route and SDK OpenAPI snapshots, generated clients, `llms.txt`, and skill
+  projections through their owning scripts. The CORS change exposes lifecycle metadata after the
+  existing allowlist and must not broaden Host, Origin, or mutation-token admission.
+- [ ] **Verify, independently refute, and close out.** Run focused backend/frontend tests, generated-
+  artifact checks, documentation/governance checks, the relevant multi-module test/build gates, and
+  live browser/API verification on an owned stack. Obtain an independent refute-first review, fix
+  every valid finding, update this evidence ledger, and commit explicit paths. Do not push, open a
+  pull request, dispatch the manual devcontainer workflow, publish npm, or merge without separate
+  authorization.
+- [ ] **Obtain the external D1 proof when an authorized container host is available.** Run the
+  checked-in manual devcontainer job or the equivalent local Dev Container CLI proof and record its
+  build, toolchain, doctor, and Tier-0 result. This is an evidence dependency, not remaining code.
+
+Teardown is narrow and explicit: `RouteResponseSchemas` is already removed and the proposed
+`RouteLifecyclePolicy` never existed; no second lifecycle authority will be created. The losing SDK
+generator left no artifact. D2's starter-issue targets remain intentionally unimplemented. D5 may
+remove only a proven-dead direct frontend export helper and stale prose that describes that helper.
+
+Implementation will use disjoint bounded subagents for the succession prose, MCP-only code, and
+diagnostics backend while this lane owns the shared HTTP policy/projections and final UI/docs
+integration. Each slice is reviewed and committed separately before the final combined verification.
