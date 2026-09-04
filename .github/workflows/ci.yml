@@ -45,10 +45,10 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 15 -> 20: this required lane exhausted the former limit while building kernel gate inputs
-    # after every earlier check had passed. Leave runner/install variance enough headroom so a
-    # timeout does not turn every PR red rather than report a failure in one of the checks.
-    timeout-minutes: 20
+    # 15 -> 20 -> 30: this required lane exhausted both former limits while building kernel
+    # gate inputs after every earlier check had passed. Leave runner/install variance enough
+    # headroom so a timeout does not turn every PR red instead of reporting a failed check.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
