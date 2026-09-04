@@ -182,8 +182,11 @@ try {
     assert.equal(badDist.checks, undefined, 'checks must be absent, not reported as failed');
     assert.equal(badDist.ready, undefined);
   });
-  check('…and the refusal lists worktrees that DO exist (the bare-name failure in §5.1)', () => {
-    assert.match(badDist.error.message, /Worktrees that DO exist: .+/);
+  check('…and the refusal reports the available-worktree inventory honestly', () => {
+    assert.match(
+      badDist.error.message,
+      /(?:Worktrees that DO exist: .+|No worktrees exist under \.claude\/worktrees\.)/,
+    );
   });
 
   // The positive case: a real sibling worktree, checked instead of the invoking checkout. Only the

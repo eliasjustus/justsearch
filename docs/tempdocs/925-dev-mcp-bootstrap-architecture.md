@@ -1027,6 +1027,12 @@ contains three upstream dependency TODO comments but had no `todo-fixme` ratchet
 declared-growth changeset now pins exactly those three inert vendor comments; the complete 14-gate
 hermetic kernel passes locally before the replacement CI run.
 
+That replacement run reached the previously skipped Dev-MCP block and exposed an older
+environment-dependent assertion: it required a list of existing sibling worktrees even on a clean
+CI checkout where none exist. The live handler correctly said that no worktrees exist. The
+projection regression now accepts both truthful inventory shapes while continuing to require the
+same `INVALID_DIST_FROM` and `checksRun: false` contract.
+
 ### 15.4 Remaining work and unverified assumptions
 
 No implementation work remains in this tempdoc. Remote CI on the workflow's pinned Node runtime is
