@@ -481,19 +481,30 @@ reached 6,563 commits, 3,331 of them touching `docs/tempdocs`).
 
 **Axis 1 — how a branch lands (mechanized, you don't manage it).** ADR-0045 set
 the repo to squash-only: every PR collapses to one `main` commit whose title and
-body come from the *PR* title/body, not the branch commit list. So your branch
-commits can be as noisy as you like — checkpoint, retry, "wip" — they never reach
-`main`. The only thing that matters is a good PR title/body, because that *is* the
-public commit. Preview it before merge with
-`node scripts/ci/preview-squash-message.mjs --pr <N>`.
+complete body come from the *PR* title/body, not the branch commit list. Keep
+those two fields permanently commit-safe. Mutable authorship, scope/risk,
+verification evidence, and review state belong in exactly one managed PR comment
+created from `.github/pr-review-record-template.md`; they never move temporarily
+through the PR body.
 
-That checker looks for a section titled exactly `## Testing` — a `## Test
-plan` header (or similar) triggers its `missing-testing-signal` warning even
-if a testing section is present under a different name (tempdoc 695). It
-also flags literal GFM `- [ ]`/`- [x]` checklist syntax in the body: that
-syntax renders as an interactive checkbox on the PR page, but publishes as
-inert plain-text `- [x]` once it becomes the squash commit message — prefer
-plain bullets or a prose list there instead.
+Use `scripts/ci/pr-review-record.mjs upsert --pr <N> --file <review-file>` to
+preview the exact comment create/update. The command prints a fingerprint; pass
+that value to the same command with `--execute --confirm <fingerprint>`. It
+refuses duplicate markers, foreign ownership, stale head/body metadata, and
+changes visible at its final preflight or exact read-back. GitHub comment
+updates have no compare-and-swap precondition, so the authenticated comment
+owner must be the sole writer from dry-run through read-back; do not manually
+edit the managed comment concurrently. Run `pr-review-record.mjs check --pr <N>` and
+`preview-squash-message.mjs --pr <N>` after the final push and review edit.
+Fix every finding before enqueue. The first command verifies the rich record;
+the second rejects review structure, template residue, provider prose, task
+boxes, and operational state from the public commit.
+
+Check summaries and artifacts may hold reproducible detail, but the managed
+comment is the stable index. Do not use a check summary as the only durable
+review record. Landed-message comparison is semantic rather than byte-exact:
+GitHub may hard-wrap long lines and append its own attribution. Public bodies
+therefore avoid tables or nested formatting whose meaning depends on wrapping.
 
 Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
 
@@ -551,10 +562,10 @@ longer applies once a PR is enqueued). Practical sequence:
   drops out of the queue and the PR stays open/unmerged, the merge-group run
   failed — pull that run (merge_group event, or the PR's checks tab) and
   investigate before re-enqueuing.
-- **`preview-squash-message.mjs` is now the sole pre-publication checkpoint, and it
-  matters more than before it did:** the queue merges unattended, so there is no
-  second human look at the title/body before it becomes permanent public history.
-  Run it, and fix everything it flags, before enqueuing — not after.
+- **The review-record check and squash preview are the pre-publication
+  checkpoints.** The queue merges unattended, so there is no second human look
+  at the comment freshness or title/body before publication. Run both and fix
+  every finding before enqueuing — not after.
 - **Confirm the merge landed before any cleanup** — `gh pr view <N> --json state`
   must read `MERGED`; an unattended queue merge gives no other confirmation moment.
 - **Check main's *final* HEAD is green** — after the queue merges, watch push-CI on

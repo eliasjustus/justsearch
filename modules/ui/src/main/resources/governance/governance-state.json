@@ -22,7 +22,7 @@
     },
     {
       "id": "npm-audit",
-      "title": "npm audit severity-count ratchet (high/critical)",
+      "title": "NPM lockfile advisory-identity ratchet (GitHub high/critical advisories)",
       "tier": "ratchet",
       "hasChangesets": true
     },

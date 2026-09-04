@@ -47,16 +47,37 @@ Review outward-facing prose for quantitative claims. Every number must point to
 a reproducible measurement or primary evidence; remove unsupported claims rather
 than approximating them.
 
-Create or update the pull request with a precise title, summary, and testing
-section. Include a standalone `Session-Id: <session uuid>` line in the body so
-ADR-0045 attribution survives the squash merge. Then run:
+Create or update the pull request with a precise, commit-safe title and body.
+The complete body is the public squash body: keep only the durable reason,
+observable outcomes, and any applicable standalone `Session-Id: <session uuid>`
+line there. Do not put mutable verification evidence, review state, provider
+prose, task lists, or operational logs in the body.
+
+Prepare the rich record from `.github/pr-review-record-template.md` in a working
+file outside the public body. Dry-run the exact create/update, then pass its fresh
+fingerprint back to the command:
 
 ```text
+node scripts/ci/pr-review-record.mjs upsert --pr <number> --file <review-file>
+node scripts/ci/pr-review-record.mjs upsert --pr <number> --file <review-file> --execute --confirm <fresh-sha256>
+```
+
+The command owns the hidden PR/head/body marker, updates only the authenticated
+actor's comment, and refuses duplicate or stale state visible at final preflight
+or read-back. GitHub comment updates have no compare-and-swap precondition, so
+the authenticated comment owner must be the sole writer from dry-run through
+read-back; do not edit that comment concurrently. Run the upsert again after any
+head, public-body, evidence, or review-state change. Then run both strict
+publication checks:
+
+```text
+node scripts/ci/pr-review-record.mjs check --pr <number>
 node scripts/ci/preview-squash-message.mjs --pr <number>
 ```
 
-Fix every reported title, body, WIP, attribution, or testing defect before
-enqueueing the merge.
+Fix every reported title, body, attribution, freshness, ownership, template, or
+process-residue defect before enqueueing the merge. Never temporarily swap the
+rich review record through the PR body and never restore it after enqueue.
 
 ## Wait for CI
 
@@ -90,7 +111,9 @@ cause before re-enqueueing. Do not blind-retry.
 After the queue reports success:
 
 1. Fetch `origin/main` and verify the published content by diff, not branch
-   ancestry alone.
+   ancestry alone. Compare the landed message semantically: GitHub may reflow
+   long lines and append its own attribution, but review-only content must be
+   absent and the durable public content must remain intact.
 2. Confirm public CI on `main` is green. A new failure caused by this publication
    remains part of the task.
 3. Update the tempdoc outcome and identify any genuine follow-up work. Do not

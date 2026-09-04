@@ -41,7 +41,10 @@ Use the [feature request template](https://github.com/justsearch-app/justsearch/
 
 You do not need to curate your branch into perfect public-history commits before
 opening a PR. Maintainers may squash PRs before merge so public `main` stays
-readable while contributors can work naturally on branches.
+readable while contributors can work naturally on branches. Keep the PR title
+and body focused on the durable change because they become the squash commit;
+maintainers keep mutable verification and review state in a separate managed PR
+comment.
 
 ## Development Setup
 

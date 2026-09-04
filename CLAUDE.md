@@ -158,7 +158,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `.github/workflows/*.yml` · root README | `check-workflow-triggers` · `check-root-readme` |
 | root `CLAUDE.md` Pre-merge table | `check-premerge-table` |
 | repo history publication settings (ADR-0045) | `check-repo-history-policy` |
-| PR title/body as public squash message | `preview-squash-message` |
+| PR title/body plus managed review record | `preview-squash-message` · `pr-review-record check` |
 | `contracts/**` | `--gate wire` |
 | `docs/decisions/**` | `--gate adr-coverage` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |

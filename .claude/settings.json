@@ -216,7 +216,7 @@
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/governance-hint.mjs"
             ],
-            "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(docs/reference/contributing/tier-register.md)|Edit(gates/**)"
+            "if": "Edit(scripts/ci/github-advisory-baseline.v1.json)|Edit(docs/reference/contributing/tier-register.md)|Edit(gates/**)"
           }
         ]
       }

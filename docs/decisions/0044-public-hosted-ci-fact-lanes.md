@@ -6,6 +6,7 @@ description: "The public repository runs standard GitHub-hosted CI on push and p
 date: 2026-06-27
 probes:
   - adr-0044-fact-lane-triggers-checked
+  - adr-0044-advisory-fact-lane-bounded
 last_reviewed: 2026-09-03
 ---
 
@@ -131,3 +132,26 @@ easy to misconfigure. Path-aware skipping can be revisited later as advisory acc
 - [Testing Strategy](../explanation/09-testing-strategy.md) - current test and CI signal
   overview.
 - [Agent Guide](../reference/contributing/agent-guide.md) - contributor workflow commands.
+
+## Amendment: bounded advisory identity evidence (2026-09-04)
+
+Publication of tempdoc 921 proved npm's bulk-advisory POST could accept both root and
+`ui-web` request bodies yet return no bytes until the CLI's five-minute fetch timeout. It
+also exposed an older parseable transport-error response that the count producer had
+normalized to zero vulnerabilities. A required fact lane cannot use job timeout as its
+transport verdict or compare mutable defect counts that allow one disappearance to cancel
+one new advisory.
+
+The `Public claims` lane therefore preserves its stable `npm-audit` kernel id while sourcing
+exact-lockfile evidence from the read-only GitHub Global Security Advisories API. Requests
+are URL-length-batched, paginated, retryable only because they are GETs, and individually
+bounded. The gate accepts explicit high/critical GHSA identities and their severities;
+unavailable evidence, a new identity, or an upward severity change fails closed. The
+covered `npm ci` calls disable their duplicate install-time audit. GitHub vulnerability
+alerts and automated security updates are the ambient monitoring layer, not a replacement
+for the reproducible PR fact.
+
+This narrows the fact-lane rule: a stable check name is insufficient unless the evidence
+transport itself terminates with an explicit result and the comparison unit cannot hide a
+defect swap. If GitHub supplies a repository-native dependency-review signal with the same
+lockfile coverage and identity-baseline behavior, it may replace this producer in place.
