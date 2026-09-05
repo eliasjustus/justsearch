@@ -76,6 +76,11 @@ public final class WorkerLuceneTelemetryAdapter implements LuceneRuntimeTypes.Te
   }
 
   @Override
+  public void onChunkRevisionMismatch(int count) {
+    if (count > 0) catalog.chunkRevisionMismatchTotal.add(count, EmptyTags.INSTANCE);
+  }
+
+  @Override
   public void onSwapStart(SwapReason reason) {
     catalog.swapStartedTotal.increment(
         SwapTags.of(reason == null ? SwapReason.UNKNOWN : reason));

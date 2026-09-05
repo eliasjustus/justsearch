@@ -8,6 +8,7 @@ import io.justsearch.adapters.lucene.runtime.IndexSchema;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.indexing.rag.ContextBudgeter;
 import io.justsearch.ipc.ChunkRef;
 import io.justsearch.ipc.ContextFormat;
@@ -74,7 +75,7 @@ class GrpcSearchServiceRetrieveContextTest {
 
       // Index chunk documents for the same parent
       final int chunk0Start = parentContent.indexOf(chunk0Text);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:abc-001",
           SchemaFields.DOC_UID, "chunk:abc-001#0",
           SchemaFields.PATH, parentDocId,
@@ -84,10 +85,10 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "3",
           SchemaFields.CHUNK_CONTENT, chunk0Text,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(chunk0Start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk0Start + chunk0Text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk0Start + chunk0Text.length())))));
 
       final int chunk1Start = parentContent.indexOf(chunk1Text);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:abc-002",
           SchemaFields.DOC_UID, "chunk:abc-002#0",
           SchemaFields.PATH, parentDocId,
@@ -97,7 +98,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "3",
           SchemaFields.CHUNK_CONTENT, chunk1Text,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(chunk1Start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk1Start + chunk1Text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk1Start + chunk1Text.length())))));
 
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
@@ -263,7 +264,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.MIME, "text/markdown")));
 
       int longChunk0Start = longContent.indexOf(longChunk0);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:long-000",
           SchemaFields.DOC_UID, "chunk:long-000#0",
           SchemaFields.PATH, longParent,
@@ -273,10 +274,10 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "2",
           SchemaFields.CHUNK_CONTENT, longChunk0,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(longChunk0Start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(longChunk0Start + longChunk0.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(longChunk0Start + longChunk0.length())))));
 
       int longChunk1Start = longContent.indexOf(longChunk1);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:long-001",
           SchemaFields.DOC_UID, "chunk:long-001#0",
           SchemaFields.PATH, longParent,
@@ -286,7 +287,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "2",
           SchemaFields.CHUNK_CONTENT, longChunk1,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(longChunk1Start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(longChunk1Start + longChunk1.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(longChunk1Start + longChunk1.length())))));
 
       // (b) A SHORT chunkless parent (<2000 chars) that also matches the query — the union path
       // is the only way it reaches retrieval.
@@ -440,7 +441,7 @@ class GrpcSearchServiceRetrieveContextTest {
       for (int i = 0; i < 10; i++) {
         String chunkText = chunkTexts[i];
         int start = chunkStart(parentDocId, chunkText);
-        lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
             SchemaFields.DOC_ID, "chunk:div-" + i,
             SchemaFields.DOC_UID, "chunk:div-" + i + "#0",
             SchemaFields.PATH, parentDocId,
@@ -450,7 +451,7 @@ class GrpcSearchServiceRetrieveContextTest {
             SchemaFields.CHUNK_TOTAL, "10",
             SchemaFields.CHUNK_CONTENT, chunkText,
             SchemaFields.CHUNK_START_CHAR, String.valueOf(start),
-            SchemaFields.CHUNK_END_CHAR, String.valueOf(start + chunkText.length()))));
+            SchemaFields.CHUNK_END_CHAR, String.valueOf(start + chunkText.length())))));
       }
 
       lifecycle.commitOps().commitAndTrack();
@@ -514,7 +515,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.META_SOURCE, "techcrunch")));
 
       // Index chunks for both parents
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:verge-001",
           SchemaFields.DOC_UID, "chunk:verge-001#0",
           SchemaFields.PATH, vergeParent,
@@ -524,9 +525,9 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "1",
           SchemaFields.CHUNK_CONTENT, vergeChunk,
           SchemaFields.CHUNK_START_CHAR, "0",
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(vergeChunk.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(vergeChunk.length())))));
 
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:tc-001",
           SchemaFields.DOC_UID, "chunk:tc-001#0",
           SchemaFields.PATH, techCrunchParent,
@@ -536,7 +537,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "1",
           SchemaFields.CHUNK_CONTENT, techCrunchChunk,
           SchemaFields.CHUNK_START_CHAR, "0",
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(techCrunchChunk.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(techCrunchChunk.length())))));
 
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
@@ -570,7 +571,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.MIME, "text/x-web-markdown",
           SchemaFields.META_SOURCE, "the verge")));
 
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:art-001",
           SchemaFields.DOC_UID, "chunk:art-001#0",
           SchemaFields.PATH, parentDocId,
@@ -580,7 +581,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "1",
           SchemaFields.CHUNK_CONTENT, chunkText,
           SchemaFields.CHUNK_START_CHAR, "0",
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunkText.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunkText.length())))));
 
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
@@ -605,7 +606,7 @@ class GrpcSearchServiceRetrieveContextTest {
 
     private void indexChunk(String parentDocId, int idx, String text) throws Exception {
       int start = chunkStart(parentDocId, text);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:excl-" + idx,
           SchemaFields.DOC_UID, "chunk:excl-" + idx + "#0",
           SchemaFields.PATH, parentDocId,
@@ -615,7 +616,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "3",
           SchemaFields.CHUNK_CONTENT, text,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(start + text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(start + text.length())))));
     }
 
     @Test
@@ -722,7 +723,7 @@ class GrpcSearchServiceRetrieveContextTest {
 
     private void indexChunk(String parentDocId, int idx, String text) throws Exception {
       int start = chunkStart(parentDocId, text);
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:" + parentDocId + "-" + idx,
           SchemaFields.DOC_UID, "chunk:" + parentDocId + "-" + idx + "#0",
           SchemaFields.PATH, parentDocId,
@@ -732,7 +733,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "9",
           SchemaFields.CHUNK_CONTENT, text,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(start + text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(start + text.length())))));
     }
 
     /**
@@ -843,7 +844,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.MIME, "application/pdf")));
 
       final int chunk0Start = 0;
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:xml-001",
           SchemaFields.DOC_UID, "chunk:xml-001#0",
           SchemaFields.PATH, parentDocId,
@@ -853,7 +854,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_TOTAL, "1",
           SchemaFields.CHUNK_CONTENT, chunk0Text,
           SchemaFields.CHUNK_START_CHAR, String.valueOf(chunk0Start),
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk0Start + chunk0Text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk0Start + chunk0Text.length())))));
 
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
@@ -911,6 +912,10 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_CONTENT, chunkText,
           SchemaFields.CHUNK_START_CHAR, "0",
           SchemaFields.CHUNK_END_CHAR, String.valueOf(chunkText.length())));
+      // Tempdoc 931 §C.1: the parent revision the offsets address. Without it the read path
+      // refuses to reconstruct the chunk's text and the scope assertions see an empty context.
+      chunk.put(
+          SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(chunkText));
       if (collection != null) {
         // ChunkDocumentWriter propagates the parent's collection onto chunks (811 item 3); the
         // fixture mirrors that, since the scope binds on the chunk branch.
@@ -976,9 +981,9 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.DOC_ID, splitDoc,
           SchemaFields.DOC_UID, splitDoc + "#0",
           SchemaFields.PATH, splitDoc,
-          SchemaFields.CONTENT, text,
+          SchemaFields.CONTENT, rememberParentContent(splitDoc, text),
           SchemaFields.MIME, "text/markdown")));
-      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(withParentRevision(Map.of(
           SchemaFields.DOC_ID, "chunk:" + splitDoc,
           SchemaFields.DOC_UID, "chunk:" + splitDoc + "#0",
           SchemaFields.PATH, splitDoc,
@@ -988,7 +993,7 @@ class GrpcSearchServiceRetrieveContextTest {
           SchemaFields.CHUNK_INDEX, "0",
           SchemaFields.CHUNK_CONTENT, text,
           SchemaFields.CHUNK_START_CHAR, "0",
-          SchemaFields.CHUNK_END_CHAR, String.valueOf(text.length()))));
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(text.length())))));
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
 
@@ -1170,6 +1175,25 @@ class GrpcSearchServiceRetrieveContextTest {
   }
 
   // ==================== Helper ====================
+
+  /**
+   * Stamps a chunk fixture with the revision of the parent content its offsets address -- what
+   * {@code ChunkDocumentWriter} writes since tempdoc 931 section C.1, and what the read path checks
+   * before re-slicing the chunk's text out of the parent (section E item 5). Without it the chunk
+   * reads as textless, which is exactly the guard doing its job on a fixture that never registered
+   * its parent.
+   */
+  private Map<String, Object> withParentRevision(Map<String, Object> chunk) {
+    String parentDocId = String.valueOf(chunk.get(SchemaFields.PARENT_DOC_ID));
+    String parentContent = parentContentById.get(parentDocId);
+    if (parentContent == null) {
+      throw new IllegalStateException("No registered parent content for " + parentDocId);
+    }
+    Map<String, Object> stamped = new HashMap<>(chunk);
+    stamped.put(
+        SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(parentContent));
+    return stamped;
+  }
 
   private String rememberParentContent(String parentDocId, String content) {
     parentContentById.put(parentDocId, content);

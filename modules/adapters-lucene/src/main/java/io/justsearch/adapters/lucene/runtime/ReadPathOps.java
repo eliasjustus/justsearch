@@ -153,6 +153,9 @@ public final class ReadPathOps {
       allow.add(SchemaFields.PARENT_DOC_ID);
       allow.add(SchemaFields.CHUNK_START_CHAR);
       allow.add(SchemaFields.CHUNK_END_CHAR);
+      // Tempdoc 931 §E item 5: the revision those offsets address, so the reconstruction can
+      // refuse a parent that has been rewritten since (ChunkReadRevisionGuard).
+      allow.add(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
     }
     return allow;
   }
@@ -402,7 +405,7 @@ public final class ReadPathOps {
             if (synthesizeChunkContent && !chunkSlices.isEmpty()) {
               Map<String, String> chunkContent =
                   DocumentFieldOps.resolveChunkContents(
-                      searcher, idField, chunkSlices, Map.of());
+                      searcher, idField, chunkSlices, Map.of(), session.telemetryEvents);
               for (SearchHit hit : hits) {
                 String content = chunkContent.get(hit.docId());
                 if (content != null) {
@@ -420,6 +423,9 @@ public final class ReadPathOps {
                 }
                 if (!projectionFields.contains(SchemaFields.CHUNK_END_CHAR)) {
                   hit.fields().remove(SchemaFields.CHUNK_END_CHAR);
+                }
+                if (!projectionFields.contains(SchemaFields.CHUNK_PARENT_CONTENT_SHA256)) {
+                  hit.fields().remove(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
                 }
               }
             }

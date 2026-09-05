@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.services.respond;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.IndexSchema;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
@@ -123,6 +124,63 @@ final class SearchResponseContentRevisionTest {
     assertNull(
         hit.getFieldsMap().get(SchemaFields.CONTENT_SHA256),
         "absent is honest; an empty or borrowed revision would read as a mismatch downstream");
+  }
+
+  /**
+   * Tempdoc 931 §E item 5 — when the read-path revision guard refuses to reconstruct a chunk's text
+   * (parent rewritten, chunks not regenerated yet), the hit reaches the builder with no
+   * {@code chunk_content}. The excerpt must come out EMPTY rather than sliced from the newer parent
+   * revision. The reconstructible sibling below is the positive control: it proves the empty result
+   * is the guard's doing and not a fixture that never produces excerpts.
+   */
+  @Test
+  void aChunkHitWithNoReconstructibleTextYieldsAnEmptyExcerptNotBorrowedText() {
+    var withText =
+        new LuceneRuntimeTypes.SearchHit(
+            "chunk:parent-1#0",
+            1.0f,
+            Map.of(
+                SchemaFields.PARENT_DOC_ID, "parent-1",
+                SchemaFields.IS_CHUNK, "true",
+                SchemaFields.CHUNK_INDEX, "0",
+                SchemaFields.CHUNK_CONTENT, "the needle lives in this reconstructed chunk"));
+    var control = respondWithExcerpts(withText).getResults(0);
+    assertTrue(
+        control.getExcerptRegionsCount() > 0,
+        "positive control: a reconstructible chunk does produce excerpt regions here");
+
+    var refused =
+        new LuceneRuntimeTypes.SearchHit(
+            "chunk:parent-1#0",
+            1.0f,
+            Map.of(
+                SchemaFields.PARENT_DOC_ID, "parent-1",
+                SchemaFields.IS_CHUNK, "true",
+                SchemaFields.CHUNK_INDEX, "0"));
+    var hit = respondWithExcerpts(refused).getResults(0);
+
+    assertEquals(
+        0,
+        hit.getExcerptRegionsCount(),
+        "no excerpt is the honest answer; text from the newer parent revision is not");
+    assertNull(
+        hit.getFieldsMap().get(SchemaFields.CHUNK_CONTENT),
+        "the builder must not conjure chunk text the read path refused to reconstruct");
+    assertEquals(
+        PARENT_REVISION,
+        hit.getFieldsMap().get(SchemaFields.CONTENT_SHA256),
+        "the hit itself is still delivered — it loses its snippet, not its identity");
+  }
+
+  private SearchResponse respondWithExcerpts(LuceneRuntimeTypes.SearchHit hit) {
+    LuceneRuntimeTypes.SearchResult result =
+        new LuceneRuntimeTypes.SearchResult(List.of(hit), 1, 5L);
+    PipelineConfig pipeline = PipelineConfig.newBuilder().setSparseEnabled(true).build();
+    return builder
+        .toGrpcResponseBuilder(
+            result, 5L, "needle", pipeline, null, /* includeExcerpts= */ true,
+            /* includeDetail= */ false)
+        .build();
   }
 
   private SearchResponse respond(LuceneRuntimeTypes.SearchHit hit) {

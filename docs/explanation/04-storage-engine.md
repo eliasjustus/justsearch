@@ -174,6 +174,19 @@ equal-or-longer rewrite fits the old offsets and would silently re-slice the wro
 re-deriving, the read-modify-write path hashes the parent it read and compares: a missing or
 differing hash refuses the rewrite with an `IOException`, the same fail-closed path as a missing
 parent. Refusing loses nothing — such a chunk is stale by definition and regeneration deletes it.
+
+The read path applies the same test. Every reconstruction — `getDocumentContent` on a chunk id, the
+`chunk_content` projection on a search hit, the chunk-search envelope — routes through one guard
+that returns the slice only when the parent's current revision equals the chunk's
+`chunk_parent_content_sha256`. On a mismatch, or for a legacy chunk carrying no revision at all,
+the chunk is omitted exactly the way a missing parent is: the point lookup returns nothing, the hit
+arrives without `chunk_content` so its excerpt is empty rather than borrowed, and a RAG context
+drops the passage instead of citing text from a revision the user never saw. Each refused
+reconstruction increments `index.runtime.chunk_revision_mismatch_total`, so the parent-rewrite
+window is visible rather than silent. The comparison reads the parent's stored `content_sha256`
+where it exists and hashes the parent's content only for documents indexed before that field, once
+per parent per read rather than once per chunk.
+
 Because it is a stored field, adding it moved `index_fingerprint`, so it lands with the reindex
 that bundle already required. One degenerate embedding no longer costs a batch either: a zero-
 magnitude or non-finite dense vector is dropped from that one document (its `embedding_status`

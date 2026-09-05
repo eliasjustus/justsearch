@@ -12,6 +12,7 @@ import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.ipc.PipelineConfig;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
@@ -586,6 +587,9 @@ final class GrpcSearchServiceReasonCodeContractTest {
     fields.put(SchemaFields.CHUNK_CONTENT, chunkContent);
     fields.put(SchemaFields.CHUNK_START_CHAR, "0");
     fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(Math.max(0, chunkContent.length())));
+    // Tempdoc 931 §C.1: the revision the offsets above address. Without it the read path refuses
+    // to re-slice the chunk's text out of the parent, and the chunk reads as textless.
+    fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(parentContent));
     fields.put(SchemaFields.PATH, parentDocId);
     fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
     fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
@@ -625,6 +629,7 @@ final class GrpcSearchServiceReasonCodeContractTest {
       fields.put(SchemaFields.CHUNK_CONTENT, d[2]);
       fields.put(SchemaFields.CHUNK_START_CHAR, "0");
       fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(Math.max(0, d[2].length())));
+      fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(d[1]));
       fields.put(SchemaFields.PATH, parentId);
       fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
       fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");

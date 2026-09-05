@@ -45,12 +45,18 @@ public final class DocumentFieldOps {
   /** Stored parent identity used to seed/rebuild the Worker document-identity store. */
   public record StoredDocumentIdentity(String docId, String docUid) {}
 
-  /** Character slice in a stored parent document that reconstructs one chunk's text. */
-  record ChunkSlice(String parentDocId, int startChar, int endChar) {}
+  /**
+   * Character slice in a stored parent document that reconstructs one chunk's text, together with
+   * the {@code chunk_parent_content_sha256} revision those offsets address (tempdoc 931 §E item 5).
+   * The revision is what lets {@link ChunkReadRevisionGuard} tell an in-sync parent from one that
+   * has been rewritten but whose chunks have not been regenerated yet.
+   */
+  record ChunkSlice(
+      String parentDocId, int startChar, int endChar, String parentContentRevision) {}
 
   @FunctionalInterface
   interface ParentContentLoader {
-    String load(String parentDocId) throws IOException;
+    ChunkReadRevisionGuard.ParentRevision load(String parentDocId) throws IOException;
   }
 
   DocumentFieldOps(
@@ -142,11 +148,14 @@ public final class DocumentFieldOps {
         Set<String> storedAllowlist =
             Set.of(
                 SchemaFields.CONTENT,
+                SchemaFields.CONTENT_SHA256,
                 SchemaFields.PARENT_DOC_ID,
                 SchemaFields.CHUNK_START_CHAR,
-                SchemaFields.CHUNK_END_CHAR);
+                SchemaFields.CHUNK_END_CHAR,
+                SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
         org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
         Map<String, String> result = new LinkedHashMap<>(resolved.size());
+        Map<String, ChunkReadRevisionGuard.ParentRevision> knownParents = new LinkedHashMap<>();
         Map<String, ChunkSlice> chunkSlices = new LinkedHashMap<>();
         for (Map.Entry<Integer, String> entry : resolved) {
           Map<String, String> fields =
@@ -155,6 +164,7 @@ public final class DocumentFieldOps {
           String content = fields.get(SchemaFields.CONTENT);
           if (content != null) {
             result.put(entry.getValue(), content);
+            knownParents.put(entry.getValue(), parentRevisionFrom(fields));
             continue;
           }
           ChunkSlice slice = chunkSliceFrom(fields);
@@ -162,7 +172,9 @@ public final class DocumentFieldOps {
             chunkSlices.put(entry.getValue(), slice);
           }
         }
-        result.putAll(resolveChunkContents(searcher, idField, chunkSlices, result));
+        result.putAll(
+            resolveChunkContents(
+                searcher, idField, chunkSlices, knownParents, session.telemetryEvents));
         return Collections.unmodifiableMap(result);
       });
     } catch (IOException e) {
@@ -258,10 +270,18 @@ public final class DocumentFieldOps {
     try {
       int start = Integer.parseInt(fields.getOrDefault(SchemaFields.CHUNK_START_CHAR, "-1"));
       int end = Integer.parseInt(fields.getOrDefault(SchemaFields.CHUNK_END_CHAR, "-1"));
-      return start >= 0 && end >= start ? new ChunkSlice(parentDocId, start, end) : null;
+      String revision = fields.get(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
+      return start >= 0 && end >= start ? new ChunkSlice(parentDocId, start, end, revision) : null;
     } catch (NumberFormatException ignored) {
       return null;
     }
+  }
+
+  /** The revision identity of a parent document, read off the same stored-field map as its text. */
+  static ChunkReadRevisionGuard.ParentRevision parentRevisionFrom(Map<String, String> fields) {
+    if (fields == null) return null;
+    return new ChunkReadRevisionGuard.ParentRevision(
+        fields.get(SchemaFields.CONTENT), fields.get(SchemaFields.CONTENT_SHA256));
   }
 
   /** Resolves each distinct parent once, then applies all requested chunk slices. */
@@ -269,51 +289,62 @@ public final class DocumentFieldOps {
       org.apache.lucene.search.IndexSearcher searcher,
       String idField,
       Map<String, ChunkSlice> chunks,
-      Map<String, String> knownParentContent)
+      Map<String, ChunkReadRevisionGuard.ParentRevision> knownParents,
+      LuceneRuntimeTypes.TelemetryEvents telemetry)
       throws IOException {
     org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
-    Set<String> contentOnly = Set.of(SchemaFields.CONTENT);
+    Set<String> parentFields = Set.of(SchemaFields.CONTENT, SchemaFields.CONTENT_SHA256);
     return resolveChunkContents(
         chunks,
-        knownParentContent,
+        knownParents,
         parentId -> {
           var parentHits = searcher.search(new TermQuery(new Term(idField, parentId)), 1);
           if (parentHits.scoreDocs.length == 0) return null;
           Map<String, String> fields =
               SearchResultFormatter.extractFromStoredFields(
-                  storedFields, parentHits.scoreDocs[0].doc, true, contentOnly);
-          return fields.get(SchemaFields.CONTENT);
-        });
+                  storedFields, parentHits.scoreDocs[0].doc, true, parentFields);
+          return parentRevisionFrom(fields);
+        },
+        telemetry);
   }
 
-  /** Resolves slices through an injectable loader so parent de-duplication is directly testable. */
+  /**
+   * Resolves slices through an injectable loader so parent de-duplication is directly testable.
+   *
+   * <p>A chunk whose stored {@code chunk_parent_content_sha256} is not the revision the parent is
+   * at right now is OMITTED rather than sliced out of the newer text — see
+   * {@link ChunkReadRevisionGuard}. Every caller already handles a chunk missing from this map
+   * (that is what a deleted parent looks like), so "not yet consistent" travels as an absence.
+   */
   static Map<String, String> resolveChunkContents(
       Map<String, ChunkSlice> chunks,
-      Map<String, String> knownParentContent,
-      ParentContentLoader parentLoader)
+      Map<String, ChunkReadRevisionGuard.ParentRevision> knownParents,
+      ParentContentLoader parentLoader,
+      LuceneRuntimeTypes.TelemetryEvents telemetry)
       throws IOException {
     if (chunks == null || chunks.isEmpty()) return Map.of();
 
-    Map<String, String> parentContent = new HashMap<>();
-    if (knownParentContent != null) parentContent.putAll(knownParentContent);
-    Set<String> attemptedParents = new LinkedHashSet<>(parentContent.keySet());
+    Map<String, ChunkReadRevisionGuard.ParentRevision> parents = new HashMap<>();
+    if (knownParents != null) parents.putAll(knownParents);
+    Set<String> attemptedParents = new LinkedHashSet<>(parents.keySet());
 
     for (ChunkSlice slice : chunks.values()) {
       String parentId = slice.parentDocId();
       if (!attemptedParents.add(parentId)) continue;
-      String content = parentLoader.load(parentId);
-      if (content != null) parentContent.put(parentId, content);
+      ChunkReadRevisionGuard.ParentRevision parent = parentLoader.load(parentId);
+      if (parent != null) parents.put(parentId, parent);
     }
 
+    ChunkReadRevisionGuard guard = new ChunkReadRevisionGuard();
     Map<String, String> resolved = new LinkedHashMap<>();
     for (var entry : chunks.entrySet()) {
       ChunkSlice slice = entry.getValue();
-      String content = parentContent.get(slice.parentDocId());
-      if (content == null
-          || slice.startChar() < 0
-          || slice.endChar() < slice.startChar()
-          || slice.endChar() > content.length()) continue;
-      resolved.put(entry.getKey(), content.substring(slice.startChar(), slice.endChar()));
+      guard
+          .slice(entry.getKey(), slice, parents.get(slice.parentDocId()))
+          .ifPresent(text -> resolved.put(entry.getKey(), text));
+    }
+    if (telemetry != null && guard.mismatchCount() > 0) {
+      telemetry.onChunkRevisionMismatch(guard.mismatchCount());
     }
     return resolved;
   }

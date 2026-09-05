@@ -10,6 +10,7 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSor
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -46,6 +47,8 @@ class ChunkSearchIntegrationTest {
   private Path tempDir;
   private String prevConfig;
   private final Map<String, Map<String, Object>> parentDocuments = new HashMap<>();
+  /** Chunk fixtures per parent, re-cut whenever that parent's content grows. */
+  private final Map<String, List<Map<String, Object>>> chunkDocuments = new HashMap<>();
 
   @BeforeEach
   void setup() throws Exception {
@@ -484,7 +487,7 @@ class ChunkSearchIntegrationTest {
     assertEquals(7, countAllDocs(), "Should have 2 parents + 5 chunks");
 
     // Delete chunks for parent-a only
-    runtime.indexingCoordinator().deleteChunksForParentDocId("parent-a");
+    deleteChunksForParent("parent-a");
     commitAndRefresh();
 
     // Parent-a should still exist
@@ -516,7 +519,7 @@ class ChunkSearchIntegrationTest {
     assertEquals(4, countAllDocs(), "Should have 1 parent + 3 opaque chunks");
 
     // Delete chunks using field-based method (should work regardless of doc_id format)
-    runtime.indexingCoordinator().deleteChunksForParentDocId("parent-opaque");
+    deleteChunksForParent("parent-opaque");
     commitAndRefresh();
 
     // Parent should remain
@@ -539,7 +542,7 @@ class ChunkSearchIntegrationTest {
 
     // Simulate reindex with fewer chunks:
     // 1. Delete old chunks
-    runtime.indexingCoordinator().deleteChunksForParentDocId("doc-1");
+    deleteChunksForParent("doc-1");
     // 2. Index new chunks (only 2 this time)
     indexChunk("doc-1", 0, 2, "New chunk 0");
     indexChunk("doc-1", 1, 2, "New chunk 1");
@@ -933,7 +936,7 @@ class ChunkSearchIntegrationTest {
       String parentDocId, int index, int total, String content, String collection) {
     String chunkId = parentDocId + "#chunk_" + index;
     int[] offsets = appendChunkToParent(parentDocId, content);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.ofEntries(
+    indexChunkDoc(parentDocId, Map.ofEntries(
         Map.entry(SchemaFields.DOC_ID, chunkId),
         Map.entry(SchemaFields.DOC_UID, chunkId + "#0"),
         Map.entry(SchemaFields.IS_CHUNK, "true"),
@@ -945,7 +948,7 @@ class ChunkSearchIntegrationTest {
         Map.entry(SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1])),
         Map.entry(SchemaFields.PATH, parentDocId),
         Map.entry(SchemaFields.COLLECTION, collection)
-    )));
+    ));
   }
 
   /**
@@ -959,7 +962,7 @@ class ChunkSearchIntegrationTest {
     // Use legacy format for tests that verify specific chunk IDs
     String chunkId = parentDocId + "#chunk_" + index;
     int[] offsets = appendChunkToParent(parentDocId, content);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+    indexChunkDoc(parentDocId, Map.of(
         SchemaFields.DOC_ID, chunkId,
         SchemaFields.DOC_UID, chunkId + "#0",
         SchemaFields.IS_CHUNK, "true",
@@ -970,7 +973,7 @@ class ChunkSearchIntegrationTest {
         SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0]),
         SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1]),
         SchemaFields.PATH, parentDocId
-    )));
+    ));
     return chunkId;
   }
 
@@ -978,7 +981,7 @@ class ChunkSearchIntegrationTest {
       String parentDocId, int index, int total, String content, float[] vector) {
     String chunkId = parentDocId + "#chunk_" + index;
     int[] offsets = appendChunkToParent(parentDocId, content);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.ofEntries(
+    indexChunkDoc(parentDocId, Map.ofEntries(
         Map.entry(SchemaFields.DOC_ID, chunkId),
         Map.entry(SchemaFields.DOC_UID, chunkId + "#0"),
         Map.entry(SchemaFields.IS_CHUNK, "true"),
@@ -990,7 +993,7 @@ class ChunkSearchIntegrationTest {
         Map.entry(SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1])),
         Map.entry(SchemaFields.CHUNK_VECTOR, vector),
         Map.entry(SchemaFields.PATH, parentDocId)
-    )));
+    ));
     return chunkId;
   }
 
@@ -1003,7 +1006,7 @@ class ChunkSearchIntegrationTest {
   private void indexChunkOpaque(String parentDocId, int index, int total, String content) {
     String chunkId = "chunk:" + java.util.UUID.randomUUID().toString();
     int[] offsets = appendChunkToParent(parentDocId, content);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+    indexChunkDoc(parentDocId, Map.of(
         SchemaFields.DOC_ID, chunkId,
         SchemaFields.DOC_UID, chunkId + "#0",
         SchemaFields.IS_CHUNK, "true",
@@ -1014,14 +1017,14 @@ class ChunkSearchIntegrationTest {
         SchemaFields.CHUNK_START_CHAR, String.valueOf(offsets[0]),
         SchemaFields.CHUNK_END_CHAR, String.valueOf(offsets[1]),
         SchemaFields.PATH, parentDocId
-    )));
+    ));
   }
 
   private void indexParent(Map<String, Object> fields) {
     String docId = fields.get(SchemaFields.DOC_ID).toString();
     Map<String, Object> copy = new LinkedHashMap<>(fields);
     parentDocuments.put(docId, copy);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(new LinkedHashMap<>(copy)));
+    writeParent(copy);
   }
 
   /** Appends without changing earlier offsets, then rewrites the parent with its full content. */
@@ -1036,8 +1039,49 @@ class ChunkSearchIntegrationTest {
     String newContent = oldContent + separator + chunkContent;
     int end = newContent.length();
     parent.put(SchemaFields.CONTENT, newContent);
-    runtime.indexingCoordinator().indexSingle(new IndexDocument(new LinkedHashMap<>(parent)));
+    writeParent(parent);
+    // The parent moved to a new revision, so the chunks already cut from it are stale — exactly the
+    // state the read-path guard (tempdoc 931 §E item 5) refuses to reconstruct from. Production
+    // regenerates them after a parent rewrite; this fixture re-cuts them the same way, so the
+    // sibling chunks stay readable while a genuinely stale chunk still fails closed.
+    for (Map<String, Object> chunk : chunkDocuments.getOrDefault(parentDocId, List.of())) {
+      writeChunk(parentDocId, chunk);
+    }
     return new int[] {start, end};
+  }
+
+  private void writeParent(Map<String, Object> parent) {
+    Map<String, Object> copy = new LinkedHashMap<>(parent);
+    copy.put(
+        SchemaFields.CONTENT_SHA256,
+        ChunkParentRevision.sha256Hex(copy.getOrDefault(SchemaFields.CONTENT, "").toString()));
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(copy));
+  }
+
+  /**
+   * Indexes a chunk stamped with the revision of the parent content it was cut from — what
+   * {@code ChunkDocumentWriter} writes since tempdoc 931 §C.1, and what the read path checks before
+   * re-slicing the text out of the parent.
+   */
+  private void indexChunkDoc(String parentDocId, Map<String, Object> fields) {
+    Map<String, Object> copy = new LinkedHashMap<>(fields);
+    chunkDocuments.computeIfAbsent(parentDocId, k -> new java.util.ArrayList<>()).add(copy);
+    writeChunk(parentDocId, copy);
+  }
+
+  /** Deletes a parent's chunk docs and forgets the fixtures, so nothing re-cuts a deleted chunk. */
+  private void deleteChunksForParent(String parentDocId) {
+    chunkDocuments.remove(parentDocId);
+    runtime.indexingCoordinator().deleteChunksForParentDocId(parentDocId);
+  }
+
+  private void writeChunk(String parentDocId, Map<String, Object> chunk) {
+    Map<String, Object> parent = parentDocuments.get(parentDocId);
+    String parentContent =
+        parent == null ? "" : parent.getOrDefault(SchemaFields.CONTENT, "").toString();
+    chunk.put(
+        SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(parentContent));
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(new LinkedHashMap<>(chunk)));
   }
 
   private boolean docExists(String docId) {
