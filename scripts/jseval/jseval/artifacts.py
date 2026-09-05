@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import ce_coverage, provenance
 from .retriever import resolve_doc_id
+from .trec import format_trec_line
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +267,11 @@ def _build_per_query_entries(
 
 
 def _write_trec_run(path: Path, scored_docs: list, run_name: str) -> None:
-    """Write a TREC-format run file: qid Q0 docid rank score run_name."""
+    """Write a TREC-format run file: qid Q0 docid rank score run_name.
+
+    Tab-delimited (:data:`jseval.trec.DELIMITER`) so a doc id containing spaces
+    stays one unambiguous field on the wire.
+    """
     # Group by qid and assign ranks
     by_qid: dict[str, list] = {}
     for sd in scored_docs:
@@ -276,7 +281,7 @@ def _write_trec_run(path: Path, scored_docs: list, run_name: str) -> None:
     for qid in sorted(by_qid.keys()):
         docs = sorted(by_qid[qid], key=lambda d: d.score, reverse=True)
         for rank, sd in enumerate(docs, 1):
-            lines.append(f"{qid} Q0 {sd.doc_id} {rank} {sd.score:.6f} {run_name}")
+            lines.append(format_trec_line(qid, sd.doc_id, rank, sd.score, run_name))
 
     path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 

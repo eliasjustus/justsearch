@@ -41,10 +41,15 @@ function ndcgAt(order, rel, k) {
 function readTrec(path) {
   const byQ = new Map();
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    // Right-anchored: `qid Q0 <doc id> rank score tag`, and a doc id may contain
+    // spaces (OHR-bench), so the id is everything between the fixed head and tail.
+    // Mirrors jseval/trec.py parse_trec_line.
     const p = line.trim().split(/\s+/);
-    if (p.length < 5) continue;
+    if (p.length < 6) continue;
+    const doc = p.slice(2, -3).join(' ');
+    if (!doc) continue;
     if (!byQ.has(p[0])) byQ.set(p[0], []);
-    byQ.get(p[0]).push({ doc: String(p[2]), score: Number(p[4]) });
+    byQ.get(p[0]).push({ doc, score: Number(p[p.length - 2]) });
   }
   for (const arr of byQ.values()) arr.sort((a, b) => b.score - a.score); // what ir_measures does
   return byQ;

@@ -2245,6 +2245,55 @@ growth are removed in the closeout. Lane D already fingerprints the four static 
 `ALGORITHM_VERSION` correctly remains **`"v1"`**. A version bump would cause an unnecessary reindex
 for byte-identical chunking.
 
+### L.8 OHR reconciliation mismatches — a TREC parser defect, not a measurement (2026-09-05)
+
+The 105/962 reconciliation mismatches recorded on `mixed/ohr-bench-clean` were an **instrument
+defect in the projection's TREC reader**, not a property of the run. All 105 were the same shape
+("projection says the gold is absent, harness says present"), which is the signature of a parse
+failure rather than a retrieval disagreement.
+
+**Mechanism.** `staged_recall_accounting._load_trec` split each run line on whitespace and took
+`parts[2]` as the doc id, while `artifacts._write_trec_run` wrote `qid Q0 <docid> rank score tag`
+space-delimited and unquoted. 109 of the 962 OHR golds contain a space
+(`law/airtechinternationalgroupinc_05_08_2000-ex-10.4-franchise agreement_p8`), so every one of
+them was truncated at its first space at parse time and then failed every set-membership check
+against qrels — in the leg union and in the final list alike. Fixed in
+`scripts/jseval/jseval/trec.py` (new shared module): the reader is now **right-anchored**
+(`qid`/`Q0` lead, `rank`/`score`/`run_tag` trail, everything between is the id) and the writer
+tab-delimits. Both other in-repo readers (`experiments/fusion_attribution_784.py`,
+`metric_order_ab.mjs`) carried the identical `parts[2]` assumption and were fixed the same way.
+
+**Corrected numbers** — incumbent arm `t500-o50-r0`, run
+`20260903T125636_mixed_ohr-bench-clean`, re-derived with the fixed code against a copy of the run
+dir (the archived artifacts were not rewritten):
+
+| quantity | as-recorded | corrected |
+|---|---|---|
+| `final_recall` | 0.8783783783783784 | **0.9875259875259875** |
+| `leg_union_recall` | 0.8794178794178794 | **0.9885654885654885** |
+| `LEG_MISS` | 115 | **10** |
+| `reconciliation.mismatches` | 105 | **0** (checked 962) |
+
+Independent corroboration that the corrected values are right, not merely different: the fixed
+projection's per-leg recalls now equal the harness's `ir_measures` `R@10` **exactly** for all four
+modes — hybrid 0.9875259875259875, lexical 0.9864864864864865, vector 0.920997920997921, splade
+0.4553014553014553 (`summary.json` `per_mode/*/aggregate_metrics/R@10`). Two independent code
+paths now agree to the last digit.
+
+**Comparability.** The bias is a constant −0.1091 on `leg_union_recall` (and −0.1091 on
+`final_recall`) applied identically to all 12 OHR arms, because every arm shares the same qrels and
+the same 109 space-bearing golds. **Deltas between OHR arms therefore hold unchanged**; only the
+OHR *absolutes* were under-reported. `mixed/legal-clerc-200` and `mixed/enron-qa` had 0 mismatches
+and are unaffected — their doc ids contain no whitespace.
+
+**The Part 1 verdict is unchanged.** The pre-registered decision metrics (`nDCG@10`, `R@10`) are
+computed by `ir_measures` over in-memory `ScoredDoc`s (`scoring.py:44`, `artifacts.py:233-236`) and
+never read the TREC file, so clauses 1, 3, 4, 5 and 6 of §K.6's adoption rule are untouched.
+`leg_union_recall` appears only in clause 2, and only *comparatively* ("does not fall" versus the
+incumbent) — never as an absolute threshold. A constant per-corpus offset cancels in that
+comparison, so clause 2's verdict on every OHR arm is also unchanged. 500/50/100 is retained on
+the same evidence.
+
 ---
 
 ## §H Register updates made
@@ -2442,6 +2491,17 @@ pool/limit and clean reranker-window work; Part 4 will not duplicate it.
     Worker models safely on a 12 GB GPU, but its pre-measurement enrichment must also be identical.
     The hour-scale completion of 4,122 pending chunk embeddings was deliberately not run in this
     bounded window.
+
+15. **CLOSED by §L.8 — the OHR reconciliation mismatches were an instrument defect, and the fix is
+    in.** The 105/962 mismatches came from a left-anchored `parts[2]` TREC read truncating the 109
+    OHR doc ids that contain a space, not from anything the run did. `scripts/jseval/jseval/trec.py`
+    now owns one right-anchored parser and one tab-delimiting writer; all three in-repo readers use
+    it. Corrected: `final_recall` 0.8784 → 0.9875, `leg_union_recall` 0.8794 → 0.9886, `LEG_MISS`
+    115 → 10, mismatches 105 → 0 — and all four per-leg recalls now equal the harness's
+    `ir_measures` `R@10` exactly. **The Part 1 verdict is unchanged** (the rule's metrics never read
+    the TREC file; the offset is constant across all 12 OHR arms, so every delta holds). Remaining
+    non-item: the 12 OHR arms' *archived* `staged_recall_accounting.json` files still carry the
+    biased absolutes; they were deliberately not rewritten, and §L.8 is the correction of record.
 
 ## Report-back
 

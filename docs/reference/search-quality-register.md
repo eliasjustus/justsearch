@@ -746,6 +746,15 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   mismatched completion; `tests/test_916_chunk_sweep.py` pins failure and stale-resume shapes plus
   chain exit propagation. Selection was recomputed from each arm's own metrics and completion
   evidence, never from the defective outer marker.
+- **Rider (2026-09-05) — OHR `leg_union_recall`/`final_recall` above are biased LOW by 0.1091; the
+  verdict is unchanged.** The staged-recall projection's TREC reader was left-anchored
+  (`parts[2]`), so the 109 `mixed/ohr-bench-clean` golds whose doc ids contain a space were
+  truncated at parse time — the sole cause of the campaign's 105/962 OHR reconciliation mismatches.
+  Corrected for the incumbent arm: `leg_union_recall` 0.8794 → **0.9886**, `final_recall` 0.8784 →
+  **0.9875**, `LEG_MISS` 115 → 10, mismatches → **0** (fix: `scripts/jseval/jseval/trec.py`). The
+  offset is identical on all 12 OHR arms, so every OHR delta and the adoption rule's clause-2
+  comparison hold; `nDCG@10`/`R@10` never read the TREC file, and the legal figures quoted above
+  are unaffected (0 mismatches — CLERC ids contain no whitespace). Detail: tempdoc 916 §L.8.
 
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
@@ -1184,6 +1193,19 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+- **Instrument rider (2026-09-05) — the projection under-reported `leg_union_recall` (and
+  `final_recall`) on any corpus whose doc ids contain whitespace, until fixed.** `_load_trec` read
+  the doc id left-anchored as `parts[2]` of a whitespace-split line, while the writer emitted
+  `qid Q0 <docid> rank score tag` space-delimited, so a doc id containing a space was truncated and
+  then missed every membership check — inflating `LEG_MISS`, deflating `leg_union_recall` and
+  `final_recall`, and showing up as "projection says absent, harness says present" reconciliation
+  mismatches. **Observed on `mixed/ohr-bench-clean` only** (109/962 golds affected; bias −0.1091;
+  105 mismatches). The four corpora profiled above, plus `mixed/legal-clerc-200` and
+  `mixed/enron-qa`, have whitespace-free ids and reported 0 mismatches — their numbers stand. Fixed
+  2026-09-05: `scripts/jseval/jseval/trec.py` is now the single right-anchored reader + tab-delimiting
+  writer used by all three in-repo TREC readers. **A non-zero mismatch count that is entirely
+  "absent/present"-shaped is a parser symptom first, a retrieval finding second.** Detail: tempdoc
+  916 §L.8.
 
 ### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
 
@@ -2457,6 +2479,15 @@ above)*
   `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
   release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
   parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+- **Instrument rider (2026-09-05) — the gated quantity itself was under-reported on
+  whitespace-bearing doc ids until fixed.** `leg_union_recall` comes from
+  `staged_recall_accounting`, whose TREC reader truncated any doc id containing a space (see the
+  F-025 rider), so the floor was measured too low on such corpora. **Observed on
+  `mixed/ohr-bench-clean`** (bias −0.1091). The three pinned floor corpora
+  (`mixed/legal-clerc-200`, `beir/scifact`, `golden/needle-burial-v1`) all have whitespace-free doc
+  ids and are **unaffected — the pins stand and were not re-derived**. Fixed in
+  `scripts/jseval/jseval/trec.py`; a future `union-recall-gate-derive` that adds a corpus with
+  spaces in its ids would previously have pinned a floor ~0.11 too low.
 
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
