@@ -169,13 +169,10 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | indexing-job lifecycle surfaces | `--gate operation-surface` |
 | `CoreSurfaceCatalog.java` / surface `altitude` | `--gate surface-altitude` |
 | `governance/logic-seams.v1.json` or a registered seam | `check-logic-seams --mode gate` |
-| `RegistrySnapshotExporter` / `LiveWitness` | `check-live-witness` |
 | guard-string register (`execution-surfaces`/`operation-surfaces`) | `--gate register-guard-resolution` |
 | `LifecycleReasonCode.java` / `readinessNotice.ts` | `check-readiness-reason-codes` |
-| search-degradation reason-code vocabularies | `check-search-degradation-reason-codes` |
 | `justsearch-dev-mcp/**` | `check-dev-mcp-doc-sync` |
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
-| `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
 | **`modules/ui-web/src/**`** (ui-web gate set) | `node scripts/ci/run-ui-web-gates.mjs` — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
 | `scripts/agent-analytics/**` | `node scripts/agent-analytics/run-all-tests.mjs` |
