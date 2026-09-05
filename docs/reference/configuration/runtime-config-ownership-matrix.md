@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-09-03.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-09-05.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -71,6 +71,7 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | EnvRegistry.HYBRID_VECTOR_RRF_WEIGHT | permanent | index.hybrid.vector_rrf_weight | JUSTSEARCH_INDEX_VECTOR_RRF_WEIGHT | index.hybrid.vector_rrf_weight | HYBRID_VECTOR_RRF_WEIGHT | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | EnvRegistry.HYBRID_VECTOR_RRF_WEIGHT_LOW_SIGNAL | permanent | index.hybrid.vector_rrf_weight_low_signal | JUSTSEARCH_INDEX_VECTOR_RRF_WEIGHT_LOW_SIGNAL | index.hybrid.vector_rrf_weight_low_signal | HYBRID_VECTOR_RRF_WEIGHT_LOW_SIGNAL | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | EnvRegistry.HYBRID_VECTOR_SKIP_MIN_CHARS | permanent | index.hybrid.vector_skip_min_chars | JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_CHARS | index.hybrid.vector_skip_min_chars | HYBRID_VECTOR_SKIP_MIN_CHARS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| EnvRegistry.HYBRID_VECTOR_SKIP_MIN_DF_FRACTION | permanent | - | JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_DF_FRACTION | index.hybrid.vector_skip_min_df_fraction | HYBRID_VECTOR_SKIP_MIN_DF_FRACTION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | ConfigKey.INDEX_INTEGRITY_CHECK | permanent | index.integrity_check | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | ConfigKey.INDEX_MERGE_MAX_MERGED_SEGMENT_MB | permanent | index.merge.tiered.max_merged_segment_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | ConfigKey.INDEX_MERGE_SEGS_PER_TIER | permanent | index.merge.tiered.segs_per_tier | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
@@ -252,7 +253,6 @@ Tempdoc 883 decision 4 deleted the settings-to-sysprop promotions for `justsearc
 | EnvRegistry.RERANK_MODEL_PATH | permanent | - | JUSTSEARCH_RERANK_MODEL_PATH | justsearch.rerank.model_path | RERANK_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | EnvRegistry.RERANK_TOP_K | permanent | - | JUSTSEARCH_RERANK_TOP_K | justsearch.rerank.top_k | RERANK_TOP_K | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | EnvRegistry.RULE_TICK_MS | permanent | - | JUSTSEARCH_RULE_TICK_MS | justsearch.rule.tick.ms | RULE_TICK_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| EnvRegistry.SEARCH_ENTITY_BOOST | permanent | - | JUSTSEARCH_SEARCH_ENTITY_BOOST | justsearch.search.entity_boost | SEARCH_ENTITY_BOOST | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | EnvRegistry.SEARCH_PIPELINE | permanent | - | JUSTSEARCH_SEARCH_PIPELINE | justsearch.search.pipeline | SEARCH_PIPELINE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | EnvRegistry.SEARCH_PROFILE | permanent | justsearch.search.pipeline.profile | JUSTSEARCH_SEARCH_PROFILE | justsearch.search.pipeline.profile | SEARCH_PROFILE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | EnvRegistry.SEARCH_QUERY_CLASSIFICATION_ENABLED | permanent | - | JUSTSEARCH_SEARCH_QUERY_CLASSIFICATION_ENABLED | justsearch.search.query_classification.enabled | SEARCH_QUERY_CLASSIFICATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
