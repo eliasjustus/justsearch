@@ -4,7 +4,7 @@
   "vocabularies": [
     {
       "id": "query-degradation",
-      "why": "The worker `SearchReasonCode` enum's `.name()` wire strings populate the three user-tier degradation fields (vectorBlockedReason / hybridFallbackReason / spladeSkipReason, all carried by VectorEncoding.Failed / SpladeEncoding.Failed). The FE `DEGRADATION_REASON_WORDING` map words them.",
+      "why": "The worker `SearchReasonCode` enum's `.name()` wire strings populate the three user-tier degradation fields (vectorBlockedReason / hybridFallbackReason / spladeSkipReason). Encoding failures carry the failure reasons; deliberate planner-owned dense skips carry a separate typed denseSkipReason and project through vectorBlockedReason without masquerading as an encoding failure. The FE `DEGRADATION_REASON_WORDING` map words them.",
       "producer": {
         "file": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/SearchReasonCode.java",
         "symbol": "SearchReasonCode",

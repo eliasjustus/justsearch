@@ -79,7 +79,8 @@ Minimal example (schema v1):
 
 **Search config (post tempdoc 343):** `StatusResponse` includes `SearchConfig` (field 11) with
 the active search pipeline configuration: `chunk_aware_enabled`, CC weights (sparse/dense/splade),
-branch weights (whole/chunk), `branch_chunk_min_weight_multiplier`, `title_boost`, `entity_boost`,
+branch weights (whole/chunk), `branch_chunk_min_weight_multiplier`, `title_boost`, and the retired
+always-zero `entity_boost` compatibility tombstone,
 and `query_classification_enabled`. jseval snapshots this at run start for eval provenance.
 
 **Encoder profiling (post tempdoc 357):** `EnrichmentCoverage` includes `EncoderProfile` sub-messages

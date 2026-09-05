@@ -354,6 +354,25 @@ class ChunkSearchIntegrationTest {
   }
 
   @Test
+  @DisplayName("direct RAG chunk retrieval remains recall-first for short/common queries")
+  void searchChunksHybridDirectRagDoesNotApplyPlannerSkip() throws Exception {
+    indexDoc("doc-1", "Parent content");
+
+    float[] vector = new float[] {1f, 0f, 0f, 0f};
+    String chunkId =
+        indexChunkWithVector("doc-1", 0, 1, "lexically unrelated material", vector);
+    commitAndRefresh();
+
+    var result =
+        runtime
+            .chunkSearchOps()
+            .searchChunksHybrid("the", vector, Set.of("doc-1"), 1, true, null);
+
+    assertEquals(1, result.hits().size(), "the direct RAG path must still execute chunk KNN");
+    assertEquals(chunkId, result.hits().get(0).docId());
+  }
+
+  @Test
   @DisplayName("searchChunksHybrid (Phase 6) caps vector-only chunks on low-signal queries")
   void searchChunksHybridPhase6CapsVectorOnlyOnLowSignal() throws Exception {
     indexDoc("doc-1", "Parent content");

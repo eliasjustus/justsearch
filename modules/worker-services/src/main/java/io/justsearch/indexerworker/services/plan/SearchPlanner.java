@@ -35,6 +35,9 @@ public final class SearchPlanner {
   private static final Logger log = LoggerFactory.getLogger(SearchPlanner.class);
   static final int DEFAULT_LIMIT = 10;
   static final int MAX_LIMIT = 100;
+  static final int MIN_DF_SKIP_FIELD_DOCS = 100;
+  static final int DEFAULT_VECTOR_SKIP_MIN_CHARS = 4;
+  static final double DEFAULT_VECTOR_SKIP_MIN_DF_FRACTION = 0.25;
 
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
 
@@ -137,13 +140,16 @@ public final class SearchPlanner {
         }
       }
       ChunkMergeDirective chunkMerge =
-          planChunkMerge(inputs, limit, queryString);
+          planChunkMerge(inputs, limit, queryString, false);
       return new SearchDecision.SparseShortcut(
           runtimeSyntax, retrievalLimit, correctionRetryEnabled, facets, chunkMerge);
     }
 
     // MultiLegDecision path.
-    LegSet legs = selectLegSet(inputs, canSparse, canDense, canSplade, retrievalLimit);
+    Optional<SearchReasonCode> denseSkipReason =
+        planDenseSkip(inputs, queryString, canSparse, canDense, canSplade);
+    boolean runDense = canDense && denseSkipReason.isEmpty();
+    LegSet legs = selectLegSet(inputs, canSparse, runDense, canSplade, retrievalLimit);
     if (legs == null) {
       // No legs runnable → empty result (Bm25Only with empty query).
       return new SearchDecision.EmptyQueryDecision(
@@ -182,10 +188,47 @@ public final class SearchPlanner {
     }
 
     ChunkMergeDirective chunkMerge =
-        planChunkMerge(inputs, limit, queryString);
+        planChunkMerge(inputs, limit, queryString, runDense);
 
     return new SearchDecision.MultiLegDecision(
-        inputs.runtimeSyntax(), legs, hybridFallback, spladeSkip, facets, chunkMerge);
+        inputs.runtimeSyntax(),
+        legs,
+        hybridFallback,
+        denseSkipReason,
+        spladeSkip,
+        facets,
+        chunkMerge);
+  }
+
+  private Optional<SearchReasonCode> planDenseSkip(
+      SearchInputs inputs,
+      String queryString,
+      boolean canSparse,
+      boolean canDense,
+      boolean canSplade) {
+    // Dense-only is recall-first: planner shortcuts are legal only when another leg can answer.
+    if (!canDense || (!canSparse && !canSplade)) {
+      return Optional.empty();
+    }
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    ResolvedConfig.HybridSearch hybrid = config != null ? config.hybridSearch() : null;
+    int minChars =
+        hybrid != null ? hybrid.vectorSkipMinChars() : DEFAULT_VECTOR_SKIP_MIN_CHARS;
+    if (queryString.length() < minChars) {
+      return Optional.of(SearchReasonCode.SKIPPED_SHORT_QUERY);
+    }
+    long fieldDocCount = inputs.qpp().fieldDocCount();
+    if (fieldDocCount < MIN_DF_SKIP_FIELD_DOCS) {
+      return Optional.empty();
+    }
+    double minDfFraction =
+        hybrid != null
+            ? hybrid.vectorSkipMinDfFraction()
+            : DEFAULT_VECTOR_SKIP_MIN_DF_FRACTION;
+    if (inputs.qpp().minTermDocFreqFraction() >= minDfFraction) {
+      return Optional.of(SearchReasonCode.SKIPPED_NO_DISCRIMINATIVE_TERM);
+    }
+    return Optional.empty();
   }
 
   private static int clampLimit(int requested) {
@@ -237,7 +280,8 @@ public final class SearchPlanner {
   private ChunkMergeDirective planChunkMerge(
       SearchInputs inputs,
       int limit,
-      String queryString) {
+      String queryString,
+      boolean allowDenseVector) {
     SearchRequest request = inputs.request();
     boolean chunkAwareEnabled = resolvedConfigSupplier.get().search().chunkAwareEnabled();
     if (!chunkAwareEnabled) {
@@ -269,7 +313,7 @@ public final class SearchPlanner {
     }
     // EligibleApply — the executor checks hasBaseResults at runtime.
     java.util.List<Float> vecList = null;
-    if (inputs.encoding().vector() instanceof VectorEncoding.Success vs) {
+    if (allowDenseVector && inputs.encoding().vector() instanceof VectorEncoding.Success vs) {
       vecList = vs.vector();
     }
     Map<String, Float> spladeWeights = null;

@@ -10,12 +10,8 @@ import io.justsearch.configuration.resolved.ResolvedConfigBuilder;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class HybridSearchOpsTest {
-
-  // ---- shouldSkipVectorSearch ----
 
   private static ResolvedConfig resolveForTest(String yaml) {
     ResolvedConfigBuilder builder = ResolvedConfig.builder();
@@ -38,53 +34,9 @@ class HybridSearchOpsTest {
     IndexSchema schema = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768));
     RuntimeSession session = new RuntimeSession(schema);
     session.resolvedConfig = rc;
-    // TextQueryOps and ReadPathOps need a bridge/searcher. For unit tests that only
-    // exercise shouldSkipVectorSearch and computeLowSignalGating, null ops are acceptable since
-    // those methods don't delegate to the search legs.
+    // TextQueryOps and ReadPathOps need a bridge/searcher. For unit tests that only exercise
+    // computeLowSignalGating, null ops are acceptable since it doesn't delegate to search legs.
     return new HybridSearchOps(session, null, null);
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"a", "ab", "abc"})
-  void shouldSkipVectorSearchForShortQueries(String query) {
-    // Default min chars is 4
-    HybridSearchOps ops = opsWithConfig(null);
-    assertTrue(ops.shouldSkipVectorSearch(query));
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"the", "The", "THE", "is", "a", "an"})
-  void shouldSkipVectorSearchForStopWords(String query) {
-    HybridSearchOps ops = opsWithConfig("index:\n  hybrid:\n    vector_skip_min_chars: 1\n");
-    assertTrue(ops.shouldSkipVectorSearch(query));
-  }
-
-  @Test
-  void shouldNotSkipVectorSearchForNonStopSingleWord() {
-    HybridSearchOps ops = opsWithConfig(null);
-    assertFalse(ops.shouldSkipVectorSearch("thesis"));
-  }
-
-  @Test
-  void shouldNotSkipVectorSearchForMultiWordWithStopWords() {
-    HybridSearchOps ops = opsWithConfig(null);
-    assertFalse(ops.shouldSkipVectorSearch("the cat sat"));
-  }
-
-  @Test
-  void shouldSkipVectorSearchUsesDefaultsWhenConfigNull() {
-    HybridSearchOps ops = opsWithConfig(null);
-    // "test" is 4 chars (= default min chars), not a stop word → don't skip
-    assertFalse(ops.shouldSkipVectorSearch("test"));
-    // "abc" is 3 chars (< default 4) → skip
-    assertTrue(ops.shouldSkipVectorSearch("abc"));
-  }
-
-  @Test
-  void shouldSkipVectorSearchRespectsCustomMinChars() {
-    HybridSearchOps ops = opsWithConfig("index:\n  hybrid:\n    vector_skip_min_chars: 6\n");
-    assertTrue(ops.shouldSkipVectorSearch("hello")); // 5 < 6
-    assertFalse(ops.shouldSkipVectorSearch("hellos")); // 6 >= 6
   }
 
   // ---- computeLowSignalGating ----
@@ -218,55 +170,6 @@ class HybridSearchOpsTest {
         ops.computeLowSignalGating(bm25, vector, "test", "test");
     assertEquals(Integer.MAX_VALUE, gating.vectorOnlyCap());
     assertEquals(0.75, gating.vectorWeight(), 0.001);
-  }
-
-  // ---- E2E-8: vector-skip debug scores ----
-
-  @Test
-  void vectorSkipPopulatesSparseAndVectorDebugScores() {
-    HybridSearchOps ops = opsWithConfig(null);
-    // "ab" is 2 chars (< default 4) → triggers vector skip
-    HybridSearchOps.TextSearchLeg textLeg =
-        (q, l) ->
-            new SearchResult(
-                List.of(new SearchHit("doc-1", 5.5f, Map.of("title", "Test"))), 1, 0);
-    HybridSearchOps.VectorSearchLeg vectorLeg = (v, l) -> new SearchResult(List.of(), 0, 0);
-
-    SearchResult result =
-        ops.executeHybrid(textLeg, vectorLeg, "ab", new float[] {0.1f}, 10, false, "test");
-    assertEquals(1, result.hits().size());
-    SearchHit hit = result.hits().getFirst();
-    // Non-debug mode: "sparse", "vector" + rank keys (matching fuseWithRRF key names)
-    assertEquals(5.5f, hit.debugScores().get("sparse"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("vector"), 0.001f);
-    assertEquals(1.0f, hit.debugScores().get("sparse_rank"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("vector_rank"), 0.001f);
-    assertEquals(4, hit.debugScores().size());
-  }
-
-  @Test
-  void vectorSkipDebugModeIncludesRrfKeys() {
-    HybridSearchOps ops = opsWithConfig(null);
-    HybridSearchOps.TextSearchLeg textLeg =
-        (q, l) -> new SearchResult(List.of(new SearchHit("doc-1", 3.0f, Map.of())), 1, 0);
-    HybridSearchOps.VectorSearchLeg vectorLeg = (v, l) -> new SearchResult(List.of(), 0, 0);
-
-    SearchResult result =
-        ops.executeHybrid(textLeg, vectorLeg, "ab", new float[] {0.1f}, 10, true, "test");
-    assertEquals(1, result.hits().size());
-    SearchHit hit = result.hits().getFirst();
-    // Debug mode: "sparse", "vector" + RRF debug keys.
-    // Vector leg was skipped, so RRF contributions are 0; only "rrf" carries the raw BM25 score.
-    assertEquals(3.0f, hit.debugScores().get("sparse"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("vector"), 0.001f);
-    assertEquals(3.0f, hit.debugScores().get("rrf"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("sparse_rrf"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("vector_rrf"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("sparse_boost"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("rrf_base"), 0.001f);
-    assertEquals(1.0f, hit.debugScores().get("sparse_rank"), 0.001f);
-    assertEquals(0.0f, hit.debugScores().get("vector_rank"), 0.001f);
-    assertEquals(9, hit.debugScores().size());
   }
 
   // ---- helpers ----

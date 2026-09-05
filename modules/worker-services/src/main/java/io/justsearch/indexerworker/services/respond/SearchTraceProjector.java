@@ -157,18 +157,20 @@ final class SearchTraceProjector {
   private static LegExec legsOfMultiLeg(SearchDecision.MultiLegDecision multi) {
     String hybridFallback =
         multi.hybridFallback().map(f -> f.reason().name()).orElse("not-selected");
+    String denseUnavailable =
+        multi.denseSkipReason().map(SearchReasonCode::name).orElse(hybridFallback);
     String spladeSkip = multi.spladeSkip().map(f -> f.reason().name()).orElse("not-selected");
     return switch (multi.legs()) {
       case LegSet.Bm25Only b ->
-          new LegExec(EXECUTED, null, SKIPPED, hybridFallback, SKIPPED, spladeSkip, false, null);
+          new LegExec(EXECUTED, null, SKIPPED, denseUnavailable, SKIPPED, spladeSkip, false, null);
       case LegSet.DenseOnly d ->
           new LegExec(SKIPPED, "dense-only", EXECUTED, null, SKIPPED, spladeSkip, false, null);
       case LegSet.SpladeOnly p ->
-          new LegExec(SKIPPED, "splade-only", SKIPPED, hybridFallback, EXECUTED, null, false, null);
+          new LegExec(SKIPPED, "splade-only", SKIPPED, denseUnavailable, EXECUTED, null, false, null);
       case LegSet.Bm25Dense bd ->
           new LegExec(EXECUTED, null, EXECUTED, null, SKIPPED, spladeSkip, true, "hybrid");
       case LegSet.Bm25Splade bs ->
-          new LegExec(EXECUTED, null, SKIPPED, hybridFallback, EXECUTED, null, true, "rrf");
+          new LegExec(EXECUTED, null, SKIPPED, denseUnavailable, EXECUTED, null, true, "rrf");
       case LegSet.DenseSplade ds ->
           new LegExec(SKIPPED, "dense-splade", EXECUTED, null, EXECUTED, null, true, "rrf");
       case LegSet.ThreeWay tw ->
@@ -260,6 +262,12 @@ final class SearchTraceProjector {
         b.setVectorBlockedReason(blocked.encodingFailure().reason().name());
       }
       case SearchDecision.MultiLegDecision multi -> {
+        multi.denseSkipReason()
+            .ifPresent(
+                reason -> {
+                  b.setVectorBlocked(true);
+                  b.setVectorBlockedReason(reason.name());
+                });
         multi.hybridFallback()
             .ifPresent(
                 f -> {

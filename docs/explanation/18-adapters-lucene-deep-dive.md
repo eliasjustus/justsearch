@@ -314,9 +314,12 @@ Detects weak signal from either ranking and adjusts fusion. When low signal is d
 
 For current low-signal detection thresholds and cap values, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 10](23-search-pipeline-overview.md).
 
-### 4.5 Stop-Word Short-Circuit
+### 4.5 Planner-Owned Dense Skip
 
-Skips expensive vector search for trivial queries (very short queries or single-word common stop words). For current thresholds, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
+When another retrieval leg can run, the planner skips vector search for queries shorter than four
+characters or queries whose analyzed terms are all common in the indexed `content` corpus. It never
+applies this optimization to dense-only search or direct RAG. For current thresholds, see
+[`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
 
 ## 4B. SPLADE (Learned Sparse Retrieval)
 

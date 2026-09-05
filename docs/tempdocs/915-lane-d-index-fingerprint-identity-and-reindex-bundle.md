@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PENDING (2026-09-03). Phase 2 adds durable path-free document identity in jobs.db without backfilling legacy Head feedback/GPL rows."
+status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2/PR-C1 PENDING (2026-09-03). The required six-corpus PR-C0 evaluation and PR-C1's overnight evidence campaign remain deferred and block their respective merges."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -22,7 +22,8 @@ related:
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
 records what re-verification found. Phase 1 is merged. Phase 2 is split between the implemented
-Worker-side PR-A and the pending Head-side PR-B; Phase 3 remains pending.
+Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0 is implemented and short-checked;
+PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block merge.
 
 ---
 
@@ -89,7 +90,7 @@ Worker-side PR-A and the pending Head-side PR-B; Phase 3 remains pending.
       Execution evidence is recorded separately from this implementation checklist.
 - [ ] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
-### Phase 3 — the reindex bundle, one migration for users (PENDING)
+### Phase 3 — the reindex bundle, one migration for users (PR-C0 IMPLEMENTED; PR-C2/PR-C1 PENDING)
 
 - [ ] C1. Quantized vectors by default, with jseval nDCG@10 / recall@50 evidence (delta ≤ 1%
       absolute), index size and RSS before/after; binary-quantized HNSW on `chunk_vector` as a
@@ -100,9 +101,13 @@ Worker-side PR-A and the pending Head-side PR-B; Phase 3 remains pending.
 - [ ] C3. Stop storing `chunk_content` (`stored:false`, still indexed); slice the parent `content`
       by `chunk_start_char`/`chunk_end_char`; measure the per-hit stored-field cost.
 - [ ] C4. Delete the `entity_*_text` fields and the entity text-boost path; keep facets on
-      `entity_*_raw`; tell lane B for ADR-0007's amendment.
-- [ ] C5. Replace the English stop-word list with a document-frequency signal; verify comparable
-      per-language skip rates on the multilingual eval sets.
+      `entity_*_raw`; tell lane B for ADR-0007's amendment. PR-C0 has already retired the functional
+      `entity_boost` configuration/query path while preserving the public status field as a zeroed
+      compatibility tombstone; physical field deletion remains PR-C2.
+- [x] C5a. Replace the English stop-word list with a field-local document-frequency signal, move the
+      decision into `SearchPlanner`, and report deliberate dense skips truthfully with typed reasons.
+- [ ] C5b. Verify comparable per-language skip rates and no material quality loss on the six
+      pre-registered multilingual eval corpora. This remains required before PR-C0 may merge.
 - [ ] C6. Chunk size: take lane E's number; change nothing about chunking except that its
       parameters are already fingerprint inputs (done in Phase 1 — see §C.1).
 
@@ -588,3 +593,56 @@ change. The hour-scale Lane E benchmark campaign is deliberately not part of PR-
   calendar schedule.
 - **Q8 — authority failure:** fail closed and let the queue retry. Never mint from a fallback
   authority when the durable identity store is unavailable.
+
+---
+
+## Phase 3 implementation report-back
+
+### §P3.A Accepted PR order and evidence boundary
+
+The accepted order is PR-A → PR-C0 → PR-C2 → PR-C1 → lane E constants → PR-B. PR-C0 is deliberately
+fingerprint-neutral. PR-C2 and PR-C1 each move the fingerprint for independently attributable
+storage/codec changes; all fingerprint-moving PRs still land before one release so users pay for one
+rebuild. PR-C1 remains blocked by its codec/versioning work and 12–18 machine-hour evidence campaign.
+
+The hour-scale Lane E benchmarks are not PR-C0 verification and were not run. PR-C0's six-corpus
+multilingual comparison is also deferred for the current work window, but it is **not waived**: its
+pre-registered skip-rate and relevance criteria remain a merge prerequisite.
+
+### §P3.B PR-C0 implemented semantics
+
+- QPP now carries the `content` field's own `IndexReader.getDocCount(field)` denominator and the
+  minimum analyzed-term `docFreq / fieldDocCount` fraction. Chunk documents therefore cannot inflate
+  the denominator for a field they do not contain.
+- The planner skips dense retrieval only when another retrieval leg is runnable. Dense-only/vector
+  requests and direct RAG remain recall-first and always run dense. Empty QPP and corpora below 100
+  field documents never trigger the document-frequency skip.
+- The existing short-query rule remains independent at four characters. The new DF threshold is
+  `index.hybrid.vector_skip_min_df_fraction` / `JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_DF_FRACTION`, default
+  `0.25`, clamped to `[0,1]`. It replaces the retired `entity_boost` key one-for-one, preserving the
+  configuration-surface pins at `111 / 250 / 56`.
+- Deliberate planner skips use `SKIPPED_SHORT_QUERY` or `SKIPPED_NO_DISCRIMINATIVE_TERM`, separate
+  from embedding/encoding failure. The trace now reports the dense stage as skipped with that typed
+  reason, and chunk merging omits a dense vector when the planner skipped the leg.
+- The English `STOP_WORDS` collection and all four adapter-level skip guards are deleted. A fifth
+  language-agnostic-analysis check rejects authored `Set.of`/`List.of` natural-language word lists
+  in the query path.
+- The functional `entity_boost` resolver, environment/system-property registration, and query
+  construction path are retired. Status/protobuf field 9 remains present and is always projected as
+  `0.0`, preserving compatibility. The physical `entity_*_text` fields and writers remain until
+  PR-C2, so PR-C0 does not move `index_fingerprint`.
+
+PR-C0 avoids KNN search and fusion work for a skipped dense leg. It does **not** avoid query-embedding
+generation, which still happens before planning; performance claims must preserve that distinction.
+
+### §P3.C PR-C0 local verification (2026-09-03)
+
+Focused Java tests cover common-term skipping, discriminative-term retention, tiny-corpus behavior,
+dense-only and direct-RAG recall, truthful traces, field-local QPP denominators, retired entity-query
+behavior, configuration defaults/clamping, and the zeroed wire/status tombstone. Focused UI tests
+cover exact reason wording and fixture compatibility. The language-agnostic-analysis,
+search-degradation-reason-code, ADR-coverage, and config-surface gates pass; the generated runtime
+configuration matrix remains exactly `yaml_keys=111`, `env_sysprop_pairs=250`, `config_keys=56`.
+
+The six-corpus evaluation and hour-long benchmarks were not run. PR-C0 may be reviewed and stacked
+upon locally, but it must not merge until the six-corpus acceptance evidence is recorded here.

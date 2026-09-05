@@ -436,7 +436,6 @@ public record ResolvedConfig(
    * @param collection primary index collection name
    * @param queryClassificationEnabled 306: enable query classification for CE/expansion gating
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
-   * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
    * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
    *     (default TRUE since the 775 §I flip, 2026-07-22; flag-off reproduces the IDF-only delivery
    *     excerpt byte-for-byte)
@@ -453,7 +452,6 @@ public record ResolvedConfig(
       String collection,
       boolean queryClassificationEnabled,
       double titleBoost,
-      double entityBoost,
       boolean chunkAwareEnabled,
       // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
       // content_preview (evidence-coherent CE input + delivery). Default TRUE since the 775 §I flip
@@ -821,6 +819,8 @@ public record ResolvedConfig(
    *
    * @param rrfK RRF constant K
    * @param vectorSkipMinChars min query chars before vector search is attempted
+   * @param vectorSkipMinDfFraction minimum analyzed-term document-frequency fraction at which a
+   *     redundant dense leg is skipped
    * @param candidateLimitMax max candidates per retrieval system
    * @param textCandidateMultiplier BM25 candidate multiplier
    * @param vectorCandidateMultiplier vector candidate multiplier
@@ -841,6 +841,7 @@ public record ResolvedConfig(
   public record HybridSearch(
       int rrfK,
       int vectorSkipMinChars,
+      double vectorSkipMinDfFraction,
       int candidateLimitMax,
       int textCandidateMultiplier,
       int vectorCandidateMultiplier,

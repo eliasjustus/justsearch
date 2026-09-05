@@ -175,6 +175,24 @@ def _concat_ndjson(sources: list[Path], dst: Path) -> None:
                 out.write(b"\n")
 
 
+DENSE_STAGE_WIRE_ID = "dense-retrieval"
+
+
+def _trace_stage_of(response: dict, stage_id: str) -> dict:
+    """The unified trace's stage node with ``stage_id`` from a raw search response, or ``{}``.
+
+    Same contract as ``ce_coverage.ce_stage_of`` (tempdoc 549: the trace's stage list is the
+    single source; ``{}`` means no trace at all, never an omitted stage).
+    """
+    trace = response.get("searchTrace") or {}
+    if not isinstance(trace, dict):
+        return {}
+    for stage in trace.get("stages") or []:
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            return stage
+    return {}
+
+
 def _build_per_query_entries(
     mode: str,
     mode_result: dict,
@@ -226,6 +244,7 @@ def _build_per_query_entries(
             judge_signals.append({"docId": doc_id, **provenance.extract_judge_signals(h)})
 
         ce_stage = ce_coverage.ce_stage_of(resp)
+        dense_stage = _trace_stage_of(resp, DENSE_STAGE_WIRE_ID)
 
         entry = {
             "qid": qid,
@@ -260,6 +279,12 @@ def _build_per_query_entries(
             # makes the archived artifact judgeable at all (jseval.ce_coverage).
             "crossEncoderStatus": ce_stage.get("status"),
             "crossEncoderReason": ce_stage.get("reason"),
+            # Tempdoc 931 (lane D PR-C0 evidence): the dense-retrieval stage's own status + reason.
+            # C0 moved the dense skip into SearchPlanner and types it (SKIPPED_SHORT_QUERY /
+            # SKIPPED_NO_DISCRIMINATIVE_TERM); the per-language skip-rate check (915 C5b) reads
+            # these two fields, so they must survive into the archived artifact like the CE pair.
+            "denseStatus": dense_stage.get("status"),
+            "denseReason": dense_stage.get("reason"),
         }
         entries.append(entry)
 
