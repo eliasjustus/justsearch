@@ -12,7 +12,7 @@ deliberately excluded (the primary is JustSearch's own accent).
 
 > **Placement note.** The repo's root `THIRD_PARTY_NOTICES` is a machine projection of the
 > dependency/model/native manifests (`scripts/codegen/gen-notices.mjs`, banner: "do NOT edit by
-> hand", gated by `check-notices-regen`). T3 Code is not a redistributed dependency — it is a
+> hand", gated by `regen-all --check`). T3 Code is not a redistributed dependency — it is a
 > derived-source attribution, a category that projection has no input for. Rather than hand-editing
 > a generated file into drift, the notice lives with the code it covers. If this window is promoted
 > into a shipped build, add a derived-source declaration input to `gen-notices.mjs` so this entry is

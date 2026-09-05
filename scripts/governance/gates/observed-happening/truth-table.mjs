@@ -262,4 +262,4 @@ export function verdictForUncoveredStream({ violations }) {
 
 // verdictForLivenessWindow — RETIRED (tempdoc 575 §17 Face A). The liveness window is now GENERATED
 // from the register into the worker + FE constants (scripts/codegen/gen-liveness-constants.mjs), so
-// drift is impossible by construction; the `check-liveness-constants-regen` gate is the replacement.
+// drift is impossible by construction; the `regen-all --check` gate is the replacement.

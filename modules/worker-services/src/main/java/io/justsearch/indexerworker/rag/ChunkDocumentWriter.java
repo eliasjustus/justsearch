@@ -54,10 +54,13 @@ public final class ChunkDocumentWriter {
    *
    * <p>This is used by VDU update/replay paths where we don't have a {@code Path} or
    * {@code ExtractionResult} but want chunks to inherit metadata such as mime/file_kind.
+   *
+   * @param chunkSpladeEnabled see {@link #regenerateChunks}; read from the LIVE resolved config at
+   *     the call site, never a constructor-time copy
    */
   public static int regenerateChunksFromExistingParent(
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator,
-      String parentDocId, String content) {
+      String parentDocId, String content, boolean chunkSpladeEnabled) {
     if (documentFieldOps == null) {
       return 0;
     }
@@ -84,17 +87,25 @@ public final class ChunkDocumentWriter {
         parentDocId,
         content,
         new ParentChunkMetadata(
-            mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid));
+            mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid),
+        chunkSpladeEnabled);
   }
 
   /**
    * Regenerates chunk docs for a parent doc with explicit metadata.
    *
    * <p>Deletion is best-effort; worst-case is stale chunks remain rather than failing the caller.
+   *
+   * @param chunkSpladeEnabled {@code rag.chunk_splade.enabled} (tempdoc 712 / 931 §E item 8). When
+   *     false the chunk carries NO {@code splade_status} at all rather than PENDING: every backfill
+   *     lane refuses chunk SPLADE while the flag is off, so a PENDING stamp would be a permanent
+   *     claim of outstanding work for a stage that will never run — and it sits in every
+   *     field-carrying denominator ({@code IndexCountOps#countWithField}) forever. Absence is the
+   *     post-798 "this stage does not apply to this document" encoding.
    */
   public static int regenerateChunks(
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator,
-      String parentDocId, String content, ParentChunkMetadata meta) {
+      String parentDocId, String content, ParentChunkMetadata meta, boolean chunkSpladeEnabled) {
     if (documentFieldOps == null || indexingCoordinator == null
         || parentDocId == null || parentDocId.isBlank()) {
       return 0;
@@ -206,8 +217,10 @@ public final class ChunkDocumentWriter {
       fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
       fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
 
-      // Initialize SPLADE status for Phase 3 backfill
-      fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+      // Initialize SPLADE status for Phase 3 backfill — only when the stage applies at all.
+      if (chunkSpladeEnabled) {
+        fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+      }
 
       indexingCoordinator.indexSingle(new IndexDocument(fields));
       indexed++;

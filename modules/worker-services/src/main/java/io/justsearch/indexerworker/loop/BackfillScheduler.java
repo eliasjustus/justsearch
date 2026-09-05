@@ -721,8 +721,9 @@ public final class BackfillScheduler {
   /**
    * Whether chunk documents are SPLADE work at all (tempdoc 712 {@code rag.chunk_splade.enabled}).
    *
-   * <p>Flag off, no lane may select a chunk on {@code splade_status}: {@code ChunkDocumentWriter}
-   * stamps PENDING on every chunk regardless, so a lane that ignores this flag encodes sparse data
+   * <p>Flag off, no lane may select a chunk on {@code splade_status}: chunks written during an
+   * earlier flag-on window still carry PENDING ({@code ChunkDocumentWriter} omits the field
+   * entirely while the flag is off), so a lane that ignores this flag encodes sparse data
    * the configuration says not to produce, and the chunk-sparse retrieval leg
    * ({@code SearchExecutor#chunkMerge}) then scores against a population that depends on how far
    * backfill happened to get.

@@ -137,6 +137,20 @@ final class WorkerStatusCache {
     extras.put("chunkVectorCoveragePercent", s.getEnrichment().getChunk().getCoveragePercent());
     extras.put("chunkVectorsReady", s.getEnrichment().getChunk().getVectorsReady());
 
+    // Tempdoc 931 §E item 8: chunk-SPLADE coverage (chunk documents only — the spladeCoveragePercent
+    // below counts parents) plus the flag that says whether zero coverage means "off" or "behind".
+    extras.put("chunkSpladeEnabled", s.getEnrichment().getChunk().getSpladeEnabled());
+    extras.put(
+        "chunkSpladeCompletedCount", s.getEnrichment().getChunk().getSpladeCompletedCount());
+    extras.put("chunkSpladePendingCount", s.getEnrichment().getChunk().getSpladePendingCount());
+    extras.put(
+        "chunkSpladeCoveragePercent", s.getEnrichment().getChunk().getSpladeCoveragePercent());
+
+    // Tempdoc 931 §E item 8: merge state of the active reader — maxDoc - numDocs is the
+    // deleted-but-unmerged backlog.
+    extras.put("indexMaxDoc", s.getCore().getIndexMaxDoc());
+    extras.put("indexNumDocs", s.getCore().getIndexNumDocs());
+
     // 366: Doc-level enrichment coverage for MCP status (agent discoverability)
     extras.put("embeddingCoveragePercent", s.getEnrichment().getEmbedding().getCoveragePercent());
     extras.put("spladeCoveragePercent", s.getEnrichment().getSplade().getCoveragePercent());

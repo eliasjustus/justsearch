@@ -9,7 +9,6 @@ import pytest
 from jseval.history import (
     append_run,
     check_trend,
-    get_envelope_metrics,
     get_history,
 )
 
@@ -19,7 +18,7 @@ def _make_summary(dataset="scifact", git_sha="abc123", ts="2026-03-16T14:00:00Z"
 
 
 def _append(output_dir, mode="hybrid", ndcg=0.7, comparable=True,
-            manifest_hash=None, envelope=None, **kwargs):
+            manifest_hash=None, **kwargs):
     summary = _make_summary(**{k: v for k, v in kwargs.items()
                                if k in ("dataset", "git_sha", "ts")})
     if "ts" in kwargs:
@@ -29,25 +28,8 @@ def _append(output_dir, mode="hybrid", ndcg=0.7, comparable=True,
     }
     return append_run(
         summary, mode, metrics, comparable, output_dir,
-        manifest_hash=manifest_hash, envelope=envelope,
+        manifest_hash=manifest_hash,
     )
-
-
-def _envelope(cohort_hash="cohort-abc", modes=("hybrid",),
-              metrics=("nDCG@10", "P@1"), mean=0.7, stdev=0.001, n=5,
-              calibrated_at="2026-04-22T06:00:00Z"):
-    """Build a Phase-2-compatible envelope document for test insertion."""
-    block = {m: {metric: {"mean": mean, "stdev": stdev, "n": n}
-                 for metric in metrics}
-             for m in modes}
-    return {
-        "schema_version": 1,
-        "cohort_hash": cohort_hash,
-        "calibrated_at": calibrated_at,
-        "git_sha": "abc123",
-        "n_runs": n,
-        "metrics": block,
-    }
 
 
 class TestAppendAndRetrieve:
@@ -179,91 +161,6 @@ class TestCheckTrendCohortAware:
         assert result["manifest_hash"] == "solo"
 
 
-class TestEnvelopeMetricsTable:
-    """LR4-h: envelope_metrics normalized table (§26.6 Decision 3)."""
-
-    def test_insert_rows_from_envelope(self, tmp_path):
-        env = _envelope(cohort_hash="c1",
-                        modes=("hybrid",),
-                        metrics=("nDCG@10", "P@1"))
-        _append(tmp_path, mode="hybrid", manifest_hash="c1", envelope=env)
-
-        rows = get_envelope_metrics(tmp_path, cohort_hash="c1")
-        assert {(r["metric"], r["mode"]) for r in rows} == {
-            ("nDCG@10", "hybrid"), ("P@1", "hybrid"),
-        }
-        for r in rows:
-            assert r["cohort_hash"] == "c1"
-            assert r["n"] == 5
-            assert r["calibrated_at"] == "2026-04-22T06:00:00Z"
-
-    def test_no_insert_when_envelope_none(self, tmp_path):
-        _append(tmp_path, manifest_hash="c1", envelope=None)
-        assert get_envelope_metrics(tmp_path) == []
-
-    def test_no_insert_when_mode_missing_from_envelope(self, tmp_path):
-        env = _envelope(cohort_hash="c1", modes=("hybrid",))
-        # Insert for mode='lexical' but envelope only covers 'hybrid'.
-        _append(tmp_path, mode="lexical", manifest_hash="c1", envelope=env)
-        assert get_envelope_metrics(tmp_path, mode="lexical") == []
-
-    def test_multi_mode_envelope(self, tmp_path):
-        env = _envelope(cohort_hash="c1",
-                        modes=("hybrid", "lexical"),
-                        metrics=("nDCG@10",))
-        _append(tmp_path, mode="hybrid", manifest_hash="c1", envelope=env)
-        _append(tmp_path, mode="lexical", manifest_hash="c1", envelope=env)
-
-        hybrid_rows = get_envelope_metrics(tmp_path, mode="hybrid")
-        lexical_rows = get_envelope_metrics(tmp_path, mode="lexical")
-        assert len(hybrid_rows) == 1
-        assert len(lexical_rows) == 1
-        assert hybrid_rows[0]["metric"] == "nDCG@10"
-        assert lexical_rows[0]["metric"] == "nDCG@10"
-
-    def test_filter_by_metric(self, tmp_path):
-        env = _envelope(cohort_hash="c1",
-                        modes=("hybrid",),
-                        metrics=("nDCG@10", "P@1", "R@10"))
-        _append(tmp_path, mode="hybrid", manifest_hash="c1", envelope=env)
-
-        ndcg = get_envelope_metrics(tmp_path, metric="nDCG@10")
-        assert len(ndcg) == 1
-        assert ndcg[0]["metric"] == "nDCG@10"
-
-    def test_returns_empty_when_db_missing(self, tmp_path):
-        # No db, no append — envelope_metrics still returns []
-        assert get_envelope_metrics(tmp_path) == []
-
-    def test_skips_metric_rows_missing_mean_stdev_or_n(self, tmp_path):
-        env = {
-            "schema_version": 1,
-            "cohort_hash": "c1",
-            "calibrated_at": "2026-04-22T06:00:00Z",
-            "metrics": {
-                "hybrid": {
-                    "nDCG@10": {"mean": 0.7, "stdev": 0.001, "n": 5},
-                    "P@1": {"mean": 0.5, "stdev": 0.002},  # missing n
-                    "R@10": {"stdev": 0.001, "n": 5},  # missing mean
-                },
-            },
-        }
-        _append(tmp_path, mode="hybrid", manifest_hash="c1", envelope=env)
-        rows = get_envelope_metrics(tmp_path)
-        assert {r["metric"] for r in rows} == {"nDCG@10"}
-
-    def test_silently_ignores_envelope_without_cohort_hash(self, tmp_path):
-        env = {
-            "schema_version": 1,
-            # No cohort_hash.
-            "calibrated_at": "2026-04-22T06:00:00Z",
-            "metrics": {"hybrid": {"nDCG@10": {
-                "mean": 0.7, "stdev": 0.001, "n": 5}}},
-        }
-        _append(tmp_path, mode="hybrid", manifest_hash="c1", envelope=env)
-        assert get_envelope_metrics(tmp_path) == []
-
-
 class TestMigration:
     """LR4-h: schema migrates a pre-existing db without the new column."""
 
@@ -385,37 +282,9 @@ class TestAppendRunReturnsRunId:
         rid2 = _append(tmp_path, manifest_hash="b")
         assert rid2 == rid1 + 1
 
-    def test_envelope_metrics_bind_to_correct_run_id(self, tmp_path):
-        env_a = _envelope(cohort_hash="A", metrics=("nDCG@10",))
-        env_b = _envelope(cohort_hash="B", metrics=("nDCG@10",))
-        rid_a = _append(tmp_path, manifest_hash="A", envelope=env_a)
-        rid_b = _append(tmp_path, manifest_hash="B", envelope=env_b)
-
-        rows = get_envelope_metrics(tmp_path, limit=100)
-        by_cohort = {r["cohort_hash"]: r for r in rows}
-        # Phase 6 / 6.11: run_id is stored as INTEGER now (was TEXT)
-        # so JOINs against runs.id work without CAST.
-        assert by_cohort["A"]["run_id"] == rid_a
-        assert by_cohort["B"]["run_id"] == rid_b
-
 
 class TestForeignKeyCascade:
-    """Phase 6 / 6.11: FK constraint with ON DELETE CASCADE."""
-
-    def test_delete_run_cascades_to_envelope_metrics(self, tmp_path):
-        env = _envelope(cohort_hash="c1", metrics=("nDCG@10",))
-        rid = _append(tmp_path, manifest_hash="c1", envelope=env)
-        # Baseline: one envelope row present.
-        assert len(get_envelope_metrics(tmp_path)) == 1
-
-        with sqlite3.connect(str(tmp_path / "eval-history.db")) as conn:
-            # FKs are off by default on a new connection; must enable.
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("DELETE FROM runs WHERE id = ?", (rid,))
-            conn.commit()
-
-        # envelope_metrics row should have been deleted by cascade.
-        assert get_envelope_metrics(tmp_path) == []
+    """Phase 6 / 6.11: FK enforcement is on for every library connection."""
 
     def test_foreign_keys_enabled_on_connect(self, tmp_path):
         _append(tmp_path, manifest_hash="c1")
@@ -425,30 +294,3 @@ class TestForeignKeyCascade:
         with _connect(tmp_path / "eval-history.db") as conn:
             result = conn.execute("PRAGMA foreign_keys").fetchone()
             assert result[0] == 1
-
-
-class TestInsertEnvelopeMetricsCounts:
-    """Phase 6 / 6.11: `_insert_envelope_metrics` returns (inserted, skipped)."""
-
-    def test_direct_call_returns_counts(self, tmp_path):
-        from jseval.history import _connect, _insert_envelope_metrics
-
-        # Prepare a DB with a runs row so the FK passes.
-        _append(tmp_path, manifest_hash="c1")
-        env = {
-            "schema_version": 1,
-            "cohort_hash": "c1",
-            "calibrated_at": "2026-04-22T00:00:00Z",
-            "metrics": {
-                "hybrid": {
-                    "nDCG@10": {"mean": 0.7, "stdev": 0.001, "n": 5},
-                    "P@1": {"mean": 0.5, "stdev": 0.002},  # missing n → skipped
-                    "R@10": {"stdev": 0.001, "n": 5},  # missing mean → skipped
-                },
-            },
-        }
-        with _connect(tmp_path / "eval-history.db") as conn:
-            # Use existing run_id=1 from the earlier _append.
-            inserted, skipped = _insert_envelope_metrics(conn, 1, "hybrid", env)
-        assert inserted == 1
-        assert skipped == 2

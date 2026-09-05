@@ -84,6 +84,9 @@ public final class KnowledgeServerMigrationOps {
       Path indexBasePath,
       Path activeIndexPath,
       ObjectMapper json,
+      // Tempdoc 931 §E item 8: rag.chunk_splade.enabled, read from the LIVE resolved config each
+      // time a buffered VDU_UPDATE regenerates chunks — a drain can span a config change.
+      BooleanSupplier chunkSpladeEnabledSupplier,
       Logger log) {}
 
   public record EnqueueContext(
@@ -676,7 +679,8 @@ public final class KnowledgeServerMigrationOps {
                       ChunkDocumentWriter.regenerateChunksFromExistingParent(
                           context.ingestLifecycle().documentFieldOps(),
                           context.ingestLifecycle().indexingCoordinator(),
-                          docId, extracted);
+                          docId, extracted,
+                          context.chunkSpladeEnabledSupplier().getAsBoolean());
                   if (chunksRegenerated > 0) {
                     context
                         .log()

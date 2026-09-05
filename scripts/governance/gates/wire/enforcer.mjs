@@ -116,6 +116,25 @@ export async function enforceWire(options) {
   // Translate to gate-interface findings.
   const findings = [...runnerErrors, ...structuralBreaks];
   let verdict = 'pass';
+
+  // Tempdoc 930 §19.3 F7 — FAIL CLOSED on a runner-level error.
+  //
+  // Until this branch existed, `runnerErrors` were pushed into `findings` and then ignored by the
+  // verdict: with no buf CLI the wrapper returns zero structural breaks, `computeVerdict` sees
+  // `breaks: false`, and the gate returned `pass` while having inspected no .proto at all. That
+  // is not a soft edge, it is the failure mode this gate exists to prevent — a breaking protobuf
+  // change ships with a green wire gate because the tool was absent. `buf-runner-error` (a buf
+  // usage/config/internal exit) failed open the same way and is covered by the same branch: an
+  // enforcement mechanism whose precondition is absent must fail loudly, not degrade to a pass
+  // (tempdoc 742, the same rule the RUNNER applies to missing gate inputs).
+  //
+  // CI installs buf ahead of this gate (`bufbuild/buf-setup-action` + `npm ci --prefix
+  // scripts/wire-contract`). Locally, `npm install` in scripts/wire-contract/ is the remedy the
+  // finding already prints.
+  if (runnerErrors.length > 0) {
+    verdict = 'fail';
+  }
+
   if (v.status === 'fail') {
     verdict = 'fail';
     findings.push({

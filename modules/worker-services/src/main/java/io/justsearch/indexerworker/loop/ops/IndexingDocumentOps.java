@@ -399,6 +399,9 @@ public final class IndexingDocumentOps {
    * @param collection the parent document's collection tag (nullable), written onto every chunk so
    *     collection scoping works on the chunk branch (tempdoc 811 item 3). Must be the same value
    *     passed to {@link #buildDocument} for the parent, or parent and chunks disagree on scope.
+   * @param chunkSpladeEnabled {@code rag.chunk_splade.enabled}, read from the live resolved config
+   *     by the caller (tempdoc 931 §E item 8) — decides whether a chunk carries a
+   *     {@code splade_status} at all.
    */
   public static int indexChunks(
       Path filePath,
@@ -407,12 +410,14 @@ public final class IndexingDocumentOps {
       IndexingCoordinator indexingCoordinator,
       ParentIndexMetadata parentMetadata,
       String collection,
-      String parentDocUid) {
+      String parentDocUid,
+      boolean chunkSpladeEnabled) {
     String content = extraction.content();
     String parentDocId = PathNormalizer.normalizeKey(filePath);
 
     if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
-      ChunkDocumentWriter.regenerateChunks(documentFieldOps, indexingCoordinator, parentDocId, "", null);
+      ChunkDocumentWriter.regenerateChunks(
+          documentFieldOps, indexingCoordinator, parentDocId, "", null, chunkSpladeEnabled);
       return 0;
     }
 
@@ -426,7 +431,8 @@ public final class IndexingDocumentOps {
         indexingCoordinator,
         parentDocId,
         content,
-        metadata.toChunkMetadata(collection, parentDocUid));
+        metadata.toChunkMetadata(collection, parentDocUid),
+        chunkSpladeEnabled);
   }
 
   public static ParentIndexMetadata deriveParentMetadata(

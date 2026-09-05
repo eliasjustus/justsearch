@@ -288,31 +288,6 @@ def run_dataset_ok(manifest: dict | None, dataset: str) -> bool:
         return False
 
 
-# --- envelope-derived band (tempdoc 640 R2) --------------------------------
-
-def _envelope_band(
-    manifest: dict | None, mode: str, metric: str, lower: bool, *, k: float = 2.0
-) -> float | None:
-    """A *data-driven* ratio band from the cohort calibrate envelope: ``1 ± k·CV``.
-
-    The run manifest embeds its cohort's ``non_determinism_envelope`` (``manifest.py``), whose
-    ``metrics.<mode>.<metric>.{mean,stdev}`` is the within-machine ±kσ reproducibility band
-    (``calibrate.compute_envelope``; ``k=2`` ≈ the ±2σ band tempdoc 640 names). Converting σ to a
-    *ratio* (``CV = stdev/mean``) keeps ``diff_gate``'s ratio model unchanged — the band just becomes
-    measured-noise-adaptive instead of a fixed guess: tight where the metric is stable, wide where it
-    is noisy. Returns ``None`` when the cohort has no calibrated value for this (mode, metric) — only
-    the calibrated per-mode metric (``ce_p50_ms``) qualifies; the caller then falls back to the fixed
-    band (so the gate is unchanged until a calibrate envelope exists — never flappier).
-    """
-    env = (manifest or {}).get("non_determinism_envelope") or {}
-    cell = (((env.get("metrics") or {}).get(mode) or {}).get(metric)) or {}
-    mean, stdev = cell.get("mean"), cell.get("stdev")
-    if not isinstance(mean, (int, float)) or not isinstance(stdev, (int, float)) or mean <= 0:
-        return None
-    cv = stdev / mean
-    return (1.0 + k * cv) if lower else max(0.0, 1.0 - k * cv)
-
-
 # --- the gate ---------------------------------------------------------------
 
 def evaluate(
@@ -371,20 +346,14 @@ def evaluate(
             continue
 
         lower = _LOWER_IS_BETTER.get(metric, True)
-        # Band resolution: an explicit per-entry pin wins (operator override); else a data-driven
-        # envelope band (1 ± k·CV) when the cohort calibrated this metric (tempdoc 640 R2); else the
-        # file-level / module fixed default. The envelope band adapts to measured noise; the fixed
-        # default is the graceful fallback when no calibrate envelope exists.
+        # Band resolution: an explicit per-entry pin wins (operator override); else the
+        # file-level / module fixed default.
         explicit = bands.get(metric)
         if explicit is not None:
             band, band_src = explicit, "pinned"
         else:
-            env_band = _envelope_band(manifest, mode, metric, lower)
-            if env_band is not None:
-                band, band_src = env_band, "envelope±2σ"
-            else:
-                band = file_default_bands.get(metric, _DEFAULT_BANDS.get(metric, 1.10))
-                band_src = "default"
+            band = file_default_bands.get(metric, _DEFAULT_BANDS.get(metric, 1.10))
+            band_src = "default"
         kwargs = {"lower_is_better": lower}
         kwargs["max_ratio" if lower else "min_ratio"] = band
         comp = diff_gate.compare_ratio(float(baseline_val), float(current), **kwargs)

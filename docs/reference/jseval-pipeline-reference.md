@@ -221,31 +221,20 @@ deliberately — use it only when you actually intend to run another checkout's 
 Post-§23 closure, jseval is the single CLI surface for every piece of
 tempdoc 400 observability. Every subcommand below reads/writes the
 jseval-owned data root (tempdoc 716): `--data-dir` defaults to
-`scripts/jseval/tmp/`, which hosts both `eval-results/` (where a defaults
-`run` writes) and `cohort_baselines/` (where `calibrate` files envelopes) —
-defaults-only invocations compose without path flags. Pre-716 calibration
-state left inside a backend data dir still resolves read-only, with a
-deprecation WARN. See `docs/explanation/08-observability.md` for the schema.
+`scripts/jseval/tmp/`, which hosts `eval-results/` (where a defaults `run`
+writes) — defaults-only invocations compose without path flags. See
+`docs/explanation/08-observability.md` for the schema.
+
+Tempdoc 930 §18.1 row 7 removed the cohort-envelope / drift-calibration
+commands (`calibrate`, `calibrate-drift-baseline`,
+`recalibrate-nightly-baseline`) and the `cohort_baselines/` directory they
+wrote: no baseline was ever captured on any machine. Run-to-run variation is
+reported per run instead — `summary.json`'s `latency_stats` and
+`encoder_latency` blocks (see below).
 
 ```bash
-# Calibrate cross-run non-determinism envelope (LR1-b).
-# --data-dir = where the envelope is FILED (default: jseval data root);
-# --backend-data-dir = isolated Worker dir the sub-runs execute against.
-python -m jseval calibrate --dataset scifact --modes full --runs 5 \
-  --max-queries 50 [--backend-data-dir <path>]
-
-# Capture drift baseline from N warm runs (LR4-g, Phase 6/6.2 opt-in)
-# Requires >= 3 runs at stable SHA; blocks cold-start outliers
-python -m jseval calibrate-drift-baseline --cohort-hash H \
-  --from-runs R1 R2 R3
-
-# Extract sigma from an existing envelope for nightly-baseline refresh
-python -m jseval recalibrate-nightly-baseline \
-  --cohort-hash H [--output env.txt]
-
-# Nightly-style quality gate (Phase 6/6.13; was scripts/ci/phase3_*)
-python -m jseval gate --baseline-stdev 0.00108 \
-  --tolerance-pct 10 [--report-out <json>]
+# Projection-presence gate (Phase 6/6.13; was scripts/ci/phase3_*)
+python -m jseval gate [--report-out <json>]
 
 # Layer-5 experiment runners
 python -m jseval counterfactual --dataset scifact --max-queries 50
@@ -257,11 +246,7 @@ python -m jseval bisect --run-a <run_dir> --run-b <run_dir> \
   [--synthesize --dataset scifact --modes full --dry-run]
 ```
 
-**Operator guides:** `docs/how-to/recalibrate-phase3-baseline.md`,
-`docs/how-to/calibrate-drift-baseline.md`,
-`docs/how-to/interpret-bisect-output.md`,
-`docs/how-to/triage-psi-drift.md`,
-`docs/how-to/envelope-staleness-policy.md`.
+**Operator guides:** `docs/how-to/interpret-bisect-output.md`.
 
 ## Available Datasets
 
@@ -336,10 +321,9 @@ mode. The structural check is satisfied by two legs, so an omitted
 - **Backend lifecycle**: `--start-backend` starts runHeadlessEval,
   `--clean` wipes the whole data dir, auto-stops via taskkill on
   completion. `--clean` is **fail-closed** (tempdoc 711 item 4) and,
-  since tempdoc 716, **unconditional**: calibration state
-  (`cohort_baselines/`, `non_determinism_envelopes/`) is filed under the
-  jseval data root (`scripts/jseval/tmp/`), never inside the backend
-  data dir, so nothing in the backend dir is protected from the wipe.
+  since tempdoc 716, **unconditional**: every durable jseval artifact is
+  filed under the jseval data root (`scripts/jseval/tmp/`), never inside the
+  backend data dir, so nothing in the backend dir is protected from the wipe.
   Because the Worker JVM (spawned by the Head as a grandchild of the
   Gradle process) has been observed to survive the process-tree
   `taskkill` and keep the Lucene index open, the wipe runs a
@@ -417,9 +401,8 @@ so nothing there survives a fresh checkout.
 ## Output Structure
 
 The jseval data root (`scripts/jseval/tmp/`; tempdoc 716) hosts every
-durable jseval artifact — run results and calibration state — so every
-gate/calibrate reader's `--data-dir` defaults compose with `run`'s
-default `--output-dir`:
+durable jseval artifact, so every gate reader's `--data-dir` default
+composes with `run`'s default `--output-dir`:
 
 ```text
 scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
@@ -427,7 +410,6 @@ scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
     summary.json            # Metrics, config, git SHA, pipeline timing
     <mode>_per_query.json   # Per-query scores and ranks
     <mode>_run.trec         # TREC-format run file
-  cohort_baselines/<hash>/  # `calibrate` envelopes + drift baselines
 ```
 
 **Additive schema key, always present (885 item 19).** Every `run` emits a `cadence` block in
@@ -448,6 +430,15 @@ differs between two otherwise-identical fresh indexes of the same corpus (a meas
 2,629 vs 222, shifting hit counts 3-4% with no code cause). Every field is `null` when the backend
 doesn't publish it (older backend, or `--skip-readiness`), so a paired-arm comparison always has
 the column to check before attributing a metric delta to code.
+
+**Additive schema key, always present (930 §18.1 row 7).** Every `run` also emits an
+`encoder_latency` block: `{"encoders": {"<encoder.name>": {"n", "p50_ms", "p95_ms"}}}`, derived
+from the `encoder.ort_run` spans in the Worker's `traces.ndjson` (rotated siblings included).
+`encoders` is `{}` when the Worker published no such spans — typically because
+`JUSTSEARCH_INDEX_TRACING_LEVEL=detailed` was not exported. Absolute numbers, no baseline and
+no threshold: this replaced the `encoder_drift` PSI projection, whose per-cohort baseline never
+existed. Read it alongside `cpu_fallback_counts` to tell "the encoder got slower" from "the
+encoder moved to CPU".
 
 **Local prerequisite for the full pytest suite.** `python -m pytest scripts/jseval/tests` needs the
 optional extras: `pip install -e "scripts/jseval[dev,agent]"`. Without them four test modules fail

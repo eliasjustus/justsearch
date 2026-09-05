@@ -98,15 +98,15 @@ def make_span():
 
 
 @pytest.fixture(autouse=True)
-def _isolate_pre716_legacy_roots(monkeypatch, tmp_path):
-    """Point the tempdoc-716 legacy-root read fallback away from the real machine.
+def _isolate_worker_data_dir(monkeypatch, tmp_path):
+    """Point the Worker-data-dir resolution away from the real machine.
 
-    `cohort_baselines.candidate_roots` consults env `JUSTSEARCH_DATA_DIR` and
-    `_paths.DEFAULT_BACKEND_DATA_DIR` as read fallbacks for pre-716
-    calibration state. Un-isolated, a developer machine's real
-    `tmp/headless-eval-data` (or an exported JUSTSEARCH_DATA_DIR) could leak
-    envelopes into tests that expect a miss. Tests that exercise the fallback
-    re-point these explicitly (their monkeypatch writes win — same
+    `run._worker_data_dir()` reads env `JUSTSEARCH_DATA_DIR` and falls back to
+    `_paths.DEFAULT_BACKEND_DATA_DIR`; the `cadence` and `encoder_latency` summary
+    blocks then read `<that>/telemetry/`. Un-isolated, a developer machine's real
+    `tmp/headless-eval-data` (or an exported JUSTSEARCH_DATA_DIR) would leak real
+    telemetry into tests that expect an empty block. Tests that exercise a populated
+    telemetry dir re-point these explicitly (their monkeypatch writes win — same
     function-scoped monkeypatch, later write).
     """
     import jseval._paths as _paths

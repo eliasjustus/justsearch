@@ -3,16 +3,22 @@
  *
  * `repin-coverage.test.mjs` asserts each growth-licensing gate REFERENCES the rule module. That is
  * a static check, and a static check is a hypothesis: an enforcer can import the module and still
- * call it on a branch that never runs (`wrong-gate`). This file is the runtime half — it drives
- * seven enforcers, each with a covering changeset AND a live exceedance, and asserts each returns
+ * call it on a branch that never runs (`wrong-gate`). This file is the runtime half — it drives the
+ * enforcers, each with a covering changeset AND a live exceedance, and asserts each returns
  * `verdict: 'fail'` carrying its own `…-without-repin` rule id.
  *
- * Both `makeRatchetGate` clients are driven, not one: their `detect()` results differ in shape
- * (style-literal carries a per-class `cls`, atom-fork does not), and that difference reaches the
- * message. The remaining three wired call sites (`ts-any`, `todo-fixme`, `dead-code`) are covered
- * by `declared-growth-repin.test.mjs`. Together: 11 of 11 branches exercised.
+ * Six gates wire the rule, across seven call sites. Six of the seven are driven here:
+ * `module-deps`, `config-surface`, `npm-audit`, `atom-fork-ratchet` (through the shared
+ * `makeRatchetGate` factory) and BOTH of `test-efficacy`'s — its strength FLOOR and its no-coverage
+ * CEILING, which are separate branches reached by different metrics. The seventh (`dead-code`) is
+ * driven by `declared-growth-repin.test.mjs`, which also covers the four-case truth table per gate.
+ * Together: 7 of 7 branches exercised.
  *
- * The file also asserts `--explain` answers for all 11 rule ids: six gates merge the repin
+ * `npm-audit` and `test-efficacy` are the FLOOR-shaped gates — the direction where the pin must be
+ * LOWERED to accommodate the measured value — so their cases are load-bearing for the
+ * `declared-regression` half of the rule, not redundant with the ceiling gates.
+ *
+ * The file also asserts `--explain` answers for all six rule ids: these gates merge the repin
  * description into their enforcer's RETURN VALUE rather than the registry-declared descriptions
  * module, and `--explain` silently could not see those (tempdoc 918 review B3).
  *
@@ -27,11 +33,8 @@ import { fileURLToPath } from 'node:url';
 
 import { enforceModuleDeps } from '../gates/module-deps/enforcer.mjs';
 import { enforceConfigSurface } from '../gates/config-surface/enforcer.mjs';
-import { enforce as enforceDeadCodeJvm } from '../gates/dead-code-jvm/enforcer.mjs';
 import { enforceNpmAudit } from '../gates/npm-audit/enforcer.mjs';
 import { enforceTestEfficacy } from '../gates/test-efficacy/enforcer.mjs';
-import { enforceTestToCode } from '../gates/test-to-code/enforcer.mjs';
-import { enforceStyleLiteralRatchet } from '../gates/style-literal-ratchet/enforcer.mjs';
 import { enforceAtomForkRatchet } from '../gates/atom-fork-ratchet/enforcer.mjs';
 import { REQUIRED_ADVISORY_TARGETS, sha256 } from '../../ci/lib/github-advisory-report.mjs';
 import { explainRule } from './explain.mjs';
@@ -59,7 +62,7 @@ const call = (fn, root, gate) =>
 /**
  * Each case must fail AND name its own repin rule. Asserting the id — not merely `verdict: 'fail'`
  * — is what distinguishes "passes for the right reason" from a fixture that happens to trip some
- * other rule (three of these seven did exactly that while this file was being written: two schema
+ * other rule (three of these did exactly that while this file was being written: two schema
  * mismatches and one report shape, each of which was a `fail` that proved nothing).
  */
 async function firesFor(label, expectedRuleId, build, expectMessage) {
@@ -73,8 +76,9 @@ async function firesFor(label, expectedRuleId, build, expectMessage) {
     assert.equal(finding.level, 'error');
     // The message must state the NUMBERS. A gate that omits `measured`/`livePin` degrades to the
     // shared "the baseline does not carry this row" sentence, which for a row that DOES exist is
-    // simply false (tempdoc 918 review S1).
-    assert.ok(!finding.message.includes('does not carry this row') || expectMessage === null,
+    // simply false (tempdoc 918 review S1). Every gate still wiring the rule holds a numeric pin
+    // per row, so this holds unconditionally.
+    assert.ok(!finding.message.includes('does not carry this row'),
       `message fell back to the row-absent wording: ${finding.message}`);
     if (expectMessage) assert.match(finding.message, expectMessage);
     passed += 1;
@@ -114,23 +118,7 @@ await firesFor('config-surface', 'config-surface/declared-growth-without-repin',
   });
 });
 
-await firesFor('dead-code-jvm', 'dead-code-jvm/declared-growth-without-repin', () => {
-  const root = scaffold({
-    'tmp/dead-code-jvm.json': JSON.stringify({ deadSymbols: [{ kind: 'class', symbol: 'io.justsearch.Probe' }] }),
-    'gates/dead-code-jvm/baseline.txt': '# no rows\n',
-    'gates/dead-code-jvm/.changesets/f.md': changeset('declared-growth'),
-  });
-  return call(enforceDeadCodeJvm, root, {
-    id: 'dead-code-jvm',
-    baseline: { path: 'gates/dead-code-jvm/baseline.txt' },
-    changesetsDir: 'gates/dead-code-jvm/.changesets',
-    config: { reportPath: 'tmp/dead-code-jvm.json' },
-  });
-  // `null`: this ratchet's baseline is a SET of symbols, so "the baseline does not carry this row"
-  // is the literally correct sentence here, not the degraded fallback S1 is about.
-}, null);
-
-await firesFor('npm-audit', 'npm-audit/declared-regression-without-repin', () => {
+await firesFor('npm-audit (a FLOOR)', 'npm-audit/declared-regression-without-repin', () => {
   const lockfiles = Object.fromEntries(REQUIRED_ADVISORY_TARGETS.map((target) => [
     target.lockfile,
     target.targetId === 'root'
@@ -171,54 +159,45 @@ await firesFor('npm-audit', 'npm-audit/declared-regression-without-repin', () =>
   });
 });
 
-await firesFor('test-efficacy (a FLOOR, not a ceiling)', 'test-efficacy/declared-regression-without-repin', () => {
-  const root = scaffold({
-    'tmp/pit.json': JSON.stringify({ schema: 'pit-strength-report.v1', seams: { s1: { strength: 40, noCoverage: 0 } } }),
-    'gates/test-efficacy/strength-baseline.v1.json': JSON.stringify({
-      schema: 'pit-strength-baseline.v1', seams: { s1: { minStrength: 90, maxNoCoverage: 5 } },
-    }),
-    'governance/logic-seams.v1.json': JSON.stringify({ seams: [{ id: 's1' }] }),
-    'gates/test-efficacy/.changesets/f.md': changeset('strength-regression'),
-  });
-  return call(enforceTestEfficacy, root, {
-    id: 'test-efficacy',
-    baseline: { path: 'gates/test-efficacy/strength-baseline.v1.json' },
-    changesetsDir: 'gates/test-efficacy/.changesets',
-    config: { reportPath: 'tmp/pit.json', registerPath: 'governance/logic-seams.v1.json' },
-  });
-});
-
-await firesFor('test-to-code (a FLOOR)', 'test-to-code/declared-regression-without-repin', () => {
-  const root = scaffold({
-    'modules/probe/src/main/java/A.java': 'class A {}\n'.repeat(40),
-    'modules/probe/src/test/java/ATest.java': 'class ATest {}\n',
-    'gates/test-to-code/baseline.txt': 'modules/probe 900 2026-09-01\n',
-    '_baseline/gates/test-to-code/baseline.txt': 'modules/probe 900 2026-09-01\n',
-    'gates/test-to-code/.changesets/f.md': changeset('declared-regression'),
-  });
-  return call(enforceTestToCode, root, {
-    id: 'test-to-code',
-    baseline: { path: 'gates/test-to-code/baseline.txt' },
-    changesetsDir: 'gates/test-to-code/.changesets',
-  });
-});
-
-await firesFor('style-literal-ratchet (the shared makeRatchetGate factory)',
-  'style-literal-ratchet/declared-growth-without-repin', () => {
+await firesFor('test-efficacy strength (a FLOOR, not a ceiling)',
+  'test-efficacy/declared-regression-without-repin', () => {
     const root = scaffold({
-      'modules/ui-web/src/sub/probe.ts':
-        'export const css = `.a { z-index: 42; transition: 120ms; font-size: 12px; }`;\n',
-      'scripts/ci/style-literal-ratchet-baseline.v1.json': JSON.stringify({}),
-      'gates/style-literal-ratchet/.changesets/f.md': changeset('declared-growth'),
+      'tmp/pit.json': JSON.stringify({ schema: 'pit-strength-report.v1', seams: { s1: { strength: 40, noCoverage: 0 } } }),
+      'gates/test-efficacy/strength-baseline.v1.json': JSON.stringify({
+        schema: 'pit-strength-baseline.v1', seams: { s1: { minStrength: 90, maxNoCoverage: 5 } },
+      }),
+      'governance/logic-seams.v1.json': JSON.stringify({ seams: [{ id: 's1' }] }),
+      'gates/test-efficacy/.changesets/f.md': changeset('strength-regression'),
     });
-    return call(enforceStyleLiteralRatchet, root, {
-      id: 'style-literal-ratchet',
-      baseline: { path: 'scripts/ci/style-literal-ratchet-baseline.v1.json' },
-      changesetsDir: 'gates/style-literal-ratchet/.changesets',
+    return call(enforceTestEfficacy, root, {
+      id: 'test-efficacy',
+      baseline: { path: 'gates/test-efficacy/strength-baseline.v1.json' },
+      changesetsDir: 'gates/test-efficacy/.changesets',
+      config: { reportPath: 'tmp/pit.json', registerPath: 'governance/logic-seams.v1.json' },
     });
-  }, /Measured 1 raw (zIndex|transition|fontSize) literals; the pin in scripts\/ci\/style-literal-ratchet-baseline\.v1\.json is 0/);
+  }, /Measured 40 test-strength; the pin in gates\/test-efficacy\/strength-baseline\.v1\.json is 90/);
 
-await firesFor('atom-fork-ratchet (the same factory, a detect() WITHOUT a per-class field)',
+await firesFor('test-efficacy no-coverage (the SECOND call site, a ceiling on the same gate)',
+  'test-efficacy/declared-regression-without-repin', () => {
+    // Strength is ABOVE its floor here, so only the coverage-erosion branch can produce the
+    // finding — which is what makes this case distinguish the two call sites rather than re-run one.
+    const root = scaffold({
+      'tmp/pit.json': JSON.stringify({ schema: 'pit-strength-report.v1', seams: { s1: { strength: 95, noCoverage: 9 } } }),
+      'gates/test-efficacy/strength-baseline.v1.json': JSON.stringify({
+        schema: 'pit-strength-baseline.v1', seams: { s1: { minStrength: 90, maxNoCoverage: 5 } },
+      }),
+      'governance/logic-seams.v1.json': JSON.stringify({ seams: [{ id: 's1' }] }),
+      'gates/test-efficacy/.changesets/f.md': changeset('strength-regression'),
+    });
+    return call(enforceTestEfficacy, root, {
+      id: 'test-efficacy',
+      baseline: { path: 'gates/test-efficacy/strength-baseline.v1.json' },
+      changesetsDir: 'gates/test-efficacy/.changesets',
+      config: { reportPath: 'tmp/pit.json', registerPath: 'governance/logic-seams.v1.json' },
+    });
+  }, /Measured 9 uncovered mutations; the pin in gates\/test-efficacy\/strength-baseline\.v1\.json is 5/);
+
+await firesFor('atom-fork-ratchet (the shared makeRatchetGate factory)',
   'atom-fork-ratchet/declared-growth-without-repin', () => {
     const root = scaffold({
       // `.badge {` is a fork class projected from governance/atom-facets.v1.json; the file must not
@@ -235,18 +214,13 @@ await firesFor('atom-fork-ratchet (the same factory, a detect() WITHOUT a per-cl
     });
   }, /Measured 1 raw atom-class rules; the pin in scripts\/ci\/atom-fork-ratchet-baseline\.v1\.json is 0/);
 
-// --- `--explain` answers for every one of the 11 ids -------------------------------------------
+// --- `--explain` answers for every one of the six ids -------------------------------------------
 
 const ALL_REPIN_RULE_IDS = [
   'dead-code/declared-growth-without-repin',
-  'dead-code-jvm/declared-growth-without-repin',
   'config-surface/declared-growth-without-repin',
-  'ts-any/declared-growth-without-repin',
-  'todo-fixme/declared-growth-without-repin',
   'module-deps/declared-growth-without-repin',
-  'style-literal-ratchet/declared-growth-without-repin',
   'atom-fork-ratchet/declared-growth-without-repin',
-  'test-to-code/declared-regression-without-repin',
   'npm-audit/declared-regression-without-repin',
   'test-efficacy/declared-regression-without-repin',
 ];
@@ -275,9 +249,11 @@ const ALL_REPIN_RULE_IDS = [
       failures.push(`--explain ${ruleId}: ${e.message}`);
     }
   }
-  // The rule must NOT be invented for a gate that is exempt from it.
+  // The rule must NOT be invented for a gate that is exempt from it. `consumer-drift` is a
+  // registered, growth-licensing, EXEMPT gate (see repin-coverage.test.mjs) — its vocabulary
+  // licenses a change to the slot register itself, so it has no pin to advance.
   try {
-    const out = await capture('prose-tier-register/declared-growth-without-repin');
+    const out = await capture('consumer-drift/declared-growth-without-repin');
     assert.ok(out.includes('No description registered'),
       'an exempt gate must not get a fabricated repin rule');
     passed += 1;
@@ -293,4 +269,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  ✗ ${f}`);
   process.exit(1);
 }
-console.log(`repin-fires-per-gate.test: all ${passed} checks passed (8 gates fire, 12 --explain)`);
+console.log(`repin-fires-per-gate.test: all ${passed} checks passed (6 call sites fire, 7 --explain)`);

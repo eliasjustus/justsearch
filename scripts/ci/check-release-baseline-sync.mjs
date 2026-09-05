@@ -16,7 +16,7 @@
  * Usage: node scripts/ci/check-release-baseline-sync.mjs
  * Exit 0 = consistent; non-zero = stale / invalid (with a fix hint).
  *
- * Mirrors the projection-staleness pattern of check-wire-schema-types-regen.mjs.
+ * Mirrors the projection-staleness pattern of the regen set (scripts/ci/regen-all.mjs).
  * Uses only repo-root deps (Ajv) + Node stdlib.
  */
 

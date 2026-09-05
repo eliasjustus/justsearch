@@ -5,9 +5,9 @@ cross-run comparisons can identify cohorts (identical manifest hash =
 same configuration surface) and bisect deltas via manifest-axis diff.
 
 The manifest is the fixed point that tempdoc 400 Layer 1 establishes:
-two runs with the same ``manifest_hash`` must produce results inside the
-non-determinism envelope (§9.1). Any delta outside ±2σ is signal and
-feeds LR5-d bisection.
+two runs with the same ``manifest_hash`` describe the same configuration
+surface, so a metric delta between them is attributable to something the
+manifest records — which is what LR5-d bisection walks.
 
 Design constraints (from 400 §13.9 A-tier findings):
 
@@ -17,7 +17,7 @@ Design constraints (from 400 §13.9 A-tier findings):
   tempdoc adds them.
 - Stay cohort-stable: the fields that define ``manifest_hash`` must
   remain invariant across identical re-runs. Volatile per-run data
-  (timestamps, UUIDs, envelope stats) is excluded from the hash.
+  (timestamps, UUIDs, runtime snapshots) is excluded from the hash.
 """
 
 from __future__ import annotations
@@ -53,13 +53,27 @@ _VOLATILE_FIELDS = frozenset({
     "timestamp",
     "workflow_run_id",
     "manifest_hash",
-    "non_determinism_envelope",
-    "envelope_staleness_days",
     "status_snapshot",
     "debug_state_snapshot",
     "inference_status_snapshot",
     "env_fingerprint",
     "telemetry_health_tag",
+})
+
+#: Field names this module no longer WRITES but must keep EXCLUDING from the hash.
+#:
+#: ``_compute_cohort_hash`` is replayed against archived manifests — most sharply by
+#: ``corpus_certify._derive_scientific_verdict`` (``corpus_certify.py:487-494``), which
+#: re-hashes the ``run_manifest`` embedded in a 707 certification and requires the result
+#: to equal the ``manifest_hash`` recorded at certification time. Every such manifest was
+#: written while these two keys existed, so dropping them from the exclusion set would
+#: silently promote them INTO the hash and invalidate every certificate on disk.
+#: Retired producer-side by tempdoc 930 §18.1 row 7 (no envelope was ever calibrated);
+#: retained here as an exclusion-only compatibility list. Never add a name here that the
+#: current writer still emits — that is what ``_VOLATILE_FIELDS`` above is for.
+_RETIRED_VOLATILE_FIELDS = frozenset({
+    "non_determinism_envelope",
+    "envelope_staleness_days",
 })
 
 # The 7 identity-stable fields inside ``/api/debug/commit-metadata`` —
@@ -145,33 +159,6 @@ def capture_state_snapshots(base_url: str, timeout: float = 5.0) -> dict:
     return snapshots
 
 
-def _envelope_staleness_days(envelope: dict) -> int | None:
-    """Days elapsed between ``envelope.calibrated_at`` and ``now``.
-
-    Returns ``None`` if ``calibrated_at`` is missing / unparseable. This
-    is an informational signal only — no invalidation policy fires on a
-    stale envelope. Consumers that care about staleness (e.g. a future
-    Phase-3 LR4-b that weights σ by age) read this field and apply their
-    own threshold. See tempdoc 400 §25.4 deferral: a full freshness
-    policy is Phase 3/4 territory.
-    """
-    raw = envelope.get("calibrated_at")
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        # ISO-8601 with trailing Z → Python's +00:00.
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        ts = datetime.fromisoformat(raw)
-        # Compute against a timezone-aware "now" to avoid naive/aware mix.
-        now = datetime.now(timezone.utc)
-        delta = now - ts
-        return max(0, delta.days)
-    except (ValueError, TypeError) as e:  # pragma: no cover — defensive
-        log.debug("envelope calibrated_at unparseable (%r): %s", raw, e)
-        return None
-
-
 def _extract_telemetry_tag(state_snapshots: dict) -> str:
     """Extract the telemetry-stack lifecycle tag."""
     t = state_snapshots.get("/api/telemetry/health") or {}
@@ -217,11 +204,10 @@ def _compute_cohort_hash(manifest: dict) -> str:
 
     Two runs with identical ``manifest_hash`` share the same configuration
     surface — the same git, the same policy, the same index identity, the
-    same models, the same corpus, the same eval protocol. The
-    non-determinism envelope (σ per metric) applies to this cohort
-    specifically.
+    same models, the same corpus, the same eval protocol.
     """
-    filtered = {k: v for k, v in manifest.items() if k not in _VOLATILE_FIELDS}
+    excluded = _VOLATILE_FIELDS | _RETIRED_VOLATILE_FIELDS
+    filtered = {k: v for k, v in manifest.items() if k not in excluded}
     return _sha256_canonical(filtered)
 
 
@@ -234,8 +220,6 @@ def compute_manifest(
     eval_protocol: dict,
     state_snapshots: dict,
     workflow_run_id: str | None = None,
-    non_determinism_envelope: dict | None = None,
-    envelope_data_dir: Path | None = None,
     corpus_identity: dict | None = None,
 ) -> dict:
     """Build the run manifest document.
@@ -244,20 +228,6 @@ def compute_manifest(
     (git SHA, corpus, qrels, eval protocol, env fingerprint). The
     resulting ``manifest_hash`` is the cohort identifier that tempdoc 400
     §9.2 bisection consumes.
-
-    The ``non_determinism_envelope`` field is per-cohort (not per-run):
-
-    - If passed explicitly (non-None), that value wins unchanged.
-    - Else if ``envelope_data_dir`` is set, the manifest's
-      ``manifest_hash`` is looked up under
-      ``<envelope_data_dir>/cohort_baselines/`` via
-      :func:`jseval.calibrate.read_envelope` (which also consults the
-      Phase-2 sidecar dir and the pre-716 legacy roots); a hit embeds
-      the envelope, a miss leaves the field ``None``.
-    - Else the field stays ``None`` — an uncalibrated cohort.
-
-    Consumers that observe ``None`` must treat cross-run deltas
-    qualitatively (§13.9 C4).
     """
     commit_metadata = _normalise_commit_metadata(
         state_snapshots.get("/api/debug/commit-metadata") or {},
@@ -322,37 +292,9 @@ def compute_manifest(
         "inference_status_snapshot": state_snapshots.get("/api/inference/status") or {},
         "env_fingerprint": env_fingerprint or {},
         "telemetry_health_tag": _extract_telemetry_tag(state_snapshots),
-
-        # Volatile — per-cohort calibration artefact (LR1-b).
-        "non_determinism_envelope": non_determinism_envelope,
     }
 
     manifest["manifest_hash"] = _compute_cohort_hash(manifest)
-
-    # Phase 2.2b: if no envelope was explicitly passed and a registry is
-    # configured, look up the calibrated envelope for this cohort. Missing
-    # sidecar (uncalibrated cohort) leaves the field None; consumers must
-    # treat cross-run deltas qualitatively in that case.
-    if non_determinism_envelope is None and envelope_data_dir is not None:
-        try:
-            from jseval.calibrate import read_envelope  # avoid import cycle at module load
-            manifest["non_determinism_envelope"] = read_envelope(
-                envelope_data_dir, manifest["manifest_hash"],
-            )
-        except Exception as e:  # pragma: no cover — defensive best-effort
-            log.debug("envelope lookup failed (best-effort): %s", e)
-
-    # Phase 2.2d (staleness signal, tempdoc 400 §25.4): surface how old
-    # the embedded envelope is so downstream consumers can weight the
-    # envelope's σ against its age without committing to any specific
-    # invalidation rule. A full freshness policy (GPU driver / model
-    # reload / schema change triggers) is deferred to Phase 3/4 where
-    # LR4-b's consumer semantics will inform the decision.
-    envelope = manifest.get("non_determinism_envelope")
-    if isinstance(envelope, dict):
-        manifest["envelope_staleness_days"] = _envelope_staleness_days(envelope)
-    else:
-        manifest["envelope_staleness_days"] = None
 
     return manifest
 

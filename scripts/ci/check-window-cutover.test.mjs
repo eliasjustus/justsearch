@@ -37,8 +37,8 @@ const ok = (label, cond) => {
 const plugin = (audience) => `
 export const CORE_SURFACES = [
   {
-    id: 'core.governance-surface',
-    mountTag: 'jf-governance-view',
+    id: 'core.api-explorer-surface',
+    mountTag: 'jf-api-explorer-view',
     audience: 'DEVELOPER',
     placement: 'DEEPLINK',
   },

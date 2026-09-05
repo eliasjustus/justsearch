@@ -1529,6 +1529,7 @@ _COHORT = {"model": "haiku", "cli_version": "v", "mcp_tool_surface_hash": "h",
 
 def _graded_logs(tmp_path, conds_through):
     """Build EvalLogs for given {condition: correct_through} via a graded mock solver."""
+    pytest.importorskip("inspect_ai")
     from inspect_ai import Task, eval_set, task
     from inspect_ai.dataset import Sample
     from inspect_ai.solver import solver

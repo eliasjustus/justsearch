@@ -195,9 +195,10 @@ def cmd_shadow_eval(ctx, dataset, policy_a, policy_b, policy_a_name,
               help="Eval-results directory hosting the manifest index.")
 @click.option("--metric", default="nDCG@10", show_default=True)
 @click.option("--mode", default=None,
-              help="Mode to bisect on (default: pick the single mode in the envelope).")
-@click.option("--sigma", type=float, default=2.0, show_default=True,
-              help="Multiplier on envelope stdev for the significance threshold.")
+              help="Mode to bisect on (default: the single mode present in run A's summary).")
+@click.option("--threshold", type=float, default=None,
+              show_default="bisection.DEFAULT_THRESHOLD",
+              help="Absolute metric delta above which an axis swap counts as attributed.")
 @click.option("--report-out", type=click.Path(), default=None,
               help="Optional path to write the JSON report (default: stdout only).")
 @click.option("--synthesize", is_flag=True,
@@ -213,34 +214,22 @@ def cmd_shadow_eval(ctx, dataset, policy_a, policy_b, policy_a_name,
 @click.option("--dry-run", is_flag=True,
               help="With --synthesize, print the plan without spawning runs.")
 @click.pass_context
-def cmd_bisect(ctx, run_a, run_b, output_dir, metric, mode, sigma, report_out,
+def cmd_bisect(ctx, run_a, run_b, output_dir, metric, mode, threshold, report_out,
                 synthesize, dataset, modes, max_queries, dry_run):
     """Manifest-hash bisection (tempdoc 400 LR5-d).
 
-    Given two runs A and B with a metric delta that exceeds the
-    cohort's non-determinism envelope, walks the axis-wise diff
-    between their manifests and attributes the delta to single-
-    axis swaps. Cache lookup only — when no cached run matches a
+    Given two runs A and B whose metric delta is worth attributing, walks
+    the axis-wise diff between their manifests and attributes the delta to
+    single-axis swaps. Cache lookup only — when no cached run matches a
     synthetic axis-swapped hash, that axis is reported as
     ``no-cached-run``.
     """
     from .. import bisection
-    from .. import calibrate
 
     run_a_path = Path(run_a)
     run_b_path = Path(run_b)
     manifest_a = json.loads((run_a_path / "manifest.json").read_text(encoding="utf-8"))
     manifest_b = json.loads((run_b_path / "manifest.json").read_text(encoding="utf-8"))
-
-    data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
-    envelope = None
-    if data_dir_env and manifest_a.get("manifest_hash"):
-        envelope = calibrate.read_envelope(
-            Path(data_dir_env), manifest_a["manifest_hash"],
-        )
-    # Fallback: read envelope embedded in manifest A (if any).
-    if envelope is None:
-        envelope = manifest_a.get("non_determinism_envelope")
 
     if synthesize:
         if not dataset:
@@ -253,7 +242,6 @@ def cmd_bisect(ctx, run_a, run_b, output_dir, metric, mode, sigma, report_out,
             sys.exit(1)
         result = bisection.synthesize_and_bisect(
             manifest_a, manifest_b,
-            envelope=envelope or {"metrics": {}},
             output_dir=Path(output_dir),
             data_dir=Path(data_dir_for_sync),
             dataset=dataset,
@@ -261,17 +249,16 @@ def cmd_bisect(ctx, run_a, run_b, output_dir, metric, mode, sigma, report_out,
             max_queries=max_queries,
             metric=metric,
             mode=mode,
-            sigma_multiplier=sigma,
+            threshold=threshold,
             dry_run=dry_run,
         )
     else:
         result = bisection.bisect(
             manifest_a, manifest_b,
-            envelope=envelope or {"metrics": {}},
             output_dir=Path(output_dir),
             metric=metric,
             mode=mode,
-            sigma_multiplier=sigma,
+            threshold=threshold,
         )
 
     if report_out:
@@ -289,7 +276,7 @@ def cmd_bisect(ctx, run_a, run_b, output_dir, metric, mode, sigma, report_out,
     else:
         click.echo(f"bisection status: {result['status']}")
         click.echo(f"  metric: {result['metric']} (mode={result['mode']})")
-        click.echo(f"  metric_a={result['metric_a']} metric_b={result['metric_b']} sigma={result['envelope_sigma']}")
+        click.echo(f"  metric_a={result['metric_a']} metric_b={result['metric_b']} threshold={result['threshold']}")
         click.echo(f"  axes_diff: {result['axes_diff']}")
         for a in result["attributions"]:
             line = f"    {a['axis']}: {a.get('status')}"
