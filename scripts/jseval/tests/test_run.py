@@ -1104,7 +1104,7 @@ _SETTLE_202 = {
     "numDocsBefore": 222,
     "maxDocAfter": 222,
     "numDocsAfter": 222,
-    "segmentsAfter": 3,
+    "segmentsAfter": 1,
     "elapsedMs": 4200,
 }
 
@@ -1114,13 +1114,13 @@ class TestSettleIndexHelper:
         calls = []
         with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
             block = _settle_index("http://localhost:8080")
-        assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+        assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": False, "maxSegments": 1})]
         assert block == {
             "max_doc_before": 2851,
             "num_docs_before": 222,
             "max_doc_after": 222,
             "num_docs_after": 222,
-            "segments_after": 3,
+            "segments_after": 1,
             "elapsed_ms": 4200,
         }
 
@@ -1188,12 +1188,12 @@ def test_execute_run_with_settle_flag_records_the_block_and_rechecks_readiness(
             "scifact", "http://localhost:8080", ["hybrid"], settle_index=True,
         )
 
-    assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+    assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": False, "maxSegments": 1})]
     block = summary["index_state_at_query"]
     assert block["settled"] is True
     assert block["settle"]["max_doc_before"] == 2851
     assert block["settle"]["max_doc_after"] == 222
-    assert block["settle"]["segments_after"] == 3
+    assert block["settle"]["segments_after"] == 1
     assert block["settle"]["elapsed_ms"] == 4200
     # The settle commits and reopens the searcher, so the recorded coverage percentages must
     # come from a post-settle readiness snapshot, not the pre-settle one.
