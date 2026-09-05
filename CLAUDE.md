@@ -163,7 +163,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `docs/decisions/**` | `--gate adr-coverage` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |
 | NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
-| `SSOT/catalogs/**` · analyzers schema · adapter/Worker search paths | `check-language-agnostic-analysis` + word-list scanner self-test |
+| `SSOT/catalogs/**` · analyzers schema · search paths | `check-language-agnostic-analysis` + word-list test |
 | new tempdoc/changeset (cross-worktree) | `check-tempdoc-numbers` |
 | indexing-job lifecycle surfaces | `--gate operation-surface` |
 | `CoreSurfaceCatalog.java` / surface `altitude` | `--gate surface-altitude` |
