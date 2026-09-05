@@ -110,6 +110,13 @@ jobs:
           python -m pip install --quiet pillow
           python -m unittest discover -s scripts/sandbox -p "test_*.py" -v
 
+      # A lockfile can install fine under the npm that wrote it and still be REFUSED by the
+      # runner's npm ("Missing: X@V from lock file"), because writing prunes edges the reader
+      # demands. Nothing local caught that; three jobs went red on it. This reads all five
+      # lockfiles offline and fails on the same condition, before any install runs.
+      - name: Lockfiles name every declared dependency edge
+        run: node scripts/ci/check-lockfile-completeness.mjs
+
       - name: Install root dependencies
         # The identity gate below is the authoritative audit for this lockfile. npm's install-time
         # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
@@ -149,6 +156,9 @@ jobs:
 
       - name: Workflow npm install audit policy guard
         run: node scripts/ci/check-workflow-npm-audit-policy.mjs
+
+      - name: Test lockfile completeness guard
+        run: node scripts/ci/test-check-lockfile-completeness.mjs
 
       - name: Test publish preflight contract
         run: node scripts/ci/test-run-publish-preflight.mjs

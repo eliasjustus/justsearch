@@ -691,7 +691,13 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    additional lane: it scores a revision diff via the dependency graph, not the checked-out
    lockfile, and its `allow-ghsas` would be a second, un-gated acceptance authority. Evidence and
    the two conditions that *do* hold (fails closed on 404/403; no GHAS needed) are in ADR-0044's
-   2026-09-05 amendment.
+   2026-09-05 amendment. Surfaced en route and fixed in the same PR: `npm install --package-lock-only`
+   under npm 11.6.2/win32-x64 prunes the transitive edges of optional `cpu: ["wasm32"]` packages,
+   producing a lockfile the runner's npm refuses (`Missing: @emnapi/core@… from lock file`) while a
+   local `npm ci` passes — three required jobs red on a condition nothing local reported. New gate
+   `scripts/ci/check-lockfile-completeness.mjs` (+ test, `ci.yml`, pre-merge table, local-repro
+   inventory) walks every declared edge offline and fails on a missing entry; the only reliable
+   repair is regenerating that lockfile from scratch, since incremental re-runs re-prune.
 2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
    wire `pmdMain`, or accept dormancy explicitly.
 3. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.

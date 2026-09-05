@@ -189,3 +189,15 @@ strict subset of a whole-lockfile check that already runs on every pull request,
 a second lane would contribute is a second red surface and a second acceptance list to keep in
 sync. Re-evaluate if GitHub exposes a dependency-review endpoint that scores a submitted lockfile
 snapshot rather than a revision diff.
+
+One lane *was* added, for a different fact. Clearing the advisories rewrote two lockfiles, and the
+rewrite produced a lockfile that installs cleanly under the npm that wrote it and is *refused* by
+the runner's npm: writing under npm 11.6.2 on win32-x64 pruned the transitive edges of an optional
+`cpu: ["wasm32"]` package while keeping the package itself, and the newer npm on the runner demands
+those edges (`Missing: @emnapi/core@… from lock file`, EUSAGE). Three required jobs went red on a
+condition no local command reported, because a local `npm ci` never rewrites the lock and so never
+sees the prune. `check-lockfile-completeness.mjs` closes that: it walks each lockfile entry's
+declared dependency edges through node resolution and fails on any edge with no entry — offline,
+in milliseconds, before the first install. Same fact-lane rule as above, one layer earlier: the
+evidence a required lane consumes has to be checkable where it is produced, not only where it is
+installed.
