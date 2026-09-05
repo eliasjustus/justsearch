@@ -26,7 +26,7 @@ const PERSISTENCE_SEQUENCE_STORAGE_KEY = 'justsearch.ui-mode-persistence-sequenc
 const PERSISTENCE_SEQUENCE_LOCK = 'justsearch.ui-mode-persistence-sequence';
 
 /** Local settings mutations should fail promptly rather than pinning later user intent forever. */
-export const UI_MODE_PERSISTENCE_TIMEOUT_MS = 10_000;
+const UI_MODE_PERSISTENCE_TIMEOUT_MS = 10_000;
 /** Backend-recognized ordering token for mode mutations that may outlive an aborted fetch. */
 export const UI_MODE_INTENT_HEADER = 'X-JustSearch-UI-Mode-Intent';
 
