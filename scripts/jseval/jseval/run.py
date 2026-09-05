@@ -163,8 +163,15 @@ def _snapshot_search_config(base_url: str) -> dict | None:
         return None
 
 
+# Full force-merge, not tombstone-only: Lucene's forceMergeDeletes skips segments whose deleted
+# fraction is below its 10 % threshold, so an expunge-only settle left 181 tombstones and a
+# multi-segment layout on scifact (7756 -> 6920 maxDoc for 6739 live docs, 931 C1 campaign).
+# A paired comparison needs both arms at one segment with zero deletions, so request that.
+_SETTLE_REQUEST = {"expungeDeletesOnly": False, "maxSegments": 1}
+
+
 def _settle_index(base_url: str, timeout_sec: float = 900.0) -> dict | None:
-    """Purge deleted-but-unmerged documents from the active index (tempdoc 931 §E item 10).
+    """Force-merge the active index to one tombstone-free segment (tempdoc 931 §E item 10).
 
     POSTs ``/api/indexing/settle`` and returns the normalized before/after counts, or ``None``
     when the settle did not happen -- an older backend without the route (404), a worker refusal
@@ -174,7 +181,7 @@ def _settle_index(base_url: str, timeout_sec: float = 900.0) -> dict | None:
     """
     try:
         with httpx.Client(base_url=base_url, timeout=timeout_sec) as client:
-            resp = client.post("/api/indexing/settle", json={"expungeDeletesOnly": True})
+            resp = client.post("/api/indexing/settle", json=_SETTLE_REQUEST)
     except Exception as exc:
         log.warning("Index settle failed (%s); continuing unsettled", exc)
         return None
