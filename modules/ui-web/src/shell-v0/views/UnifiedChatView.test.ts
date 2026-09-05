@@ -1353,7 +1353,7 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     // the chip body is not rendered.
     const summary = sr.querySelector('.source-disclosure-summary') as HTMLButtonElement;
     expect(summary).not.toBeNull();
-    expect(summary.tagName).toBe('BUTTON'); // keyboard-operable (controls-a11y)
+    expect(summary.tagName).toBe('BUTTON'); // keyboard-operable (559 operability)
     expect(summary.textContent).toContain('Sources · 2');
     expect(summary.getAttribute('aria-expanded')).toBe('false');
     expect(sr.querySelector('.source-chips')).toBeNull();
@@ -1446,7 +1446,7 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     // each node anchors to its timeline item (the scroll-spy / click-jump target).
     expect([...nodes].every((n) => n.getAttribute('data-item-id'))).toBe(true);
     // §13 P2 — the spine is an operable nav (the binding), not aria-hidden decorative; every node is a
-    // keyboard-operable button with an accessible name (controls-a11y-clean).
+    // keyboard-operable button with an accessible name (559 operability).
     expect(spine!.tagName.toLowerCase()).toBe('nav');
     expect(spine!.getAttribute('aria-label')).toBeTruthy();
     expect(

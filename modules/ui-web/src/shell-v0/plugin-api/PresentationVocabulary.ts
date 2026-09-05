@@ -6,8 +6,9 @@
  * The PRESENTATION axis projection of the one declaration model is a plugin's
  * {@link PluginSurfaceContribution}, which mounts a custom element by tag (`mountTag`). An arbitrary
  * plugin-defined element can paint raw colors / styles — a SECOND presentation authority that
- * bypasses the single theme authority the tempdoc-557 gates (presentation-purity / color-tokens /
- * theme-token-closure) establish for host code.
+ * bypasses the single theme authority tempdoc 557 established for host code (its static
+ * presentation-purity / color-tokens / theme-token-closure gates were retired in 930 chunk H;
+ * the authority itself, and the measured contrast sweep over it, stand).
  *
  * The constraint: an UNTRUSTED plugin's PRESENTATION contribution may only mount a component from the
  * host's constrained vocabulary — the `jf-` design-system namespace. Every `jf-*` component is host

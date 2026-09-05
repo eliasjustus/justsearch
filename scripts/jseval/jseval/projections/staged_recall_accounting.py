@@ -70,6 +70,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..trec import load_trec_run
 from .base import Projection
 
 log = logging.getLogger(__name__)
@@ -123,21 +124,11 @@ def _load_json(path: Path):
 def _load_trec(path: Path) -> dict[str, list[str]]:
     """Parse a ``{mode}_run.trec`` into ``{qid: [doc_id in score-rank order]}``.
 
-    TREC line: ``qid Q0 docid rank score run_tag`` — already score-sorted by
-    :func:`jseval.artifacts._write_trec_run`, so file order is rank order.
-    Returns ``{}`` if the file is absent/unreadable.
+    Delegates to :func:`jseval.trec.load_trec_run` (right-anchored, so doc ids
+    containing spaces survive); file order is rank order because
+    :func:`jseval.artifacts._write_trec_run` writes score-sorted.
     """
-    ranked: dict[str, list[str]] = {}
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return ranked
-    for line in text.splitlines():
-        parts = line.split()
-        if len(parts) >= 4:
-            qid, _q0, doc_id = parts[0], parts[1], parts[2]
-            ranked.setdefault(qid, []).append(doc_id)
-    return ranked
+    return load_trec_run(path)
 
 
 def _ranked_by_qid(run_dir: Path, mode: str) -> dict[str, list[str]]:
