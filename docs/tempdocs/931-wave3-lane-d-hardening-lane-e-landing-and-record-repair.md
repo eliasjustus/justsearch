@@ -1,7 +1,7 @@
 ---
 title: "Wave 3: lane D hardening, lane E landing, and record repair after the Codex continuation"
 type: tempdocs
-status: "LANDED (2026-09-05 eve): #643, #645, #646, #647, #657 (C2 split), #659 (flag), #658 (jseval) merged; #660 (1f) in the queue; settle call PR open; C1 draft #662 awaits its campaign. Earlier: MERGING (2026-09-05 pm): #643, #645 merged; #646 queued; #647 next; #648 split (C2 PR without C1); flag/jseval/1f follow-ups in review. Earlier: IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
+status: "CLOSED FOR LANE D (2026-09-05 night): C1 campaign run and DECIDED — int8 write default rejected under 915 §P3.F (index bytes +25 %, recall@50 −0.020; ranking quality unaffected), draft #662 closed, Float32 stays; #684 (read-path revision guard) and #685 (settle full force-merge) merged. Earlier: LANDED (2026-09-05 eve): #643, #645, #646, #647, #657 (C2 split), #659 (flag), #658 (jseval) merged; #660 (1f) in the queue; settle call PR open; C1 draft #662 awaits its campaign. Earlier: MERGING (2026-09-05 pm): #643, #645 merged; #646 queued; #647 next; #648 split (C2 PR without C1); flag/jseval/1f follow-ups in review. Earlier: IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
 created: 2026-09-05
 updated: 2026-09-05
 lane: D/E/F (decision re-examination programme, wave 3)
@@ -634,9 +634,37 @@ to either a projection fix (if the population differs) or an F-057 caveat.
   done: the FE route manifest needs a live-backend regen (`gen-api-client.mjs --from-live`), and
   the dev-MCP `api_call` allowlist does not carry the route yet.
 
+- 2026-09-05 **§E item 1 closed — C1 campaign run and decided** (`worktree-wave3-c1`, draft #662
+  at `a71f1cd8d`, merged with `origin/main` after #660). Two fresh-index arms per corpus on the
+  same machine, A0 float32 vs A1 int8, `--pipeline --settle-index`; arm identity proven from the
+  status snapshot (`vectorFormatActual` FLOAT32 12/0 segments vs INT8_SQ 0/10). Quality: within
+  noise on every gated cell (scifact hybrid −0.0008 / vector −0.0015 nDCG@10, R@10 −0.0033;
+  enron hybrid identical, vector +0.0089 / +0.0100; legal −0.0005; zero errors), and the A0 arms
+  reproduce the 832 scorecard. ANN bench (20k × 768, k = 50): recall@50 0.994 → 0.974 (ratio 0.980,
+  passes the 915 ratio, fails the FW-008 0.01-absolute wording) and **`index_size_bytes` +25.1 %**
+  (62.8 → 78.5 MB) because `Lucene104HnswScalarQuantizedVectorsFormat` keeps the raw float32
+  vectors beside the int8 copy — the "index bytes fall" leg cannot pass with this format by
+  construction; query p50 also rose 0.7 ms; RSS not instrumented. 915 §P3.F: any single miss →
+  the flip does not ship. **Decision: Float32 stays the default; #662 closed** with the evidence;
+  finding recorded as F-060 and FW-008 updated. Full tables and artifact paths:
+  `931-evidence/c1-quantization-campaign-2026-09-05.md`. Two campaign-tooling defects fixed on the
+  way: the campaign driver must call `gradlew.bat` by full path from a `cmd` label routine, and
+  `EngineVectorIndexBench` needs a `__bench_sentinel__` document in the vectors file (the
+  fixture generator did not add one). Observed on the way and fixed in #685: an expunge-only
+  settle leaves sub-10 % tombstones (181 vs 1044 deleted docs between the scifact arms), so
+  `--settle-index` now force-merges to one segment.
+- 2026-09-05 **§E item 5 closed — read-path revision guard** (#684): `ChunkReadRevisionGuard`
+  compares the stored `chunk_parent_content_sha256` against the live parent on chunk-text
+  reads and reports a not-yet-consistent status instead of a slice of the newer revision
+  (counter `index.runtime.chunk_read_revision_mismatch_total`). Residual: stored-vs-live hash
+  pairing is test-covered, not gate-enforced.
+- 2026-09-05 **follow-ups landed**: #683 (dev-MCP `api_call` allowlist carries
+  `POST /api/indexing/settle`; FE route manifest regenerated from the live backend, 243 routes),
+  #685 (jseval settle = full force-merge, see above).
+
 ## §E Open items
 
-1. C1 campaign (3-4 h) — deferred; C2 now lands without C1 (§D split entry); C1 re-drafted on top, campaign only after the jseval readiness/merge-state fixes (items 9/10) land.
+1. **Closed (2026-09-05 night, §D "C1 campaign" entry): int8 default rejected, #662 closed, Float32 stays.** Was: C1 campaign (3-4 h) — deferred; C2 now lands without C1 (§D split entry); C1 re-drafted on top, campaign only after the jseval readiness/merge-state fixes (items 9/10) land.
 2. 1f identity/revision contract — owner adopted the §C.6 design with a deletion grace period (30 days) over explicit confirmation; implementation in flight (`worktree-wave3-1f`).
 3. Lane F derisk — **no-go for now** (owner, 2026-09-05): a process-boundary rewrite (917: 1,806-line Head client, 48 RPCs, spawner, 20 chaos tests, dev-runner) waits for D fully merged, the C1 decision closed, and a brief refreshed with 917's corrections.
 4. **Closed** (`bc968416` / `d829ef7c`, see §D). §C.5 residual: the determinate-input fallback only runs when the *expected* digest is
@@ -696,3 +724,5 @@ to either a projection fix (if the population differs) or an F-057 caveat.
     the Worker now publishes chunk-SPLADE coverage); **10 closed** (settle PR, §D): merge state is recorded,
     paired-arm divergence warns, and `--settle-index` forces equal merge state before the query
     phase. **5** and **7** unchanged. **1** (C1 campaign) is the only lane-D item still open.
+13. Status after the night run (§D): **1 closed** (campaign decided against the int8 default),
+    **5 closed** (#684). **7** is the only lane-D item still open.
