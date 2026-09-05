@@ -213,13 +213,16 @@ Publishing, opening a pull request, enqueueing, and merging are explicitly exclu
   cold-load timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated
   rerun passed all 35 tests. After each of the final two `origin/main` catch-ups,
   `npm run test:unit:run` passed all 469 files and 6,287 tests.
-- The worktree was caught up through publication-candidate merge commit `038c3ab1` (including
-  mainline `8bd591a4`). The required `./gradlew.bat build -x test` and repository-wide
+- The worktree was caught up again through publication-candidate merge commit `e4cc4bad` (including
+  mainline `6e20f1d9`). The required `./gradlew.bat build -x test` and repository-wide
   `./gradlew.bat test` both passed after that merge. The preceding uncached full-suite run passed
   cleanly in 3m17s, including the previously load-sensitive Lucene concurrency regression. The
   complete `:modules:ui:test` task, including the new HTTP contract, also passed independently.
   Frontend lint and typecheck passed, and the exact caught-up candidate passed all 469 unit-test
-  files / 6,287 tests.
+  files / 6,287 tests. The first hosted Public claims run exposed one accidental unused export on
+  the otherwise internal persistence-timeout constant; removing that export left runtime behavior
+  unchanged, and the exact corrected head passed the local dead-code gate plus two complete hosted
+  CI runs before the final mainline catch-up.
 - The publish preflight's complete Public claims section passed, including the lockfile-completeness
   gate added by the final mainline catch-up. Its Windows runner cannot execute manifest entries that
   spell the wrapper as `./gradlew.bat` through `cmd.exe`; each remaining underlying subset was run
