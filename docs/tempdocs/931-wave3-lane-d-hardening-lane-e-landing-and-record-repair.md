@@ -556,6 +556,27 @@ to either a projection fix (if the population differs) or an F-057 caveat.
   the control carries 2,629 tombstoned docs in un-merged segments (§E 10); the same count of live
   vectors exists on both. Lane E's pre-C2 56.65 MB (500/50, 916) is a different merge state and
   is not used as the reference. Register F-059.
+- 2026-09-05 **Closeout.** `wave3-d` tip (= draft #648 code + record): `build -x test` BUILD
+  SUCCESSFUL; `cleanTest … --no-build-cache` worker-services 1,176 / adapters-lucene 691 /
+  indexer-worker 367 — 0 failures, 0 errors (result XML); earlier combined tip 5,162/0 across six
+  modules. Draft #648 opened (base #647, head `286a97bc`). Fix worktrees `wave3-fix-{a,b,c}`
+  removed with their branches (all commits cherry-picked); `wave3-c2` and `wave3-pa` kept as the
+  measurement arms (their index dirs are the 5b evidence; snapshot before further forensics — the
+  re-query runs opened writers that merged segments). Time spent on live measurement: 3a 17 min,
+  3b/3c 5 pipeline runs + 1 re-run + 2 re-queries + 2 C2 re-measurements ≈ 95 min — under the 2 h
+  rule, with 3d (C1) the one skip.
+- 2026-09-05 **#648 first CI: two reds, both draft-only code** (`4aad952d`, cherry-picked to
+  `wave3-d` as `58b5460a`). (1) `UnreferencedCodeTest` (app-launcher, whole-program): four
+  members with no main-code reference after the wave-3 fixes — `WritePathOps.indexDocument(Map)`
+  and `FieldMapper.toDocument(Map)` (pre-931 overloads superseded by the
+  `DroppedVectorReport`-carrying ones), `SsotCommitMetadataSource.indexFingerprint()` (superseded
+  by `fingerprintInputs()`), write-only `FieldDef.vectorSimilarity`. Deleted; 33 test call sites
+  pass the report explicitly. The scanner is its own falsification (red before, 28/0 after).
+  (2) `test-to-code` on `modules/indexing` 95.1 % → 93.0 %: A's `ChunkParentRevision` was tested
+  only from worker-services. `ChunkParentRevisionTest` (6 cases) pins the hash contract in its own
+  module; falsified once — uppercase hex → **4** of 6 RED (the commit message says 2; the XML says
+  4) — restored 6/6 green; gate pass (indexing back above its 95.1 % pin). Suites: adapters-lucene 691 / indexing 84
+  / app-launcher scanner 28 — 0 failures; `build -x test` green.
 
 ## §E Open items
 
