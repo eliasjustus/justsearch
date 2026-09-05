@@ -664,7 +664,7 @@ export class TaskList extends JfElement {
             </div>`
           : nothing}
         <!-- 813 §5/§20: the DETAIL tier is opt-in. A native <button> so it is keyboard-operable by
-             construction (559 Authority V / check-controls-a11y). It now opens on per-stage
+             construction (559 Authority V). It now opens on per-stage
              enrichment detail as well as per-file rows — during pure enrichment there are no task
              rows at all, and gating the button on them left the card with nothing to open exactly
              when the user most wants to know which stage is still running. -->

@@ -6,8 +6,9 @@
  * authority, api/types/surface.ts) to its ARIA landmark role. The shell applies
  * the projected role to each grid region by the placement it hosts — so landmark
  * roles are *derived from the catalog*, never hand-stamped per region, and a new
- * Placement kind is landmarked the moment it is mapped here (the `a11y-closure`
- * gate enumerates this map against the Placement union).
+ * Placement kind is landmarked the moment it is mapped here. (The `a11y-closure` gate
+ * that enumerated this map against the Placement union was retired in 930 chunk H —
+ * the exhaustive `switch` below is the type-level check, measured axe the rendered one.)
  */
 import type { Placement } from '../../api/types/surface.js';
 

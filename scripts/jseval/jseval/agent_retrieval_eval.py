@@ -28,6 +28,8 @@ the above.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import re
@@ -35,6 +37,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -61,6 +64,10 @@ class CompactModelNotAllowedError(RuntimeError):
     """Raised by :func:`run_tier2_eval` when the served chat model matches a
     ``COMPACT_MODEL_MARKERS`` entry (tempdoc 842 §2.5) and ``allow_compact_model``
     was not passed."""
+
+
+class Tier2ComparisonError(ValueError):
+    """Raised when two Tier-2 records cannot support a paired comparison."""
 
 
 def stage_corpus_dir(corpus_dir: str, *, prefix: str = "jseval-corpus-stage-",
@@ -691,6 +698,70 @@ _TIER2_JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
+_TIER2_PROTOCOL_ID = "tier2-evaluator.v1"
+_TIER2_SCORING_VERSION = "exact-substring-has-intersection.v1"
+_TIER2_RETRIEVE_PATH = "/api/knowledge/retrieve-context"
+_TIER2_USER_MESSAGE_TEMPLATE_ID = "context-question.v1"
+_TIER2_USER_MESSAGE_TEMPLATE = "Context:\n{context}\n\nQuestion: {question}"
+_TIER2_LLM_MODEL = "local"
+_TIER2_LLM_MAX_TOKENS = 512
+_TIER2_LLM_TEMPERATURE = 0.1
+_TIER2_LLM_LOGPROBS = True
+_TIER2_LLM_TOP_LOGPROBS = 3
+_TIER2_LLM_CHAT_TEMPLATE_KWARGS = {"enable_thinking": False}
+
+
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _tier2_protocol_digest(definition: dict) -> str:
+    """Digest a protocol definition using its canonical JSON representation."""
+    return _canonical_sha256(definition)
+
+
+def _tier2_evaluator_protocol(*, structured: bool, use_paper_prompt: bool) -> dict:
+    """Describe and fingerprint every decision-bearing Tier-2 evaluator constant."""
+    prompt_variant = "paper" if use_paper_prompt else "standard"
+    prompt = _TIER2_PAPER_PROMPT if use_paper_prompt else _TIER2_SYSTEM_PROMPT
+    uses_json_schema = structured and not use_paper_prompt
+    definition = {
+        "id": _TIER2_PROTOCOL_ID,
+        "prompt_variant": prompt_variant,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "scoring_version": _TIER2_SCORING_VERSION,
+        "retrieval_request": {
+            "path": _TIER2_RETRIEVE_PATH,
+            "query_field": "query",
+            "top_k_field": "top_k",
+            "max_context_tokens_field": "max_tokens",
+        },
+        "llm_request": {
+            "model": _TIER2_LLM_MODEL,
+            "max_tokens": _TIER2_LLM_MAX_TOKENS,
+            "temperature": _TIER2_LLM_TEMPERATURE,
+            "logprobs": _TIER2_LLM_LOGPROBS,
+            "top_logprobs": _TIER2_LLM_TOP_LOGPROBS,
+            "chat_template_kwargs": dict(_TIER2_LLM_CHAT_TEMPLATE_KWARGS),
+            "user_message_template": {
+                "id": _TIER2_USER_MESSAGE_TEMPLATE_ID,
+                "sha256": hashlib.sha256(
+                    _TIER2_USER_MESSAGE_TEMPLATE.encode("utf-8")).hexdigest(),
+            },
+            "response_mode": "json_schema" if uses_json_schema else "plain_text",
+            "response_schema_sha256": (
+                _canonical_sha256(_TIER2_JSON_SCHEMA) if uses_json_schema else None),
+        },
+    }
+    return {
+        "id": _TIER2_PROTOCOL_ID,
+        "digest_sha256": _tier2_protocol_digest(definition),
+        "definition": definition,
+    }
+
 _TIER2_ABSTENTION = [
     "insufficient information", "cannot find", "not found",
     "does not contain", "not present", "could not find",
@@ -712,11 +783,69 @@ class Tier2Result:
     correct_substring: bool = False
     correct_has_intersection: bool = False  # paper's raw scoring
     retrieval_chunks: int = 0
+    included_anchors: list[dict] = field(default_factory=list)
+    included_anchor_count: int = 0
+    anchor_evidence_error: str = "anchor evidence not captured"
     context_tokens: int = 0
+    answer_in_context: bool = False
+    context_truncated: bool = False
     latency_retrieve_ms: int = 0
     latency_llm_ms: int = 0
     completion_tokens: int = 0
     error: str = ""
+
+
+def _extract_tier2_anchor_evidence(data: object) -> tuple[list[dict], int, int, str]:
+    """Extract ordered anchor identities and validate their producer count.
+
+    The structured pair stays structured throughout.  Joining a path and
+    ordinal into one string would be ambiguous for Windows drive paths and is
+    unnecessary because JSON already represents the identity directly.
+
+    Returns ``(anchors, anchor_count, retrieval_chunks, error)``.  Callers keep
+    the diagnostic record on malformed responses, but paired comparison fails
+    closed whenever ``error`` is non-empty.
+    """
+    if not isinstance(data, dict):
+        return [], 0, 0, "retrieve-context response is not an object"
+
+    quality = data.get("quality")
+    if not isinstance(quality, dict):
+        return [], 0, 0, "retrieve-context response is missing quality evidence"
+    retrieval_chunks = quality.get("chunks_included")
+    if (not isinstance(retrieval_chunks, int) or isinstance(retrieval_chunks, bool)
+            or retrieval_chunks < 0):
+        return [], 0, 0, "quality.chunks_included must be a non-negative integer"
+
+    raw_anchors = data.get("chunks")
+    if not isinstance(raw_anchors, list):
+        return [], 0, retrieval_chunks, "retrieve-context response is missing the chunks array"
+
+    anchors: list[dict] = []
+    for index, raw_anchor in enumerate(raw_anchors):
+        if not isinstance(raw_anchor, dict):
+            return [], 0, retrieval_chunks, f"chunks[{index}] must be an object"
+        parent_doc_id = raw_anchor.get("parent_doc_id")
+        chunk_index = raw_anchor.get("chunk_index")
+        if not isinstance(parent_doc_id, str) or not parent_doc_id:
+            return [], 0, retrieval_chunks, (
+                f"chunks[{index}].parent_doc_id must be a non-empty string")
+        if (not isinstance(chunk_index, int) or isinstance(chunk_index, bool)
+                or chunk_index < -1):
+            return [], 0, retrieval_chunks, (
+                f"chunks[{index}].chunk_index must be -1 or a non-negative integer")
+        anchors.append({"parent_doc_id": parent_doc_id, "chunk_index": chunk_index})
+
+    anchor_count = len(anchors)
+    if anchor_count != retrieval_chunks:
+        return anchors, anchor_count, retrieval_chunks, (
+            "included anchor count "
+            f"{anchor_count} disagrees with quality.chunks_included {retrieval_chunks}")
+    return anchors, anchor_count, retrieval_chunks, ""
+
+
+def _append_evidence_error(current: str, violation: str) -> str:
+    return f"{current}; {violation}" if current else violation
 
 
 def _score_tier2(ground_truth: str, llm_answer: str) -> tuple[bool, bool, bool]:
@@ -842,6 +971,8 @@ def run_tier2_eval(
     source_check: bool = False,
     checkpoint_dir: Path | None = None,
     allow_compact_model: bool = False,
+    comparison_baseline: object | None = None,
+    require_served_model: bool = False,
 ) -> dict:
     """Run Tier 2 single-shot RAG eval: retrieve-context + local LLM answer.
 
@@ -870,6 +1001,10 @@ def run_tier2_eval(
     if served_model is None:
         log.warning("Could not determine served chat model identity at %s; "
                     "tier-2 result will record served_model=None.", llm_url)
+        if require_served_model:
+            raise Tier2ComparisonError(
+                "served chat model identity is unavailable; canonical CLI runs require "
+                "a non-empty model identity before processing queries")
 
     compact_model_allowed = False
     if served_model:
@@ -886,6 +1021,30 @@ def run_tier2_eval(
                     "anyway -- the result will be stamped compact_model_allowed=true.")
             compact_model_allowed = True
 
+    filtered = queries
+    if question_types:
+        filtered = [q for q in queries if q["question_type"] in question_types]
+    if max_queries:
+        filtered = filtered[:max_queries]
+
+    eval_config = {
+        "top_k": top_k,
+        "max_context_tokens": max_context_tokens,
+        "structured": structured,
+        "use_paper_prompt": use_paper_prompt,
+        "source_check": source_check,
+        "served_model": served_model,
+    }
+    evaluator_protocol = _tier2_evaluator_protocol(
+        structured=structured, use_paper_prompt=use_paper_prompt)
+    if comparison_baseline is not None:
+        _preflight_tier2_baseline(
+            comparison_baseline,
+            filtered,
+            eval_config=eval_config,
+            evaluator_protocol=evaluator_protocol,
+        )
+
     client = _httpx.Client(base_url=base_url, timeout=30.0)
     results: list[Tier2Result] = []
 
@@ -895,12 +1054,6 @@ def run_tier2_eval(
     if source_check:
         corpus_sources = _build_corpus_source_set(base_url)
         log.info("Source check enabled: %d sources in corpus", len(corpus_sources))
-
-    filtered = queries
-    if question_types:
-        filtered = [q for q in queries if q["question_type"] in question_types]
-    if max_queries:
-        filtered = filtered[:max_queries]
 
     log.info("Running Tier 2 eval: %d queries (top_k=%d, structured=%s, source_check=%s)",
              len(filtered), top_k, structured, source_check)
@@ -915,7 +1068,7 @@ def run_tier2_eval(
         # Step 1: Retrieve context
         t0 = time.monotonic()
         try:
-            resp = client.post("/api/knowledge/retrieve-context", json={
+            resp = client.post(_TIER2_RETRIEVE_PATH, json={
                 "query": q["query"],
                 "top_k": top_k,
                 "max_tokens": max_context_tokens,
@@ -927,9 +1080,27 @@ def run_tier2_eval(
             results.append(result)
             continue
 
-        context = data.get("context", "")
-        result.retrieval_chunks = data.get("quality", {}).get("chunks_included", 0)
+        raw_context = data.get("context") if isinstance(data, dict) else None
+        context = raw_context if isinstance(raw_context, str) else ""
+        (result.included_anchors,
+         result.included_anchor_count,
+         result.retrieval_chunks,
+         result.anchor_evidence_error) = _extract_tier2_anchor_evidence(data)
+        quality = data.get("quality") if isinstance(data, dict) else None
+        raw_truncated = quality.get("truncated") if isinstance(quality, dict) else None
+        result.context_truncated = raw_truncated if isinstance(raw_truncated, bool) else False
+        if not isinstance(raw_context, str):
+            result.anchor_evidence_error = _append_evidence_error(
+                result.anchor_evidence_error,
+                "retrieve-context context must be a string",
+            )
+        if not isinstance(raw_truncated, bool):
+            result.anchor_evidence_error = _append_evidence_error(
+                result.anchor_evidence_error,
+                "quality.truncated must be a boolean",
+            )
         result.context_tokens = len(context) // 4
+        result.answer_in_context = q["answer"].lower() in context.lower()
         result.latency_retrieve_ms = int((time.monotonic() - t0) * 1000)
 
         # Source existence check: if query mentions sources not in corpus, abstain
@@ -948,20 +1119,21 @@ def run_tier2_eval(
 
         # Step 2: Call local LLM
         system_prompt = _TIER2_PAPER_PROMPT if use_paper_prompt else _TIER2_SYSTEM_PROMPT
-        user_msg = f"Context:\n{context}\n\nQuestion: {q['query']}"
+        user_msg = _TIER2_USER_MESSAGE_TEMPLATE.format(
+            context=context, question=q["query"])
         llm_body: dict = {
-            "model": "local",
+            "model": _TIER2_LLM_MODEL,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
-            "max_tokens": 512,
-            "temperature": 0.1,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "max_tokens": _TIER2_LLM_MAX_TOKENS,
+            "temperature": _TIER2_LLM_TEMPERATURE,
+            "chat_template_kwargs": dict(_TIER2_LLM_CHAT_TEMPLATE_KWARGS),
         }
         # Always request logprobs for observability
-        llm_body["logprobs"] = True
-        llm_body["top_logprobs"] = 3
+        llm_body["logprobs"] = _TIER2_LLM_LOGPROBS
+        llm_body["top_logprobs"] = _TIER2_LLM_TOP_LOGPROBS
 
         if structured and not use_paper_prompt:
             llm_body["response_format"] = {
@@ -1060,8 +1232,14 @@ def run_tier2_eval(
     client.close()
     if source_check:
         log.info("Source check abstentions: %d/%d", source_check_abstentions, len(filtered))
-    return _aggregate_tier2(results, served_model=served_model,
-                            compact_model_allowed=compact_model_allowed)
+    return _aggregate_tier2(
+        results,
+        served_model=served_model,
+        compact_model_allowed=compact_model_allowed,
+        eval_config=eval_config,
+        evaluator_protocol=evaluator_protocol,
+        eval_provenance={"base_url": base_url, "llm_url": llm_url},
+    )
 
 
 def _save_checkpoint(checkpoint_dir: Path, results: list[Tier2Result], done: int, total: int) -> None:
@@ -1078,10 +1256,20 @@ def _save_checkpoint(checkpoint_dir: Path, results: list[Tier2Result], done: int
 
 
 def _aggregate_tier2(results: list[Tier2Result], *, served_model: str | None = None,
-                     compact_model_allowed: bool = False) -> dict:
+                     compact_model_allowed: bool = False,
+                     eval_config: dict | None = None,
+                     evaluator_protocol: dict | None = None,
+                     eval_provenance: dict | None = None) -> dict:
     """Aggregate Tier 2 results."""
     if not results:
-        return {"error": "no results", "served_model": served_model}
+        aggregate = {"error": "no results", "served_model": served_model}
+        if eval_config is not None:
+            aggregate["eval_config"] = dict(eval_config)
+        if evaluator_protocol is not None:
+            aggregate["evaluator_protocol"] = dict(evaluator_protocol)
+        if eval_provenance is not None:
+            aggregate["eval_provenance"] = dict(eval_provenance)
+        return aggregate
 
     total = len(results)
     errors = sum(1 for r in results if r.error)
@@ -1116,6 +1304,10 @@ def _aggregate_tier2(results: list[Tier2Result], *, served_model: str | None = N
             "accuracy_exact": sum(1 for r in tv if r.correct_exact) / tn,
             "accuracy_substring": sum(1 for r in tv if r.correct_substring) / tn,
             "accuracy_has_intersection": sum(1 for r in tv if r.correct_has_intersection) / tn,
+            "answer_in_context_rate": round(
+                sum(1 for r in tv if r.answer_in_context) / tn, 4),
+            "context_truncated_rate": round(
+                sum(1 for r in tv if r.context_truncated) / tn, 4),
             "avg_latency_ms": round(sum(r.latency_retrieve_ms + r.latency_llm_ms for r in tv) / tn),
         }
 
@@ -1124,9 +1316,14 @@ def _aggregate_tier2(results: list[Tier2Result], *, served_model: str | None = N
         "served_model": served_model,
         "total_queries": total,
         "errors": errors,
+        "anchor_evidence_errors": sum(1 for r in results if r.anchor_evidence_error),
         "accuracy_exact": round(exact_correct / n, 4),
         "accuracy_substring": round(substr_correct / n, 4),
         "accuracy_has_intersection": round(hi_correct / n, 4),
+        "answer_in_context_rate": round(
+            sum(1 for r in valid if r.answer_in_context) / n, 4),
+        "context_truncated_rate": round(
+            sum(1 for r in valid if r.context_truncated) / n, 4),
         "avg_latency_retrieve_ms": round(avg_latency_ret),
         "avg_latency_llm_ms": round(avg_latency_llm),
         "avg_context_tokens": round(avg_ctx_tokens),
@@ -1135,9 +1332,420 @@ def _aggregate_tier2(results: list[Tier2Result], *, served_model: str | None = N
         "by_type": type_summary,
         "results": [asdict(r) for r in results],
     }
+    if eval_config is not None:
+        agg["eval_config"] = dict(eval_config)
+    if evaluator_protocol is not None:
+        agg["evaluator_protocol"] = dict(evaluator_protocol)
+    if eval_provenance is not None:
+        agg["eval_provenance"] = dict(eval_provenance)
     if compact_model_allowed:
         agg["compact_model_allowed"] = True
     return agg
+
+
+_TIER2_COMPARISON_CONFIG_TYPES = {
+    "top_k": int,
+    "max_context_tokens": int,
+    "structured": bool,
+    "use_paper_prompt": bool,
+    "source_check": bool,
+    "served_model": str,
+}
+
+
+def _validate_tier2_comparison_record(
+    record: object, arm: str,
+) -> tuple[dict, dict, dict, list[dict]]:
+    """Return normalized comparison inputs or reject an unevaluable record."""
+    if not isinstance(record, dict):
+        raise Tier2ComparisonError(f"{arm} Tier-2 record must be an object")
+    if record.get("tier") != "tier2_single_shot_rag":
+        raise Tier2ComparisonError(
+            f"{arm} tier must be 'tier2_single_shot_rag'")
+
+    config = record.get("eval_config")
+    if not isinstance(config, dict):
+        raise Tier2ComparisonError(f"{arm} Tier-2 record is missing eval_config")
+    missing_config = [key for key in _TIER2_COMPARISON_CONFIG_TYPES if key not in config]
+    if missing_config:
+        raise Tier2ComparisonError(
+            f"{arm} eval_config is missing: {', '.join(missing_config)}")
+    for key, expected_type in _TIER2_COMPARISON_CONFIG_TYPES.items():
+        value = config[key]
+        if expected_type is int:
+            lower_bound = 1 if key == "top_k" else 0
+            valid = (
+                isinstance(value, int) and not isinstance(value, bool)
+                and value >= lower_bound)
+        elif expected_type is bool:
+            valid = isinstance(value, bool)
+        else:
+            valid = isinstance(value, expected_type) and bool(value)
+        if not valid:
+            raise Tier2ComparisonError(
+                f"{arm} eval_config.{key} has an invalid value")
+
+    served_model = record.get("served_model")
+    if served_model != config["served_model"]:
+        raise Tier2ComparisonError(
+            f"{arm} served_model disagrees with eval_config.served_model")
+
+    protocol = record.get("evaluator_protocol")
+    if not isinstance(protocol, dict):
+        raise Tier2ComparisonError(f"{arm} Tier-2 record is missing evaluator_protocol")
+    protocol_id = protocol.get("id")
+    protocol_digest = protocol.get("digest_sha256")
+    protocol_definition = protocol.get("definition")
+    if not isinstance(protocol_id, str) or not protocol_id:
+        raise Tier2ComparisonError(f"{arm} evaluator_protocol.id is invalid")
+    if not isinstance(protocol_definition, dict) or protocol_definition.get("id") != protocol_id:
+        raise Tier2ComparisonError(
+            f"{arm} evaluator_protocol definition/id is invalid")
+    if (not isinstance(protocol_digest, str) or len(protocol_digest) != 64
+            or protocol_digest != _tier2_protocol_digest(protocol_definition)):
+        raise Tier2ComparisonError(
+            f"{arm} evaluator_protocol digest does not match its definition")
+
+    provenance = record.get("eval_provenance")
+    if not isinstance(provenance, dict):
+        raise Tier2ComparisonError(f"{arm} Tier-2 record is missing eval_provenance")
+    for key in ("base_url", "llm_url"):
+        if not isinstance(provenance.get(key), str) or not provenance[key]:
+            raise Tier2ComparisonError(f"{arm} eval_provenance.{key} is invalid")
+
+    raw_results = record.get("results")
+    if not isinstance(raw_results, list) or not raw_results:
+        raise Tier2ComparisonError(f"{arm} Tier-2 record has no per-query results")
+    reported_evidence_errors = record.get("anchor_evidence_errors")
+    if (not isinstance(reported_evidence_errors, int)
+            or isinstance(reported_evidence_errors, bool)
+            or reported_evidence_errors < 0):
+        raise Tier2ComparisonError(
+            f"{arm} anchor_evidence_errors must be a non-negative integer")
+    actual_evidence_errors = sum(
+        1
+        for raw_result in raw_results
+        if isinstance(raw_result, dict)
+        and isinstance(raw_result.get("anchor_evidence_error"), str)
+        and bool(raw_result["anchor_evidence_error"])
+    )
+    if reported_evidence_errors != actual_evidence_errors:
+        raise Tier2ComparisonError(
+            f"{arm} anchor_evidence_errors {reported_evidence_errors} disagrees with "
+            f"{actual_evidence_errors} per-query evidence errors")
+    if actual_evidence_errors:
+        raise Tier2ComparisonError(
+            f"{arm} has invalid anchor evidence for {actual_evidence_errors} "
+            f"quer{'y' if actual_evidence_errors == 1 else 'ies'}")
+    total_queries = record.get("total_queries")
+    if (not isinstance(total_queries, int) or isinstance(total_queries, bool)
+            or total_queries != len(raw_results)):
+        raise Tier2ComparisonError(
+            f"{arm} total_queries disagrees with the per-query result count")
+
+    normalized_results: list[dict] = []
+    for index, raw_result in enumerate(raw_results):
+        prefix = f"{arm} results[{index}]"
+        if not isinstance(raw_result, dict):
+            raise Tier2ComparisonError(f"{prefix} must be an object")
+        for key in ("query", "answer", "question_type", "error"):
+            if not isinstance(raw_result.get(key), str):
+                raise Tier2ComparisonError(f"{prefix}.{key} must be a string")
+        for key in ("answer_in_context", "correct_has_intersection", "context_truncated"):
+            if not isinstance(raw_result.get(key), bool):
+                raise Tier2ComparisonError(f"{prefix}.{key} must be a boolean")
+        latency = raw_result.get("latency_retrieve_ms")
+        if (not isinstance(latency, int) or isinstance(latency, bool) or latency < 0):
+            raise Tier2ComparisonError(
+                f"{prefix}.latency_retrieve_ms must be a non-negative integer")
+
+        evidence_error = raw_result.get("anchor_evidence_error")
+        if not isinstance(evidence_error, str):
+            raise Tier2ComparisonError(f"{prefix} is missing anchor_evidence_error")
+        if evidence_error:
+            raise Tier2ComparisonError(
+                f"{prefix} has invalid anchor evidence: {evidence_error}")
+
+        raw_anchors = raw_result.get("included_anchors")
+        if not isinstance(raw_anchors, list):
+            raise Tier2ComparisonError(f"{prefix} is missing included_anchors")
+        anchors: list[dict] = []
+        for anchor_index, raw_anchor in enumerate(raw_anchors):
+            anchor_prefix = f"{prefix}.included_anchors[{anchor_index}]"
+            if not isinstance(raw_anchor, dict):
+                raise Tier2ComparisonError(f"{anchor_prefix} must be an object")
+            parent_doc_id = raw_anchor.get("parent_doc_id")
+            chunk_index = raw_anchor.get("chunk_index")
+            if not isinstance(parent_doc_id, str) or not parent_doc_id:
+                raise Tier2ComparisonError(
+                    f"{anchor_prefix}.parent_doc_id must be a non-empty string")
+            if (not isinstance(chunk_index, int) or isinstance(chunk_index, bool)
+                    or chunk_index < -1):
+                raise Tier2ComparisonError(
+                    f"{anchor_prefix}.chunk_index must be -1 or a non-negative integer")
+            anchors.append({"parent_doc_id": parent_doc_id, "chunk_index": chunk_index})
+
+        anchor_count = raw_result.get("included_anchor_count")
+        retrieval_chunks = raw_result.get("retrieval_chunks")
+        for key, value in (("included_anchor_count", anchor_count),
+                           ("retrieval_chunks", retrieval_chunks)):
+            if (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                raise Tier2ComparisonError(
+                    f"{prefix}.{key} must be a non-negative integer")
+        if anchor_count != len(anchors):
+            raise Tier2ComparisonError(
+                f"{prefix}.included_anchor_count disagrees with included_anchors")
+        if retrieval_chunks != anchor_count:
+            raise Tier2ComparisonError(
+                f"{prefix}.retrieval_chunks disagrees with included_anchor_count")
+
+        normalized_results.append({
+            "query": raw_result["query"],
+            "answer": raw_result["answer"],
+            "question_type": raw_result["question_type"],
+            "error": raw_result["error"],
+            "answer_in_context": raw_result["answer_in_context"],
+            "correct_has_intersection": raw_result["correct_has_intersection"],
+            "context_truncated": raw_result["context_truncated"],
+            "latency_retrieve_ms": latency,
+            "included_anchors": anchors,
+            "included_anchor_count": anchor_count,
+        })
+    return (
+        dict(config), copy.deepcopy(protocol), dict(provenance), normalized_results,
+    )
+
+
+def validate_tier2_result(record: object) -> None:
+    """Fail unless ``record`` is a canonical, comparison-ready Tier-2 result."""
+    _validate_tier2_comparison_record(record, "result")
+
+
+def _preflight_tier2_baseline(
+    baseline: object,
+    queries: list[dict],
+    *,
+    eval_config: dict,
+    evaluator_protocol: dict,
+) -> None:
+    """Reject a known-incompatible baseline before any query is processed."""
+    baseline_config, baseline_protocol, _, baseline_results = (
+        _validate_tier2_comparison_record(baseline, "baseline")
+    )
+    if baseline_config != eval_config:
+        raise Tier2ComparisonError(
+            "Tier-2 eval configuration/model differs between baseline and planned run")
+    if baseline_protocol != evaluator_protocol:
+        raise Tier2ComparisonError(
+            "Tier-2 evaluator protocol differs between baseline and planned run")
+    if len(baseline_results) != len(queries):
+        raise Tier2ComparisonError(
+            "Tier-2 baseline query count differs from the planned run")
+    for index, (baseline_result, query) in enumerate(zip(baseline_results, queries)):
+        planned_identity = (
+            query.get("query"), query.get("answer"), query.get("question_type"))
+        baseline_identity = (
+            baseline_result["query"], baseline_result["answer"],
+            baseline_result["question_type"])
+        if baseline_identity != planned_identity:
+            raise Tier2ComparisonError(
+                "Tier-2 ordered query/answer/question_type sequence differs from the "
+                f"planned run at results[{index}]")
+
+
+def _bool_transition(before: bool, after: bool) -> str:
+    return f"{str(before).lower()}_to_{str(after).lower()}"
+
+
+def _error_transition(before: str, after: str) -> str:
+    return f"{'error' if before else 'none'}_to_{'error' if after else 'none'}"
+
+
+def _increment(counter: dict[str, int], key: str) -> None:
+    counter[key] += 1
+
+
+def _anchor_key(anchor: dict) -> tuple[str, int]:
+    return anchor["parent_doc_id"], anchor["chunk_index"]
+
+
+def _ordered_anchor_difference(left: list[dict], right: list[dict]) -> list[dict]:
+    """Return the unmatched multiset difference in ``left`` order."""
+    remaining = Counter(_anchor_key(anchor) for anchor in right)
+    difference: list[dict] = []
+    for anchor in left:
+        key = _anchor_key(anchor)
+        if remaining[key]:
+            remaining[key] -= 1
+        else:
+            difference.append(dict(anchor))
+    return difference
+
+
+def compare_tier2_results(baseline: object, candidate: object) -> dict:
+    """Build a deterministic, fail-closed paired Tier-2 comparison.
+
+    Pairing is positional and is admitted only when both records prove the same
+    ordered query/answer/type sequence, exact evaluation configuration, served
+    model, and valid included-anchor evidence for every query.
+
+    ``base_url`` and ``llm_url`` remain per-arm provenance, not compatibility
+    inputs: isolated baseline/candidate stacks can legitimately use different
+    ports.  The evaluator protocol digest and served-model/config equality own
+    the semantic comparison boundary.
+    """
+    (baseline_config, baseline_protocol,
+     baseline_provenance, baseline_results) = _validate_tier2_comparison_record(
+        baseline, "baseline")
+    (candidate_config, candidate_protocol,
+     candidate_provenance, candidate_results) = _validate_tier2_comparison_record(
+        candidate, "candidate")
+    if baseline_config != candidate_config:
+        raise Tier2ComparisonError(
+            "Tier-2 eval configuration/model differs between baseline and candidate")
+    if baseline_protocol != candidate_protocol:
+        raise Tier2ComparisonError(
+            "Tier-2 evaluator protocol differs between baseline and candidate")
+    if len(baseline_results) != len(candidate_results):
+        raise Tier2ComparisonError(
+            "Tier-2 per-query result counts differ between baseline and candidate")
+
+    bool_transition_keys = (
+        "false_to_false", "false_to_true", "true_to_false", "true_to_true")
+    transitions = {
+        "answer_in_context": {key: 0 for key in bool_transition_keys},
+        "correct_has_intersection": {key: 0 for key in bool_transition_keys},
+        "errors": {
+            key: 0 for key in
+            ("none_to_none", "none_to_error", "error_to_none", "error_to_error")
+        },
+        "context_truncated": {key: 0 for key in bool_transition_keys},
+        "anchor_count": {"decreased": 0, "unchanged": 0, "increased": 0},
+        "anchor_identity": {"unchanged": 0, "changed": 0},
+        "anchor_order": {"unchanged": 0, "changed": 0, "not_comparable": 0},
+    }
+    per_query: list[dict] = []
+    baseline_latency_total = 0
+    candidate_latency_total = 0
+    additions_total = 0
+    removals_total = 0
+
+    for index, (before, after) in enumerate(zip(baseline_results, candidate_results)):
+        identity = (before["query"], before["answer"], before["question_type"])
+        candidate_identity = (after["query"], after["answer"], after["question_type"])
+        if identity != candidate_identity:
+            raise Tier2ComparisonError(
+                "Tier-2 ordered query/answer/question_type sequence differs at "
+                f"results[{index}]")
+
+        answer_transition = _bool_transition(
+            before["answer_in_context"], after["answer_in_context"])
+        intersection_transition = _bool_transition(
+            before["correct_has_intersection"], after["correct_has_intersection"])
+        error_transition = _error_transition(before["error"], after["error"])
+        truncation_transition = _bool_transition(
+            before["context_truncated"], after["context_truncated"])
+        _increment(transitions["answer_in_context"], answer_transition)
+        _increment(transitions["correct_has_intersection"], intersection_transition)
+        _increment(transitions["errors"], error_transition)
+        _increment(transitions["context_truncated"], truncation_transition)
+
+        before_anchors = before["included_anchors"]
+        after_anchors = after["included_anchors"]
+        before_keys = [_anchor_key(anchor) for anchor in before_anchors]
+        after_keys = [_anchor_key(anchor) for anchor in after_anchors]
+        identity_changed = Counter(before_keys) != Counter(after_keys)
+        order_comparable = not identity_changed
+        order_changed = order_comparable and before_keys != after_keys
+        additions = _ordered_anchor_difference(after_anchors, before_anchors)
+        removals = _ordered_anchor_difference(before_anchors, after_anchors)
+        additions_total += len(additions)
+        removals_total += len(removals)
+
+        count_delta = after["included_anchor_count"] - before["included_anchor_count"]
+        count_transition = (
+            "increased" if count_delta > 0 else "decreased" if count_delta < 0 else "unchanged")
+        _increment(transitions["anchor_count"], count_transition)
+        _increment(
+            transitions["anchor_identity"], "changed" if identity_changed else "unchanged")
+        if not order_comparable:
+            order_transition = "not_comparable"
+        else:
+            order_transition = "changed" if order_changed else "unchanged"
+        _increment(transitions["anchor_order"], order_transition)
+
+        baseline_latency = before["latency_retrieve_ms"]
+        candidate_latency = after["latency_retrieve_ms"]
+        latency_delta = candidate_latency - baseline_latency
+        baseline_latency_total += baseline_latency
+        candidate_latency_total += candidate_latency
+        per_query.append({
+            "index": index,
+            "query": before["query"],
+            "answer": before["answer"],
+            "question_type": before["question_type"],
+            "baseline_anchors": [dict(anchor) for anchor in before_anchors],
+            "candidate_anchors": [dict(anchor) for anchor in after_anchors],
+            "baseline_anchor_count": before["included_anchor_count"],
+            "candidate_anchor_count": after["included_anchor_count"],
+            "anchor_count_delta": count_delta,
+            "anchor_additions": additions,
+            "anchor_removals": removals,
+            "anchor_identity_changed": identity_changed,
+            "anchor_order_comparable": order_comparable,
+            "anchor_order_changed": order_changed,
+            "answer_in_context_transition": answer_transition,
+            "correct_has_intersection_transition": intersection_transition,
+            "error_transition": error_transition,
+            "context_truncated_transition": truncation_transition,
+            "baseline_retrieval_latency_ms": baseline_latency,
+            "candidate_retrieval_latency_ms": candidate_latency,
+            "retrieval_latency_delta_ms": latency_delta,
+        })
+
+    query_count = len(per_query)
+    baseline_mean = baseline_latency_total / query_count
+    candidate_mean = candidate_latency_total / query_count
+    mean_delta = candidate_mean - baseline_mean
+    percent_delta = None if baseline_mean == 0 else mean_delta / baseline_mean * 100
+    return {
+        "schema_version": "tier2-paired-comparison.v2",
+        "evaluator_compatible": True,
+        "experimental_admissibility": {
+            "status": "external-check-required",
+            "checked_by_comparator": False,
+            "required_checks": [
+                "baseline and candidate use the same logical index identity",
+                "enrichment state is stable within and equal across both arms",
+            ],
+        },
+        "query_count": query_count,
+        "eval_config": dict(baseline_config),
+        "evaluator_protocol": dict(baseline_protocol),
+        # Endpoint addresses identify where each arm ran, but are transport
+        # provenance rather than evaluator semantics.  Separate baseline and
+        # candidate stacks routinely use different ports; the protocol digest
+        # and served-model/config equality above own semantic compatibility.
+        "eval_provenance": {
+            "affects_semantic_compatibility": False,
+            "baseline": dict(baseline_provenance),
+            "candidate": dict(candidate_provenance),
+        },
+        "transitions": transitions,
+        "anchor_changes": {
+            "additions": additions_total,
+            "removals": removals_total,
+            "baseline_total": sum(r["included_anchor_count"] for r in baseline_results),
+            "candidate_total": sum(r["included_anchor_count"] for r in candidate_results),
+        },
+        "retrieval_latency_ms": {
+            "baseline_mean": round(baseline_mean, 4),
+            "candidate_mean": round(candidate_mean, 4),
+            "mean_delta": round(mean_delta, 4),
+            "mean_delta_percent": None if percent_delta is None else round(percent_delta, 4),
+        },
+        "per_query": per_query,
+    }
 
 
 def format_tier2_console(result: dict) -> str:
@@ -1150,6 +1758,9 @@ def format_tier2_console(result: dict) -> str:
         f"  has_intersection (paper): {result.get('accuracy_has_intersection', 0):.1%}",
         f"  Substring:               {result.get('accuracy_substring', 0):.1%}",
         f"  Exact match:             {result.get('accuracy_exact', 0):.1%}",
+        f"  Answer in context:       {result.get('answer_in_context_rate', 0):.1%}",
+        f"  Context truncated:       {result.get('context_truncated_rate', 0):.1%}",
+        f"  Anchor evidence errors:  {result.get('anchor_evidence_errors', 0)}",
         "",
         "--- Latency ---",
         f"  Retrieve: {result.get('avg_latency_retrieve_ms', 0)}ms",
@@ -1170,6 +1781,48 @@ def format_tier2_console(result: dict) -> str:
             f"exact={stats.get('accuracy_exact', 0):.0%} "
             f"avg={stats.get('avg_latency_ms', 0)}ms"
         )
+    comparison = result.get("paired_comparison")
+    if isinstance(comparison, dict):
+        transitions = comparison.get("transitions", {})
+        answer = transitions.get("answer_in_context", {})
+        intersection = transitions.get("correct_has_intersection", {})
+        errors = transitions.get("errors", {})
+        truncation = transitions.get("context_truncated", {})
+        anchor_count = transitions.get("anchor_count", {})
+        anchor_identity = transitions.get("anchor_identity", {})
+        anchor_order = transitions.get("anchor_order", {})
+        latency = comparison.get("retrieval_latency_ms", {})
+        admissibility = comparison.get("experimental_admissibility", {})
+        mean_delta_percent = latency.get("mean_delta_percent")
+        mean_delta_percent_text = (
+            "n/a" if mean_delta_percent is None else f"{mean_delta_percent}%"
+        )
+        lines.extend([
+            "",
+            "--- Paired Comparison ---",
+            f"  Evaluator compatible: {comparison.get('evaluator_compatible', False)}",
+            "  Experimental admissibility: "
+            f"{admissibility.get('status', 'unknown')}",
+            "  Gold-span context wins/losses: "
+            f"{answer.get('false_to_true', 0)}/{answer.get('true_to_false', 0)}",
+            "  Answer-intersection wins/losses: "
+            f"{intersection.get('false_to_true', 0)}/{intersection.get('true_to_false', 0)}",
+            "  New/recovered errors: "
+            f"{errors.get('none_to_error', 0)}/{errors.get('error_to_none', 0)}",
+            "  New/recovered truncations: "
+            f"{truncation.get('false_to_true', 0)}/{truncation.get('true_to_false', 0)}",
+            "  Anchor counts decreased/unchanged/increased: "
+            f"{anchor_count.get('decreased', 0)}/"
+            f"{anchor_count.get('unchanged', 0)}/"
+            f"{anchor_count.get('increased', 0)}",
+            f"  Anchor identities changed: {anchor_identity.get('changed', 0)}",
+            "  Anchor order changed/not-comparable: "
+            f"{anchor_order.get('changed', 0)}/"
+            f"{anchor_order.get('not_comparable', 0)}",
+            "  Mean retrieval latency delta: "
+            f"{latency.get('mean_delta', 0)}ms "
+            f"({mean_delta_percent_text})",
+        ])
     return "\n".join(lines)
 
 
