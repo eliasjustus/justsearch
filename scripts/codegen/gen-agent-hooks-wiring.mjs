@@ -39,6 +39,9 @@ const LOCAL_SETTINGS = join(REPO_ROOT, '.claude', 'settings.local.json');
 // The tracked public projection contains universal hooks and a deny-only
 // permission posture. Founder-local analytics remain in the local example.
 const PUBLIC_SETTINGS = join(REPO_ROOT, '.claude', 'settings.json');
+// Compatibility names consumed by the focused tracked-projection wrapper.
+const PUBLIC_BASE = PUBLIC_SETTINGS;
+const SETTINGS = LOCAL_SETTINGS;
 
 // The committable maintainer re-wire seed (631 #2): FULL hooks + documented permissions/env stubs.
 // Committed (not gitignored) so a fresh maintainer clone has a seed; copying it to settings.local.json
@@ -148,6 +151,8 @@ function renderPublicSettings(manifest, currentSettings = JSON.parse(readFileSyn
     { ...safeBase, hooks: renderHooksBlock(manifest, PUBLIC_EXCLUDED_HOOKS) }, null, 2) + '\n';
 }
 
+const renderPublicTemplate = renderPublicSettings;
+
 /**
  * Compose the maintainer re-wire SEED (.claude/settings.local.json.example, 631 #2): the public base
  * (worktree/mcp/plugins) + the FULL hooks block (no exclusions — the founder-analytics hooks the public
@@ -243,9 +248,12 @@ export {
   PUBLIC_SETTINGS,
   LOCAL_SETTINGS,
   LOCAL_EXAMPLE_OUT,
+  PUBLIC_BASE,
+  SETTINGS,
   readManifest,
   renderHooksBlock,
   renderSettings,
   renderPublicSettings,
   renderLocalExample,
+  renderPublicTemplate,
 };

@@ -145,6 +145,18 @@ test('end-to-end adapter refuses a force push in a later compound segment', () =
   assert.match(result.stderr, /Force push is blocked/);
 });
 
+test('end-to-end adapter refuses a direct publication merge request', () => {
+  const result = adapterOnCommand('gh pr merge 933', 'publication-merge');
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /run-gh\.mjs enqueue/);
+});
+
+test('end-to-end adapter allows the validated publication enqueue gateway', () => {
+  const result = adapterOnCommand('node scripts/dev/run-gh.mjs enqueue 933', 'publication-enqueue');
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stderr, /Direct PR merge requests/);
+});
+
 test('end-to-end adapter injects Codex session id into justsearch-dev calls', () => {
   const sessionId = `codex-adapter-mcp-test-${process.pid}`;
   const result = spawnSync(process.execPath, [ADAPTER], {

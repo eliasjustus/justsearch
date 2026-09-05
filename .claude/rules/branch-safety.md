@@ -150,8 +150,10 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
-3. `gh pr merge <N>` (no flag) enqueues once checks pass; the queue runs
-   `merge-group` CI and squash-merges. A rejection means CI failed —
+3. `node scripts/dev/run-gh.mjs enqueue <N>` revalidates the live squash and
+   managed review records, then enqueues once checks pass; the queue runs
+   `merge-group` CI and squash-merges. Direct `gh pr merge` bypasses that proof
+   and is blocked by the shared agent hook. A rejection means CI failed —
    investigate before retrying. Keep checkpoint/retry commits off `main`;
    use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.

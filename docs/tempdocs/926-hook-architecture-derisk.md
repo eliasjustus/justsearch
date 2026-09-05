@@ -103,14 +103,15 @@ be a new design, not conflict resolution.
 
 ### Projection ownership
 
-- [x] Make the normal Claude hook generator regenerate tracked
-      `.claude/settings.json` and `.claude/settings.local.json.example`.
-- [x] Make `--check` validate both tracked projections and an existing ignored
-      local projection without creating local state.
+- [x] Keep the focused Claude hook generator added by the latest `main` catch-up
+      as the `regen-all` owner for tracked `.claude/settings.json` and
+      `.claude/settings.local.json.example`.
+- [x] Make its `--check` path validate both tracked projections without creating
+      ignored local state.
 - [x] Preserve the public native force-push deny rules and exclude founder-local
       analytics from the public projection.
-- [x] Keep the current consolidated `regen-all` owner; do not restore a deleted
-      one-off regen wrapper.
+- [x] Preserve the new focused `gen-agent-hooks.mjs` wrapper from `main`; do not
+      replace it with the older cutover-package projection path.
 - [x] Replace the nonexistent hook-generator command in canonical contributor
       guidance with the exact `regen-all` invocation.
 

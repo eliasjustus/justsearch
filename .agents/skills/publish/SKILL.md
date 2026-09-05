@@ -67,8 +67,8 @@ actor's comment, and refuses duplicate or stale state visible at final preflight
 or read-back. GitHub comment updates have no compare-and-swap precondition, so
 the authenticated comment owner must be the sole writer from dry-run through
 read-back; do not edit that comment concurrently. Run the upsert again after any
-head, public-body, evidence, or review-state change. Then run both strict
-publication checks:
+head, public-body, evidence, or review-state change. Run both strict
+publication checks while preparing the record so findings can be corrected:
 
 ```text
 node scripts/ci/pr-review-record.mjs check --pr <number>
@@ -76,8 +76,10 @@ node scripts/ci/preview-squash-message.mjs --pr <number>
 ```
 
 Fix every reported title, body, attribution, freshness, ownership, template, or
-process-residue defect before enqueueing the merge. Never temporarily swap the
-rich review record through the PR body and never restore it after enqueue.
+process-residue defect before enqueueing the merge. The enqueue gateway repeats
+both checks against live state immediately before requesting the queue. Never
+temporarily swap the rich review record through the PR body and never restore it
+after enqueue.
 
 ## Wait for CI
 
@@ -102,11 +104,13 @@ non-required before continuing.
 
 ## Merge queue and completion
 
-When the pull request's required checks are green, run `gh pr merge <number>`
-without a strategy flag. The protected `main` branch uses the squash merge queue;
-the queue runs its own merge-group checks. If the entry leaves the queue while
-the pull request remains open, inspect the failed merge-group run and fix the
-cause before re-enqueueing. Do not blind-retry.
+When the pull request's required checks are green, run
+`node scripts/dev/run-gh.mjs enqueue <number>`. This repository-owned gateway
+revalidates the live squash title/body and managed review record, then invokes
+the ordinary strategy-free merge-queue request. Direct `gh pr merge` bypasses
+that proof and is blocked by the shared agent hook. If the entry leaves the queue
+while the pull request remains open, inspect the failed merge-group run and fix
+the cause before re-enqueueing. Do not blind-retry.
 
 After the queue reports success:
 
