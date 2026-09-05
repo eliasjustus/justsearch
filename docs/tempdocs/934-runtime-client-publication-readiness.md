@@ -161,8 +161,8 @@ package export, or prior documentation authority is replaced.
 - A separate `npm run check:pack` passed with 20 files after the metadata guard was tightened to
   compare repository fields semantically and require the discovery, contract, and issue links.
 - `node scripts/docs/llmstxt-generate.mjs --check`, `node scripts/docs/skills-sync.mjs --check`, and
-  `node scripts/docs/verify-canonical-doc-links.mjs` passed (`114` indexed docs, `5` generated skills
-  from `9` sources, and `154` canonical files).
+  `node scripts/docs/verify-canonical-doc-links.mjs` passed (`115` indexed docs, `5` generated skills
+  from `9` sources, and `155` canonical files after the final rebase).
 - `node scripts/architecture/module-deps.mjs --check-canonical` and
   `node scripts/docs/verify-runtime-config-matrix.mjs` passed (`111` YAML files, `251` pairs, `307`
   rows). No module or configuration output changed.
@@ -209,6 +209,21 @@ No publication occurred. Three external outcomes remain deliberately outside thi
 No additional repository implementation is known to be required for those actions. At implementation
 closeout this branch had not been pushed, no pull request had been opened, no issue had been created,
 and no npm package had been published.
+
+## Repository publication record
+
+[PR #676](https://github.com/justsearch-app/justsearch/pull/676) is the authorized repository
+publication path for this tempdoc. The candidate was rebased onto `origin/main` at `8a919ad1` before
+push. The current full local preflight passed public claims (including lockfile completeness),
+license and notice consistency, the no-model build, all three JVM unit-test shards, the 2,808-test
+jseval suite (95 skipped), the exact repository secret scan, and the npm publication dry run. The
+dry run again rebuilt the package, passed all 7 package tests, and verified the same 20-file tarball.
+
+Required hosted checks, the rich review record, merge-queue result, and post-merge `main` CI remain
+GitHub-owned publication evidence and are intentionally not copied here as mutable status snapshots.
+Landing this tempdoc through PR #676 completes repository publication only. It does not publish
+`@justsearch/runtime-client` to npm, create the starter issues, or fill the human custody and
+succession assignments listed above.
 
 ## Session closeout
 
