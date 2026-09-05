@@ -227,6 +227,7 @@ export const API_ROUTES = {
   "POST /api/indexing/migration/start": { method: "POST", path: "/api/indexing/migration/start", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/indexing/reindex": { method: "POST", path: "/api/indexing/reindex", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/indexing/roots": { method: "POST", path: "/api/indexing/roots", cohort: "indexing", requiredCapabilities: ["WORKER"] },
+  "POST /api/indexing/settle": { method: "POST", path: "/api/indexing/settle", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/inference/detach": { method: "POST", path: "/api/inference/detach", cohort: "inference", requiredCapabilities: [] },
   "POST /api/inference/mode": { method: "POST", path: "/api/inference/mode", cohort: "inference", requiredCapabilities: [] },
   "POST /api/inference/reload": { method: "POST", path: "/api/inference/reload", cohort: "inference", requiredCapabilities: [] },

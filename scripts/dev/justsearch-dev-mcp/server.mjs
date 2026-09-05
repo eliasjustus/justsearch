@@ -722,6 +722,8 @@ export const API_CALL_ALLOWLIST = [
   { path: '/api/indexing/migration/pause', methods: ['POST'] },
   { path: '/api/indexing/migration/resume', methods: ['POST'] },
   { path: '/api/indexing/gc', methods: ['POST'] },
+  // Tempdoc 931 §E item 10: purge tombstones so paired evaluation arms query equal merge state.
+  { path: '/api/indexing/settle', methods: ['POST'] },
   // Inference
   { path: '/api/inference/status', methods: ['GET'] },
   { path: '/api/inference/mode', methods: ['POST'] },
