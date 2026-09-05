@@ -60,13 +60,20 @@
     ignored. Verified by planting `// TODO ...` in modules/app-util and running
     `./gradlew.bat :modules:app-util:pmdMain -PskipPmd=false` (2 violations, BUILD FAILED).
 
-    SCOPE (930 §22.2 follow-up 2 closed the gap this comment used to record): `pmdMain` now runs
-    in `check`/`build` by default and as the `Static analysis (PMD)` step of CI's required
-    `Build (no model blobs)` job, so the whole ruleset bites without anyone opting in. The 130
-    pre-existing violations of the other rules above were cleared in the same change.
+    SCOPE — no Java source is out of it any more. Follow-up 2 wired `pmdMain` into `check`/`build`
+    and into CI (clearing 130 pre-existing violations of the other rules above); follow-up 10 did
+    the same for every non-`main` source set, which runs `ruleset-tests.xml` (a marker parked in a
+    test file now fails the build, not review) and cleared 569 more. CI runs `pmdAll`, the root
+    aggregate over every PMD task, as the `Static analysis (PMD, all source sets)` step of the
+    required `Unit tests (platform-contracts)` lane — that lane, because `pmdAll` needs test
+    classes and `assemble` compiles none.
 
-    Java TEST sources are still out of scope — `pmdTest` stays behind `-Ppmd.includeTests=true`
-    (JvmBaseConventionsPlugin), so a marker parked in a test file is caught by review, not here.
+    THIS FILE IS THE AUTHORITY for the two derived rulesets beside it. They inline these rules
+    rather than referencing this file — PMD's `rule ref` resolves against the CLASSPATH, and a ref
+    it cannot resolve makes PMD analyse zero files while Gradle reports success. Adding a rule here
+    without adding it there therefore fails silently, so `scripts/ci/check-pmd-ruleset-sync.mjs`
+    enforces the relationship: derived == authority minus a declared, description-justified
+    subtraction.
   -->
   <rule ref="category/java/documentation.xml/CommentContent">
     <properties>
