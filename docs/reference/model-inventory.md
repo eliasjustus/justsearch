@@ -16,8 +16,10 @@ was adopted.
 
 ### Search Runtime (ONNX)
 
-These are the models used by the Worker process for retrieval. They live under `models/` in
-the repo root (tracked in git) and are discovered by the Worker at startup.
+These are the models used by the Worker process for retrieval. Packaged identity, hashes, sizes,
+and download URLs come from `model-registry.v2.json`. The public repository tracks supporting
+metadata but not model weights; the install flow downloads weights, while private development
+checkouts may provide the same layout under `models/` for discovery at startup.
 
 #### ONNX Embedding: `EmbeddingGemma-300M` (Q4 GPU / INT8 CPU) — **legacy backup**
 
@@ -37,8 +39,8 @@ the repo root (tracked in git) and are discovered by the Worker at startup.
 | Prefixes | Task-specific (configured via `prefix_config.json`) |
 | Repo path | `models/onnx/embeddinggemma-300m/model.onnx` (Q4, 188 MB), `model_int8.onnx` (INT8, 298 MB) |
 | Manifest | `model_manifest.json`: cpu=`model_int8.onnx`, gpu=`model.onnx` |
-| Provenance | `build.json` in model directory (tempdoc 348) |
-| Discovery | `EmbeddingOnnxModelDiscovery` fallback: discovered when `gte-multilingual-base/` is not present (see Discovery Paths) |
+| Provenance | No `build.json` is tracked for this legacy package in the public repository |
+| Discovery | Historical package only; the current `EmbeddingOnnxModelDiscovery` does not automatically fall back to this directory |
 | Adopted | Tempdoc 312 (INT8 default since Phase 5); tempdoc 334 (Q4 GPU default) |
 
 Why EmbeddingGemma: #1 open model under 500M on MTEB English/multilingual/code.
@@ -61,7 +63,7 @@ INT8 (298 MB) is used as CPU fallback when GPU is unavailable.
 | Inputs | `input_ids`, `token_type_ids`, `attention_mask` |
 | Outputs | `last_hidden_state` |
 | Repo path | `models/onnx/embedding/model.onnx` |
-| Discovery | Fallback: used when `embeddinggemma-300m/` directory is not found |
+| Discovery | Historical local fallback only; the current ONNX embedding discoverer does not select this directory automatically |
 | Adopted | Tempdoc 268 (ONNX-first for search runtime); superseded as default by tempdoc 312 |
 
 Why INT8: tempdoc 268 established quality parity with GGUF Q8 after overlap fixes. INT8
@@ -72,14 +74,15 @@ is 4x smaller than FP32 (131 MB vs 549 MB) with negligible retrieval quality dif
 | Property | Value |
 |----------|-------|
 | Identity | `Alibaba-NLP/gte-multilingual-base` |
-| Variant | FP16 GPU default (628 MB), FP32 CPU (1.26 GB, not yet shipped in registry) |
+| Variant | FP16 GPU default (627,988,827 bytes), FP32 CPU (1,255,502,649 bytes); both are shipped in the registry |
 | Source | [Alibaba-NLP/gte-multilingual-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-base) |
 | Repo path | `models/onnx/gte-multilingual-base/` (`model_fp16.onnx` FP16, `model.onnx` FP32) |
-| Manifest | `model_manifest.json`: cpu=`model_fp16.onnx`, gpu=`model_fp16.onnx` |
+| Manifest | `model_manifest.json`: cpu=`model.onnx`, gpu=`model_fp16.onnx` |
 | Discovery | Primary: `EmbeddingOnnxModelDiscovery` tries `gte-multilingual-base/` first (hardcoded `MODEL_NAME`). Quality: nDCG@10 0.7132 on SciFact (matches EmbeddingGemma baseline 0.7128). 39s faster pipeline. 70+ languages. |
 | Adopted | Tempdoc 358 (selected as production default over EmbeddingGemma-300M); tempdoc 374 (packaged in model registry for Install AI) |
 
-**Known manifest bug:** Both `cpu` and `gpu` keys in `model_manifest.json` currently point to `model_fp16.onnx`. The `cpu` key should point to `model.onnx` (FP32), but the FP32 variant is not yet shipped in the model registry (tempdoc 376). FP16 on CPU is broken/unusably slow because ORT CPU EP has no native FP16 support and inserts Cast nodes before every operation.
+The manifest and registry agree on the CPU/GPU split. FP16 on the CPU remains unsupported and
+unusably slow because the ORT CPU execution provider inserts casts around FP16 operations.
 
 #### SPLADE: `opensearch-neural-sparse-encoding-multilingual-v1` (baked-PRESPARSE, FP32 CPU / FP16 GPU) — **current default**
 
@@ -128,16 +131,21 @@ See `scripts/models/bake_presparse_fp16.py` for the low-level bake script and
 |----------|-------|
 | Identity | `Alibaba-NLP/gte-multilingual-reranker-base` |
 | Variant | FP16 GPU (default), FP32 CPU fallback |
-| Size | ~340 MB (FP16), ~628 MB (FP32) |
+| Size | 340,858,200 bytes (FP32 CPU), 629,118,152 bytes (FP16 GPU) |
 | Params | 306M (GTE encoder, 12L/768d, head_dim=64, 250K vocab, 70+ langs) |
 | Repo path | `models/onnx/reranker/model.onnx` (FP32), `model_fp16.onnx` (FP16) |
-| Provenance | `build.json` in model directory (tempdoc 348) |
+| Provenance | No `build.json` is tracked for this package in the public repository |
 | Process | **Worker** (migrated from Head in tempdoc 360) |
 | GPU default | `true` (mem=2048MB, seq=512) |
 | Latency | ~175ms for 20 docs on GPU (12x faster than previous INT8 CPU model at 2400ms) |
 | Status | **Active** — Worker-side via `Rerank` gRPC RPC (tempdocs 205, 248, 317, 360, 343) |
 
-Build command:
+The checked-in `build-crossencoder.py` command is not a builder for this current package: it emits
+one pre-built INT8 CPU variant, while the registry requires FP32 CPU and FP16 CUDA variants. A new
+candidate therefore needs independently reviewed build provenance until a compatible role builder
+is added.
+
+Historical builder shape:
 
 ```bash
 python scripts/models/build-crossencoder.py \
@@ -163,7 +171,7 @@ python scripts/models/build-crossencoder.py \
 | Identity | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | Size | 22 MB |
 | Repo path | `models/onnx/citation-scorer/model.onnx` |
-| Provenance | `build.json` in model directory (tempdoc 348) |
+| Provenance | No `build.json` is tracked for this package in the public repository |
 | Status | **Active** — upgraded from L-2 variant (tempdoc 343 Phase A.3). Score separation +27% over L-2; +4.16 MRR@10 on MS MARCO dev. |
 
 **Legacy backup:** The previous model (`Xenova/ms-marco-MiniLM-L-2-v2`, 16 MB) is backed up to `models/onnx/citation-scorer-l2-backup/`.
@@ -188,13 +196,13 @@ The chat model (served by llama-server / Brain process) now serves three roles b
 2. **Query Understanding preprocessing** (~1s async, tempdoc 363) — translates natural language queries into structured search parameters (filters, sort, reformulated query) before search execution. Bypassed when llama-server is offline.
 3. **Context Sufficiency classification** (~1.3s, retrieve-context only, tempdoc 363) — post-search LLM call that assesses whether retrieved context is sufficient to answer the query. Surfaces a confidence signal to downstream consumers (e.g., MCP agent layer).
 
-#### Embedding (GGUF fallback): `nomic-embed-text-v1.5.Q4_K_M.gguf`
+#### Embedding (legacy local GGUF fallback): `nomic-embed-text-v1.5.Q4_K_M.gguf`
 
 | Property | Value |
 |----------|-------|
 | Identity | `nomic-ai/nomic-embed-text-v1.5-GGUF` |
 | Size | 84 MB |
-| Status | **Packaged fallback** — still in registry, superseded by ONNX INT8 for search runtime |
+| Status | **Not a registry package** — retained only as a legacy local resolver candidate |
 
 `EmbeddingModelResolver` prefers Q8_0 over Q4_K_M when both exist (Q8_0 recovers +0.025
 nDCG on dense retrieval).
@@ -223,24 +231,25 @@ adopted there (`Qwen_Qwen3.5-9B-Q4_K_M.gguf`) has since **graduated to the packa
 |----------|-------|
 | Identity | `Davlan/distilbert-base-multilingual-cased-ner-hrl` |
 | Format | ONNX |
-| Variant | INT8 CPU default (66 MB), FP16 GPU (131 MB) |
+| Variant | INT8 CPU default (135,115,720 bytes), FP16 GPU (269,622,486 bytes) |
 | Languages | 10 (en, fr, de, es, pt, it, nl, ar, zh, ru) |
 | Repo path | `models/onnx/ner/` (`model.onnx` INT8, `model_fp16.onnx` FP16) |
 | Manifest | `model_manifest.json`: cpu=`model.onnx`, gpu=`model_fp16.onnx` |
-| Provenance | `build.json` in model directory (tempdoc 348) |
+| Provenance | No `build.json` is tracked for this package in the public repository |
 | Quality | F1=0.908 (CoNLL-2003 validation): PER 0.953, ORG 0.839, LOC 0.942 — see F-011 in search-quality-register.md. Multilingual variant measured: PER 0.942, ORG 0.849, LOC 0.911 on CoNLL-2003 test (tempdoc 343 Phase A.2). |
-| Status | **Active** — upgraded from `dslim/distilbert-NER` (EN-only) in tempdoc 343 Phase A.2. NER is in the default `models/` set with `build.json`. |
+| Status | **Active** — the registry supplies the package to the default install set |
 
 **Legacy backup:** The previous model (`dslim/distilbert-NER`, EN-only) is backed up to `models/onnx/ner-distilbert-en-backup/`.
 
 ## Model Fingerprinting
 
-The Worker computes SHA-256 fingerprints of the active model file at boot via `Sha256SidecarCache`.
+The Worker computes SHA-256 fingerprints of active model files at boot via `Sha256SidecarCache`.
 `EmbeddingFingerprint.discoverModelPath()` uses `ModelManifest.loadOrDefault()` to determine
-which file to fingerprint (respects `model_manifest.json` CPU/GPU selection). The fingerprint is
-cached in a sidecar file (e.g., `model_int8.onnx.sha256`) next to the model. The embedding
-fingerprint is stored in the Lucene index metadata to detect model changes that require
-reindexing. SPLADE fingerprint is stored under commit metadata key `splade_model_sha256`.
+which file to fingerprint and respects the CPU/GPU selection. Sidecars cache individual hashes.
+`IndexFingerprint` then incorporates the embedding, SPLADE, and NER model digests into one
+`index_fingerprint` commit-metadata value; changed bytes in any of those three roles require the
+blue/green migration evidence named by the promotion planner. Reranker, citation, and chat packages
+do not affect index compatibility.
 
 Sidecar format: `sha256:<hex64> mtime:<epoch-millis> size:<bytes>`
 
@@ -248,14 +257,16 @@ Sidecar files are gitignored (generated at runtime).
 
 ## Model Provenance (`build.json`)
 
-Each model directory contains a `build.json` recording how the model was produced
-(tempdoc 348). This is the source of truth for reproducing or updating any model.
+Model build scripts can emit a `build.json` recording how a model was produced. In the public
+repository, only `models/splade/naver-splade-v3/build.json` is currently tracked. Absence is not a
+successful integrity result and is not provenance: a promotion candidate must supply equivalent
+immutable provenance before it can be considered ready.
 
 Schema:
 
 - `source`: HuggingFace model ID + commit hash (auto-captured by build scripts)
 - `variants`: keyed by filename, each with `description`, `transformations`
-  (ordered list of steps), `output_sha256` (hash of committed `.onnx` file)
+  (ordered list of steps), `output_sha256` (hash of the produced `.onnx` bytes)
 - `build_command`: exact command to reproduce
 - `tool_versions`: Python package versions used during the build
 
@@ -266,19 +277,29 @@ Build scripts in `scripts/models/`:
 | `build-splade.py` | SPLADE | HF export + FP32/FP16 baked-PRESPARSE |
 | `build-ner.py` | NER | Download pre-built INT8 + FP16 from onnx-community |
 | `build-embedding.py` | EmbeddingGemma | Q4 merge + INT8 quantization |
-| `build-crossencoder.py` | Reranker, citation-scorer | Download pre-built INT8 |
-| `check-integrity.py` | All | Verify SHA-256 hashes + schema validation |
-| `verify-model.py` | All | CPU smoke test (load + dummy inference) |
+| `build-crossencoder.py` | Citation scorer and legacy CPU-only cross-encoder shapes | Download one pre-built INT8 variant; it does not build the current reranker FP32/FP16 pair |
+| `check-integrity.py` | Directories that already contain `build.json` | Verify SHA-256 hashes + schema; missing provenance directories are skipped |
+| `verify-model.py` | ONNX candidates | CPU smoke test only; production CUDA verification uses the Gradle `verifyModel` path |
 
 Integrity check: `python scripts/models/check-integrity.py`
+
+`model_promotion_planner.py` is the write-free admission layer above these package-specific tools.
+It accepts one explicit registry package and staged candidate, validates closure and immutable
+provenance, and reports publication, remote-byte, CPU/GPU, live, quality, projection, and migration
+evidence as blockers. Its deterministic review bundle retains the canonical provenance, complete
+remote-verification facts, evidence references, and generated projection results/diffs. A candidate
+cannot be ready without explicit approval evidence tied to its proposed license. The planner never
+builds, uploads, edits the registry, or activates a model.
 
 ## Discovery Paths
 
 ### ONNX Embedding (`EmbeddingOnnxModelDiscovery`)
 
 1. `JUSTSEARCH_EMBED_ONNX_MODEL_PATH` env var (explicit override)
-2. `<modelRoot>/onnx/embeddinggemma-300m/` (primary — requires `model.onnx` + `tokenizer.json`)
-3. `<modelRoot>/onnx/embedding/` (fallback — nomic, requires `model.onnx` + `tokenizer.json`)
+2. `<modelRoot>/onnx/gte-multilingual-base/` for each resolved model root, requiring the conventional
+   model/tokenizer pair or a complete manifest/FP16 variant layout
+
+The current discoverer has no automatic EmbeddingGemma or nomic fallback.
 
 ### GGUF Embedding (`EmbeddingModelResolver`)
 
@@ -346,25 +367,25 @@ describe a snapshot in time.
 
 | Path | `build.json` | Identity |
 |------|-------------|--------|
-| `models/onnx/embeddinggemma-300m/model.onnx` | Yes | Q4, GPU default |
-| `models/onnx/embeddinggemma-300m/model_int8.onnx` | Yes | INT8, CPU fallback |
-| `models/onnx/gte-multilingual-base/model_fp16.onnx` | Yes | FP16, packaged/registry default |
-| `models/onnx/gte-multilingual-base/model.onnx` | Yes | FP32, not yet in registry |
+| `models/onnx/embeddinggemma-300m/model.onnx` | No tracked file | Q4, historical GPU default |
+| `models/onnx/embeddinggemma-300m/model_int8.onnx` | No tracked file | INT8, historical CPU fallback |
+| `models/onnx/gte-multilingual-base/model_fp16.onnx` | No tracked `build.json` | FP16, packaged/registry GPU default |
+| `models/onnx/gte-multilingual-base/model.onnx` | No tracked `build.json` | FP32, packaged/registry CPU default |
 | `models/onnx/embedding/model.onnx` | No | Nomic INT8, legacy fallback |
 | `models/splade/naver-splade-v3/model.onnx` | Yes | FP32 baked-PRESPARSE, CPU (multilingual-v1) |
 | `models/splade/naver-splade-v3/model_fp16.onnx` | Yes | FP16 baked-PRESPARSE, GPU (multilingual-v1) |
-| `models/onnx/reranker/model.onnx` | Yes | GTE-multilingual-reranker FP32 |
-| `models/onnx/reranker/model_fp16.onnx` | Yes | GTE-multilingual-reranker FP16, GPU default |
+| `models/onnx/reranker/model.onnx` | No tracked `build.json` | GTE-multilingual-reranker FP32 |
+| `models/onnx/reranker/model_fp16.onnx` | No tracked `build.json` | GTE-multilingual-reranker FP16, GPU default |
 | `models/onnx/reranker-minilm-backup/model.onnx` | No | Legacy MiniLM, backup only |
-| `models/onnx/citation-scorer/model.onnx` | Yes | MiniLM-L6 INT8 |
-| `models/onnx/ner/model.onnx` | Yes | Multilingual-NER-HRL INT8, CPU |
-| `models/onnx/ner/model_fp16.onnx` | Yes | Multilingual-NER-HRL FP16, GPU |
-| GGUF models (chat, embedding, mmproj) | No | Packaged layer — deferred |
+| `models/onnx/citation-scorer/model.onnx` | No tracked `build.json` | MiniLM-L6 INT8 |
+| `models/onnx/ner/model.onnx` | No tracked `build.json` | Multilingual-NER-HRL INT8, CPU |
+| `models/onnx/ner/model_fp16.onnx` | No tracked `build.json` | Multilingual-NER-HRL FP16, GPU |
+| Registry GGUF models (chat, chat-compact, mmproj) | Per-candidate GGUF source manifest | Downloaded by the install/dev flow; weights are not tracked here |
 
 ## Open Decisions
 
 1. ~~Should ONNX embedding + SPLADE enter `model-registry.v2.json` for packaged app distribution?~~ **Settled:** both are already registry packages (`"id": "embedding"`, `"id": "splade"`) — `modules/configuration/src/main/resources/ai/model-registry.v2.json`.
-2. Should the legacy MiniLM reranker be removed from the registry?
-3. Should `Qwen3.5-9B` replace `Qwen3VL-8B-Thinking` as the packaged chat model?
-4. ~~Should NER be included in the default `models/` set or remain dev-only?~~ **Settled:** NER is in the default `models/` set, confirmed at `models/onnx/ner/model.onnx` with `build.json` (tempdoc 343 Phase A.2).
+2. ~~Should the legacy MiniLM reranker be removed from the registry?~~ **Settled:** it is not a registry package; `reranker` is the GTE multilingual package.
+3. ~~Should `Qwen3.5-9B` replace `Qwen3VL-8B-Thinking` as the packaged chat model?~~ **Settled:** registry package `chat` is Qwen3.5-9B.
+4. ~~Should NER be included in the default `models/` set or remain dev-only?~~ **Settled:** registry package `ner` is in the default install set.
 5. Should the AppData models be updated to match the repo-root canonical variants?

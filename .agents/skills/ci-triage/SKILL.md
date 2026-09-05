@@ -5,10 +5,6 @@ description: >-
   investigating a failed GitHub Actions run. Loads the CI failure symptom-to-fix
   decision tree.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # CI Triage
 
 Decision tree for diagnosing CI and build failures. Match the symptom, follow the fix.
@@ -124,12 +120,16 @@ node scripts/docs/llmstxt-generate.mjs --check    # reproduce
 node scripts/docs/llmstxt-generate.mjs             # fix
 ```
 
-### Docs lint — skills drift
+### Docs lint — Claude skill canonical-section drift
 
 ```bash
 node scripts/docs/skills-sync.mjs --check          # reproduce
 node scripts/docs/skills-sync.mjs                   # fix
 ```
+
+This check does not update `.agents/skills`. If the underlying workflow or
+canonical source is shared, review the Codex skill manually after fixing the
+Claude embedding.
 
 ### Gradle lockfile failure
 

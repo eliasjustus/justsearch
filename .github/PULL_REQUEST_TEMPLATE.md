@@ -1,7 +1,5 @@
-## Summary
+Explain why this durable change was needed.
 
-## Changes
+- Describe one observable outcome.
 
-## Testing
-
-## Related Issues
+Session-Id: <session-uuid>

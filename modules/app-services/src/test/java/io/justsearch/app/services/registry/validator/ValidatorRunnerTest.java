@@ -95,6 +95,10 @@ final class ValidatorRunnerTest {
         CoreOperationCatalog.EXPORT_DIAGNOSTICS,
         new io.justsearch.app.services.registry.operations.handlers.ExportDiagnosticsHandler(
             () -> null));
+    handlers.register(
+        CoreOperationCatalog.COPY_DIAGNOSTIC_SUMMARY,
+        new io.justsearch.app.services.registry.operations.handlers.CopyDiagnosticSummaryHandler(
+            () -> null));
     // Tempdoc 561 P-E added core.remember to AgentToolsOperationCatalog. This registration is a
     // FIXTURE, not a mirror of production wiring: it exists only so ExecutorBindingValidator can
     // resolve the declared binding, and the no-op MemoryStore suffices because no validator ever

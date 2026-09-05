@@ -1,0 +1,126 @@
+{
+  "asOf": "2026-09-03",
+  "extractorCases": [
+    {
+      "label": "Gradle Java toolchain",
+      "pinSource": { "path": "toolchain.kt", "adapter": "gradle-java-toolchain", "selector": "languageVersion" },
+      "source": "java.toolchain.languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(25))\n",
+      "expected": "25"
+    },
+    {
+      "label": "Gradle wrapper URL",
+      "pinSource": { "path": "gradle-wrapper.properties", "adapter": "gradle-wrapper-distribution", "selector": "distributionUrl" },
+      "source": "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.6.1-bin.zip\n",
+      "expected": "9.6.1"
+    },
+    {
+      "label": "TOML version catalog",
+      "pinSource": { "path": "versions.toml", "adapter": "toml-version", "selector": "lucene" },
+      "source": "[versions]\nlucene = \"10.4.0\"\n[libraries]\nlucene = { version.ref = \"lucene\" }\n",
+      "expected": "10.4.0"
+    },
+    {
+      "label": "Cargo lock package",
+      "pinSource": { "path": "Cargo.lock", "adapter": "cargo-lock-package", "selector": "tauri" },
+      "source": "[[package]]\nname = \"tauri\"\nversion = \"2.11.5\"\n",
+      "expected": "2.11.5"
+    },
+    {
+      "label": "GitHub Actions environment pin",
+      "pinSource": { "path": "ci.yml", "adapter": "github-actions-env", "selector": "NODE_VERSION" },
+      "source": "env:\n  NODE_VERSION: \"24.14.0\"\n",
+      "expected": "24.14.0"
+    },
+    {
+      "label": "Kotlin string constant",
+      "pinSource": { "path": "build.gradle.kts", "adapter": "kotlin-string-constant", "selector": "llamaPrebuiltVersion" },
+      "source": "val llamaPrebuiltVersion = \"b8571\"\n",
+      "expected": "b8571"
+    },
+    {
+      "label": "llama CUDA asset",
+      "pinSource": { "path": "build.gradle.kts", "adapter": "llama-cuda-asset", "selector": "llamaCudaAsset" },
+      "source": "val llamaCudaAsset = \"llama-$llamaPrebuiltVersion-bin-win-cuda-12.4-x64.zip\"\n",
+      "expected": "12.4"
+    },
+    {
+      "label": "JSON pointer",
+      "pinSource": { "path": "runtime.json", "adapter": "json-pointer", "selector": "/version" },
+      "source": "{\"version\":\"5.5.0.20241111\"}",
+      "expected": "5.5.0.20241111"
+    }
+  ],
+  "evaluationRegister": {
+    "schemaVersion": 1,
+    "supportWarningDays": 90,
+    "evidenceGraceDays": 30,
+    "platforms": [
+      {
+        "id": "fixed",
+        "name": "Fixed-date fixture",
+        "scope": "build",
+        "pinSource": { "path": "fixed.kt", "adapter": "gradle-java-toolchain", "selector": "languageVersion" },
+        "evidenceOwner": "fixture-owner",
+        "sourceUrl": "https://example.com/fixed",
+        "sourceCheckedOn": "2026-01-01",
+        "reviewBy": "2027-01-01",
+        "policy": { "kind": "fixed-date", "supportUntil": "2026-09-03" }
+      },
+      {
+        "id": "relative",
+        "name": "Release-relative fixture",
+        "scope": "build",
+        "pinSource": { "path": "relative.properties", "adapter": "gradle-wrapper-distribution", "selector": "distributionUrl" },
+        "evidenceOwner": "fixture-owner",
+        "sourceUrl": "https://example.com/relative",
+        "sourceCheckedOn": "2026-09-03",
+        "reviewBy": "2027-01-01",
+        "policy": { "kind": "release-relative", "successorVersion": "9.7.1", "successorObservedOn": "2026-09-03" }
+      },
+      {
+        "id": "rolling",
+        "name": "Rolling fixture",
+        "scope": "distribution",
+        "pinSource": { "path": "rolling.lock", "adapter": "cargo-lock-package", "selector": "tauri" },
+        "evidenceOwner": "fixture-owner",
+        "sourceUrl": "https://example.com/rolling",
+        "sourceCheckedOn": "2026-01-01",
+        "reviewBy": "2026-07-01",
+        "policy": { "kind": "rolling" }
+      },
+      {
+        "id": "matrix",
+        "name": "Compatibility-matrix fixture",
+        "scope": "runtime",
+        "pinSource": { "path": "matrix.gradle.kts", "adapter": "llama-cuda-asset", "selector": "llamaCudaAsset" },
+        "evidenceOwner": "fixture-owner",
+        "sourceUrl": "https://example.com/driver",
+        "additionalSourceUrls": ["https://example.com/toolkit"],
+        "sourceCheckedOn": "2026-09-03",
+        "reviewBy": "2027-01-01",
+        "policy": { "kind": "compatibility-matrix", "basis": "Fixture intersection evidence." }
+      },
+      {
+        "id": "unknown-eol",
+        "name": "No-published-EOL fixture",
+        "scope": "runtime",
+        "pinSource": { "path": "unknown.json", "adapter": "json-pointer", "selector": "/version" },
+        "evidenceOwner": "fixture-owner",
+        "sourceUrl": "https://example.com/releases",
+        "sourceCheckedOn": "2026-09-03",
+        "reviewBy": "2027-01-01",
+        "policy": { "kind": "no-published-eol" }
+      }
+    ]
+  },
+  "evaluationSources": {
+    "fixed.kt": "JavaLanguageVersion.of(25)\n",
+    "relative.properties": "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.6.1-bin.zip\n",
+    "rolling.lock": "[[package]]\nname = \"tauri\"\nversion = \"2.11.5\"\n",
+    "matrix.gradle.kts": "val llamaCudaAsset = \"llama-b8571-bin-win-cuda-12.4-x64.zip\"\n",
+    "unknown.json": "{\"version\":\"1.24.3\"}"
+  },
+  "ambiguousSource": "[versions]\nlucene = \"10.4.0\"\nlucene = \"10.5.0\"\n",
+  "missingSource": "[versions]\ntika = \"3.2.3\"\n",
+  "malformedJsonSource": "{\"version\":"
+}

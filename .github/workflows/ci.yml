@@ -45,10 +45,11 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 10 -> 15: this job now installs modules/ui-web and builds the kernel gate inputs (knip,
-    # npm audit, module-deps). The producers themselves measure ~8s combined; the install is the
-    # cost, and a job that times out is a red for every PR rather than a signal about one.
-    timeout-minutes: 15
+    # 15 -> 20 -> 30: this required lane exhausted both former limits while building kernel
+    # gate inputs after every earlier check had passed. The replacement GitHub advisory producer
+    # is independently bounded and fails closed; leave remaining runner/install variance enough
+    # headroom so a timeout does not turn every PR red instead of reporting a failed check.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -112,7 +113,9 @@ jobs:
           python -m unittest discover -s scripts/sandbox -p "test_*.py" -v
 
       - name: Install root dependencies
-        run: npm ci
+        # The identity gate below is the authoritative audit for this lockfile. npm's install-time
+        # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
+        run: npm ci --audit=false
 
       - name: Test language-agnostic authored-word-list scanner
         run: node scripts/ci/lib/language-agnostic-word-lists.test.mjs
@@ -142,6 +145,39 @@ jobs:
 
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
+
+      - name: Test workflow npm audit policy
+        run: node scripts/ci/test-check-workflow-npm-audit-policy.mjs
+
+      - name: Workflow npm install audit policy guard
+        run: node scripts/ci/check-workflow-npm-audit-policy.mjs
+
+      - name: Test publish preflight contract
+        run: node scripts/ci/test-run-publish-preflight.mjs
+
+      - name: Required-check local reproduction inventory is complete
+        run: node scripts/ci/run-publish-preflight.mjs --check
+
+      - name: Test platform lifecycle evidence policy
+        run: node scripts/ci/check-platform-lifecycle.test.mjs
+
+      # Advisory by design: invalid or unreadable evidence still fails closed, while a valid
+      # superseded/support finding is reported for an owner decision instead of making every PR red.
+      - name: Report platform lifecycle evidence
+        run: node scripts/ci/check-platform-lifecycle.mjs --mode report
+
+      - name: Screenshot-step coverage matches the reachable UI catalog
+        run: node scripts/ci/check-ui-step-coverage.mjs
+
+      - name: Release metadata projection tests
+        run: |
+          node --test scripts/release/release-changelog.test.mjs
+          node scripts/release/release-changelog.mjs check
+          node --test scripts/release/winget-manifests.test.mjs
+          node scripts/release/winget-manifests.mjs check --metadata packaging/winget/package.v1.json --release packaging/winget/releases/v0.2.0.json --output packaging/winget/manifests/e/eliasjustus/JustSearch/0.2.0
+
+      - name: Model-promotion planner tests
+        run: python -m unittest discover -s scripts/models/tests -p "test_*.py" -v
 
       - name: Unit-test shard policy guard
         run: node scripts/ci/verify-unit-test-shard-policy.mjs
@@ -210,8 +246,17 @@ jobs:
       # run-all-tests.mjs only discovers scripts/agent-analytics/**. 856 added trailer checks
       # to that script, which would have landed equally unrun. Wired here rather than left as
       # a follow-up, per retire-with-a-sweep's evasion clause.
-      - name: Test squash-message preview (session-id trailer + title/body checks)
+      - name: Test squash-message preview
         run: node scripts/ci/test-preview-squash-message.mjs
+
+      - name: Test publication-record projection
+        run: node scripts/ci/test-squash-message-projection.mjs
+
+      - name: Test managed PR review record
+        run: node scripts/ci/test-pr-review-record.mjs
+
+      - name: Test bounded advisory reporting
+        run: node scripts/ci/test-report-github-advisories.mjs
 
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
@@ -229,7 +274,8 @@ jobs:
       # registered, baselined and unable to notice anything, because this job built none of their
       # inputs. gates/dead-code/baseline.txt had gone untouched since 2026-07-16 while 27 findings
       # accumulated behind it. The inputs are cheap -- measured locally at 0.2s (module-deps),
-      # 2.7s (knip) and 4.5s (npm audit) -- so the reason they were missing was wiring, not budget.
+      # 2.7s (knip) and 4.5s (the original npm audit) -- so the reason they were missing was wiring,
+      # not budget. Tempdoc 921 later replaced that unreliable POST with bounded GitHub advisory GETs.
       # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
       # builds it rather than here.
       # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
@@ -261,11 +307,13 @@ jobs:
           node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
 
       - name: Build kernel gate inputs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          npm ci --prefix modules/ui-web
+          npm ci --prefix modules/ui-web --audit=false
           node scripts/docs/generate-runtime-config-matrix.mjs
           node scripts/architecture/module-deps.mjs
-          node scripts/ci/report-npm-audit.mjs
+          node scripts/ci/report-github-advisories.mjs
           npm --prefix modules/ui-web run knip:report
 
       - name: Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
@@ -274,16 +322,18 @@ jobs:
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
 
-      # Tempdoc 913 T1/T2, the same shape as the block below it. The dev-MCP surface's doc-sync
-      # gate and the two pure suites that cover its verdict logic ran in no workflow at all, which
-      # is why an allowlist could lose an endpoint and the ownership verdict could report
-      # `rebuildFirst` on every distFrom launch with nothing to contradict either. All three are
-      # pure (no dev stack, no Gradle): check-dev-mcp-doc-sync spawns the MCP server over stdio and
-      # calls tools/list, which touches no run state.
-      - name: Dev-MCP surface (doc sync + pure unit suites)
+      # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
+      # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
+      # and real stdio handler projection. No suite starts the shared dev stack or runs Gradle.
+      - name: Dev-MCP surface (hermetic bootstrap + truth + doc sync)
         run: |
+          node scripts/dev/generate-dev-mcp-runtime.mjs --check
+          node scripts/dev/generate-dev-mcp-runtime.test.mjs
+          node scripts/dev/test-dev-mcp-bootstrap.mjs
+          node scripts/dev/test-dev-mcp-observations.mjs
           node scripts/ci/check-dev-mcp-doc-sync.mjs
           node scripts/dev/test-dev-mcp-surface-honesty.mjs
+          node scripts/dev/test-dev-mcp-projection-live.mjs
           node scripts/dev/test-ownership-verdict.mjs
 
       # Tempdoc 913 D1, the same shape a fourth time, one register-family out. The
@@ -321,7 +371,7 @@ jobs:
       # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
       - name: Wire contract gate (protobuf breaking changes)
         run: |
-          npm ci --prefix scripts/wire-contract
+          npm ci --prefix scripts/wire-contract --audit=false
           node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
           node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
@@ -476,8 +526,16 @@ jobs:
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 
-      - name: Verify synced skills are up to date
+      - name: Verify Claude skill doc sections are up to date
         run: node scripts/docs/skills-sync.mjs --check
+
+      - name: Upload this run's governance-health snapshot
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: governance-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tmp/governance-history.ndjson
+          if-no-files-found: warn
 
   license-and-notices:
     name: License and notices
@@ -513,7 +571,7 @@ jobs:
           cache-dependency-path: modules/ui-web/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix modules/ui-web
+        run: npm ci --prefix modules/ui-web --audit=false
 
       - name: Enforce the license allowlist
         run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
@@ -559,15 +617,25 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             modules/ui-web/package-lock.json
+            packages/runtime-client/package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --audit=false
+
+      - name: Install runtime client generator dependencies
+        run: npm ci --prefix packages/runtime-client --ignore-scripts --audit=false
+
+      - name: Runtime client generated source is in sync
+        run: npm --prefix packages/runtime-client run check:regen
 
       - name: Assemble without model blobs
         shell: bash
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
+
+      - name: Reference-client API projections are reproducible
+        run: node scripts/ci/check-api-client-regen.mjs
 
       - name: Upload build attribution
         if: always()
@@ -579,6 +647,16 @@ jobs:
             build/ci/build-attribution.md
             build/ci/build-task-timing.json
           if-no-files-found: warn
+
+      - name: Setup runtime client minimum Node version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Test and inspect the packed runtime client
+        run: |
+          npm --prefix packages/runtime-client test
+          npm --prefix packages/runtime-client run check:pack
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
@@ -755,6 +833,15 @@ jobs:
 
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
+
+      - name: Release signing contract tests
+        shell: pwsh
+        run: |
+          ./scripts/ci/test-install-codesign-tool.ps1
+          ./scripts/ci/test-resolve-release-signing.ps1
+          ./scripts/ci/test-sign-windows.ps1
+          ./scripts/ci/test-verify-pe-signatures.ps1
+          ./scripts/release/test-sign-vendored-payload.ps1
 
   # The `shell` crate ran in NO lane until now. The only `cargo` invocation anywhere in CI was
   # `dump-cargo-licenses.mjs` (this file, "License and notices"), which compiles nothing. So
@@ -947,7 +1034,7 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, integration-tests, secret-scan]
+    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan]
     if: always()
     steps:
       - name: Checkout

@@ -4,6 +4,7 @@ package io.justsearch.ui.api.runtime;
 import io.javalin.http.Context;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.runtime.RuntimeManifest;
+import io.justsearch.ui.api.ApiErrorHandler;
 import io.justsearch.ui.runtime.RuntimeManifestPublisher;
 import java.util.Map;
 import java.util.Objects;
@@ -33,11 +34,23 @@ public final class RuntimeManifestController {
   private static final Logger log = LoggerFactory.getLogger(RuntimeManifestController.class);
 
   private final RuntimeManifestPublisher publisher;
-  private final ObjectMapper mapper;
+  private final ManifestSerializer serializer;
+
+  @FunctionalInterface
+  interface ManifestSerializer {
+    String serialize(RuntimeManifest manifest) throws Exception;
+  }
 
   public RuntimeManifestController(RuntimeManifestPublisher publisher) {
+    this(
+        publisher,
+        manifest ->
+            new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(manifest));
+  }
+
+  RuntimeManifestController(RuntimeManifestPublisher publisher, ManifestSerializer serializer) {
     this.publisher = Objects.requireNonNull(publisher, "publisher");
-    this.mapper = new ObjectMapper();
+    this.serializer = Objects.requireNonNull(serializer, "serializer");
   }
 
   public void handleGet(Context ctx) {
@@ -52,15 +65,13 @@ public final class RuntimeManifestController {
     }
     try {
       RuntimeManifest publicView = manifest.publicProjection();
-      ctx.contentType("application/json")
-          .result(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(publicView));
+      ctx.contentType("application/json").result(serializer.serialize(publicView));
     } catch (Exception e) {
       log.warn("/api/runtime/manifest serialization failed: {}", e.getMessage(), e);
       ctx.status(500)
           .json(
-              Map.of(
-                  "error", e.getMessage() == null ? e.toString() : e.getMessage(),
-                  "errorCode", ApiErrorCode.INTERNAL_ERROR.name()));
+              ApiErrorHandler.toResponse(
+                  ApiErrorCode.INTERNAL_ERROR, "Runtime manifest serialization failed"));
     }
   }
 }

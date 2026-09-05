@@ -16,7 +16,9 @@ old rolling packaging log).
 > **Status.** The Sandbox verification *loop* has been exercised across many candidates.
 > `build-installer.yml` has been dispatched successfully against both `main` and a worktree branch
 > (2026-07-15) — dispatching it does **not** require a `v*` tag or create/update a GitHub Release
-> unless the ref dispatched against is one.
+> unless the ref dispatched against is one. The first stable release, **v0.2.0**, was published on
+> 2026-08-13 with Authenticode signatures (publisher **Elias Justus**). The exact published-installer
+> updater qualification tracked by tempdoc 617 remains a separate, still-open evidence tier.
 
 ## The release loop
 
@@ -205,7 +207,17 @@ reminds you). See `packaging/mcpb/README.md`.
 
 In-repo steps (an agent can prepare these; the branch must be pushed and green):
 
-1. Bump `gradle.properties` `version` to the release version (e.g. `0.2.0`).
+1. Prepare the changelog section, then validate its structure:
+
+   ```bash
+   node scripts/release/release-changelog.mjs prepare --version <version> --date YYYY-MM-DD --write
+   node scripts/release/release-changelog.mjs check
+   ```
+
+   This moves the current `[Unreleased]` entries under one exact, non-empty
+   `## [<version>] - YYYY-MM-DD` heading and leaves a new, possibly empty `[Unreleased]` section.
+   The tag workflow rechecks that exact version before it creates or edits a draft Release.
+2. Bump `gradle.properties` `version` to the release version (e.g. `0.2.1`).
    `sync-version.ps1` propagates it to Tauri/Cargo/npm; `-RequireReleaseSemver` accepts
    `x.y.z[-alpha.N]` and rejects `SNAPSHOT`.
    > **Strict release semver is now load-bearing at tag time.** The next `v*` tag dispatch is
@@ -214,14 +226,14 @@ In-repo steps (an agent can prepare these; the branch must be pushed and green):
    > exercised because no tag dispatch had run since the flag was added). So `gradle.properties`
    > must already be a clean `x.y.z[-pre.N]` before you tag — a `SNAPSHOT`/malformed version now
    > fails the build at dispatch instead of slipping through.
-2. `sync-version.ps1` also stamps `server.json`'s `version` + release-asset URL from the
+3. `sync-version.ps1` also stamps `server.json`'s `version` + release-asset URL from the
    gradle version. If the MCPB source changed since the last release, also run
    `node scripts/ci/pack-mcpb.mjs --sync` and commit `server.json` (its `fileSha256`).
    Verify: `node scripts/ci/check-mcpb-consistency.mjs --release-version <version>`.
 
 Owner-only steps (require repo permissions):
 
-3. Configure the updater trust inputs:
+4. Configure the updater trust inputs:
    - secret `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY` (and
      `JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD` when applicable);
    - secret `JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM`;
@@ -236,9 +248,19 @@ Owner-only steps (require repo permissions):
    `release.v1.json`. The v1 metadata root is deliberately a long-lived offline root; replacing it
    safely requires a separately designed bridge/dual-root release and must not be attempted as an
    ordinary variable change.
-4. Push, tag `v<version>` (a bare `vX.Y.Z` auto-resolves to **non-prerelease** → becomes
+5. Push, tag `v<version>` (a bare `vX.Y.Z` auto-resolves to **non-prerelease** → becomes
    `/releases/latest`; `-alpha/-beta/-rc` tags are prereleases).
-5. Dispatch `build-installer.yml` against the tag ref. It builds, runs
+6. Read the provider portal's remaining-signatures value, then dispatch
+   `build-installer.yml` against the tag ref with `providerRemainingSignatures` set to that value.
+   The tag path requires signing and refuses to begin packaging unless the value covers the
+   reviewed per-run ceiling (currently 12). The tag version must also exactly match the single
+   `version=` value in `gradle.properties`; a mismatched tag is rejected before packaging:
+
+   ```bash
+   gh workflow run build-installer.yml --ref v<version> -f providerRemainingSignatures=<portal-value>
+   ```
+
+   It builds, runs
    `build-release-assets.ps1`, round-trip verifies the draft asset set, and publishes the Release
    only after verification succeeds.
 
@@ -258,9 +280,9 @@ Owner-only steps (require repo permissions):
    > in with the first stable tag (v0.2.0, 2026-08-13; tempdoc 801 D14.b). Restructuring the
    > workflow file is now safe. Raise the floor only to stay above the highest sequence any
    > *published* release has carried; never lower it.
-6. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
+7. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
    (see `docs/m1-operator-checklist.md`).
-7. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
+8. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
    line and the `v<version>` download link describe the *published* release asset, which is why
    they deliberately still read the previous release's figures (853 MB, the v0.1.0 SHA) until a cut
    lands. After the Release exists, bump the size, the `SHA256SUMS` value, and the
@@ -269,6 +291,24 @@ Owner-only steps (require repo permissions):
 > Do **not** advertise MCP against a release whose installer predates the `/mcp` endpoint. The
 > shipped **v0.1.0** app has no MCP endpoint (its backend is 2026-04-28 jars); the MCPB bundle
 > and the README's MCP sections are meaningful only from the next release onward.
+
+### Post-release WinGet projection
+
+After a stable Release is published, dispatch the standalone projection workflow:
+
+```bash
+gh workflow run prepare-winget-manifests.yml --ref main -f releaseTag=v<version>
+gh run download <run-id> -n winget-manifests-v<version>
+```
+
+It authenticates the published installer's canonical URL and GitHub-reported SHA-256, downloads
+`SHA256SUMS`, authenticates that file against its own GitHub asset digest, and requires the
+installer entry to agree with the installer asset digest. It generates schema 1.12 manifests in
+the upstream-ready `manifests/e/eliasjustus/JustSearch/<version>/` hierarchy plus a PR body, runs
+the repository semantic/determinism checker and `winget validate`, and uploads the result. It does
+not mutate the Release or submit upstream. The owner reviews the artifact and opens the
+`microsoft/winget-pkgs` PR; installation/Sandbox evidence is recorded separately from manifest
+validation.
 
 ## Pre-release verification (sandbox silent-install)
 
@@ -295,24 +335,20 @@ share, ending in a literal `PASS`/`FAIL`. `-GenerateOnly` prepares the `.wsb` wi
 > Sandbox they will find and silently `/S`-uninstall a real install (this happened once during
 > authoring — tempdoc 760). The guest header carries the same warning.
 
-## Release notes for the next cut
+## Release-note authority
 
-Items to fold into the GitHub Release notes (the workflow already prepends a verify-your-download
-trust blurb and appends `generate_release_notes` output):
-
-- **Installer is now ~260 MB** (tempdoc 772, CI run `29901314606`), down from 853 MB at v0.1.0
-  (−68%), with zero first-run UX regression.
-- **WebView2 uses the online bootstrapper.** Machines without WebView2 preinstalled need network
-  access at install time; Windows 11 and most Windows 10 machines already have the runtime, so this
-  affects only offline/stripped installs.
-- Link `docs/how-to/verify-your-download.md` (checksum verification, SmartScreen guidance).
+Do not maintain a second “next cut” list here. Human-authored release notes live in
+`CHANGELOG.md`. The tag workflow composes the immutable release body from the download-trust
+notice, that tag's exact changelog section, and GitHub's generated notes. Re-running a failed tag
+dispatch updates an existing draft to the same composed body before asset publication.
 
 ## Code signing
 
-Signing is wired but **dormant until a mode credential secret is present** — a secrets-absent
-dispatch builds exactly as today (`build-installer.yml` computes `-Sign` only when a credential is
-configured). `scripts/ci/sign-windows.ps1` selects a credential mode via `JUSTSEARCH_CODESIGN_MODE`
-(default `pfx`), all fail-closed under `JUSTSEARCH_REQUIRE_SIGNING`:
+Authenticode signing is live: v0.2.0 shipped signed by **Elias Justus**. Branch rehearsals may still
+be unsigned or explicitly self-signed, but every `v*` tag requires a configured credential and the
+full `-Release` contract. `scripts/ci/sign-windows.ps1` selects a credential mode via
+`JUSTSEARCH_CODESIGN_MODE` (default `pfx`), all fail-closed under
+`JUSTSEARCH_REQUIRE_SIGNING`:
 
 | Mode | Secrets it reads | Use |
 |---|---|---|
@@ -320,15 +356,19 @@ configured). `scripts/ci/sign-windows.ps1` selects a credential mode via `JUSTSE
 | `store` | `JUSTSEARCH_CODESIGN_THUMBPRINT` | Cert from the Windows cert store — how USB-token / HSM CSP-backed non-exportable keys present locally (`signtool /sha1`). |
 | `command` | `JUSTSEARCH_CODESIGN_COMMAND` (a template with a `{file}` placeholder) | Any vendor CLI (Azure Trusted Signing, eSigner, …) — pluggable with zero further repo changes. |
 
-**One-time setup:** set `JUSTSEARCH_CODESIGN_MODE` and the mode's credential secret(s) in the repo
-secrets. Nothing else — signing then engages automatically on the next dispatch.
+**One-time setup:** create the protected GitHub Environment named `release-signing`, put
+`JUSTSEARCH_CODESIGN_MODE` and the selected mode's credential secret(s) there, validate both paid
+signing workflows, then remove any repository-scoped copies. Environment creation and secret
+migration are owner actions; workflow code cannot perform or verify the secret-value move.
 
 **eSigner (SSL.com) via `command` mode — validated template.** Sandbox-validated end-to-end
 (2026-07-22, CodeSignTool 1.3.3, demo credentials; tempdoc 760): signs in place, non-interactive,
 distinct nonzero exit codes on failure (fail-closed semantics hold through the `.cmd` wrapper).
-`build-installer.yml` auto-installs CodeSignTool into `%RUNNER_TEMP%\CodeSignTool` whenever the
-command template references `CodeSignTool` (the tool ships its own JRE and production endpoint
-config — no properties edit). Set `JUSTSEARCH_CODESIGN_COMMAND` to:
+`build-installer.yml` installs CodeSignTool into `%RUNNER_TEMP%\CodeSignTool` only when the command
+template references it. The shared bootstrap verifies the downloaded archive against the committed
+SHA-256 before extraction and writes a provenance receipt. During vendor execution the signer
+removes unrelated updater, release-metadata, and GitHub secrets from the child environment. Set
+`JUSTSEARCH_CODESIGN_COMMAND` to:
 
 ```text
 %RUNNER_TEMP%\CodeSignTool\CodeSignTool.bat sign -username=<eSigner login> -password="<password>" -totp_secret="<TOTP secret captured at 2FA enrollment>" -credential_id=<credential id> -input_file_path="{file}" -override="true"
@@ -343,16 +383,26 @@ is the right time to run the per-pin-bump signed-mirror procedure below (the ~93
 signatures are then free).
 
 > **`JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` is REHEARSAL-ONLY and must NEVER be set for a production
-> release.** It relaxes the post-sign check from `signtool verify /pa` to a hash-valid-Authenticode
-> presence check, so a chain-untrusted (self-signed) signature is accepted — exactly what a real
-> release must reject. Leave it unset in production.
+> release or `command`-mode/vendor signing.** It relaxes the post-sign check from `signtool verify
+> /pa` to a hash-valid-Authenticode presence check, so a chain-untrusted (self-signed) signature is
+> accepted — exactly what a real release must reject. Both release admission and the shared signer
+> reject the combination with `command` mode. The shared signer also requires a run-local ledger
+> path and positive ceiling before any command/vendor invocation; every paid workflow dispatch must
+> additionally supply provider-authoritative remaining budget.
 
-**Rehearsal (no cert needed).** The full CI signing path can be exercised with a self-signed cert
-before any purchase: generate a self-signed cert, set it as the mode credential in repo secrets,
-set the repo variable `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED=1`, and dispatch. This is how tempdoc
-760's signing-rehearsal campaign reached green (run `29914075529`) with zero paid signings spent;
-remove the rehearsal secrets/variable afterward. The signing script itself is separately rehearsable
-via `scripts/ci/test-sign-windows.ps1`.
+**Rehearsal (no paid cert needed).** The full CI signing path can be exercised before any purchase:
+generate a throwaway self-signed certificate, configure it through `pfx` or `store` mode, set
+`JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED=1`, and dispatch a branch build. Never put an eSigner/vendor
+command in this rehearsal lane. This is how tempdoc 760's signing-rehearsal campaign reached green
+(run `29914075529`) with zero paid signings spent; remove the rehearsal credential/variable
+afterward. The signing script itself is separately rehearsable via
+`scripts/ci/test-sign-windows.ps1`.
+
+Each signing run keeps two credential-free journals. The append-only attempt journal reserves a
+slot before every vendor invocation, so failures, retries, and interrupted calls still consume the
+reviewed ceiling. The verified-signature ledger is appended only after local Authenticode
+verification succeeds. The workflow summary reports both counts; neither is a substitute for the
+provider portal's authoritative remaining allocation.
 
 ### Per-pin-bump signed-mirror procedure
 
@@ -366,7 +416,7 @@ upstream pin bump** and re-host the signed archives, dropping per-release signin
    metered signings):
 
    ```bash
-   gh workflow run sign-vendored-mirrors.yml --ref main -f signLlama=true -f signTesseract=true
+   gh workflow run sign-vendored-mirrors.yml --ref main -f signLlama=true -f signTesseract=true -f providerRemainingSignatures=<portal-value>
    ```
 
    Both inputs default to `true`; set one to `false` to re-sign a single payload when only one pin
@@ -377,7 +427,8 @@ upstream pin bump** and re-host the signed archives, dropping per-release signin
    zip, and runs `scripts/release/sign-vendored-payload.ps1` on each archive (extract → sign every
    unsigned inner PE → deterministic re-zip → sha256 out). Budget ~9-12 s per PE: a full two-payload
    run is ~20 min of signing. The same script can be run locally with the
-   `JUSTSEARCH_CODESIGN_*` env set, if you would rather not go through CI.
+   `JUSTSEARCH_CODESIGN_*` env set and `-ProviderRemainingSignatures <portal-value>`, if you would
+   rather not go through CI.
 2. **Download the run's `signed-vendored-mirrors` artifact** (`gh run download <run-id>`): the two
    `-signed.zip` files and their `.sha256` sidecars. The sidecar lines are also printed near the end
    of the run log, ready to paste.
@@ -402,8 +453,8 @@ upstream pin bump** and re-host the signed archives, dropping per-release signin
 5. **Commit the URL + sha256 pairs into `packaging/signed-mirrors.v1.json`** (`llama-cpu` and/or
    `tesseract` entry), together with the regenerated manifest, as one PR. The build reads that file
    and applies the matching gradle override pair; the pins are committed there — not in repo
-   variables — so each bump is PR-reviewed supply-chain history. The file ships EMPTY, so until a
-   pair is committed the build is byte-identical to the default pinned upstream download; a
+   variables — so each bump is PR-reviewed supply-chain history. If a payload entry is absent, the
+   build uses the byte-identical default pinned upstream download; a
    half-complete entry (url without sha256, or vice versa) fails the build loudly before it starts.
 
 **Notes:**
@@ -452,7 +503,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/justsearch-app/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-13 run. Rounds 1-6 confirmed the dense-retrieval + capability-gate fixes and `core.workflow-run` (tempdoc 744), but round 6 was **DO-NOT-QUALIFY** (golden-query parity regression, plus a HIGH-severity RAG chunk-retrieval bug, tempdoc 749). Rounds 7-13 converged those and later findings. **Round 13 (2026-08-04) found no blocking product defect** — it failed on harness state only: the coverage gate at 25/26 (an unreachable `core.extract` route pointer) and finding R13-F2, both fixed in tempdoc 807 / PR #366. Next step: **one fresh-install confirmation round** against the fixed build to qualify. | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749, tempdoc 807 |
+| v0.2.0 | 2026-08-13 | published after the 0.2.0 convergence campaign; tempdoc 617's exact updater N→N+1 lanes remain open | First stable cut with the MCP endpoint, authenticated update assets, and Authenticode-signed installer (publisher Elias Justus). | [release](https://github.com/justsearch-app/justsearch/releases/tag/v0.2.0), tempdoc 734, tempdoc 823, tempdoc 617 |
 
 ## See also
 

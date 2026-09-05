@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "packageId": "embedding",
+  "stagedRoot": "staged",
+  "proposedPackage": {
+    "id": "embedding",
+    "necessity": "required",
+    "label": "Embedding model",
+    "description": "Fixture",
+    "targetDir": "onnx/fixture",
+    "termsUrl": "https://huggingface.co/example/old-embedding",
+    "license": "Apache-2.0",
+    "tier": "retrieval-core",
+    "minVramBytes": 0,
+    "variants": [
+      { "filename": "cpu.bytes", "precision": "FP32", "targetEP": "CPU", "sha256": "A6A353D392E0F69E07C1536C19AFC19B95BBC123E9F8DCB5C6F53192D09A9ECE", "sizeBytes": 20, "downloadUrl": "https://example.invalid/releases/download/models-new/cpu.bytes" },
+      { "filename": "gpu.bytes", "precision": "FP16", "targetEP": "CUDA", "sha256": "65311A770968793EEBF0E46EAAB817798FAA9F7FE43C0A15AE241027717C0B60", "sizeBytes": 20, "downloadUrl": "https://example.invalid/releases/download/models-new/gpu.bytes" }
+    ],
+    "supportingFiles": [
+      { "filename": "tokenizer.json", "sha256": "77F851A05DE55165FECAE589D2F1F4AFD7C7EC66BD1EDF82FA31D368389BCE07", "sizeBytes": 24, "downloadUrl": "https://example.invalid/releases/download/models-new/tokenizer.json" },
+      { "filename": "pooling_config.json", "sha256": "97131CFC5FC41B079D8707DE074A55F4B84318603F64759FB5089BB5087C764D", "sizeBytes": 19, "downloadUrl": "https://example.invalid/releases/download/models-new/pooling_config.json" },
+      { "filename": "model_manifest.json", "sha256": "BD16058F2064199DFE61DB25218AB1B6AB9D4AD7A45D1FC0F48C8D2C83885ABA", "sizeBytes": 45, "downloadUrl": "https://example.invalid/releases/download/models-new/model_manifest.json" }
+    ]
+  },
+  "provenance": {
+    "kind": "onnx-build",
+    "source": { "repository": "example/new-embedding", "revision": "0123456789abcdef0123456789abcdef01234567" },
+    "buildCommand": "python scripts/models/build-embedding.py --fixture",
+    "toolVersions": { "onnx": "fixture" },
+    "outputs": {
+      "cpu.bytes": { "sha256": "A6A353D392E0F69E07C1536C19AFC19B95BBC123E9F8DCB5C6F53192D09A9ECE", "transformations": ["fixture CPU export"] },
+      "gpu.bytes": { "sha256": "65311A770968793EEBF0E46EAAB817798FAA9F7FE43C0A15AE241027717C0B60", "transformations": ["fixture FP16 export"] }
+    }
+  },
+  "remoteVerification": {
+    "cpu.bytes": { "status": "pass", "url": "https://example.invalid/releases/download/models-new/cpu.bytes", "sha256": "A6A353D392E0F69E07C1536C19AFC19B95BBC123E9F8DCB5C6F53192D09A9ECE", "sizeBytes": 20 },
+    "gpu.bytes": { "status": "pass", "url": "https://example.invalid/releases/download/models-new/gpu.bytes", "sha256": "65311A770968793EEBF0E46EAAB817798FAA9F7FE43C0A15AE241027717C0B60", "sizeBytes": 20 },
+    "tokenizer.json": { "status": "pass", "url": "https://example.invalid/releases/download/models-new/tokenizer.json", "sha256": "77F851A05DE55165FECAE589D2F1F4AFD7C7EC66BD1EDF82FA31D368389BCE07", "sizeBytes": 24 },
+    "pooling_config.json": { "status": "pass", "url": "https://example.invalid/releases/download/models-new/pooling_config.json", "sha256": "97131CFC5FC41B079D8707DE074A55F4B84318603F64759FB5089BB5087C764D", "sizeBytes": 19 },
+    "model_manifest.json": { "status": "pass", "url": "https://example.invalid/releases/download/models-new/model_manifest.json", "sha256": "BD16058F2064199DFE61DB25218AB1B6AB9D4AD7A45D1FC0F48C8D2C83885ABA", "sizeBytes": 45 }
+  },
+  "evidence": {
+    "cpu-production": { "status": "pass", "ref": "fixture://cpu" },
+    "gpu-production": { "status": "pass", "ref": "fixture://gpu" },
+    "live-behavior": { "status": "pass", "ref": "fixture://live" },
+    "quality-search": { "status": "pass", "ref": "fixture://quality" },
+    "migration": { "status": "pass", "ref": "fixture://migration" },
+    "license-approval": { "status": "pass", "ref": "fixture://license-review", "license": "Apache-2.0" }
+  },
+  "projections": {
+    "model-inventory": {
+      "status": "pass",
+      "ref": "fixture://inventory",
+      "result": "updated",
+      "diff": "@@ model identity @@\n-old fixture\n+new fixture"
+    },
+    "notices": {
+      "status": "no-change",
+      "ref": "fixture://notices",
+      "result": "unchanged",
+      "diff": ""
+    }
+  }
+}

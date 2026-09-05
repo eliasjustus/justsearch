@@ -56,18 +56,25 @@ In the IDE extension or desktop app, attach the same folder and make it the
 primary working directory. Codex walks upward from the working directory to
 discover `AGENTS.md`, `.agents/skills`, and `.codex` configuration.
 
-At session start, follow `AGENTS.md`: read the compact cross-harness contract,
-use `$justsearch-start` when the personal skill is installed (otherwise read the
-three named orientation docs), and run the world-state command before changing
-files. Feature work belongs in a dedicated worktree. Keep one task per distinct
-outcome; resume an existing task when continuing the same outcome.
+The required `justsearch-dev` MCP initializes from tracked files in a fresh
+worktree; it does not require that worktree to have a root `node_modules` yet.
+Node.js 24 or newer and Git must already be available. Install root npm
+dependencies when repository scripts or generated-runtime maintenance require
+them, but task creation itself does not depend on that installation.
+
+At session start, follow the automatically loaded `AGENTS.md` contract. Use
+`$justsearch-start` when you explicitly want repository orientation or a fresh
+world-state summary; it is not required for every session. Run the world-state
+command before changing files for a substantial task. Feature work belongs in a
+dedicated worktree. Keep one task per distinct outcome; resume an existing task
+when continuing the same outcome.
 
 ## Claude-to-Codex mapping
 
 | Claude Code surface | Codex equivalent in this repository | Authority |
 | --- | --- | --- |
 | `CLAUDE.md` and always-loaded rules | `AGENTS.md` | `AGENTS.md`; Claude's hard-invariant block is generated from it |
-| `.claude/skills/*` and slash skills | `.agents/skills/*`; invoke with `$skill-name` | `.claude/skills`; Codex tree is generated |
+| `.claude/skills/*` and slash skills | `.agents/skills/*`; invoke with `$skill-name` | Each harness-specific skill tree owns its own instructions |
 | `.mcp.json` local dev tools | `.codex/config.toml` → `justsearch-dev` | shared MCP server implementation |
 | `.claude/settings*.json` hooks | `.codex/hooks.json` | `governance/agent-hooks.v1.json` |
 | Claude agent types | `.codex/agents/{explorer,worker,reviewer}.toml` | Codex-native role files |
@@ -107,7 +114,14 @@ Expected results:
 
 If project MCP, skills, or hooks are all absent, check project trust first. If
 only MCP is absent, run `codex mcp list` from the repository root and validate
-`.codex/config.toml`. If hooks misbehave, set
+`.codex/config.toml`. Then run `node scripts/dev/justsearch-dev-mcp.mjs` and
+inspect `tmp/justsearch-dev-mcp/bootstrap-failure.json`; bootstrap errors use
+stable `DEV_MCP_BOOT_*` codes and emit no protocol output on stdout. The stable
+file points to the most recently observed failure; per-instance records beside it retain
+concurrent failures, and `quick_health` is the current-state authority. A missing
+or stale generated runtime is repaired from an installed checkout with
+`node scripts/dev/generate-dev-mcp-runtime.mjs`, followed by its `--check`
+mode. If hooks misbehave, set
 `JUSTSEARCH_DISABLE_HOOKS=1` for recovery, capture the failure, and fix the
 shared manifest or adapter rather than hand-editing generated wiring.
 
@@ -123,21 +137,23 @@ recent chats when conversational continuity is useful. Work older than the
 tempdocs/history; it is not lost or required for Codex to understand current
 project state.
 
-## Regeneration contract
+## Maintenance contract
 
 Use these commands after editing their authorities:
 
 ```powershell
 node scripts/docs/agent-instructions-sync.mjs
-node scripts/docs/skills-sync.mjs
+node scripts/docs/skills-sync.mjs # refreshes canonical-doc sections in Claude skills only
 node scripts/codegen/gen-agent-hooks.mjs
 node scripts/codegen/gen-codex-hooks.mjs
 node scripts/docs/llmstxt-generate.mjs
 ```
 
 CI runs `check-codex-agent-parity.mjs`, the general hook-integrity gate, the
-agent-analytics tests, and documentation generation checks. Never edit
-`.agents/skills` or `.codex/hooks.json` directly.
+agent-analytics tests, and documentation generation checks. Edit
+`.agents/skills` directly for Codex behavior. When a shared workflow or source
+document changes, manually review the corresponding `.claude/skills` and
+`.agents/skills` copies. Never edit generated `.codex/hooks.json` directly.
 
 ## Official Codex references
 

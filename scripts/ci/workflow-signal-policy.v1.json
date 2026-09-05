@@ -1,7 +1,10 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 4,
+  "version": 5,
   "defaultStaleDays": 14,
+  "branchProtection": {
+    "requireBranchesUpToDateBeforeMerging": false
+  },
   "workflows": [
     {
       "name": "CI",
@@ -54,6 +57,17 @@
       "class": "release-gate",
       "expectedTriggers": ["workflow_dispatch"],
       "owner": "tempdoc 760/772 SS-K sign-once-per-upstream-bump",
+      "failureDefault": "release-blocking-failure",
+      "staleDays": 365,
+      "blocking": false,
+      "advisory": true
+    },
+    {
+      "name": "Prepare WinGet Manifests",
+      "path": ".github/workflows/prepare-winget-manifests.yml",
+      "class": "release-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 905 / WinGet manifest projection",
       "failureDefault": "release-blocking-failure",
       "staleDays": 365,
       "blocking": false,

@@ -1,0 +1,35 @@
+{
+  "name": "@justsearch/runtime-client",
+  "version": "0.1.0",
+  "description": "Generated Node client for the stable JustSearch Runtime Contract read surface.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "generate": "orval --config orval.config.mjs && node scripts/generate-runtime-contract.mjs",
+    "check:regen": "node scripts/check-regen.mjs",
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check:pack": "node scripts/check-pack.mjs",
+    "smoke:live": "npm run build && node scripts/live-smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "orval": "8.27.0",
+    "typescript": "5.9.3"
+  }
+}

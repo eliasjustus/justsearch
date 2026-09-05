@@ -53,9 +53,9 @@
  *     contract itself is unchanged by the flag — only which checks feed into it. Omitting the flag
  *     is byte-identical to the pre-829 behavior (all reported checks, required and advisory alike).
  *
- *     Exit codes of `checks-wait` itself: 0 = all checks passed, 1 = a check failed,
- *     3 = TIMEOUT (bounded by --timeout-sec, default 1800), 2 = an unexpected `gh` error
- *     (e.g. auth failure) surfaced verbatim on stderr.
+ *     The same bounded exit contract is used by `merge-wait` and `run-wait-sha`:
+ *     0 = success, 1 = terminal failure, 3 = TIMEOUT, 2 = an unexpected `gh`/JSON error.
+ *     Both emit only state transitions, so one long-lived process replaces conversational polls.
  */
 
 import path from 'node:path';
@@ -128,6 +128,108 @@ export function buildChecksArgs(prNumber, requiredOnly) {
   const args = ['pr', 'checks', String(prNumber)];
   if (requiredOnly) args.push('--required');
   return args;
+}
+
+export function classifyMergeSnapshot(snapshot) {
+  const state = String(snapshot?.state || '').toUpperCase();
+  const mergeState = String(snapshot?.mergeStateStatus || 'UNKNOWN').toUpperCase();
+  if (state === 'MERGED' || snapshot?.mergedAt) {
+    const sha = snapshot?.mergeCommit?.oid || snapshot?.mergeCommit?.sha || 'unknown';
+    return { verdict: 'pass', key: `MERGED:${sha}`, message: `merged at ${sha}` };
+  }
+  if (state === 'CLOSED') return { verdict: 'fail', key: 'CLOSED', message: 'closed without merging' };
+  return { verdict: 'pending', key: `${state || 'OPEN'}:${mergeState}`, message: `${state || 'OPEN'} / ${mergeState}` };
+}
+
+export function selectWorkflowRun(rows, sha, event = null) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row?.headSha === sha && (!event || row?.event === event))
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))[0] || null;
+}
+
+export function classifyWorkflowRun(run) {
+  if (!run) return { verdict: 'pending', key: 'UNREGISTERED', message: 'waiting for run registration' };
+  const status = String(run.status || '').toLowerCase();
+  const conclusion = String(run.conclusion || '').toLowerCase();
+  if (status !== 'completed') {
+    return { verdict: 'pending', key: `${run.databaseId}:${status}`, message: `run ${run.databaseId} ${status || 'pending'}` };
+  }
+  if (conclusion === 'success') {
+    return { verdict: 'pass', key: `${run.databaseId}:success`, message: `run ${run.databaseId} succeeded` };
+  }
+  return { verdict: 'fail', key: `${run.databaseId}:${conclusion || 'unknown'}`, message: `run ${run.databaseId} concluded ${conclusion || 'unknown'}` };
+}
+
+function capturedJson(bin, args) {
+  const result = runGhCaptured(bin, args);
+  if (result.error) return { error: result.error };
+  if (result.status !== 0) return { error: new Error(`${result.stderr || result.stdout || `gh exited ${result.status}`}`.trim()) };
+  try {
+    return { value: JSON.parse(result.stdout) };
+  } catch (error) {
+    return { error: new Error(`invalid gh JSON: ${error.message}`) };
+  }
+}
+
+function emitTransition(prefix, classified, previousKey) {
+  if (classified.key !== previousKey) process.stderr.write(`${prefix}: ${classified.message}\n`);
+  return classified.key;
+}
+
+export async function mergeWait(bin, prNumber, timeoutSec, {
+  loadJson = capturedJson,
+  now = () => Date.now(),
+  pause = sleep,
+  emit = emitTransition,
+} = {}) {
+  const deadline = now() + timeoutSec * 1000;
+  let previousKey = null;
+  for (;;) {
+    const loaded = loadJson(bin, ['pr', 'view', String(prNumber), '--json', 'state,mergedAt,mergeCommit,mergeStateStatus,url']);
+    if (loaded.error) {
+      process.stderr.write(`run-gh merge-wait: ${loaded.error.message}\n`);
+      return 2;
+    }
+    const classified = classifyMergeSnapshot(loaded.value);
+    previousKey = emit(`run-gh merge-wait PR #${prNumber}`, classified, previousKey);
+    if (classified.verdict === 'pass') return 0;
+    if (classified.verdict === 'fail') return 1;
+    if (now() >= deadline) {
+      process.stderr.write(`run-gh merge-wait: TIMEOUT after ${timeoutSec}s\n`);
+      return 3;
+    }
+    await pause(POLL_INTERVAL_MS);
+  }
+}
+
+export async function runWaitSha(bin, sha, timeoutSec, { workflow = 'CI', branch = null, event = null } = {}, {
+  loadJson = capturedJson,
+  now = () => Date.now(),
+  pause = sleep,
+  emit = emitTransition,
+} = {}) {
+  const deadline = now() + timeoutSec * 1000;
+  let previousKey = null;
+  for (;;) {
+    const args = ['run', 'list', '--workflow', workflow, '--commit', sha, '--limit', '20', '--json',
+      'databaseId,status,conclusion,headSha,event,createdAt,url'];
+    if (branch) args.push('--branch', branch);
+    if (event) args.push('--event', event);
+    const loaded = loadJson(bin, args);
+    if (loaded.error) {
+      process.stderr.write(`run-gh run-wait-sha: ${loaded.error.message}\n`);
+      return 2;
+    }
+    const classified = classifyWorkflowRun(selectWorkflowRun(loaded.value, sha, event));
+    previousKey = emit(`run-gh run-wait-sha ${sha.slice(0, 12)}`, classified, previousKey);
+    if (classified.verdict === 'pass') return 0;
+    if (classified.verdict === 'fail') return 1;
+    if (now() >= deadline) {
+      process.stderr.write(`run-gh run-wait-sha: TIMEOUT after ${timeoutSec}s\n`);
+      return 3;
+    }
+    await pause(POLL_INTERVAL_MS);
+  }
 }
 
 async function checksWait(bin, prNumber, timeoutSec, requiredOnly) {
@@ -210,6 +312,14 @@ export function parseRequiredOnly(args) {
   return { requiredOnly: true, rest };
 }
 
+export function parseValueFlag(args, name, fallback = null) {
+  const index = args.indexOf(name);
+  if (index === -1) return { value: fallback, rest: args };
+  const candidate = args[index + 1];
+  if (!candidate || candidate.startsWith('--')) return { value: fallback, rest: [...args.slice(0, index), ...args.slice(index + 1)] };
+  return { value: candidate, rest: [...args.slice(0, index), ...args.slice(index + 2)] };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const bin = resolveGhBin();
@@ -224,6 +334,33 @@ async function main() {
     }
     const code = await checksWait(bin, prNumber, timeoutSec, requiredOnly);
     process.exit(code);
+  }
+
+  if (argv[0] === 'merge-wait') {
+    const { timeoutSec, rest } = parseTimeoutSec(argv.slice(1));
+    const prNumber = rest[0];
+    if (!prNumber) {
+      process.stderr.write('run-gh merge-wait: missing <pr-number>\n');
+      process.exit(2);
+    }
+    process.exit(await mergeWait(bin, prNumber, timeoutSec));
+  }
+
+  if (argv[0] === 'run-wait-sha') {
+    const { timeoutSec, rest: afterTimeout } = parseTimeoutSec(argv.slice(1));
+    const workflowFlag = parseValueFlag(afterTimeout, '--workflow', 'CI');
+    const branchFlag = parseValueFlag(workflowFlag.rest, '--branch');
+    const eventFlag = parseValueFlag(branchFlag.rest, '--event');
+    const sha = eventFlag.rest[0];
+    if (!sha) {
+      process.stderr.write('run-gh run-wait-sha: missing <sha>\n');
+      process.exit(2);
+    }
+    process.exit(await runWaitSha(bin, sha, timeoutSec, {
+      workflow: workflowFlag.value,
+      branch: branchFlag.value,
+      event: eventFlag.value,
+    }));
   }
 
   const result = runGh(bin, argv);

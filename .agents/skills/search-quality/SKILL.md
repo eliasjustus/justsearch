@@ -7,10 +7,6 @@ description: >-
   usage, generic docs work, or incidental mentions of search; use narrower
   skills or canonical docs instead.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Search Quality Context
 
 Read this before starting any search quality work. Do not re-run
@@ -20,7 +16,7 @@ This is intentionally a heavy register-backed skill. Load it when the task
 depends on retrieval-quality history or baselines, not for general search
 workflow orientation.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/reference/search-quality-register.md -->
 
@@ -127,7 +123,7 @@ distribution flags a drift signal independent of aggregate quality.
 See `docs/explanation/08-observability.md` §Contract Tiers + §Run
 Manifest and `docs/how-to/triage-psi-drift.md`.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/register-headline-sync.mjs -->
+<!-- manually maintained Codex snapshot of the release scorecard -->
 
 ### Release Scorecard (projected — do not hand-edit)
 
@@ -158,7 +154,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | mixed/miracl-de-2k | 133 | 125.6 | 34.1 | 2.02 |
 | mixed/miracl-fr-2k | 143 | 151.7 | 46.6 | 2.02 |
 
-<!-- generated:end -->
+<!-- end manually maintained Codex release-scorecard snapshot -->
 
 > **Reading the two numbers (tempdoc 623 ④ / C-4).** The **Release Scorecard** above is the
 > *production-default* (`hybrid`) result — a **projection** of one cohort-identical release, the number a
@@ -3714,4 +3710,4 @@ Tests assert both the positive case (eligible config → feature applied) and
 negative cases (expansion blocked in HYBRID). See
 `KnowledgeHttpApiAdapterHarmfulCombinationsTest.java` for the full contract.
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

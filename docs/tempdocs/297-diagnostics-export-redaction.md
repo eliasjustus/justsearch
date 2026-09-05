@@ -4,7 +4,7 @@ title: "Tempdoc 297 - Diagnostics Export Path Redaction"
 
 # Tempdoc 297 - Diagnostics Export Path Redaction
 
-**Status:** Completed
+**Status:** Partially completed (claim corrected 2026-09-03)
 **Created:** 2026-03-14
 **Updated:** 2026-03-14
 **Goal:** Redact Windows usernames from file paths in diagnostics export zips, so exports can be shared with support without leaking `C:\Users\<username>\...` paths.
@@ -17,7 +17,9 @@ Tempdoc 289 (F9/A10) identified that file paths in logs expose Windows usernames
 
 ## Items
 
-- [x] 1. Added path redaction to all `DiagnosticsController` export paths. Windows paths (`C:\Users\...`) and Unix paths (`/home/...`) are replaced with `[path]` using the same regex patterns as `ApiErrorHandler.sanitizeMessage()`. Redaction is applied to: core state JSONs, policy files, GPU capabilities, log files (line-by-line streaming for large files), crash reports, telemetry NDJSON, runtime state snapshots. Gzipped `.gz` archives are added raw (binary, can't regex). The `redactPaths()` method is package-private for testability.
+- [x] 1. Added path redaction to textual diagnostics-export members. Windows paths (`C:\Users\...`) and Unix paths (`/home/...`) are replaced with `[path]` using the same regex patterns as `ApiErrorHandler.sanitizeMessage()`. Redaction is applied to core state JSONs, policy files, GPU capabilities, uncompressed log files (line-by-line streaming for large files), crash reports, telemetry NDJSON, and runtime state snapshots. The implementation has since moved to `DiagnosticsServiceImpl`; its `redactPaths()` method remains package-private for testability.
+
+- [ ] 1a. Gzipped `.gz` log archives are copied into the diagnostics zip without decompression or redaction (`DiagnosticsServiceImpl.addDirectoryRedacted`). A bundle containing such an archive is therefore not proven safe to share. Decompress-and-redact, omit compressed logs, or add an explicit user warning before calling this goal complete.
 
 - [ ] 2. SlowRequestDumper output is still not collected in the export. This is a separate scope decision (not a redaction issue).
 

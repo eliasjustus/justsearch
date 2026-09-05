@@ -191,7 +191,11 @@
       "id": "dev-mcp-surface",
       "pathIncludes": [
         "scripts/dev/justsearch-dev-mcp/",
-        "scripts/dev/justsearch-dev-mcp.mjs"
+        "scripts/dev/justsearch-dev-mcp.mjs",
+        "scripts/dev/generate-dev-mcp-runtime.mjs",
+        "scripts/dev/generate-dev-mcp-runtime.test.mjs",
+        "scripts/dev/test-dev-mcp-bootstrap.mjs",
+        "scripts/dev/test-dev-mcp-observations.mjs"
       ],
       "region": "the justsearch-dev MCP surface (the agent-facing dev tools)",
       "maintain": true,
@@ -204,6 +208,9 @@
       "recipe": [
         "Adding, removing or renaming a tool / an endpoint key / an allowlist entry: update docs/reference/contributing/mcp-dev-tools.md in the same change (the tool table AND the `exposes exactly these **N** tools` count).",
         "Then run `node scripts/ci/check-dev-mcp-doc-sync.mjs` — it spawns the server, calls tools/list, and compares all three inventories in both directions. It needs no dev stack.",
+        "Changing the SDK/Zod runtime boundary or root MCP dependencies: run `node scripts/dev/generate-dev-mcp-runtime.mjs`, then `node scripts/dev/generate-dev-mcp-runtime.mjs --check` and `node scripts/dev/generate-dev-mcp-runtime.test.mjs`. Commit both generated outputs, including the legal projection.",
+        "Changing bootstrap/import behavior: run `node scripts/dev/test-dev-mcp-bootstrap.mjs`; it proves the exact committed launcher in a dependency-free Git fixture and checks stable negative diagnostics with no stdout.",
+        "Changing file/socket observation behavior or quick_health/preflight truth states: run `node scripts/dev/test-dev-mcp-observations.mjs` in addition to the handler-level suites.",
         "If you changed the gate itself, run its co-located test too: `node scripts/ci/check-dev-mcp-doc-sync.test.mjs`.",
         "Changing tool BEHAVIOUR (projection, probes, error codes, dist resolution): run `node scripts/dev/test-dev-mcp-surface-honesty.mjs` (pure units) and `node scripts/dev/test-dev-mcp-projection-live.mjs` (real handlers over stdio against a throwaway loopback backend). Neither needs a dev stack.",
         "Tempdoc 844 §12.2 is the standing criterion for this surface: a dev tool must not report state it did not verify, and must not report success it did not confirm — an explicit unknown (`null`) beats a confident default (`[]`, `false`, `OK`)."

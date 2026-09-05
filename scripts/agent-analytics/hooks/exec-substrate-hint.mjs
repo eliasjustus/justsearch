@@ -18,8 +18,7 @@
  *     position inside a Bash command — the classic quoted-scoop-path paste error.
  *   - `wait-shaped`: `gh pr checks` or `gh run watch` used in a shape that waits (piped to
  *     tail/grep/head, inside a while loop, with `--watch`, or backgrounded) — the hand-rolled
- *     poll loop `run-gh checks-wait` mechanizes (cli/cli#7401 pre-poll + cli/cli#7866 bitwise
- *     exit decode).
+ *     polls mechanized by `run-gh checks-wait`, `merge-wait`, and `run-wait-sha`.
  *   - `python-risk`: an inline `python -c "..."` whose code contains non-ASCII text or a
  *     Windows-path-shaped backslash sequence, AND whose output is piped/redirected — the shape
  *     that hits the cp1252 fallback or a shell-quoting backslash trap.
@@ -97,9 +96,9 @@ const HINTS = {
   ].join('\n'),
   'wait-shaped': [
     'This looks like a hand-rolled wait on `gh pr checks`/`gh run watch`. Prefer',
-    '`node scripts/dev/run-gh.mjs checks-wait <pr-number>`: it pre-polls until checks register',
-    '(cli/cli#7401) then decodes the documented 0=pass/1=fail/8=pending bitwise exit contract',
-    '(cli/cli#7866) instead of a hand-rolled poll loop (tempdoc 743 P-K).',
+    '`run-gh.mjs checks-wait <pr>` for PR checks, `merge-wait <pr>` for queue landing, or',
+    '`run-wait-sha <sha>` for one exact workflow run. Each owns registration polling, bounded',
+    'timeouts, transition-only output, and the documented terminal exit contract.',
   ].join('\n'),
   'python-risk': [
     'Inline Python with non-ASCII/backslash-path content and piped or redirected output can hit',

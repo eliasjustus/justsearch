@@ -12,7 +12,6 @@ import path from "node:path";
 
 const GENERATED_START = "<!-- generated:start";
 const GENERATED_END = "<!-- generated:end";
-const GENERATED_CODEX_SKILL = "<!-- generated from .claude/skills";
 
 const STALE_PATTERNS = [
   "justsearch_dev_",
@@ -78,7 +77,7 @@ function collectSurfaces(root) {
 
   for (const file of walk(path.join(root, ".agents", "skills"), (f) =>
     f.endsWith("SKILL.md") || f.endsWith("openai.yaml"))) {
-    surfaces.push({ file, kind: "codex-skill-projection" });
+    surfaces.push({ file, kind: "codex-skill" });
   }
 
   for (const file of walk(path.join(root, ".claude", "rules"), (f) => f.endsWith(".md"))) {
@@ -129,7 +128,6 @@ function analyze(root, surface) {
   const lines = raw.length === 0 ? 0 : raw.split(/\r\n|\r|\n/).length;
   const words = raw.trim() === "" ? 0 : raw.trim().split(/\s+/).length;
   const generated = raw.includes(GENERATED_START) || raw.includes(GENERATED_END) ||
-    raw.includes(GENERATED_CODEX_SKILL) || surface.kind === "codex-skill-projection" ||
     rel === ".codex/hooks.json";
   const staleTokens = STALE_PATTERNS.filter((pattern) => raw.includes(pattern));
   return {

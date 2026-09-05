@@ -6,10 +6,6 @@ description: >-
   module dependency issues. Loads module architecture constraints and governance
   rules.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Module Architecture Context
 
 Reference for module structure, dependency governance, and architectural enforcement.
@@ -103,7 +99,7 @@ and doesn't churn every import statement. The convention-based approach
 is fine in principle but the migration cost is uniformly bigger than
 the benefit.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/explanation/19-module-architecture.md -->
 
@@ -309,4 +305,4 @@ A ServiceLoader-based plugin system for extensibility (egress control, artifact 
 
 **ai-bridge decomposition (ADR-0017):** The former `ai-bridge` monolith was split into focused modules. Current ownership is: `ai-backend` for backend abstractions/local translator support, `gpu-bridge` for GPU/VRAM detection, `prompt-support` for prompt support, and `app-inference` for llama-server lifecycle. The hollow `app-ai` gRPC translator module and the unused `ai-worker` process were deleted entirely. See [ADR-0017](../decisions/0017-ai-bridge-module-decomposition.md) for rationale and historical context.
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

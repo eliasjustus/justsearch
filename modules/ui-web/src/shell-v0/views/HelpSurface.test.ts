@@ -12,8 +12,21 @@
  * the surface's full (nested) shadow tree rather than the const directly.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  __resetForTest as resetOperationCatalog,
+  __seedForTest as seedOperationCatalog,
+} from '../../api/registry/OperationCatalogClient.js';
+import type { Operation, OperationCatalog } from '../../api/types/registry.js';
+import {
+  __resetJournalForTest,
+  exportJournalArchive,
+  listJournal,
+} from '../substrates/effects/index.js';
+import { bootstrapAggregateSubstrate, __resetBootstrap } from '../aggregate-substrate/bootstrap.js';
+import { __clearAggregateRegistry } from '../aggregate-substrate/aggregateRegistry.js';
 import './HelpSurface.js';
+import type { OpSuccessEventDetail } from '../components/OpButton.js';
 
 /** Concatenate text across the element's whole shadow subtree (nested shadow roots included). */
 function collectShadowText(host: Element): string {
@@ -35,7 +48,52 @@ function collectShadowText(host: Element): string {
 
 interface HelpElement extends HTMLElement {
   apiBase: string;
+  copyText: (text: string) => Promise<boolean>;
   updateComplete: Promise<unknown>;
+}
+
+function summaryDefinition(): Operation {
+  return {
+    id: 'core.copy-diagnostic-summary',
+    presentation: {
+      labelKey: 'registry-operation.copy-diagnostic-summary.label',
+      descriptionKey: 'registry-operation.copy-diagnostic-summary.description',
+      iconHint: null,
+      category: null,
+    },
+    intf: { errors: [], inputs: {}, result: {}, uiHints: {} },
+    policy: {
+      risk: 'LOW',
+      confirm: { kind: 'NONE' },
+      audit: 'METADATA_ONLY',
+      undoSupported: false,
+    },
+    availability: {},
+    lineage: { affects: [], supersedes: [] },
+    provenance: { tier: 'CORE', contributorId: 'core', version: '1.0' },
+    executors: ['UI'],
+    audience: 'USER',
+    consumers: [],
+  };
+}
+
+function summaryCatalog(): OperationCatalog {
+  return {
+    schemaVersion: '1.0',
+    catalogVersion: 1,
+    namespace: 'core',
+    primitive: 'Operation',
+    entries: [summaryDefinition()],
+  };
+}
+
+function storageText(): string {
+  const values: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (key !== null) values.push(localStorage.getItem(key) ?? '');
+  }
+  return values.join('\n');
 }
 
 async function mountHelp(): Promise<HelpElement> {
@@ -47,6 +105,28 @@ async function mountHelp(): Promise<HelpElement> {
   await new Promise((r) => setTimeout(r, 0));
   await el.updateComplete;
   return el;
+}
+
+function summaryOperation(el: HelpElement): HTMLElement {
+  const operation = el.shadowRoot?.querySelector<HTMLElement>(
+    'jf-operation[operation-id="core.copy-diagnostic-summary"]',
+  );
+  if (!operation) throw new Error('diagnostic summary operation not rendered');
+  return operation;
+}
+
+async function dispatchSummarySuccess(el: HelpElement, summary: string): Promise<void> {
+  summaryOperation(el).dispatchEvent(new CustomEvent<OpSuccessEventDetail>('op-success', {
+    bubbles: true,
+    composed: true,
+    detail: {
+      message: 'backend message must not be rendered',
+      executionId: 'exec-test',
+      structuredData: { summary },
+    },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await el.updateComplete;
 }
 
 describe('HelpSurface — keyboard shortcuts (tempdoc 586 P-3)', () => {
@@ -93,5 +173,118 @@ describe('HelpSurface — settle transients on hide (tempdoc 609)', () => {
     expect(v.exportPath).toBeNull(); // stale export feedback settled
     expect(v.exportError).toBeNull();
     expect(v.expanded).toBe(3); // the open FAQ choice is recoverable, kept
+  });
+});
+
+describe('HelpSurface — redacted diagnostic summary copy', () => {
+  beforeEach(() => {
+    resetOperationCatalog();
+    __clearAggregateRegistry();
+    __resetBootstrap();
+    __resetJournalForTest();
+    bootstrapAggregateSubstrate();
+  });
+
+  afterEach(() => {
+    document.querySelectorAll('jf-help-surface').forEach((el) => el.remove());
+    localStorage.clear();
+    resetOperationCatalog();
+    __clearAggregateRegistry();
+    __resetBootstrap();
+    __resetJournalForTest();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('keeps hostile payload out of every frontend sink on the real operation path', async () => {
+    const hostileSummary = 'PRIVATE-DIAGNOSTIC-SINK-SENTINEL-899';
+    seedOperationCatalog(summaryCatalog());
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({
+        success: true,
+        message: 'backend message must not be rendered',
+        structuredData: { summary: hostileSummary },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const el = await mountHelp();
+    el.copyText = vi.fn().mockResolvedValue(true);
+    const operation = summaryOperation(el);
+    await (operation as unknown as { updateComplete: Promise<void> }).updateComplete;
+    const opButton = operation.querySelector<HTMLElement>('jf-op-button');
+    expect(opButton).not.toBeNull();
+    await (opButton as unknown as { updateComplete: Promise<void> }).updateComplete;
+    const actionButton = opButton?.shadowRoot?.querySelector('jf-action-button');
+    expect(actionButton).not.toBeNull();
+
+    actionButton?.dispatchEvent(new CustomEvent('action-invoke', {
+      detail: { operationId: 'core.copy-diagnostic-summary', risk: 'LOW' },
+      bubbles: true,
+      composed: true,
+    }));
+
+    await vi.waitFor(() => expect(el.copyText).toHaveBeenCalledWith(hostileSummary));
+    await el.updateComplete;
+
+    expect(fetchImpl.mock.calls.some((call) => String(call[0]).includes('/invoke'))).toBe(true);
+    expect(collectShadowText(el)).toContain('Diagnostic summary copied.');
+    expect(collectShadowText(el)).not.toContain(hostileSummary);
+    expect(JSON.stringify(listJournal())).not.toContain(hostileSummary);
+    expect(exportJournalArchive()).not.toContain(hostileSummary);
+    expect(storageText()).not.toContain(hostileSummary);
+    expect(JSON.stringify(log.mock.calls)).not.toContain(hostileSummary);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(hostileSummary);
+    expect(JSON.stringify(error.mock.calls)).not.toContain(hostileSummary);
+  });
+
+  it('copies the structured summary without rendering or persisting its payload', async () => {
+    const el = await mountHelp();
+    const hostileSummary = 'PRIVATE-DIAGNOSTIC-SENTINEL-7d2e';
+    el.copyText = vi.fn().mockResolvedValue(true);
+
+    await dispatchSummarySuccess(el, hostileSummary);
+
+    expect(el.copyText).toHaveBeenCalledOnce();
+    expect(el.copyText).toHaveBeenCalledWith(hostileSummary);
+    const text = collectShadowText(el);
+    expect(text).toContain('Diagnostic summary copied.');
+    expect(text).not.toContain(hostileSummary);
+    expect(storageText()).not.toContain(hostileSummary);
+  });
+
+  it('shows only fixed failure copy when the clipboard rejects the write', async () => {
+    const el = await mountHelp();
+    const hostileSummary = 'PRIVATE-CLIPBOARD-FAILURE-SENTINEL';
+    el.copyText = vi.fn().mockResolvedValue(false);
+
+    await dispatchSummarySuccess(el, hostileSummary);
+
+    const text = collectShadowText(el);
+    expect(text).toContain('Could not copy diagnostic summary.');
+    expect(text).not.toContain(hostileSummary);
+    expect(text).not.toContain('backend message must not be rendered');
+  });
+
+  it('does not render backend error details', async () => {
+    const el = await mountHelp();
+    const hostileError = 'PRIVATE-BACKEND-ERROR-SENTINEL';
+
+    summaryOperation(el).dispatchEvent(new CustomEvent('op-error', {
+      bubbles: true,
+      composed: true,
+      detail: { message: hostileError },
+    }));
+    await el.updateComplete;
+
+    const text = collectShadowText(el);
+    expect(text).toContain('Could not copy diagnostic summary.');
+    expect(text).not.toContain(hostileError);
   });
 });

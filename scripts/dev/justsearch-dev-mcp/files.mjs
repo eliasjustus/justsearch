@@ -7,6 +7,12 @@ function toPosix(relOrAbs) {
   return String(relOrAbs).split(path.sep).join('/');
 }
 
+function fileContractError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function allowedRunFileRelPosix(runId, kind) {
   const base = `tmp/dev-runner/runs/${runId}`;
   switch (kind) {
@@ -41,12 +47,21 @@ export async function readJsonFileNoSymlinks({ repoRoot, relPosix, maxBytes = 2_
   const abs = path.resolve(repoRoot, rel);
 
   const st = await fsp.lstat(abs);
-  if (st.isSymbolicLink()) throw new Error(`File must not be a symlink: ${relPosix}`);
-  if (!st.isFile()) throw new Error(`Expected file: ${relPosix}`);
-  if (st.size > maxBytes) throw new Error(`File too large: ${relPosix} bytes=${st.size} maxBytes=${maxBytes}`);
+  if (st.isSymbolicLink()) {
+    throw fileContractError('DEV_MCP_FILE_SYMLINK', `File must not be a symlink: ${relPosix}`);
+  }
+  if (!st.isFile()) {
+    throw fileContractError('DEV_MCP_FILE_NOT_FILE', `Expected file: ${relPosix}`);
+  }
+  if (st.size > maxBytes) {
+    throw fileContractError(
+      'DEV_MCP_FILE_TOO_LARGE',
+      `File too large: ${relPosix} bytes=${st.size} maxBytes=${maxBytes}`,
+    );
+  }
 
-  const real = await fsp.realpath(abs).catch(() => null);
-  if (real) resolveUnderRepo(repoRoot, real, 'jsonFileRealPath');
+  const real = await fsp.realpath(abs);
+  resolveUnderRepo(repoRoot, real, 'jsonFileRealPath');
 
   const text = await fsp.readFile(abs, 'utf8');
   return JSON.parse(text);
@@ -198,5 +213,4 @@ export async function pruneAgentEvidence({ repoRoot, keepLastN }) {
 
   return { keepLastN: keep, found: items.length, deleted, ...(warnings.length > 0 ? { warnings } : {}) };
 }
-
 

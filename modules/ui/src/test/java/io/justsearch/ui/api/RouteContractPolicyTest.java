@@ -1,0 +1,83 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.ui.api;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.net.URI;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.Test;
+
+class RouteContractPolicyTest {
+  private static final Instant DEPRECATED = Instant.parse("2026-01-01T00:00:00Z");
+  private static final URI DOCS = URI.create("https://docs.justsearch.example/deprecations/fake");
+
+  @Test
+  void validatesChronologyAndPublicContractFloor() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> lifecycle(DEPRECATED, DEPRECATED));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> contract(RouteContractPolicy.Stability.PUBLIC_CONTRACT, lifecycle(DEPRECATED, DEPRECATED.plus(89, ChronoUnit.DAYS)), null));
+    assertDoesNotThrow(
+        () -> contract(RouteContractPolicy.Stability.PUBLIC_CONTRACT, lifecycle(DEPRECATED, DEPRECATED.plus(90, ChronoUnit.DAYS)), null));
+  }
+
+  @Test
+  void acceptsExplicitPreOneExceptionOnlyForShortPublicContractSunset() {
+    RouteContractPolicy.PreOneException exception =
+        new RouteContractPolicy.PreOneException(
+            "The 0.x compatibility break is recorded.",
+            URI.create("https://docs.justsearch.example/decisions/pre-one-break"));
+    RouteContractPolicy.Lifecycle shortWindow =
+        lifecycle(DEPRECATED, DEPRECATED.plus(30, ChronoUnit.DAYS));
+
+    assertDoesNotThrow(
+        () -> contract(RouteContractPolicy.Stability.PUBLIC_CONTRACT, shortWindow, exception));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> contract(RouteContractPolicy.Stability.REFERENCE_CLIENT, shortWindow, exception));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> contract(RouteContractPolicy.Stability.PUBLIC_CONTRACT, null, exception));
+  }
+
+  @Test
+  void lifecycleRowsMustResolveToExactlyOneLiveRoute() {
+    RouteContractPolicy.Contract row =
+        contract(RouteContractPolicy.Stability.REFERENCE_CLIENT, lifecycle(DEPRECATED, null), null);
+    assertThrows(
+        IllegalStateException.class,
+        () -> RouteContractPolicy.validateLifecycleRoutes(List.of(), List.of(row)));
+    assertThrows(
+        IllegalStateException.class,
+        () -> RouteContractPolicy.validateLifecycleRoutes(List.of(row.key(), row.key()), List.of(row)));
+    assertDoesNotThrow(
+        () -> RouteContractPolicy.validateLifecycleRoutes(List.of(row.key()), List.of(row)));
+  }
+
+  private static RouteContractPolicy.Lifecycle lifecycle(Instant deprecated, Instant sunset) {
+    return new RouteContractPolicy.Lifecycle(deprecated, sunset, "GET /replacement", DOCS);
+  }
+
+  private static RouteContractPolicy.Contract contract(
+      RouteContractPolicy.Stability stability,
+      RouteContractPolicy.Lifecycle lifecycle,
+      RouteContractPolicy.PreOneException exception) {
+    return new RouteContractPolicy.Contract(
+        "GET",
+        "/fake/{id}",
+        stability,
+        null,
+        null,
+        List.of(),
+        Map.of(200, "runtime-live-response.v1.json"),
+        ApiSecurityFilters.contractSecurity("GET", "/fake/{id}"),
+        lifecycle,
+        exception);
+  }
+}

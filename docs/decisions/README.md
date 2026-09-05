@@ -165,7 +165,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0012](0012-ui-stack-and-doc-tooling.md) | UI Stack and Documentation Tooling | Superseded | 2026-03-16 |
 | [0013](0013-synonyms-fst-placeholder.md) | Synonyms FST Placeholder | Accepted (partially superseded by ADR-0043) | 2025-10-15 |
 | [0014](0014-pipeline-definition-removal.md) | Pipeline Definition Removal | Accepted | 2026-03-16 |
-| [0015](0015-mcp-tool-surface-design.md) | MCP tool surface design | Accepted | 2026-04-01 |
+| [0015](0015-mcp-tool-surface-design.md) | MCP tool surface design | Accepted (re-examined 2026-09-04) | 2026-04-01 |
 | [0016](0016-query-understanding-soft-boost.md) | Query understanding soft-boost over hard-filter | Accepted | 2026-03-28 |
 | [0017](0017-ai-bridge-module-decomposition.md) | ai-bridge module decomposition | Accepted | 2026-04-06 |
 | [0018](0018-vlm-pdf-extraction-via-chat-model.md) | VLM PDF extraction via chat model | Accepted | 2026-03-23 |
@@ -194,8 +194,8 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0041](0041-catalog-category-format.md) | Catalog Category format — protobuf enums + metadata | Accepted (format superseded in part by tempdoc 564) | 2026-06-09 |
 | [0042](0042-runtime-witness-consumer-presence.md) | Live-registry witness — consumer-presence over the live ContributionRegistry | Accepted | 2026-06-11 |
 | [0043](0043-multilingual-by-construction-no-per-language-levers.md) | Multilingual by construction — no per-language levers | Accepted | 2026-06-15 |
-| [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted | 2026-06-27 |
-| [0045](0045-public-main-history-publication.md) | Public main history publication | Accepted | 2026-06-28 |
+| [0044](0044-public-hosted-ci-fact-lanes.md) | Public hosted CI fact lanes | Accepted, amended 2026-09-04 | 2026-06-27 |
+| [0045](0045-public-main-history-publication.md) | Public main history publication (commit-safe PR body plus managed review comment) | Accepted, amended 2026-09-04 | 2026-06-28 |
 | [0046](0046-local-api-trust-boundary.md) | Local API trust boundary | Accepted | 2026-09-02 |
 | [0047](0047-context-window-is-a-derived-resource.md) | Context window is a derived resource | Accepted | 2026-09-02 |
 | [0048](0048-extraction-isolation-and-indexing-pacing.md) | Extraction isolation and indexing pacing | Accepted | 2026-09-02 |

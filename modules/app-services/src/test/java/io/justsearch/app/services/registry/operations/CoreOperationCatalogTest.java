@@ -53,6 +53,7 @@ final class CoreOperationCatalogTest {
             "core.clear-failed-jobs",
             "core.reindex",
             "core.export-diagnostics",
+            "core.copy-diagnostic-summary",
             "core.add-watched-root",
             "core.remove-watched-root",
             "core.preview-excludes",
@@ -183,6 +184,20 @@ final class CoreOperationCatalogTest {
     assertEquals(RiskTier.LOW, op.policy().risk());
     assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
     assertEquals(Set.of(ExecutorTag.UI), op.executors());
+  }
+
+  @Test
+  void copyDiagnosticSummaryIsHeadLocalLowRiskMetadataOnlyUserOperation() {
+    Operation op = catalog.findById(CoreOperationCatalog.COPY_DIAGNOSTIC_SUMMARY).orElseThrow();
+    assertEquals(RiskTier.LOW, op.policy().risk());
+    assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
+    assertEquals(AuditPolicy.METADATA_ONLY, op.policy().audit());
+    assertEquals(Set.of(ExecutorTag.UI), op.executors());
+    assertEquals(Audience.USER, op.audience());
+    assertTrue(
+        op.policy().requiredCapabilities().isEmpty(),
+        "copy summary must remain available without Worker or Inference");
+    assertTrue(op.intf().result().contains("\"required\":[\"summary\"]"));
   }
 
   @Test

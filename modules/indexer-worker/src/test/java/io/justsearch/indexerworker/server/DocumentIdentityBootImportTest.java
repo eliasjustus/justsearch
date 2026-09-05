@@ -186,33 +186,52 @@ final class DocumentIdentityBootImportTest {
 
     server.indexGenerationManagerForTests().setMigrationPaused(false, null);
     awaitGreenUid(layout, renamedDocId, blueUid, Duration.ofSeconds(15));
+    // The parent's uid becomes visible before its chunk documents are committed, so a single
+    // read here raced the indexer on a loaded runner (CI 2026-09-05). Poll under the same bound.
+    awaitDerivedChunks(renamedDocId, blueUid, Duration.ofSeconds(15));
+  }
 
-    var documents =
-        server
-            .lifecycleManagerForTests()
-            .readPathOps()
-            .search(
-                new MatchAllDocsQuery(),
-                100,
-                Set.of(
-                    SchemaFields.DOC_UID,
-                    SchemaFields.IS_CHUNK,
-                    SchemaFields.PARENT_DOC_ID,
-                    SchemaFields.CHUNK_INDEX),
-                LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
-                null);
+  private void awaitDerivedChunks(String docId, String parentUid, Duration timeout)
+      throws Exception {
+    long deadline = System.nanoTime() + timeout.toNanos();
     int chunks = 0;
-    for (var hit : documents.hits()) {
-      if (!"true".equals(hit.fields().get(SchemaFields.IS_CHUNK))) {
-        continue;
+    while (true) {
+      var documents =
+          server
+              .lifecycleManagerForTests()
+              .readPathOps()
+              .search(
+                  new MatchAllDocsQuery(),
+                  100,
+                  Set.of(
+                      SchemaFields.DOC_UID,
+                      SchemaFields.IS_CHUNK,
+                      SchemaFields.PARENT_DOC_ID,
+                      SchemaFields.CHUNK_INDEX),
+                  LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
+                  null);
+      chunks = 0;
+      for (var hit : documents.hits()) {
+        if (!"true".equals(hit.fields().get(SchemaFields.IS_CHUNK))) {
+          continue;
+        }
+        assertEquals(docId, hit.fields().get(SchemaFields.PARENT_DOC_ID));
+        assertEquals(
+            parentUid + "#" + hit.fields().get(SchemaFields.CHUNK_INDEX),
+            hit.fields().get(SchemaFields.DOC_UID));
+        chunks++;
       }
-      assertEquals(renamedDocId, hit.fields().get(SchemaFields.PARENT_DOC_ID));
-      assertEquals(
-          blueUid + "#" + hit.fields().get(SchemaFields.CHUNK_INDEX),
-          hit.fields().get(SchemaFields.DOC_UID));
-      chunks++;
+      if (chunks > 1 || System.nanoTime() >= deadline) {
+        break;
+      }
+      Thread.sleep(100L);
     }
-    assertTrue(chunks > 1, "ordinary migration indexing must derive chunks from the parent uid");
+    assertTrue(
+        chunks > 1,
+        "ordinary migration indexing must derive chunks from the parent uid; observed "
+            + chunks
+            + " chunk(s) before the bounded timeout; queue="
+            + server.jobQueueForTests().jobStateCounts());
   }
 
   @Test

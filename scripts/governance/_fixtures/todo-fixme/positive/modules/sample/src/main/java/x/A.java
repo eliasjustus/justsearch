@@ -1,1 +1,4 @@
-class A { /* TODO: x */ }
+class A {
+  String misleading = "FIXME XXX";
+  /* TODO: x */
+}

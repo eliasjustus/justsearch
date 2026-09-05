@@ -3,7 +3,7 @@ title: Discipline-Gate Kernel
 type: reference
 status: stable
 created: 2026-05-20
-description: "Substrate for ratchet-style hygiene gates (npm-audit, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634."
+description: "Substrate for ratchet-style hygiene gates (npm-advisory identities, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634."
 ---
 
 # Discipline-Gate Kernel
@@ -199,7 +199,7 @@ dropped id would report a pass for a gate that never ran).
 
 | Gate id | Baseline | Source | Auto-rebalance |
 |---|---|---|---|
-| `npm-audit` | `scripts/ci/npm-audit-ratchet-baseline.v1.json` | `tmp/npm-audit-report.json` | yes (writes lower counts) |
+| `npm-audit` (historical id) | `scripts/ci/github-advisory-baseline.v1.json` | `tmp/github-advisory-report.json` | yes (removes resolved/improved identities) |
 | `prose-tier-register` | `docs/reference/contributing/tier-register.md` | the register itself + `governance/registry.v1.json` | no (meta-gate; tier changes require a declared changeset) |
 | `consumer-drift` | `gates/consumer-drift/slots.json` | per-slot `includeGlobs` (production callsites) | no (a populated slot's floor is raised by adding consumers, not by editing the baseline) |
 | `ssot-catalog-sync` | `gates/ssot-catalog-sync/mirrors.json` | the declared root↔classpath catalog file pairs | no (the invariant is "copies match"; fix by syncing, not editing a baseline) |
@@ -209,6 +209,18 @@ dropped id would report a pass for a gate that never ran).
 `module-deps`, `adr-coverage`, `tempdoc-wiring`, `wire`, `dead-code` — listed in
 `governance/registry.v1.json`; the table above names the representative
 ratchet-file gates.)
+
+The historical **`npm-audit`** gate id reads exact versions from the root, `ui-web`,
+shell, runtime-client, and wire-contract package locks and queries GitHub's Global
+Security Advisories API with bounded, retryable, paginated GETs. Its baseline is a
+set of accepted high/critical GHSA identities plus each accepted severity. A new
+identity or upward severity change cannot be cancelled by a different advisory
+disappearing, which was possible under the superseded count baseline. Provider or
+target unavailability fails closed. Matching workflow installs use `--audit=false`
+because npm's install-time advisory POST is duplicate evidence with an independent
+transport timeout; `check-workflow-npm-audit-policy.mjs` prevents an implicit audit
+from returning. Repository vulnerability alerts and automated security updates
+provide ambient monitoring; the kernel gate remains the per-PR lockfile fact.
 
 The **`test-efficacy`** gate (tempdoc 555) ratchets per-seam mutation **test-strength**
 (killed/covered, with `TIMED_OUT` as killed) plus a per-seam `maxNoCoverage` ceiling, over the
@@ -266,7 +278,7 @@ reading an older tempdoc that says to sanity-check a gate with
 workaround is what it was working around.
 
 If the baseline file itself was
-relaxed in the PR — an npm-audit severity count increased, a
+relaxed in the PR — an npm advisory identity or severity was accepted, a
 prose-tier-register row's tier
 changed, a consumer-drift slot's `expectedMin` lowered or a slot removed
 (`silent-floor-drop` / `silent-slot-removal`) — the gate fails with the gate's

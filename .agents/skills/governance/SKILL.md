@@ -3,16 +3,12 @@ name: governance
 description: >-
   TRIGGER when: editing baseline files
   (scripts/ci/npm-audit-ratchet-baseline.v1.json,
-  docs/reference/contributing/tier-register.md), authoring changesets under
-  gates/<id>/.changesets/, running the discipline-gate kernel, or seeing a SARIF
+  docs/reference/contributing/tier-register.md), authoring gate changesets,
+  running the discipline-gate kernel, or seeing a SARIF
   ruleId from prose-tier-register / npm-audit / consumer-drift /
   ssot-catalog-sync and unsure what to do. Loads the kernel's protocol +
   classification grammar + CLI subcommands.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Discipline-gate kernel (tempdoc 530)
 
 The kernel that gates ratchet-style hygiene metrics across the repo.
@@ -114,6 +110,10 @@ documented:
 3. **Silent unanchored rules** — new must/never/always sentences in
    `CLAUDE.md` / `.claude/rules/` outside any anchored section →
    `prose-tier-register/untagged-sentence`.
+
+The third check is intentional cross-harness governance: this Codex workflow
+audits the separately maintained Claude instruction surface; it does not make
+those files executable Codex instructions.
 
 If you're authoring a rule, anchor it with `<!-- rule:<slug> -->` and add a
 row to `docs/reference/contributing/tier-register.md` with the same slug.

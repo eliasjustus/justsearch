@@ -5,10 +5,6 @@ description: >-
   encountering port conflicts, running runHeadless/runHeadlessEval, or debugging
   backend startup issues. Loads operational knowledge for dev stack management.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Dev Stack Operations
 
 Operational reference for the JustSearch dev stack. Load this before
@@ -26,7 +22,9 @@ starting backends, debugging port issues, or running pipeline profiling.
 
 - **Cold start:** ~6s to port emit, ~38s to Worker ready
 - **Default MCP timeout:** `waitTimeoutMs` is 60s
-- **Orphaned backends hold ports** — kill via `powershell -Command "Stop-Process -Id <PID> -Force"`
+- **Occupied ports require identity evidence** — use `justsearch.dev.stop` for a dev-runner-owned
+  process. Never kill an unattributed listener from port evidence alone; identify its owning
+  lifecycle first and use that lifecycle's cleanup path.
 - **jseval's `--llm` flag cold start** (`python -m jseval run --start-backend --llm`, not a `dev.start` option) may fail once: Worker port discovery (15s timeout) races with GGUF model load (~5GB disk read). Retry succeeds because OS file cache is warm. Not a code bug.
 - **`--clean none`** preserves embedding progress across backend restarts
 - **`RERANK_MODEL_PATH`** must be absolute (Gradle `runHeadless` CWD differs from repo root)
@@ -103,7 +101,7 @@ Only one dev stack runs at a time (memory/port). The dev-runner tracks ownership
 - `acquire_when_free` blocks until the stack is acquirable and returns a `recommendedTakeover` — it replaces the conflict → ask → manual-retry loop.
 - `ownership.provenance` + `rebuildFirst` flag when the running stack was built from a different worktree/commit than yours; `start { distFrom: "<worktree>" }` launches your own code on the one shared lease.
 - `ownership.displacedNotice` surfaces at your next call if a stack you previously owned was taken over while you were away.
-- `start { leaseDurationSec: <30-7200> }` (tempdoc 735 G6) declares a campaign-length ownership hold instead of relying on the default 30s passive-expiry window: the lease's `expiresAt` is renewed against this declared duration on every renewal cycle, so a long measurement campaign that goes minutes without a Claude Code session touch (busy running `jseval`/Gradle) doesn't lapse into a `TAKEOVER_ABANDONED`/`IDLE_HOLD` verdict mid-run. Values are clamped server-side to `[30, 7200]`; the default (param omitted) is unchanged 30s behavior. Explicit takeover semantics are untouched — `force`/`warn` still work normally; this only stretches the passive-expiry window. `quick_health` reports the remaining hold at `ownership.lease.remainingSec`.
+- `start { leaseDurationSec: <30-7200> }` (tempdoc 735 G6) declares a campaign-length ownership hold instead of relying on the default 30s passive-expiry window: the lease's `expiresAt` is renewed against this declared duration on every renewal cycle, so a long measurement campaign that goes minutes without an owning agent-session renewal (busy running `jseval`/Gradle) doesn't lapse into a `TAKEOVER_ABANDONED`/`IDLE_HOLD` verdict mid-run. Values are clamped server-side to `[30, 7200]`; the default (param omitted) is unchanged 30s behavior. Explicit takeover semantics are untouched — `force`/`warn` still work normally; this only stretches the passive-expiry window. `quick_health` reports the remaining hold at `ownership.lease.remainingSec`.
 
 The four admission error codes `start` can return (`OWNER_CONFLICT`, `HANDSHAKE_REQUIRED`, `REQUIRES_CONFIRMATION`, `RUN_NOT_FOUND`/`NO_API_URL`) and their resolutions are tabulated in the [MCP dev tools reference](../../../docs/reference/contributing/mcp-dev-tools.md#start-tool-error-codes).
 

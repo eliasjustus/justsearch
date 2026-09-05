@@ -28,7 +28,7 @@ import com.tngtech.archunit.lang.ArchRule;
  *
  * <p><strong>The permit list is the frozen ratchet baseline.</strong> It is today's census (slice
  * 3a-1-8 §A.11.1: 22 wire-format + 5 internal-serialization files) — the same shape as the repo's
- * {@code class-size-exceptions.txt} / {@code npm-audit-ratchet-baseline.v1.json} ratchets. The
+ * {@code class-size-exceptions.txt} / {@code github-advisory-baseline.v1.json} ratchets. The
  * intended motion is monotone <em>shrink</em>: as facets 4a/4b migrate a facade package onto a
  * generated projection, its entry is removed here. Adding a package is the explicit, reviewed
  * "refuse the new one" decision — not a silent default.

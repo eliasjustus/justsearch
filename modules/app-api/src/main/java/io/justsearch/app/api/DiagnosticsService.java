@@ -4,7 +4,7 @@ package io.justsearch.app.api;
 import java.nio.file.Path;
 
 /**
- * Diagnostics-pack export surface exposed to the AppFacade.
+ * Local diagnostics surface exposed to the AppFacade.
  *
  * <p>Slice 3a-1-2 closure: backs the {@code core.export-diagnostics} Operation
  * (modules/app-services {@code ExportDiagnosticsHandler}) without forcing a
@@ -37,5 +37,18 @@ public interface DiagnosticsService {
    */
   default Path exportDiagnostics(String feTelemetryJson) throws Exception {
     return exportDiagnostics();
+  }
+
+  /**
+   * Build the bounded, allowlist-only text handed to the copy-diagnostic-summary operation.
+   *
+   * <p>The returned value is transient operation data. Implementations must not persist or log it,
+   * and must not derive it from the diagnostics ZIP, debug-state dumps, logs, exception messages,
+   * stack traces, environment dumps, or runtime manifests.
+   *
+   * @return deterministic UTF-8 diagnostic summary
+   */
+  default String buildDiagnosticSummary() throws Exception {
+    throw new UnsupportedOperationException("Diagnostic summary unavailable");
   }
 }

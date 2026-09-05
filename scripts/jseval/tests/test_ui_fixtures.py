@@ -35,7 +35,8 @@ class TestFixtureBodies:
     def test_registry_catalogs_have_required_schema_keys(self):
         # operationCatalogSchema / resourceCatalogSchema / diagnosticChannelCatalogSchema
         # all require these keys (types/registry.ts, types/diagnostic.ts). A bare {} fails
-        # the non-fail-open parse boundary — these minimal-valid catalogs must not.
+        # the non-fail-open parse boundary. Operations intentionally carry the two Help
+        # actions used by structural captures; the other catalogs remain minimal-empty.
         cases = {
             "/api/registry/operations": "Operation",
             "/api/registry/resources": "Resource",
@@ -46,7 +47,16 @@ class TestFixtureBodies:
             assert body["primitive"] == primitive
             for key in ("schemaVersion", "catalogVersion", "namespace", "entries"):
                 assert key in body, f"{needle} missing required {key}"
-            assert body["entries"] == []
+            if primitive != "Operation":
+                assert body["entries"] == []
+
+        operations = json.loads(
+            ui_fixtures.fixture_body("http://x/api/registry/operations")
+        )["entries"]
+        assert {entry["id"] for entry in operations} == {
+            "core.copy-diagnostic-summary",
+            "core.export-diagnostics",
+        }
 
     def test_unmapped_api_path_gets_empty_object(self):
         assert ui_fixtures.fixture_body("http://x/api/something/unmapped") == "{}"

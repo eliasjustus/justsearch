@@ -1,0 +1,3888 @@
+{
+  "components": {
+    "schemas": {
+      "ai-runtime-status-response": {
+        "$ref": "/api/schemas/ai-runtime-status-response.v1.json"
+      },
+      "effective-policy": {
+        "$ref": "/api/schemas/effective-policy.v1.json"
+      },
+      "failed-indexing-jobs-response": {
+        "$ref": "/api/schemas/failed-indexing-jobs-response.v1.json"
+      },
+      "knowledge-search-response": {
+        "$ref": "/api/schemas/knowledge-search-response.v1.json"
+      },
+      "lifecycle-snapshot": {
+        "$ref": "/api/schemas/lifecycle-snapshot.v1.json"
+      },
+      "operation-history-entry": {
+        "$ref": "/api/schemas/operation-history-entry.v1.json"
+      },
+      "resource": {
+        "$ref": "/api/schemas/resource.v1.json"
+      },
+      "runtime-context": {
+        "$ref": "/api/schemas/runtime-context.v1.json"
+      },
+      "runtime-live-response": {
+        "$ref": "/api/schemas/runtime-live-response.v1.json"
+      },
+      "runtime-manifest-public": {
+        "$ref": "/api/schemas/runtime-manifest-public.v1.json"
+      },
+      "runtime-ready-response": {
+        "$ref": "/api/schemas/runtime-ready-response.v1.json"
+      }
+    }
+  },
+  "info": {
+    "description": "Structural inventory of the loopback-only Head HTTP surface. It mixes reference-client and internal routes; it is not the narrowly versioned JustSearch Runtime Contract. Request bodies and long-tail response schemas are intentionally incomplete.",
+    "title": "JustSearch Local API — reference-client structural inventory",
+    "version": "1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/.well-known/justsearch/manifest.json": {
+      "get": {
+        "operationId": "getWellKnownRuntimeManifest",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /.well-known/justsearch/manifest.json",
+        "tags": [
+          "runtime"
+        ],
+        "x-justsearch-stability": "public-contract",
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/action-ledger": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/action-ledger",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/action-ledger/events": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/action-ledger/events",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/action-ledger/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/action-ledger/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/admin/inference/reload": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/admin/inference/reload",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/admin/runtime/reload": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/admin/runtime/reload",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/advisory/authorization-pending/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/advisory/authorization-pending/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/advisory/health-recoverable/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/advisory/health-recoverable/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/advisory/operation-completed/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/advisory/operation-completed/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/agent/hard-stop": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/agent/hard-stop",
+        "tags": [
+          "agent"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/agent/hard-stop",
+        "tags": [
+          "agent"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/ai/install/cancel": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/cancel",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/manifest": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/install/manifest",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/packages/{packageId}/decline": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/ai/install/packages/{packageId}/decline",
+        "tags": [
+          "ai-runtime"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/packages/{packageId}/decline",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/pause": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/pause",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/plan-preview": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/install/plan-preview",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/repair": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/repair",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/resume": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/resume",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/start": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/install/start",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/install/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/install/status",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/models/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/models/status",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/packs/import": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/packs/import",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/packs/installed": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/packs/installed",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/packs/preflight": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/packs/preflight",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/packs/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/packs/status",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/runtime/activate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/runtime/activate",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/runtime/deactivate": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ai/runtime/deactivate",
+        "tags": [
+          "ai-runtime"
+        ]
+      }
+    },
+    "/api/ai/runtime/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ai-runtime-status-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ai/runtime/status",
+        "tags": [
+          "ai-runtime"
+        ],
+        "x-justsearch-stability": "reference-client"
+      }
+    },
+    "/api/authorizations/approve": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/authorizations/approve",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/authorizations/grants": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/authorizations/grants",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/authorizations/grants",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/authorizations/grants",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/authorizations/pending/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/authorizations/pending/{id}",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/boot/phases": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/boot/phases",
+        "tags": [
+          "boot"
+        ]
+      }
+    },
+    "/api/chat/agent": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent",
+        "tags": [
+          "agent"
+        ],
+        "x-required-capabilities": [
+          "WORKER",
+          "INFERENCE"
+        ]
+      }
+    },
+    "/api/chat/agent/autonomy": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/autonomy",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/budget": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/budget",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/budget-decision": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/budget-decision",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/context-decision": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/context-decision",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/history": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/agent/history",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/history/{batchId}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batchId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/agent/history/{batchId}",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/steer": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/steer",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/tool-result": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/tool-result",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/tools": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/agent/tools",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/undo": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/undo",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/virtual-operations": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/agent/virtual-operations",
+        "tags": [
+          "agent"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/virtual-operations",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/{sessionId}/ag-ui": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/{sessionId}/ag-ui",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/agent/{sessionId}/attach": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/agent/{sessionId}/attach",
+        "tags": [
+          "agent"
+        ]
+      }
+    },
+    "/api/chat/approve": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/approve",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/ask": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/ask",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/batch-summarize": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/batch-summarize",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/conversations",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/chat/conversations/{sessionId}",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/branch": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/branch",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/compact": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/compact",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/context-floor": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/chat/conversations/{sessionId}/context-floor",
+        "tags": [
+          "conversation"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/context-floor",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/context-floor/summary": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/context-floor/summary",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/history": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/conversations/{sessionId}/history",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/messages/{messageId}/exclude": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/messages/{messageId}/exclude",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/sources/exclude": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/sources/exclude",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/conversations/{sessionId}/title": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/chat/conversations/{sessionId}/title",
+        "tags": [
+          "conversation"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/conversations/{sessionId}/title",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/dispatch": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/dispatch",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/extract": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/extract",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/free": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/free",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/hierarchical-summarize": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/hierarchical-summarize",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/reject": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/reject",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/runs": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/runs",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/runs/live": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/runs/live",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/runs/{runId}/observe": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/runs/{runId}/observe",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/sessions",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/last": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/sessions/last",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/resume-last": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/sessions/resume-last",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/chat/sessions/{id}",
+        "tags": [
+          "conversation"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/sessions/{id}",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/{id}/events": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/sessions/{id}/events",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/{id}/fork": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/sessions/{id}/fork",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/{id}/resume": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/sessions/{id}/resume",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/sessions/{id}/transcript": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/chat/sessions/{id}/transcript",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/summarize": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/summarize",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/chat/url-emit": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/chat/url-emit",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/condition-recovery-index": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/condition-recovery-index",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/condition-recovery-index/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/condition-recovery-index/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/conversations/encryption": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/conversations/encryption",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/change-passphrase": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/change-passphrase",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/export": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/export",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/import": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/import",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/lock": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/lock",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/recover": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/recover",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/regenerate-recovery": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/regenerate-recovery",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/setup": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/setup",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/conversations/encryption/unlock": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/conversations/encryption/unlock",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/debug/chunks": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/chunks",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/clear-condition": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/debug/clear-condition",
+        "tags": [
+          "debug"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/debug/commit-metadata": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/commit-metadata",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/dashboard": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/dashboard",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/effective-config": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/effective-config",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/events": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/events",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/logging": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/logging",
+        "tags": [
+          "debug"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/debug/logging",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/metrics/timeseries": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/metrics/timeseries",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/metrics/timeseries/available": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/metrics/timeseries/available",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/reset-index": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/debug/reset-index",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/session-policies": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/session-policies",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/state": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/state",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/debug/trip-condition": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/debug/trip-condition",
+        "tags": [
+          "debug"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/debug/worker-log": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/debug/worker-log",
+        "tags": [
+          "debug"
+        ]
+      }
+    },
+    "/api/diagnostic-channels/head-log/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/diagnostic-channels/head-log/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/diagnostics/export": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/diagnostics/export",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/api/diagnostics/ingestion/recent": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/diagnostics/ingestion/recent",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/api/diagnostics/ingestion/summary": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/diagnostics/ingestion/summary",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/api/diagnostics/traces": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/diagnostics/traces",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/api/document/{id}/resolve-address": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/document/{id}/resolve-address",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/feedback/capture": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/feedback/capture",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/feedback/capture",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/governance/state": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/governance/state",
+        "tags": [
+          "governance"
+        ]
+      }
+    },
+    "/api/gpu/capabilities": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/gpu/capabilities",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "getLifecycleHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/health",
+        "tags": [
+          "observability"
+        ],
+        "x-justsearch-stability": "public-contract"
+      }
+    },
+    "/api/health/events/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/health/events/stream",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/indexing-jobs/failed": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/failed-indexing-jobs-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing-jobs/failed",
+        "tags": [
+          "resource"
+        ],
+        "x-justsearch-stability": "reference-client"
+      }
+    },
+    "/api/indexing-jobs/failed/by-prefix": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/failed-indexing-jobs-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing-jobs/failed/by-prefix",
+        "tags": [
+          "resource"
+        ],
+        "x-justsearch-stability": "reference-client"
+      }
+    },
+    "/api/indexing-jobs/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing-jobs/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/indexing-roots/preview": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing-roots/preview",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/indexing-roots/substrate": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing-roots/substrate",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/indexing/collections": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/indexing/collections",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/excludes/apply": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/excludes/apply",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/failed-jobs": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/indexing/failed-jobs",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing/failed-jobs",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/indexing/gc": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/gc",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/migration/cutover": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/migration/cutover",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/migration/pause": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/migration/pause",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/migration/resume": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/migration/resume",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/migration/rollback": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/migration/rollback",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/migration/start": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/migration/start",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/reindex": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/reindex",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/roots": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/indexing/roots",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing/roots",
+        "tags": [
+          "indexing"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/roots",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/indexing/suggested-roots": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/indexing/suggested-roots",
+        "tags": [
+          "indexing"
+        ]
+      }
+    },
+    "/api/inference/detach": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/inference/detach",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/encoders": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/inference/encoders",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/failures": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/inference/failures",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/mode": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/inference/mode",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/reload": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/inference/reload",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/inference/status",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/inference/transitions": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/inference/transitions",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/api/intent/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/intent/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/knowledge/disposition": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/disposition",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/folder-files": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/folder-files",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/folders": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/folders",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/ingest": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/ingest",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/match-citations": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/match-citations",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/retrieve-context": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/retrieve-context",
+        "tags": [
+          "knowledge"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/search": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/knowledge-search-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/knowledge/search",
+        "tags": [
+          "knowledge"
+        ],
+        "x-justsearch-stability": "reference-client"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/knowledge-search-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/knowledge/search",
+        "tags": [
+          "knowledge"
+        ],
+        "x-justsearch-stability": "reference-client",
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
+    "/api/knowledge/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/knowledge/status",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/knowledge/suggest": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/knowledge/suggest",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/library/resolve-hash": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/library/resolve-hash",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/lifecycle/shutdown": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/lifecycle/shutdown",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "LifecycleApiModule"
+      }
+    },
+    "/api/mcp/token": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/mcp/token",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/api/memory": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/memory",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/memory",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/memory/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/memory/{id}",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/messages/errors/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/errors/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/health-events/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/health-events/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/inference-failures/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/inference-failures/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-diagnostic/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-diagnostic/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-operation/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-operation/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-prompt/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-prompt/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-resource/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-resource/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-surface/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-surface/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/messages/registry-workflow/{locale}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "locale",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/messages/registry-workflow/{locale}",
+        "tags": [
+          "i18n"
+        ]
+      }
+    },
+    "/api/meta/openapi.json": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/meta/openapi.json",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "MetaApiModule"
+      }
+    },
+    "/api/meta/routes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/meta/routes",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "MetaApiModule"
+      }
+    },
+    "/api/metrics/gpu.memory.utilization.percent": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/gpu.memory.utilization.percent",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/gpu.memory.utilization.percent/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/gpu.memory.utilization.percent/stream",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/gpu.utilization.percent": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/gpu.utilization.percent",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/gpu.utilization.percent/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/gpu.utilization.percent/stream",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/worker.documents.indexed.rate_per_sec": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/worker.documents.indexed.rate_per_sec",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/worker.documents.indexed.rate_per_sec/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/worker.documents.indexed.rate_per_sec/stream",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/worker.job_queue.depth": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/worker.job_queue.depth",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/metrics/worker.job_queue.depth/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/metrics/worker.job_queue.depth/stream",
+        "tags": [
+          "observability"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/operation-history": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/operation-history-entry"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/operation-history",
+        "tags": [
+          "resource"
+        ],
+        "x-justsearch-stability": "reference-client",
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/operation-history/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/operation-history/stream",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/operations/{id}/invoke": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/operations/{id}/invoke",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/operations/{id}/preview": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/operations/{id}/preview",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/plugins/allowlist": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/plugins/allowlist",
+        "tags": [
+          "plugins"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/plugins/allowlist",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/allowlist/{sha}": {
+      "delete": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /api/plugins/allowlist/{sha}",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/plugins/verify": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/plugins/verify",
+        "tags": [
+          "plugins"
+        ]
+      }
+    },
+    "/api/policy/effective": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/effective-policy"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/policy/effective",
+        "tags": [
+          "config"
+        ],
+        "x-justsearch-stability": "reference-client"
+      }
+    },
+    "/api/policy/user/allowlist/pack-manifest/add": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/policy/user/allowlist/pack-manifest/add",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/policy/user/create": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/policy/user/create",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/policy/validate": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/policy/validate",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/presence": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/presence",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/presence/run": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/presence/run",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/preview": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/preview",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
+    "/api/registry/diagnostic-channels": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/diagnostic-channels",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/operations": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/operations",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/prompts": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/prompts",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/resources": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/resource"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/resources",
+        "tags": [
+          "registry"
+        ],
+        "x-justsearch-stability": "reference-client",
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/shapes": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/shapes",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/surfaces": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/surfaces",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/witness": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/witness",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/registry/workflows": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/registry/workflows",
+        "tags": [
+          "registry"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime-context": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-context"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime-context",
+        "tags": [
+          "runtime"
+        ],
+        "x-justsearch-stability": "reference-client",
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime-context/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime-context/stream",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/instances": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/instances",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/instances/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/instances/{id}",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/live": {
+      "get": {
+        "operationId": "getRuntimeLiveness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-live-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/live",
+        "tags": [
+          "runtime"
+        ],
+        "x-justsearch-stability": "public-contract",
+        "x-owning-module": "ResourceApiModule"
+      },
+      "head": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "HEAD /api/runtime/live",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/manifest": {
+      "get": {
+        "operationId": "getRuntimeManifest",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/manifest",
+        "tags": [
+          "runtime"
+        ],
+        "x-justsearch-stability": "public-contract",
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/manifest/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/manifest/stream",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/runtime/ready": {
+      "get": {
+        "operationId": "getRuntimeReadiness",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-ready-response"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/runtime/ready",
+        "tags": [
+          "runtime"
+        ],
+        "x-justsearch-stability": "public-contract",
+        "x-owning-module": "ResourceApiModule"
+      },
+      "head": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "HEAD /api/runtime/ready",
+        "tags": [
+          "runtime"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/scans/{scanId}/progress": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scanId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/scans/{scanId}/progress",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/schemas/{name}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/schemas/{name}",
+        "tags": [
+          "schema"
+        ]
+      }
+    },
+    "/api/settings/v2": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/settings/v2",
+        "tags": [
+          "config"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/settings/v2",
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/shell-events/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/shell-events/stream",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/status": {
+      "get": {
+        "operationId": "getLifecycleStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/status",
+        "tags": [
+          "observability"
+        ],
+        "x-justsearch-stability": "public-contract"
+      }
+    },
+    "/api/telemetry/health": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/telemetry/health",
+        "tags": [
+          "observability"
+        ]
+      }
+    },
+    "/api/thread/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/thread/{id}",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/thread/{id}/events": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/thread/{id}/events",
+        "tags": [
+          "interaction"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/ui/ready": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /api/ui/ready",
+        "tags": [
+          "other"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/ui/ready",
+        "tags": [
+          "other"
+        ]
+      }
+    },
+    "/api/undo/{id}": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/undo/{id}",
+        "tags": [
+          "resource"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/api/upgrade/cancel": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/upgrade/cancel",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "UpgradeApiModule"
+      }
+    },
+    "/api/upgrade/commit-shutdown": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/upgrade/commit-shutdown",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "UpgradeApiModule"
+      }
+    },
+    "/api/upgrade/prepare": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/upgrade/prepare",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "UpgradeApiModule"
+      }
+    },
+    "/api/upgrade/reconcile": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/upgrade/reconcile",
+        "tags": [
+          "other"
+        ],
+        "x-owning-module": "UpgradeApiModule"
+      }
+    },
+    "/api/worker/restart": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/worker/restart",
+        "tags": [
+          "inference"
+        ]
+      }
+    },
+    "/infra/capabilities": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /infra/capabilities",
+        "tags": [
+          "infra"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/infra/capabilities/stream": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /infra/capabilities/stream",
+        "tags": [
+          "infra"
+        ],
+        "x-owning-module": "ResourceApiModule"
+      }
+    },
+    "/mcp": {
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "DELETE /mcp",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /mcp",
+        "tags": [
+          "mcp"
+        ]
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /mcp",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /v1/chat/completions",
+        "tags": [
+          "openai-compat"
+        ]
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "GET /v1/models",
+        "tags": [
+          "openai-compat"
+        ]
+      }
+    },
+    "/{wildcard}": {
+      "options": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "wildcard",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "OPTIONS /*",
+        "tags": [
+          "other"
+        ]
+      }
+    }
+  },
+  "x-justsearch-route-source": {
+    "routeCount": 243,
+    "routeDigest": "sha256:19ce45ab68f79176ba3a1704a083d6a4c12050ea32c77723fcf44424d5d7391f"
+  },
+  "x-justsearch-surface": {
+    "classification": "reference-client-structural-inventory",
+    "runtimeContract": false,
+    "schemaScope": "structural-partial"
+  }
+}

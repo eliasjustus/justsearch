@@ -3,7 +3,7 @@ title: "CI enforcement closure, tier 1: a self-hosted Windows/GPU runner on the 
 type: tempdocs
 status: CHARTERED, UNBLOCKED (2026-09-02) — decision revised same day: use the EXISTING self-hosted runner (verified online: justsearch-gpu-runner, labels self-hosted/Windows/X64/gpu), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); schedule proposed in §Schedule (owner may veto); item 0 amends ADR-0044, SHA-pins Actions, scopes secrets to an Environment, fixes the docs-lint label mismatch
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
 lane: 887 L2
 model: opus (takeover) after §O
 parent: 887-improvement-landscape-register
@@ -75,7 +75,7 @@ label set is satisfiable by a registered runner label set (read from a committed
 
 | # | mechanism | today | job |
 |---|---|---|---|
-| 0 | **Preconditions** | ADR-0044 says manual-only for self-hosted; Actions tag-pinned; **no GitHub Environments exist (verified 2026-09-02), so the four repo secrets incl. the signing command and both private keys are readable by any workflow that runs on the runner**; docs-lint label mismatch | fix the docs-lint label; amend ADR-0044 with a "scheduled self-hosted lanes" section (probes via `adr-coverage`); SHA-pin every `uses:` in workflows that target the runner; confirm `check-workflow-triggers.mjs` permits `schedule` on self-hosted jobs (if its policy forbids, stay dispatch-only and record that); move signing secrets into a `release` Environment bound to `build-installer.yml` only |
+| 0 | **Preconditions** | ADR-0044 says manual-only for self-hosted; Actions tag-pinned; **no GitHub Environments existed when verified 2026-09-02, so the four repo secrets incl. the signing command and both private keys were readable by any workflow that runs on the runner**; docs-lint label mismatch | fix the docs-lint label; amend ADR-0044 with a "scheduled self-hosted lanes" section (probes via `adr-coverage`); SHA-pin every `uses:` in workflows that target the runner; confirm `check-workflow-triggers.mjs` permits `schedule` on self-hosted jobs (if its policy forbids, stay dispatch-only and record that); use the protected `release-signing` Environment named by tempdoc 905 for the two signing-capable hosted workflows, with owner-controlled secret migration |
 | 1 | **Perf ratchet** `jseval perf-gate` (640/647) | advisory hook nudge only; `ci.yml` never runs it | nightly: clean lifecycle run on the standard strata → `perf-gate --mode gate`; red opens a GitHub issue via the workflow (labels `perf-regression`), never auto-rebaselines |
 | 2 | **Mutation ratchet** `test-efficacy` (555) | fully built; nothing produces `pit-strength-report.v1.json` | nightly: `./gradlew.bat pitest` over the 18 seams → `report-pit-strength.mjs` → `run.mjs --gate test-efficacy --mode gate`; strength regression opens an issue |
 | 3 | **Soak suite** (`SoakSuiteTest`, 4 h) | opt-in flag, no runner | weekly: `-PincludeSoakTests=true`; extend with the two disk-growth assertions 895 measures (index generations, log bytes) once 895 reports |
