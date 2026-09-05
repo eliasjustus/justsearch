@@ -49,7 +49,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 export const CAVEATS = [
   'Structural break 2026-07-14: tempdoc 727 friction hooks merged (guard tuning across the PreToolUse hook set) — pre/post cost comparisons across this date are not apples-to-apples.',
-  'Structural break 2026-09-05: tempdoc 930 row 4 retired the bash guard and 21 advisory hint hooks — pre/post comparisons of hook-attributed overhead across this date are not apples-to-apples.',
+  'Structural break 2026-09-05: tempdoc 930 row 4 retired the bash guard and 21 other hooks — pre/post comparisons of hook-attributed overhead across this date are not apples-to-apples.',
   'Structural break 2026-07-15: model-routing change (explicit `model: "sonnet"` on implementation subagents) — pre/post token/cost mix across this date reflects a deliberate policy change, not drift.',
   'Data-limited left edge: session-merges.ndjson starts 2026-06-30 — sessions with a transcript start before that date can show cost with zero attributed merges purely because the merge-link store did not exist yet, not because no merge happened.',
   'Window-edge attribution: cross-session dedup assigns a re-carried turn to the EARLIEST session that carries it, but sessions starting before --since are never costed, so their keys are not in scope. A resumed session at the left edge therefore keeps history that originated outside the window, and totals are mildly sensitive to --since (a wider window moves those tokens to the origin session, it does not create or destroy them). Inherent to windowing; compare like-for-like windows, and do not read a --since change as a real cost movement.',

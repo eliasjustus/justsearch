@@ -4,7 +4,7 @@ Hooks fire automatically and deliver their own guidance at the moment they fire 
 message carries its remedy, so this file does not catalog them. The hook layer's authority is
 `governance/agent-hooks.v1.json`, enforced by the `hook-integrity` gate (wiring, load, bite).
 
-Tempdoc 930 row 4 retired the Bash guard and 21 advisory hint hooks. What replaced them:
+Tempdoc 930 row 4 retired the Bash guard and 21 other hooks. What replaced them:
 force-push is refused by **native `permissions.deny`** in `.claude/settings.json`
 (`Bash(git push --force*)`, `Bash(git push -f*)` — prefix match, per compound-command segment;
 the refspec form `git push origin +main:main` is not expressible and is not covered there).
