@@ -397,6 +397,7 @@ Not an exhaustive list, but the metrics below are intentionally low-cardinality 
   | `index.runtime.backpressure_total` | Counter | none | When the IndexingLoop applies backpressure |
   | `index.runtime.validation_failure_total` | Counter | `reason` (bounded enum, ~6 values) | Per document validation failure |
   | `index.runtime.vector_dropped_total` | Counter | none | Per dense-vector FIELD dropped because the value could not be normalized (zero-magnitude or non-finite embedding, tempdoc 931 §C.3). The document is still written, minus that field, with its embedding status set to `FAILED` — so this is an encoder-health signal, not an indexing-failure one |
+  | `index.runtime.chunk_revision_mismatch_total` | Counter | none | Per chunk READ whose text could not be reconstructed because the parent is no longer at the revision the chunk's offsets address (tempdoc 931 §E item 5). The read returns no text for that chunk — empty excerpt, omitted RAG passage — rather than a slice of the newer revision, so this counts reads landing inside the parent-rewrite / chunk-regeneration window; a sustained non-zero trend means regeneration is not keeping up with parent rewrites |
   | `index.runtime.swap_started_total` | Counter | `reason` (same enum as `swap_duration_ms`) | At the start of every `drainAndClose` — pairs with `swap_duration_ms` |
   | `index.runtime.drain_timeout_total` | Counter | none | When `drainAndClose` writeLock acquire times out before in-flight writes complete (rare; signals the drain timeout was too tight or the queue too deep) |
 

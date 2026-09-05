@@ -485,6 +485,15 @@ public final class LuceneRuntimeTypes {
      */
     default void onVectorFieldDropped(int count) {}
 
+    /**
+     * Chunk reads whose text could NOT be reconstructed because the parent document is no longer
+     * at the revision the chunk's offsets address (tempdoc 931 §E item 5). The read returns no
+     * text for that chunk rather than a slice of the newer revision, so a non-zero trend means
+     * reads are landing inside the parent-rewrite / chunk-regeneration window, not that anything
+     * is corrupt.
+     */
+    default void onChunkRevisionMismatch(int count) {}
+
     // ==========================================================================
     // Tempdoc 406 substrate observability — drain / swap / lock contention.
     // All default no-op; production exporter (WorkerLuceneTelemetryAdapter)

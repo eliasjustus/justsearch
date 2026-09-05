@@ -56,6 +56,18 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
    */
   public static final String VECTOR_DROPPED_TOTAL = "index.runtime.vector_dropped_total";
 
+  /**
+   * Chunk reads that returned NO text because the parent document is no longer at the revision the
+   * chunk's stored offsets address (tempdoc 931 §E item 5). {@code chunk_content} is not stored, so
+   * a chunk's text is re-sliced out of its parent on every read; between a parent rewrite and the
+   * chunk regeneration that follows it, that slice would be a piece of the WRONG revision. The read
+   * path refuses it — a search hit loses its excerpt, a RAG context omits the passage — and counts
+   * it here. A non-zero trend means reads are landing inside that window; a sustained one means
+   * chunk regeneration is not keeping up with parent rewrites.
+   */
+  public static final String CHUNK_REVISION_MISMATCH_TOTAL =
+      "index.runtime.chunk_revision_mismatch_total";
+
   // Tempdoc 417 Phase 3b: 4 status gauges archived to RRD and surfaced on /api/status via
   // CoreIndexView. Suppliers read RuntimeSession atomics + CommitOps.refreshLagMs().
   public static final String WRITER_QUEUE_DEPTH = "index.runtime.writer_queue_depth";
@@ -137,6 +149,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
               .build(),
           MetricDefinition.counter(VECTOR_DROPPED_TOTAL).unit(Unit.COUNT).build(),
+          MetricDefinition.counter(CHUNK_REVISION_MISMATCH_TOTAL).unit(Unit.COUNT).build(),
           MetricDefinition.counter(COMMIT_TOTAL)
               .unit(Unit.COUNT)
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
@@ -202,6 +215,8 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public final CounterMetric<ValidationTags> validationFailureTotal;
   /** Dropped dense-vector fields — see {@link #VECTOR_DROPPED_TOTAL}. */
   public final CounterMetric<EmptyTags> vectorDroppedTotal;
+  /** Refused chunk-text reconstructions — see {@link #CHUNK_REVISION_MISMATCH_TOTAL}. */
+  public final CounterMetric<EmptyTags> chunkRevisionMismatchTotal;
   /** Commits by trigger — see {@link #COMMIT_TOTAL}. */
   public final CounterMetric<CommitTags> commitTotal;
   // Phase 3b status gauges — register their async callbacks at catalog construction; the
@@ -249,6 +264,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
     this.writeBarrierWaitUs = registry.buildHistogram(WRITE_BARRIER_WAIT_US);
     this.validationFailureTotal = registry.buildCounter(VALIDATION_FAILURE_TOTAL);
     this.vectorDroppedTotal = registry.buildCounter(VECTOR_DROPPED_TOTAL);
+    this.chunkRevisionMismatchTotal = registry.buildCounter(CHUNK_REVISION_MISMATCH_TOTAL);
     this.commitTotal = registry.buildCounter(COMMIT_TOTAL);
     this.writerQueueDepth =
         registry.buildGauge(

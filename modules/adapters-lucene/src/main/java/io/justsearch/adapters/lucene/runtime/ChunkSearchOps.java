@@ -344,6 +344,9 @@ public final class ChunkSearchOps {
             SchemaFields.CHUNK_TOTAL,
             SchemaFields.CHUNK_START_CHAR,
             SchemaFields.CHUNK_END_CHAR,
+            // Tempdoc 931 §E item 5: the parent revision the offsets address, so the text
+            // reconstruction below can refuse a parent that has been rewritten since.
+            SchemaFields.CHUNK_PARENT_CONTENT_SHA256,
             SchemaFields.CHUNK_START_LINE,
             SchemaFields.CHUNK_END_LINE,
             SchemaFields.CHUNK_HEADING_TEXT,
@@ -394,7 +397,8 @@ public final class ChunkSearchOps {
     }
 
     Map<String, String> contentByChunk =
-        DocumentFieldOps.resolveChunkContents(searcher, idField, chunkSlices, Map.of());
+        DocumentFieldOps.resolveChunkContents(
+            searcher, idField, chunkSlices, Map.of(), session.telemetryEvents);
     for (PendingChunkHit item : pending) {
       item.fields().put(
           SchemaFields.CHUNK_CONTENT, contentByChunk.getOrDefault(item.docId(), ""));

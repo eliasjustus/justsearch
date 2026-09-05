@@ -15,6 +15,7 @@ import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
 import java.nio.file.Path;
@@ -127,6 +128,9 @@ final class RagContextOpsHybridCollectionScopeTest {
         SchemaFields.CHUNK_CONTENT, text,
         SchemaFields.CHUNK_START_CHAR, "0",
         SchemaFields.CHUNK_END_CHAR, String.valueOf(text.length())));
+    // Tempdoc 931 §C.1: the parent revision the chunk offsets address; the read path refuses to
+    // reconstruct chunk text without it.
+    chunk.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(text));
     if (collection != null) {
       parent.put(SchemaFields.COLLECTION, collection);
       chunk.put(SchemaFields.COLLECTION, collection);
