@@ -636,6 +636,12 @@
             "indexHealthy" : {
               "type" : "boolean"
             },
+            "indexMaxDoc" : {
+              "type" : "integer"
+            },
+            "indexNumDocs" : {
+              "type" : "integer"
+            },
             "indexSizeBytes" : {
               "type" : "integer"
             },
@@ -719,6 +725,18 @@
                   "type" : "integer"
                 },
                 "chunkEmbeddingPendingCount" : {
+                  "type" : "integer"
+                },
+                "chunkSpladeCompletedCount" : {
+                  "type" : "integer"
+                },
+                "chunkSpladeCoveragePercent" : {
+                  "type" : "number"
+                },
+                "chunkSpladeEnabled" : {
+                  "type" : "boolean"
+                },
+                "chunkSpladePendingCount" : {
                   "type" : "integer"
                 },
                 "chunkVectorCoveragePercent" : {

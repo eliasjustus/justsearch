@@ -457,6 +457,63 @@ public final class IndexCountOps {
   }
 
   /**
+   * Queries SPLADE status counts for CHUNK documents (tempdoc 931 §E item 8) — the chunk-scoped twin
+   * of {@link #querySpladeFeatureCounts()}, which counts whole documents only ({@code IS_CHUNK}
+   * MUST_NOT) and therefore said nothing about the population the chunk-SPLADE retrieval leg scores
+   * against.
+   *
+   * <p>The denominator is the chunk documents that CARRY {@code splade_status}, not every chunk:
+   * with {@code rag.chunk_splade.enabled} off, {@code ChunkDocumentWriter} writes no status at all,
+   * and an absent status field means the stage does not apply to that document (the post-798
+   * convention {@link #countWithField} already encodes for every other stage). Counting every chunk
+   * instead would pin coverage below 100% forever for chunks no lane can ever select.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public SpladeFeatureCounts queryChunkSpladeCounts() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query chunkDocs =
+            new BooleanQuery.Builder()
+                .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                    BooleanClause.Occur.FILTER)
+                .build();
+        int total = countWithField(searcher, chunkDocs, SchemaFields.SPLADE_STATUS);
+        // Terminal success is two-valued, exactly as in querySpladeFeatureCounts: COMPLETED_EMPTY
+        // means the encode ran and produced no materialisable weight, which is still "done".
+        int completed = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_COMPLETED, SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY);
+        int pending = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_PENDING);
+        int failed = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_FAILED);
+        return new SpladeFeatureCounts(total, completed, pending, failed);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to query chunk SPLADE counts: {}", e.getMessage());
+      return new SpladeFeatureCounts(0, 0, 0, 0);
+    }
+  }
+
+  /**
+   * The reader's {@code maxDoc} — live documents PLUS deleted-but-unmerged ones (tempdoc 931 §E
+   * item 8). Paired with {@link #docCount()} ({@code numDocs}) it makes merge state observable: the
+   * difference is the deleted-document backlog a merge has not reclaimed yet, which an evaluator
+   * needs to tell "the corpus shrank" apart from "the index has not merged yet".
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public long maxDoc() {
+    try {
+      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
+    } catch (IOException e) {
+      log.debug("Failed to read maxDoc: {}", e.getMessage());
+      return 0;
+    }
+  }
+
+  /**
    * Queries enrichment coverage for documents under one watched root's path prefix (tempdoc 813
    * §1c) — the per-folder counterpart of {@link #queryEmbeddingCounts()} / {@link
    * #querySpladeFeatureCounts()} / {@link #queryChunkEmbeddingCounts()}, so a Library row can read
