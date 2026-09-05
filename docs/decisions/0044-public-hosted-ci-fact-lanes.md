@@ -156,6 +156,52 @@ transport itself terminates with an explicit result and the comparison unit cann
 defect swap. If GitHub supplies a repository-native dependency-review signal with the same
 lockfile coverage and identity-baseline behavior, it may replace this producer in place.
 
+## Amendment: the accepted-advisory baseline is empty, and `dependency-review-action` is not adopted (2026-09-05)
+
+The 2026-09-04 baseline accepted 37 high advisory identities (22 root, 15 `ui-web`). Every one
+of them had a published fix, so all 37 were cleared by upgrade rather than carried: the accepted
+set in `scripts/ci/github-advisory-baseline.v1.json` is now empty for all five lockfile targets,
+and the gate fails on the first high or critical identity that appears anywhere in them. Nothing
+is accepted, so no acceptance needs a justification.
+
+The replacement clause above was then tested against `actions/dependency-review-action` and the
+answer is no, on the clause's own two terms. **Lockfile coverage:** the action consumes the
+Dependency Review REST API, which diffs dependencies between two revisions — it evaluates only
+the dependency changes a pull request introduces, so a newly published advisory against an
+already-locked dependency produces no verdict, and a PR that touches no lockfile is never
+checked. Its data source is also the repository dependency graph rather than the checked-out
+file: this repository's graph currently reports `fast-uri` at 3.1.0, 3.1.2 and 3.1.7 and
+`js-yaml` at 3.14.2, 4.2.0 and 4.3.1 simultaneously — version sets that never coexisted in any
+single checkout — because the graph aggregates across refs and lags. The kernel producer instead
+binds each report row to the digest of the lockfile in the working tree and fails closed when
+the two disagree. **Identity baseline:** `allow-ghsas` exists but is a single repository-wide
+list in workflow YAML, with no per-target scoping, no changeset protocol and no repin gate; it
+would be a second acceptance authority to hand-synchronise with the baseline file.
+
+Two of the four adoption conditions do hold and are recorded so the question does not have to be
+re-derived: the action fails closed on 404/403 from the API (it calls `core.setFailed` on those
+paths irrespective of `warn-only`), and it needs no GitHub Advanced Security licence here — the
+repository is public, its dependency graph is enabled, and `GET /repos/justsearch-app/justsearch/dependency-graph/sbom`
+returns 200. Adoption fails on coverage, not on availability.
+
+It is therefore not added as an additional lane either. On the advisory axis a PR-diff check is a
+strict subset of a whole-lockfile check that already runs on every pull request, so the only thing
+a second lane would contribute is a second red surface and a second acceptance list to keep in
+sync. Re-evaluate if GitHub exposes a dependency-review endpoint that scores a submitted lockfile
+snapshot rather than a revision diff.
+
+One lane *was* added, for a different fact. Clearing the advisories rewrote two lockfiles, and the
+rewrite produced a lockfile that installs cleanly under the npm that wrote it and is *refused* by
+the runner's npm: writing under npm 11.6.2 on win32-x64 pruned the transitive edges of an optional
+`cpu: ["wasm32"]` package while keeping the package itself, and the newer npm on the runner demands
+those edges (`Missing: @emnapi/core@… from lock file`, EUSAGE). Three required jobs went red on a
+condition no local command reported, because a local `npm ci` never rewrites the lock and so never
+sees the prune. `check-lockfile-completeness.mjs` closes that: it walks each lockfile entry's
+declared dependency edges through node resolution and fails on any edge with no entry — offline,
+in milliseconds, before the first install. Same fact-lane rule as above, one layer earlier: the
+evidence a required lane consumes has to be checkable where it is produced, not only where it is
+installed.
+
 ## Amendment: `jseval Python suite` becomes a required fact lane (2026-09-05)
 
 The `jseval Python suite` job added by tempdoc 930 chunk D runs `scripts/jseval/tests` on a

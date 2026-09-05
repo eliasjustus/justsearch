@@ -8,8 +8,13 @@ the shared a11y baseline register in the DETERMINISTIC `--fixtures` state, and f
 This is the rendered-UI counterpart to the static 559 presentation gates (which assert
 from source/tokens). It reuses the ONE baseline authority `governance/ui-a11y-baseline.v1.json`
 and the ONE split `ui_measure.split_new_vs_known` (via the capture summary's `axe_new`),
-so the gate and the agent's live summary can never disagree. Local-first (ADR-0026): a
-runnable gate, not a CI-wired kernel gate.
+so the gate and the agent's live summary can never disagree.
+
+Runs BOTH locally and on PRs (tempdoc 930 §22.2 follow-up 5, ADR-0026 amendment 2026-09-05):
+the `--fixtures` capture state needs no backend, so the `Measured axe (advisory)` job in
+`.github/workflows/ci.yml` runs this same sweep on a hosted Linux runner. That lane is
+ADVISORY — not a required status check — so it reports without blocking; local-first
+discipline still applies, run it before you push.
 """
 from __future__ import annotations
 
