@@ -5,10 +5,9 @@
  * precedent: one small module several readers import from, instead of each
  * hand-rolling its own discovery/parse.
  *
- * Migration is OPPORTUNISTIC, never big-bang (743 design): the seven existing
- * readers (analyze-session.mjs, baseline-economics.mjs, evaluate-session.mjs,
- * friction-timeline.mjs, mine-friction.mjs, cost-session.mjs,
- * context-attribution.mjs) are UNTOUCHED by this slice. Each future wave
+ * Migration is OPPORTUNISTIC, never big-bang (743 design): the existing
+ * readers (baseline-economics.mjs, friction-timeline.mjs, mine-friction.mjs,
+ * cost-session.mjs, context-attribution.mjs) were UNTOUCHED by this slice. Each future wave
  * slice that touches a reader migrates that ONE reader, attaching it as a
  * consumer of this substrate from day one of its own change rather than
  * rewriting everything at once. `lib/transcript-cost.mjs` itself is also

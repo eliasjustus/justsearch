@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { hooksDisabled } from '../lib/hook-base.mjs';
 
-// Same repoRoot-resolution pattern as ui-shot-hint.mjs: the script's own location is
+// repoRoot resolution: the script's own location is
 // always under the MAIN checkout's scripts/ dir regardless of the session's current
 // worktree cwd, so this reliably resolves to main even when invoked from a worktree.
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);

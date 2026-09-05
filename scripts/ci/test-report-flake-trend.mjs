@@ -145,7 +145,7 @@ function record(overrides = {}) {
   ];
   const atThreshold = aggregateFlakeTrend(threeRuns, { minOccurrences: 1, days: 7 });
   assert.equal(atThreshold.warnings.length, 1, 'occurrences=3 must cross the >=3 WARN threshold');
-  assert.match(atThreshold.warnings[0], /expected-state\.v1\.json/, 'warning suggests a dated pin (872), does not write itself');
+  assert.match(atThreshold.warnings[0], /quarantine it in its own runner/, 'warning suggests the fix/quarantine remedy (930), does not write itself');
   assert.match(atThreshold.warnings[0], /chronicFlake/);
   console.log('flake-trend (d) >=3 WARN threshold: PASS');
 }
@@ -156,7 +156,7 @@ function record(overrides = {}) {
     { classname: 'pkg.FooTest', name: 'testBar', lane: 'app-ui', occurrences: 4, runsWithData: 5 },
     7,
   );
-  assert.match(text, /^pin in scripts\/agent-analytics\/expected-state\.v1\.json/);
+  assert.match(text, /^fix the flake — /);
   assert.match(text, /pkg\.FooTest\.testBar/);
   assert.match(text, /4\/5 runs/);
   console.log('flake-trend buildSuggestedObservationText formatting: PASS');

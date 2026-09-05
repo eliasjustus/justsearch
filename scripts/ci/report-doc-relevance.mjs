@@ -41,13 +41,13 @@ function walkMd(dir) {
   return out;
 }
 
-// Docs auto-delivered to agents: skills (skills-sync) + the Consult hook
-// (consult-doc-hint pushes its governing docs at edit time — also a delivery channel).
+// Docs routed to agents by a path trigger: skills (skills-sync) + the governing docs
+// named by governance/consult-register.v1.json rows (read when their region is edited).
 function deliveredDocs() {
   const out = new Set();
   for (const rel of [
     'scripts/docs/skills-sync.mjs',
-    'scripts/agent-analytics/hooks/consult-doc-hint.mjs',
+    'governance/consult-register.v1.json',
   ]) {
     const p = path.join(repoRoot, rel);
     if (!fs.existsSync(p)) continue;

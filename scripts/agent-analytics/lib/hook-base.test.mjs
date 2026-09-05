@@ -89,15 +89,15 @@ try {
 
   // --- 592: no-silent-downgrade failure contract ---
   run('hookIdFromUrl extracts the hook id from a module url', () => {
-    assert.equal(hookIdFromUrl('file:///x/scripts/agent-analytics/hooks/bash-guard.mjs'), 'bash-guard');
+    assert.equal(hookIdFromUrl('file:///x/scripts/agent-analytics/hooks/repeat-guard.mjs'), 'repeat-guard');
   });
   run('describeHookFailure: blocking hook gets a loud, attributed line', () => {
-    const { event, loud } = describeHookFailure({ id: 'bash-guard', role: 'blocking', message: 'boom' });
+    const { event, loud } = describeHookFailure({ id: 'repeat-guard', role: 'blocking', message: 'boom' });
     assert.equal(event.event, 'hook_failure');
-    assert.equal(event.hookId, 'bash-guard');
+    assert.equal(event.hookId, 'repeat-guard');
     assert.equal(event.role, 'blocking');
     assert.equal(event.phase, 'run');
-    assert.ok(typeof loud === 'string' && loud.includes('bash-guard') && loud.toLowerCase().includes('off'));
+    assert.ok(typeof loud === 'string' && loud.includes('repeat-guard') && loud.toLowerCase().includes('off'));
   });
   run('describeHookFailure: advisory hook stays quiet (loud=null) but still records telemetry', () => {
     const { event, loud } = describeHookFailure({ id: 'ssot-hint', role: 'advisory', message: 'boom' });
@@ -107,8 +107,8 @@ try {
   });
   run('hookRoleFromManifest reads role from an injected manifest; defaults to advisory', () => {
     const mp = path.join(tmpDir, 'manifest.json');
-    fs.writeFileSync(mp, JSON.stringify({ hooks: { 'bash-guard': { role: 'blocking' } } }));
-    assert.equal(hookRoleFromManifest('bash-guard', mp), 'blocking');
+    fs.writeFileSync(mp, JSON.stringify({ hooks: { 'repeat-guard': { role: 'blocking' } } }));
+    assert.equal(hookRoleFromManifest('repeat-guard', mp), 'blocking');
     assert.equal(hookRoleFromManifest('not-present', mp), 'advisory');
     assert.equal(hookRoleFromManifest('x', path.join(tmpDir, 'nope.json')), 'advisory');
   });

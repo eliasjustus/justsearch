@@ -98,8 +98,8 @@ python -m jseval knn-bench
 
 ### Standing ratchets (engine-quality gates)
 
-Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions; the
-`search-engine-hint` hook nudges them after engine/inference/MCP-surface edits. All share
+Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions;
+run them after engine/inference/MCP-surface edits. All share
 `jseval/ratchet_kernel.py` (load baselines → resolve run → compare → report) and project their floors from a
 canonical source (never hand-typed).
 

@@ -91,11 +91,9 @@ uses the same pattern: edit `governance/agent-hooks.v1.json`, then generate
 both harness projections. The Codex adapter serializes the selected shared
 handlers and translates Codex tool/event payloads before invoking them.
 
-Three Claude hooks are deliberately not projected to Codex:
+One Claude hook is deliberately not projected to Codex:
 
 - `subagent-model-guard` depends on Claude model aliases; Codex roles inherit the active model unless a user explicitly overrides it.
-- `spawn-cost-hint` depends on a Claude parent-tool-to-subagent-transcript join that Codex rollouts do not expose reliably.
-- `taskcreate-guard` protects a Claude-only task primitive.
 
 Codex does not expose Claude's `PostToolUseFailure`, `CwdChanged`, or
 `InstructionsLoaded` events. The generator therefore omits those bindings

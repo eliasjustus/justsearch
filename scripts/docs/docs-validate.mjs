@@ -63,33 +63,10 @@ for (const f of files) {
       issues.push({ file: f, kind: 'heading', severity: 'error', msg: `H1 does not match front matter title ('${data.title}' vs '${h1Text}')` });
     }
   }
-  // Title Case checks for H1 and H2 (simple heuristic)
-  function isTitleCase(s) {
-    const minor = new Set(['and','or','of','the','a','an','to','in','on','for','with','by']);
-    const parts = s.split(/\s+/).filter(Boolean);
-    for (let i = 0; i < parts.length; i++) {
-      const w = parts[i].replace(/[^A-Za-z0-9]/g, '');
-      if (!w) continue;
-      if (/^[A-Z0-9]{2,}$/.test(w)) continue; // ACRONYMS
-      if (i > 0 && minor.has(w.toLowerCase())) continue;
-      const first = w[0];
-      if (first !== first.toUpperCase()) return false;
-    }
-    return true;
-  }
-  if (h1Matches.length === 1) {
-    const h1TextTC = h1Matches[0].replace(/^#\s+/, '').trim();
-    if (!isTitleCase(h1TextTC)) {
-      issues.push({ file: f, kind: 'heading-case', severity: 'error', msg: `H1 not in Title Case: '${h1TextTC}'` });
-    }
-  }
-  const h2Matches = content.match(/^##\s+(.+?)\s*$/gm) || [];
-  for (const m of h2Matches) {
-    const txt = m.replace(/^##\s+/, '').replace(/\s*\{#.*\}\s*$/, '').trim();
-    if (!isTitleCase(txt)) {
-      issues.push({ file: f, kind: 'heading-case', severity: 'error', msg: `H2 not in Title Case: '${txt}'` });
-    }
-  }
+  // The `heading-case` rule (Title Case for H1/H2) was DELETED in tempdoc 930. It produced
+  // 6,751 findings repo-wide and was never honoured at any enforcement point — many headings
+  // are intentionally lowercase. A rule nobody enforces is not a standard, it is noise that
+  // hides this script's real findings. Do not reinstate it without an enforcement point.
   if (/^#\s+Untitled\s*$/.test(first)) {
     issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Top-level H1 is "Untitled"' });
   }
