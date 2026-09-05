@@ -52,7 +52,7 @@ the apparatus is visible and documented, never forced on a contributor.
   not an MCP server — the `github` entry was removed in tempdoc 844 P1 (one invocation in six weeks,
   and it errored: the committed PAT was the literal placeholder).
 
-  The seed (regenerate with `node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example`)
+  The seed (regenerate with `node scripts/ci/regen-all.mjs --only agent-hooks-wiring`)
   carries the **full** hook set — including the four founder-analytics hooks the public
   `settings.json` template intentionally drops (`export-session-env`, `dispatch`,
   `otlp-sink-ensure`, `mcp-session-inject`). Without a `settings.local.json`, `export-session-env`

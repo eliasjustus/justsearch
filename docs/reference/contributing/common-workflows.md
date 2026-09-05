@@ -139,7 +139,7 @@ Load `/docs-maintenance` for the full regeneration checklist and doc quality rul
 - Regenerate llms.txt: `node scripts/docs/llmstxt-generate.mjs`
 - Refresh canonical documentation embedded in Claude skills: `node scripts/docs/skills-sync.mjs`; then manually review the corresponding Codex skills when the shared workflow or source material changed.
 - After changing cross-harness invariants: `node scripts/docs/agent-instructions-sync.mjs`
-- After changing hook bindings: `node scripts/codegen/gen-agent-hooks.mjs && node scripts/codegen/gen-codex-hooks.mjs`
+- After changing hook bindings: `node scripts/ci/regen-all.mjs --only agent-hooks-wiring,codex-hooks`. The Claude generator refreshes tracked `.claude/settings.json` and `.claude/settings.local.json.example`, plus an existing ignored local settings file; `--check` verifies the same projections without creating local state.
 - After module changes: `node scripts/architecture/module-deps.mjs --update-canonical`
 - After config changes: `node scripts/docs/generate-runtime-config-matrix.mjs --write-doc docs/reference/configuration/runtime-config-ownership-matrix.md`
 

@@ -204,8 +204,8 @@ The four OTLP streams share one rotate-at-20-MB path but not one retention polic
 | `hooks/repeat-guard.mjs` | Sync PreToolUse hook (matcher: all). Blocks 3+ consecutive identical tool calls. Per-tool fingerprinting with MCP/internal tool support. Excludes build commands (deferred to build-counter). Buffer written atomically. |
 | `hooks/build-counter.mjs` | Sync hook (matcher: Bash). Counts consecutive build failures on **PostToolUse** (synchronous, replacing the former async dispatch write) and blocks build commands on **PreToolUse** after 3+ failures. One-shot advisory pattern. |
 | `hooks/subagent-guide.mjs` | Sync SubagentStart hook. Injects codebase context (large files list, docs index path) into subagent prompts. |
-| `hooks/compact-save.mjs` | Sync PreCompact hook. Produces orientation data from read/edit caches that survives compaction. |
-| `hooks/compact-restore.mjs` | Sync hook on **SessionStart** (restores orientation state as a session-stamped `.claude/rules/compaction-state.md`) **and SessionEnd** (deletes that file so it never bleeds into the next session's pre-hook rules load — tempdoc 520 P0d). |
+| `hooks/compact-save.mjs` | Sync PreCompact hook. Produces orientation data from read/edit caches and a timestamped Git workspace observation resolved from the event `cwd`. The snapshot records worktree, branch, and staged, unstaged, and untracked paths; it never attributes those paths to the current session. |
+| `hooks/compact-restore.mjs` | Sync **SessionStart** hook. Atomically consumes saved state once and emits orientation as `additionalContext`. It displays the Git snapshot only when session id, normalized worktree, and branch match the current event; otherwise it omits the unproven snapshot. The legacy `.claude/rules/compaction-state.md` path is delete-only migration cleanup and is never written. |
 | `lib/hook-base.mjs` | Shared hook plumbing (tempdoc 520 P1a): `readStdin`/`readJsonStdin`, `repoRoot`/`telemetryDir`, `atomicWriteFileSync`, `isDirectRun`, the `runHook` entrypoint, and the `JUSTSEARCH_DISABLE_HOOKS` kill switch (`hooksDisabled`). |
 | `lib/event-writer.mjs` | Synchronous NDJSON append. Rotates `events.ndjson` at 10 MB (one `.prev` generation). |
 | `lib/input-summarizer.mjs` | Extracts analytics fields from tool inputs. Strips content per the capture table above. `summarizeInput` dispatches on `lib/ledger/tool-roles.mjs`'s `roleFor('claude-code', name)`, refined by name only where a role's members disagree on shape (886 §12 PR 5a). |
@@ -239,7 +239,7 @@ Claude-specific behavior:
 - Analytics hooks (`dispatch.mjs`) use `"async": true` — never block the agent
 - Intervention hooks (`intervene.mjs`, `repeat-guard.mjs`, `build-counter.mjs`) are synchronous with matchers — only fire for matched tool calls
 - `build-counter.mjs` is also wired synchronously on `PostToolUse` (Bash, gradlew) to record pass/fail — so the next `PreToolUse` check reads a fresh count (tempdoc 520 P0f closed the prior async-write/sync-read race)
-- `compact-restore.mjs` is wired on both `SessionStart` and `SessionEnd`
+- `compact-restore.mjs` is wired only on `SessionStart`; recovery context is one-shot
 - 5s timeout for hot-path hooks; 30s for SessionEnd
 - **Kill switch:** `JUSTSEARCH_DISABLE_HOOKS=1` disables all session-affecting hooks via `hook-base.runHook` / `hooksDisabled` (tempdoc 520 P1c)
 
@@ -248,17 +248,21 @@ Codex-specific behavior:
 - `apply_patch`, unified shell execution, and native agent events are normalized to the shared Edit/Write, Bash, and Agent matchers.
 - `PostToolUseFailure`, `CwdChanged`, and `InstructionsLoaded` have no Codex event equivalent and are not generated.
 - `subagent-model-guard` is an explicit semantic exclusion, not a silent no-op.
-- `compact-restore` injects recovery context directly and does not write a Claude rule file in Codex sessions.
+- `compact-restore` injects one-shot recovery context directly and does not write a rule file in either harness.
 - The same `JUSTSEARCH_DISABLE_HOOKS=1` kill switch applies.
 
 ### Hook Interaction
 
-Hooks fire in registration order. For Bash tool calls, the chain is:
-dispatch.mjs (async) → build-counter.mjs → repeat-guard.mjs.
+Hooks fire in registration order. For Bash tool calls, the public chain is
+`agent-spawn-build-hint.mjs` → conditional `build-counter.mjs` →
+`repeat-guard.mjs`. A maintainer's full local projection prepends asynchronous
+`dispatch.mjs` to that chain.
 If a sync hook exits 2 (block), subsequent hooks likely do not fire (short-circuit).
 
-For `SessionStart`, the chain is:
-export-session-env.mjs → dispatch.mjs (async) → compact-restore.mjs.
+For `SessionStart`, the public chain is `compact-restore.mjs` followed by the
+asynchronous agent-spawn sweep hint. A maintainer's full local projection adds
+`export-session-env.mjs`, asynchronous `dispatch.mjs`, `otlp-sink-ensure.mjs`,
+and the same sweep hint around `compact-restore.mjs`, in manifest order.
 
 Subagent attribution in phase 1 is parent-owned. `subagent-guide.mjs` includes the parent
 `session_id` and instructs subagents to pass `--session-id <parent-session-id>` when invoking
@@ -268,17 +272,20 @@ Known interaction design decisions:
 - **repeat-guard excludes build commands** (`/gradlew/i`). Without this, repeat-guard
   blocks the 3rd consecutive build before build-counter reaches its failure threshold.
   Build-counter has purpose-built one-shot advisory logic; repeat-guard defers to it.
-- **build-counter reads state written by dispatch.mjs** (async PostToolUse). The async
-  write may not complete before the next PreToolUse. At worst, the advisory fires one
-  call late.
+- **build-counter owns its state synchronously.** Its PostToolUse invocation records
+  the result before the next PreToolUse check; asynchronous dispatch telemetry is not
+  part of the guard's decision path.
 - **Parallel tool calls** produce race conditions on state files (last writer wins).
   Practical impact is low — parallel calls are typically different tools.
 
 ### Process Overhead
 
-Each PreToolUse spawns Node.js processes: 1 async (dispatch) + 1-3 sync depending on
-tool type. At ~30-80ms per Node startup on Windows, Bash calls incur ~120-320ms of hook
-overhead. This is small relative to LLM inference time (seconds per turn).
+The public projection starts one synchronous `repeat-guard.mjs` process for every
+PreToolUse event, plus matcher-specific processes such as the Bash build hint and
+conditional Gradle build counter. The full local projection adds one asynchronous
+`dispatch.mjs` process to every PreToolUse event. Hook count therefore depends on
+the projection and tool matcher; startup cost should be measured on the active
+host rather than inferred from a fixed per-call estimate.
 
 ### Error Isolation
 

@@ -435,18 +435,6 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/compact-restore.mjs"
-            ],
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/agent-spawn-session-end-reap.mjs"
             ],
             "timeout": 10

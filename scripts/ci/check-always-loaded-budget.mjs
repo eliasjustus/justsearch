@@ -69,11 +69,9 @@ const tok = (b) => Math.round(b / 4);
  * file was invisible to the ratchet — always-loaded AND unmeasured. Fail-closed:
  * every on-disk rules file must either carry a ceiling or be non-always-loaded
  * (`paths:` frontmatter scopes a rule to matching files — it loads on demand,
- * not at launch). `compaction-state.md` is session-ephemeral (compact-restore
- * writes and deletes it) and exempt.
+ * not at launch).
  */
 function unlistedAlwaysLoaded() {
-  const EXEMPT = new Set(['compaction-state.md']);
   let names;
   try {
     names = readdirSync(resolve(REPO_ROOT, '.claude/rules')).filter((n) => n.endsWith('.md'));
@@ -82,7 +80,6 @@ function unlistedAlwaysLoaded() {
   }
   const out = [];
   for (const n of names) {
-    if (EXEMPT.has(n)) continue;
     const rel = `.claude/rules/${n}`;
     if (rel in ceilings) continue;
     let head = '';
