@@ -138,11 +138,12 @@ export function inventorySkills(repoRoot = DEFAULT_REPO_ROOT, tracking = null) {
         : parsed.frontmatter['disable-model-invocation'] === true;
       const trackedPath = tracked.known ? tracked.paths.has(relativePath) : null;
       const policyTracked = policyPath == null ? null : (tracked.known ? tracked.paths.has(policyPath) : null);
+      const effectivePolicyPath = policyText == null && policyTracked !== true ? null : policyPath;
       const currentMatchesHead = tracked.headComparisonKnown
         ? trackedPath === true
           && !tracked.changedPaths.has(relativePath)
-          && (policyPath == null || (
-            policyTracked === true && !tracked.changedPaths.has(policyPath)
+          && (effectivePolicyPath == null || (
+            policyTracked === true && !tracked.changedPaths.has(effectivePolicyPath)
           ))
         : null;
 
@@ -157,7 +158,7 @@ export function inventorySkills(repoRoot = DEFAULT_REPO_ROOT, tracking = null) {
         path: relativePath,
         tracked: trackedPath,
         currentMatchesHead,
-        policyPath: policyText == null && policyTracked !== true ? null : policyPath,
+        policyPath: effectivePolicyPath,
         policyTracked,
         description,
         descriptionChars: description.length,

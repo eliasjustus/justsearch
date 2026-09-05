@@ -28,10 +28,23 @@ entered the tool result, not whether the model noticed, understood, or followed 
 
 ## Why this precedes content changes
 
-The user-provided Deep Research report supports a guarded hybrid: keep a coherent task-ready
-core while routing large supporting material deterministically. That direction agrees with the
-repository's own history in tempdocs 620, 841, and 886. It does not establish which section can
-be removed safely from either `search-quality` or `inference-runtime`.
+The user-provided Deep Research report is specifically an independent review of the
+`capability-realization` skill. It recommends keeping that review lens with four narrow guards:
+bound implied capabilities to concrete repository evidence; include fresh-agent activation,
+setup, and recovery; treat absence of proof as unverified rather than a confirmed gap; and call
+the discipline no-edit/non-destructive rather than ambiguously read-only. The current Codex and
+Claude skill texts implement all four recommendations. The report does **not** establish a
+general skill-slimming design. That separate guarded core-plus-reference hypothesis comes from
+the repository's own history in tempdocs 620, 841, and 886 plus the local size/delivery evidence
+below; it still does not establish which section can safely be removed from either
+`search-quality` or `inference-runtime`.
+
+The report's reasoning is useful but analogical: NASA IV&V/traceability, end-to-end testing,
+MCP discovery-versus-call separation, and coding-agent review studies support the direction of
+the skill, not its measured effect in JustSearch. The report explicitly acknowledges that no
+empirical evaluation of this exact prompt exists. Its restraint is therefore correct: preserve
+the small, abstract review lens and evaluate whether it catches real missed links over time;
+do not expand it into a fixed seam catalog or score.
 
 The local evidence exposes a prior blind spot. A selected skill can be read in the same shell
 call as source files and diffs; when the combined result is capped, "skill selected" is not the
@@ -387,7 +400,7 @@ context and manual tool-read paths visibly truncate it.
 
 ## Follow-up verification (2026-09-05)
 
-- `skill-delivery.test.mjs`: 18 passed; `codex-adapter.test.mjs`: 34 passed;
+- `skill-delivery.test.mjs`: 19 passed; `codex-adapter.test.mjs`: 34 passed;
   `boundary.test.mjs`: 6 passed. Node syntax checks and `git diff --check` passed.
 - `run-all-tests.mjs`: 65/66 test files passed. The sole failure was the registered
   `world-state.test.mjs` wall-clock condition: all three real-CLI probes exceeded their 15-second
@@ -432,6 +445,11 @@ problems, all fixed before closeout:
 6. A nonexistent Codex home silently produced a zero-activity report. The adapter exposes
    source-root diagnostics and the CLI now fails closed when neither rollout root is readable.
 
+A final source-specific check then caught a seventh implementation bug introduced during those
+fixes: Codex skills without the optional `agents/openai.yaml` policy were incorrectly marked as
+not matching `HEAD`. The comparison now ignores an absent optional policy while still treating a
+present untracked or modified policy as divergent, with a dedicated regression test.
+
 The subsequent tempdoc-fit pass found the implementation aligned with the revised contract and
 found no remaining content fix. The original source/projection model and file-mtime baseline stay
 clearly superseded rather than being mixed into the new population.
@@ -448,6 +466,14 @@ The implemented capabilities are connected through their intended paths:
   aggregate; focused tests inspect the JSON to prove no raw command/output text survives.
 - A dirty-main inventory demonstrates real working-tree/index/`HEAD` separation without modifying
   user-owned work. A temporary nonexistent Codex home exits one with a specific diagnostic.
+
+The named `capability-realization` skill itself is not a slimming priority. Its current files are
+about 2.1k characters / 530 estimated tokens per harness, with a 191-character catalog
+description, valid metadata, and matched content semantics across Codex and Claude. In this fixed
+window the explicit tool-read audit found four Codex-path attempts (one exact, one partial, two
+batched) and three Claude-path attempts (two exact, one partial), with no truncated or missing
+results. Those observations support ordinary deliverability but still do not measure native
+loader selection or prove that the review changed an outcome.
 
 The capability is therefore **realized for on-demand inventory and tool-read delivery auditing**.
 Two boundaries remain deliberate rather than broken wiring: there is no event that proves native
@@ -475,9 +501,10 @@ no current skill should be slimmed solely from these observational counts.
 ### Prompt and process
 
 - The user's staged prompts were broad but coherent; none required a wording correction. The
-  earlier native Deep Research retry was an external-policy/tool-state problem, not ambiguity in
-  the instruction. The important process correction was to treat the downloaded report as a
-  hypothesis source and local transcripts/code as the decision evidence.
+  downloaded artifact does not contain enough evidence to identify the exact platform-policy
+  classification behind the earlier blocked Deep Research attempt, so that cause remains
+  unverified. The important process correction was to treat the report as a hypothesis source
+  and local transcripts/code as the decision evidence.
 - Running every workflow skill produced useful independent checkpoints, but overlapping design,
   derisk, review-fit, capability, and retro prose can become ceremonial. Preserve their distinct
   decisions in one tempdoc and avoid restating unchanged background in each phase.
@@ -494,6 +521,9 @@ no current skill should be slimmed solely from these observational counts.
 - A hand-written YAML parser appeared sufficient until a live Codex block-scalar description
   disproved it. Reuse repository parser dependencies for governed formats; never infer semantics
   from a small fixture.
+- The late report-specific check exposed that an optional policy path had been treated as required
+  in `HEAD` matching. Exercise both presence and absence for optional companion files; a fixture
+  that always includes the companion can conceal exactly this class of inventory defect.
 - The canonical component table alone was not a strong discovery route. The task-oriented section,
   direct package script, and generated `docs/llms.txt` description are worth preserving.
 

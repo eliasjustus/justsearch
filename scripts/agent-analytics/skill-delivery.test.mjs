@@ -133,6 +133,18 @@ run('inventory diagnoses Codex name mismatches instead of silently trusting the 
   assert.match(row.metadataErrors.join(' '), /does not match directory/);
 });
 
+run('a Codex skill without an optional policy file can still match HEAD', () => {
+  const fixture = makeRepo();
+  const policyFile = path.join(fixture.root, '.agents', 'skills', 'alpha', 'agents', 'openai.yaml');
+  fs.unlinkSync(policyFile);
+  fixture.tracking.paths.delete('.agents/skills/alpha/agents/openai.yaml');
+  const row = inventorySkills(fixture.root, fixture.tracking)
+    .find((skill) => skill.harness === 'codex-cli');
+  assert.equal(row.policyPath, null);
+  assert.equal(row.policyTracked, false);
+  assert.equal(row.currentMatchesHead, true);
+});
+
 run('findSkillTargets handles both native surfaces and escaped Windows separators', () => {
   const targets = findSkillTargets('Get-Content F:\\\\repo\\\\.agents\\\\skills\\\\alpha\\\\SKILL.md; cat .claude/skills/beta/SKILL.md');
   assert.deepEqual(targets, [
