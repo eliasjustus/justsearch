@@ -1,9 +1,10 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "CHARTERED (2026-09-02) — design settled; not started; final chunk BLOCKED-SOFT on 889 + 896"
+status: "TAKEOVER COMPLETE (2026-09-05) — GO for evidenced UX defects; NO-GO for executing the original chunks unchanged; see §T"
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-05
+lite-class: false
 lane: 887 L18 coverage note (failure-UX pass)
 model: fable (design) → opus (implementation)
 parent: 887-improvement-landscape-register
@@ -24,6 +25,10 @@ related:
 > Design tempdoc. §B briefing, §C corrects the premise, §F is the inventory (evidence),
 > §G the incoherences, §D decisions, §A the design, §P reach, §O orphans, §I opus chunks,
 > §K owner confirmations, §Z routed one-liners.
+
+> **2026-09-05 takeover:** the original charter below is dated history, not an approved
+> implementation plan. §T corrects its evidence and records the current verdict. No
+> implementation or new design was undertaken in this takeover.
 
 # 906 — Failure UX as one coherent surface
 
@@ -278,7 +283,7 @@ committer (`slice-execution.md` `ux-audit-closure`). Java edits: `./gradlew.bat 
 
 ## §Status
 
-CHARTERED (2026-09-02) — design settled; not started; final chunk (I-5) BLOCKED-SOFT on
+Original status, superseded by §T: CHARTERED (2026-09-02) — design settled; not started; final chunk (I-5) BLOCKED-SOFT on
 889-filesystem-reality + 896-background-citizenship. Inventory in §F verified by reading each cited
 file on `worktree-887-publish`. Owner confirmations K1-K5 pending. I-1's first run is expected RED;
 its counts belong here when it exists.
@@ -295,3 +300,279 @@ Out of scope, verified, not fixed here.
 | Z-4 | `AgentErrorCode.java:5-19` | bare enum with no `AgentErrorClass` annotation, while its sibling `ApiErrorCode` carries one per member — so agent errors have no `isRetryable()` | I-3 of this lane |
 | Z-5 | `healthEventActivityRow.ts:92-94` | renders a raw `TerminalDisposition` code to the user | I-4 of this lane |
 | Z-6 | `authoritySpace.ts:46` vs `TerminalDisposition.java:13` | two unrelated concepts both called "disposition" in user-adjacent code (G9) | naming decision for 878-agent-run-honesty-and-paging; not a rename this lane should make unilaterally |
+
+## §T. Takeover investigation — 2026-09-05
+
+### Verdict and scope of evidence
+
+**GO now for the demonstrated failure-presentation defects. NO-GO for implementing
+I-1 through I-5 unchanged.** The user-visible need is established without building a
+new register first. The original charter overstates several premises and mixes
+consumer fixes with retry-policy changes, a catalog migration, an ingestion feature,
+and a public MCP contract change. Those are not all justified by the same evidence.
+
+**LITE-CLASS: no**
+
+Investigation baseline: local main commit
+`8da7a24d94421656653e6fade63c79c9b3b47823`, isolated in
+`F:/justsearch-worktrees/906-takeover`, branch `codex/906-takeover`. The worktree was
+created after running `node scripts/agent-analytics/world-state.mjs`; its directory,
+branch, clean state and tempdoc-bearing base were checked before editing. The local
+checkout and `origin/main` diverged, so this is a verdict about that explicit local
+baseline, not a claim that every finding was reproduced on the current public release.
+No other session's uncommitted changes were imported.
+
+The complete charter, presentation-kernel authority map, ingestion documentation,
+agent error architecture, runtime-contract reference, owning implementations and
+neighboring consumers were inspected. Only this tempdoc was changed. No new design,
+gate, product code, dependency installation, frontend rendering, model experiment,
+Gradle build, PR or publication was performed. The shared stack was already held by
+another session; none of this investigation required taking it over.
+
+### Confirmed need, with current evidence
+
+| Finding | Evidence at the investigation baseline | Implication |
+|---|---|---|
+| Search discards the typed failure envelope | `modules/ui-web/src/shell-v0/state/searchState.ts:645` returns before reading the non-OK response body; `:719` stores exception text. `modules/ui/src/main/java/io/justsearch/ui/api/ApiErrorHandler.java:439` emits code, class, retryability and i18n key. Probe T-E1 below executed the actual search module with a mocked 502 transport: one request, zero body reads, stored error `HTTP 502`. | The cheapest decisive evidence already exists. Fixing this consumer does not depend on a seven-family register or catalog namespace migration. The charter's "most-used" traffic claim was not measured. |
+| Operation errors are rendered as implementation text | `modules/ui-web/src/shell-v0/chrome/Shell.ts:1175` and `:1199` interpolate operation IDs and exception messages into toasts. `modules/ui-web/src/shell-v0/operations/OperationClient.ts:65` already describes and carries typed `OperationError` information. | There is a concrete consumer gap, with an existing representation to inspect before adding another. |
+| MCP generic failures all suggest transience | `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:2045` appends the same sentence irrespective of exception; `:2021` returns text plus `isError` only. Existing exception resolution and sanitization are in `ApiErrorHandler.java:222` and `:344`. | The misleading suggestion is established by source. The charter does not supply measured evidence that an external model retried a permanent failure; do not repeat that as an observed cost. Other MCP error paths also call `errorContent` without exceptions, so a classifier cannot cover the surface merely by changing the generic catch formatter. |
+| Agent completion codes reach the Health row | `modules/app-services/src/main/java/io/justsearch/app/services/observability/health/HeadHealthEventsEmitter.java:140` supplies the disposition attribute without a message; `modules/ui-web/src/shell-v0/aggregate-substrate/strategies/healthEventActivityRow.ts:92` falls back to `disposition: <code>`. | This is a producer-to-consumer source trace, not just an unused fallback. The event also has an i18n-keyed title; the defect is the raw detail, not the absence of any readable title. No live screenshot was taken. |
+| The ingestion ledger still lacks a hand-authored FE consumer | `docs/explanation/03-knowledge-server.md:157` describes shipped diagnostic endpoints; source searches for `diagnostics/ingestion`, `CLOUD_PLACEHOLDER`, `PARSER_TIMEOUT`, `EXTRACTION_DROPOUT` and `REASON_CODE_LABELS` found generated route/API inventory entries but no hand-authored consumer under `modules/ui-web/src`. | Generated endpoint discoverability is not a user-facing panel. The missing consumer remains real; ownership overlaps 889 item 4. |
+
+### Corrections that prevent an unsafe or oversized takeover
+
+1. **G10's "agent path cannot answer retryability" is false.** The bare enum is
+   not the whole representation. `modules/app-agent-api/src/main/java/io/justsearch/agent/api/AgentEventPayloads.java:141`
+   emits `errorClass`, `retryAction`, `retryAttempt` and `i18nKey` from the event;
+   `modules/app-agent/src/main/java/io/justsearch/agent/AgentLoopService.java:1040`
+   accepts code, class and retry action together. Canonical
+   `docs/explanation/22-agent-system-architecture.md:241` explicitly describes their
+   use in retry policy. Adding a fixed class to every enum member is therefore a
+   policy change requiring investigation of existing pairs, not a prerequisite for
+   readable failure copy. `OperationError.errorClass` is yet another distinct axis
+   (dispatch-layer classes such as `HANDLER_FAILURE`), explicitly distinguished from
+   the handler error code at `OperationClient.ts:69`. Do not conflate these axes.
+
+2. **G2 proves deliberate sharing, not an existing wrong-message collision.**
+   T-E2 found 130 API codes and 14 agent codes, with exactly one shared name:
+   `INTERNAL_ERROR`. `ErrorMessagePropertiesContractTest.java:25` and `:75` explicitly
+   govern that shared key. The message is generic enough for both; no contrary
+   example was found. A future unintentional collision remains a plausible risk,
+   but does not by itself establish that migrating every catalog key now is worth
+   its compatibility cost. D3's alias window needs a real consumer/removal account:
+   `errorCatalog.ts:226` prefers the wire-emitted key, `ApiErrorHandler.java:445`
+   emits flat keys, and `AgentEventPayloads.java:154` notes those keys also enter
+   persisted events. Merely adding namespaced properties does not migrate those
+   producers or prove that old persisted keys disappear after one release.
+
+3. **G6 overlooks the existing tone authority and distinct semantics.**
+   `modules/ui-web/src/shell-v0/utils/statusTone.ts:29` already maps both `warn` and
+   `warning` to warning tone, and `ok`/`success` to success tone. The readiness
+   `Severity` includes operational/transition states (`readinessNotice.ts:56`),
+   while toast severity is explicitly a tone axis
+   (`components/advisory/ephemeralToast.ts:12`). No inconsistent rendering was
+   reproduced. D4 would widen a failure type with success and potentially widen
+   toast types with busy/ok; a spelling difference alone does not justify it.
+   The duplicated toast union in `substrates/effect.ts:29` is narrower evidence
+   than the charter's global-severity claim. Preserve the kernel's existing
+   status-to-tone authority while evaluating any future shared type.
+
+4. **The ingestion draft is not a complete catalog to copy verbatim.**
+   T-E2 found 24 current `IngestionReasonCodes` constants, nine labels in the
+   planning document, and 15 unlabeled current constants. The example ends with
+   `// ... full set in IngestionReasonCodes.java`
+   (`docs/how-to/library-indexing-activity-panel.md:256`). The draft also spans
+   scan progress and scoped filename resolution; building a small reason-count
+   panel would not justify declaring that entire how-to implemented. Success,
+   unchanged files and policy skips are not necessarily failures and must not
+   automatically receive warning severity or a remediation button.
+
+5. **The proposed gate cannot be reused verbatim as claimed.** T-E3 exercised
+   its exported `extractEnumConstants` on the actual proposed families: API = 0,
+   agent = 13 of 14, completion = 4 of 5. The extractor at
+   `scripts/ci/check-search-degradation-reason-codes.mjs:48` supports bare constants
+   ending in comma/semicolon, not API constructor arguments, and misses a final
+   semicolon-free member. `checkCorrespondence` itself accepts two empty sets;
+   its existing CLI's non-empty check at `:145` is essential. Its diagnostic text
+   at `:103` is also search-specific. These are reuse constraints, not evidence
+   that the existing search gate fails its own supported inputs. A correspondence
+   gate can prove code/label membership; it cannot prove a label is rendered, a
+   remedy works, or free text is absent. The original I-1 acceptance overclaims
+   coverage of §G. A `CLAUDE.md` table entry alone does not wire a new check into
+   CI; `check-premerge-table.mjs:10` checks reference validity, not execution.
+
+6. **Some evidence and dependencies are stale.** The readiness gate now reports
+   56 emittable codes and 50 worded rows. The original V6 count of 26 is now 24.
+   `docs/explanation/03-knowledge-server.md:283` already names 889's remaining
+   junction-point gap and says extraction failures are typed outcomes; Z-3's
+   quoted "deliberately deprioritized" text is gone. The incoming
+   `REPARSE_POINT`, `ROOT_UNREADABLE`, `DATA_DIR_CONTENTION` and `DISK_CRITICAL`
+   codes were not found in the inspected producer trees; 889 and 896 remain
+   chartered on this baseline. Existing-consumer fixes do not need those codes.
+
+### External research and its limits
+
+Consulted on 2026-09-05, using primary sources:
+
+- [MCP tools, protocol 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+  This is the repository's pinned protocol
+  (`modules/app-api/src/main/java/io/justsearch/app/api/mcp/McpContractVersions.java:30`).
+  It permits structured results, uses `isError` for tool execution failures, and
+  recommends serialized structured output in text for older consumers. D10's
+  machine-readable direction is feasible, but "structuredContent only" needs
+  text-client verification. Current tool definitions do not declare output schemas
+  (`McpToolSurface.java:1860`); if a later change adds one, structured results must
+  conform. MCP is a public runtime constituent, per
+  `docs/reference/runtime-contract.md:25`, so this is more than an internal FE edit.
+- [W3C error suggestion](https://www.w3.org/WAI/WCAG22/Understanding/error-suggestion.html)
+  supports specific corrective advice where an input error's correction is known.
+  It does not require a button for every runtime condition or one universal enum.
+- [W3C status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)
+  supports making dynamic success, waiting and failure messages available to
+  assistive technology without unnecessary focus movement. It supports the
+  charter's accessibility validation requirement, not a particular severity type.
+
+These sources support understandable, actionable presentation. They do not
+establish the need for the proposed global register, catalog migration or free-text
+ban. No user study, actual model retry-cost measurement, or live accessibility
+audit was performed in this takeover.
+
+### Experiments and verification record
+
+All probes ran under Node `v24.12.0` from the investigation worktree. T-E1 used the
+already-installed TypeScript compiler in the main checkout read-only; no repository
+source was transformed on disk and no request reached a backend.
+
+**T-E1 — actual search-store execution, mocked transport and timers.** Run this
+JavaScript with `node` (set `TYPESCRIPT_LIB` to an installed TypeScript package):
+
+```js
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require(process.env.TYPESCRIPT_LIB);
+const assert = require('node:assert/strict');
+let calls = 0, reads = 0;
+const out = {};
+const authorizedFetch = async () => {
+  calls++;
+  return { ok: false, status: 502, json: async () => {
+    reads++;
+    return { error: 'The search index is unavailable.',
+      errorCode: 'INDEX_UNAVAILABLE', i18nKey: 'errors.INDEX_UNAVAILABLE',
+      retryable: true };
+  } };
+};
+const context = {
+  exports: out, AbortController, performance, console,
+  window: { setTimeout: () => 1, clearTimeout: () => {} },
+  require: (id) => {
+    if (id.includes('authorizedFetch')) return { authorizedFetch };
+    if (id.includes('searchFiltersState')) return {
+      getFilters: () => ({}), hasActiveFilter: () => false,
+      getFacetSelections: () => ({}) };
+    if (id.includes('schema-types')) return {};
+    throw new Error('Unexpected dependency ' + id);
+  },
+};
+const source = fs.readFileSync(
+  'modules/ui-web/src/shell-v0/state/searchState.ts', 'utf8');
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
+  module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
+} }).outputText, context);
+out.setQuery('takeover-probe');
+out.submitSearch();
+setImmediate(() => {
+  assert.equal(calls, 1);
+  assert.equal(reads, 0);
+  assert.equal(out.getSearchState().error, 'HTTP 502');
+  console.log({ calls, errorBodyReads: reads, error: out.getSearchState().error });
+});
+```
+
+Observed: `{ calls: 1, errorBodyReads: 0, error: 'HTTP 502' }`. The one-request
+assertion ensures this cannot pass merely because search was never invoked. This
+is evidence of current defective behavior, not a regression test of a fix.
+
+**T-E2 — source census.** Node regex extraction of API lines matching
+`^\s*([A-Z][A-Z0-9_]*)\(ErrorClass\.`, bare agent constants including the final
+undelimited member, `public static final String` ingestion values, and the draft's
+`REASON_CODE_LABELS` keys yielded:
+
+```text
+API codes: 130; agent codes: 14; shared names: INTERNAL_ERROR
+Ingestion codes: 24; draft labels: 9; obsolete draft labels: 0
+Missing draft labels (15): SUCCESS_EMPTY, EXTRACTION_DROPOUT_PENDING_FALLBACK,
+EXTRACTION_DROPOUT_UNRECOVERED, NON_REGULAR_SOURCE, MISSING_AT_PROCESSING,
+DELETED_OR_MISSING, STALE_AFTER_EXTRACTION, DELETED_AFTER_SNAPSHOT,
+SIZE_CHANGED_AFTER_SNAPSHOT, FILE_KEY_CHANGED_AFTER_SNAPSHOT, UNREADABLE,
+IO_ERROR, SANDBOX_FAILED, WRITE_FAILED, WRITE_UNAVAILABLE_DRAINING
+```
+
+**T-E3 — extractor suitability.** Import `extractEnumConstants` and
+`checkCorrespondence` from `scripts/ci/check-search-degradation-reason-codes.mjs`
+and pass the three current Java sources named in correction 5. Observed:
+
+```text
+ApiErrorCode: 0 extracted
+AgentErrorCode: 13 extracted; UNSUPPORTED_RESUME_STATE omitted
+TerminalDisposition: 4 extracted; CANCELLED omitted
+checkCorrespondence({enumCodes: new Set(), wordingCodes: new Set(),
+  noWordingExempt: [], feDerived: []}): []
+```
+
+**Existing checks run, all passed:**
+
+- `node scripts/ci/check-readiness-reason-codes.mjs`: 56 emittable codes,
+  50 wording rows; producer-reference direction passed across 1,654 Java sources.
+- `node scripts/ci/check-search-degradation-reason-codes.mjs`: query degradation
+  28 codes / 17 worded / 11 exempt; cross-encoder skip 12 / 5 / 7.
+- `node --test scripts/ci/check-readiness-reason-codes.test.mjs`: one test file
+  passed, with its 19 internal assertions.
+
+These green checks coexist with T-E1 because they verify different seams. They
+are not end-to-end UX evidence. Full application compilation, Vitest, Java tests,
+live MCP/agent queries and measured screen accessibility remain unrun because no
+product or gate implementation was performed.
+
+### What this displaces, what remains, and handoff
+
+The evidenced work would displace the search store's raw transport-string path,
+the operation-toast exception formatting, the generic MCP transience sentence,
+and the completion-row raw-code fallback. It should consume the existing error
+catalog, operation-error fields, event retry metadata and status-tone mapping
+where applicable. It must not create another verdict or retry authority.
+
+The ingestion consumer duplicates **889 §Scope item 4** unless one lane owns it;
+906 has not silently taken ownership or edited 889. The `SearchResultsRenderer`
+empty-result line is already jointly claimed with 902 and is not a failure merely
+because it is empty. Neither overlap blocks the demonstrated search/operation
+consumer need. No new tempdoc is needed for these findings.
+
+The cheapest evidence invalidating the need for the **whole proposed package**
+would be showing that existing authorities can deliver the concrete consumer
+fixes without the new global mechanisms. The existing catalog, tone mapper,
+classified event wire and T-E1 already make that a credible, lower-cost direction;
+its implementation has not been attempted here. Conversely, namespacing needs a
+real conflicting meaning or a justified compatibility requirement, severity
+collapse needs an observed semantic/rendering inconsistency, and the all-family
+gate needs evidence that its coverage and maintenance cost outperform extending
+the existing authorities. A zero missing-label count alone proves none of those.
+
+**Takeover is complete; no user input is needed to finish this investigation.**
+K1-K5 remain historical, unapproved choices for a later scope/design conversation,
+not five blocking questions posed by this takeover. A subsequent design/derisk
+phase should resolve the corrected premises before treating §I as executable.
+The existing independent measured UX review remains a future implementation
+closure requirement, not a claim made here. This local tempdoc-only commit is to
+remain unpushed until publication is requested; batch or ride it along under the
+repository's tempdoc publication rules.
+
+Closeout checks: `git diff --check` passed. The repository helper
+`node scripts/dev/agent-spawn-sweep.cjs --occasion session-closeout --own-session-only`
+reported no matching entries, zero deletions and two retained registry records.
+No helper process was created by this takeover and none was killed. This was an
+own-session check, not a claim that other sessions have no live helpers.
+The closeout world-state command could not load `gray-matter` in the unprepared
+worktree; rerunning the same repository command from main's installed environment
+succeeded and reported this worktree clean (`DIRTY=0`), unpushed and `ACTIVE`.
+No dependency preparation is needed to continue reading this investigation.
