@@ -2157,6 +2157,16 @@ above)*
 - **Decision:** default **OFF**; the flag is a corpus-specific lever for a future sparse-dominant
   workload. The 712 foundation (the flag + the fix for chunk docs being silently marked
   splade-COMPLETED without encoding) shipped in #145 regardless of the default.
+- **Scope correction (2026-09-05, tempdoc 931 §E item 8):** `rag.chunk_splade.enabled` is now ONE
+  switch over the whole chunk-SPLADE stage, not a producer-side-only flag. It gates the query-side
+  leg too (`SearchExecutor.chunkSpladeLegEnabled` → `ChunkSearchOps.searchChunksSplade`), and
+  `ChunkDocumentWriter` no longer stamps `splade_status=PENDING` on chunks written while it is off.
+  Before this, a flag-off engine still ran the chunk-SPLADE leg against whatever partial chunk
+  `splade` population an earlier flag-on window had left on disk — so a flag-off A/B arm was not
+  measuring a leg-off engine. Any future re-run of the A/B below is therefore a cleaner comparison
+  than the ones recorded here. **Consequence to know:** chunks written while the flag is off carry
+  no `splade_status`, so flipping the flag on does NOT retro-enrol them (the lanes select by status
+  VALUE); a rebuild of those parents does.
 - **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
   anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
   offline result is F-033; this is its live-tier resolution.
