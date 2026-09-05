@@ -440,7 +440,7 @@ public final class EngineVectorIndexBench {
           topDocId = sr.hits().getFirst().docId();
         }
       } catch (@SuppressWarnings("EmptyCatch") Exception ignored) {
-        // topDocId is diagnostic only — the sentinel verdict below is already decided, so a hit
+        // topDocId is diagnostic only: the sentinel verdict below is already decided, so a hit
         // shape this bench did not anticipate must not fail the run.
       }
       log.info(
