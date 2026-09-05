@@ -403,6 +403,12 @@ jobs:
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 
+      - name: Release baseline stays in sync with the ratchet + scorecard
+        run: node scripts/ci/check-release-baseline-sync.mjs
+
+      - name: Generated scorecard matches the canonical release
+        run: node scripts/docs/gen-scorecard.mjs --check
+
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs
 
