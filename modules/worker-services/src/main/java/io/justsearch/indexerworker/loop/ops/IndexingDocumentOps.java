@@ -16,6 +16,7 @@ import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexerworker.text.TextQualityAnalyzer;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -154,6 +155,12 @@ public final class IndexingDocumentOps {
     fields.put(SchemaFields.PATH, absolutePath);
     fields.put(SchemaFields.FILENAME, fileName);
     fields.put(SchemaFields.CONTENT, extraction.content());
+    // Tempdoc 931 §C.6 — the content revision, written wherever CONTENT is, from the SAME string
+    // that is stored. Feedback captures (doc_uid, content_revision), so a label taken against one
+    // revision of a document is recognisable as stale after the file is edited.
+    if (extraction.content() != null) {
+      fields.put(SchemaFields.CONTENT_SHA256, ChunkParentRevision.sha256Hex(extraction.content()));
+    }
     fields.put(SchemaFields.CONTENT_PREVIEW, contentPreview(extraction.content(), isMarkdown));
     fields.put(SchemaFields.INDEXED_AT, System.currentTimeMillis());
     if (collection != null && !collection.isBlank()) {

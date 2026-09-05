@@ -1022,6 +1022,79 @@ class IndexingLoopTest {
               + "bump indexedSinceCommit on a no-op (best-effort delete semantics).");
     }
 
+    @Test
+    @DisplayName(
+        "StaleSourceHandler marks identity deleted only when the source is really gone "
+            + "(tempdoc 931 §C.6 — the DELETED classification also fires on an IOException)")
+    void staleSourceHandlerMarksIdentityOnlyForAVerifiedAbsentSource() throws Exception {
+      java.util.List<String> marked = new java.util.ArrayList<>();
+      io.justsearch.indexerworker.identity.DocumentIdentityStore recorder =
+          new io.justsearch.indexerworker.identity.DocumentIdentityStore() {
+            @Override
+            public void markDeleted(String pathHash, long nowMs) {
+              marked.add(pathHash);
+            }
+
+            @Override
+            public Identity resolve(String pathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Identity importExisting(String pathHash, String docUid, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public int importExisting(
+                java.util.Collection<ImportedIdentity> identities, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public long identityCount() {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean hasImportRecord(String generationId) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void recordImport(ImportRecord record) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RekeyResult rekey(String oldPathHash, String newPathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public java.util.Optional<Identity> lookup(String pathHash) {
+              throw new UnsupportedOperationException();
+            }
+          };
+      io.justsearch.indexerworker.loop.StaleSourceHandler handler =
+          new io.justsearch.indexerworker.loop.StaleSourceHandler(
+              mock(IndexingCoordinator.class), recorder);
+
+      Path stillThere = Files.writeString(Files.createTempFile("js-stale-present", ".txt"), "body");
+      assertEquals(1, handler.deleteMissingSource(stillThere));
+      assertTrue(
+          marked.isEmpty(),
+          "the source is present, so the index delete is not evidence of a deletion");
+
+      Path gone = Files.createTempDirectory("js-stale-gone").resolve("gone.txt");
+      assertEquals(1, handler.deleteMissingSource(gone));
+      assertEquals(
+          java.util.List.of(
+              io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(
+                  io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(gone))),
+          marked);
+    }
+
 
     @Test
     @DisplayName(

@@ -21,6 +21,7 @@ package io.justsearch.indexerworker.queue;
  *   <li>V10: Added nullable first_failed_at column to jobs (tempdoc 885 item 21)</li>
  *   <li>V11: Added durable, path-free document_identity table (tempdoc 915 Phase 2)</li>
  *   <li>V12: Added document_identity_import bookkeeping table (tempdoc 931 §C.2)</li>
+ *   <li>V13: Added nullable deleted_at column to document_identity (tempdoc 931 §C.6)</li>
  * </ul>
  */
 public final class SqliteSchema {
@@ -33,7 +34,7 @@ public final class SqliteSchema {
    * Target schema version. The migrate() method will upgrade the database
    * to this version using the migration ladder.
    */
-  public static final int TARGET_VERSION = 12;
+  public static final int TARGET_VERSION = 13;
 
   // ==================== Table: jobs ====================
 
@@ -341,6 +342,19 @@ public final class SqliteSchema {
   static final String[] MIGRATE_V11_TO_V12_ADD_DOCUMENT_IDENTITY_IMPORT = {
       CREATE_DOCUMENT_IDENTITY_IMPORT_TABLE
   };
+
+  /**
+   * V12 to V13 migration (tempdoc 931 §C.6): add {@code deleted_at} to {@code document_identity}.
+   *
+   * <p>NULL means "this path has not been observed as deleted". The column is set — never the row
+   * dropped — when the Worker removes a document because the file is verified absent, and it starts
+   * a grace window: a file reappearing at the path within the window keeps its uid (and its
+   * feedback), a file appearing after it gets a new one. Existing rows migrate with NULL, which is
+   * exactly right: nothing observed their deletion, so nothing may claim it.
+   */
+  public static final String MIGRATE_V12_TO_V13_ADD_DOCUMENT_IDENTITY_DELETED_AT = """
+      ALTER TABLE document_identity ADD COLUMN deleted_at INTEGER DEFAULT NULL
+      """;
 
   // ==================== Utility Methods ====================
 

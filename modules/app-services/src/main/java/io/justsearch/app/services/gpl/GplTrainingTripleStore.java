@@ -367,6 +367,29 @@ public final class GplTrainingTripleStore {
       boolean isNegative,
       FeaturePayload payload)
       throws IOException {
+    appendWithFeatures(queryId, documentKey, syntheticQuery, score, isNegative, payload, false);
+  }
+
+  /**
+   * As {@link #appendWithFeatures(String, String, String, float, boolean, FeaturePayload)},
+   * additionally recording whether the label was captured at a superseded content revision
+   * (tempdoc 931 §C.6).
+   *
+   * <p>{@code score} already carries the stale down-weight; the {@code stale} property records WHY
+   * a positive arrived at a fraction of its grade, which the score alone cannot say (a halved
+   * {@code CITED} and a halved {@code DWELLED} are otherwise indistinguishable from ungraded
+   * intermediates). The trainer reads named properties and ignores the rest, so the key is additive
+   * for every existing consumer; it is written only when true, keeping legacy rows byte-identical.
+   */
+  public synchronized void appendWithFeatures(
+      String queryId,
+      String documentKey,
+      String syntheticQuery,
+      float score,
+      boolean isNegative,
+      FeaturePayload payload,
+      boolean stale)
+      throws IOException {
     ObjectNode node = MAPPER.createObjectNode();
     node.put("query_id", queryId);
     node.put("doc_id", documentKey);
@@ -402,6 +425,9 @@ public final class GplTrainingTripleStore {
     node.put("qpp_query_scope", payload.qppQueryScope());
     node.put("rank_position", payload.rankPosition());
     node.put("timestamp_ms", payload.timestampMs());
+    if (stale) {
+      node.put("stale", true);
+    }
     String line;
     try {
       line = MAPPER.writeValueAsString(node) + "\n";

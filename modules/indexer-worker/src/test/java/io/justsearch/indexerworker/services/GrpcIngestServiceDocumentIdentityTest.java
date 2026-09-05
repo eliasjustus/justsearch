@@ -4,6 +4,7 @@ package io.justsearch.indexerworker.services;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
@@ -213,6 +214,14 @@ final class GrpcIngestServiceDocumentIdentityTest {
                 null)
             .hits()
             .isEmpty());
+
+    // Tempdoc 931 §C.6 — the deleteById RPC is an EXCLUDE-rule / policy removal, not evidence that
+    // the file is gone (ExcludesServiceImpl is its only caller), so it must not start the deletion
+    // grace clock. If it did, an exclude-then-unexclude cycle across the window would silently
+    // re-mint the uid and orphan the document's feedback.
+    assertNull(
+        identityStore.lookup(hash).orElseThrow().deletedAtMs(),
+        "a policy-driven index removal must not establish a confirmed deletion");
 
     DocumentIdentityStore.Identity afterDelete = identityStore.resolve(hash, 30L);
     assertEquals(first.docUid(), afterDelete.docUid());

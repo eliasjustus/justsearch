@@ -22,6 +22,19 @@ public final class SchemaFields {
 
   // Content fields
   public static final String CONTENT = "content";
+  /**
+   * SHA-256 (lowercase hex) of this parent document's stored {@link #CONTENT} — its CONTENT
+   * REVISION (tempdoc 931 §C.6).
+   *
+   * <p>Identity ({@code doc_uid}) answers "which document is this"; this answers "which version of
+   * it". Feedback captures the pair, so a label collected against one revision can be recognised as
+   * stale after the file is edited instead of silently training on text that no longer exists.
+   * Stored-only: it is projected to the Head, never queried or sorted on. The digest is the same
+   * one {@link io.justsearch.indexing.chunking.ChunkParentRevision} defines for
+   * {@link #CHUNK_PARENT_CONTENT_SHA256}, so parent and chunk revisions are directly comparable.
+   */
+  public static final String CONTENT_SHA256 = "content_sha256";
+
   /** Small stored preview used for result list snippets (bounded length). */
   public static final String CONTENT_PREVIEW = "content_preview";
   public static final String TITLE = "title";
@@ -299,6 +312,7 @@ public final class SchemaFields {
 
       // Content
       CONTENT,
+      CONTENT_SHA256,
       CONTENT_PREVIEW,
       TITLE,
 

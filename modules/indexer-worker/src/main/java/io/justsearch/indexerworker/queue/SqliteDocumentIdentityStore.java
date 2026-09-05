@@ -21,12 +21,29 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
   private static final int BUSY_TIMEOUT_MS = 5000;
 
   private final Path dbPath;
+  private final long deletionGraceMs;
   private final ReentrantLock lock = new ReentrantLock();
   private Connection connection;
 
+  /** Uses the default 30-day deletion grace (tempdoc 931 §C.6). */
   public SqliteDocumentIdentityStore(Path dbPath) {
+    this(dbPath, io.justsearch.configuration.resolved.ResolvedConfig.Index
+        .DEFAULT_IDENTITY_DELETION_GRACE_MS);
+  }
+
+  /**
+   * @param deletionGraceMs how long a confirmed-deleted path keeps its uid; a negative value is
+   *     clamped to zero so a misconfiguration cannot make the window run backwards
+   */
+  public SqliteDocumentIdentityStore(Path dbPath, long deletionGraceMs) {
     this.dbPath = Objects.requireNonNull(dbPath, "dbPath");
+    this.deletionGraceMs = Math.max(0L, deletionGraceMs);
     open();
+  }
+
+  /** The effective deletion grace window in ms. */
+  public long deletionGraceMs() {
+    return deletionGraceMs;
   }
 
   private void open() {
@@ -61,11 +78,65 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
         stmt.setLong(4, nowMs);
         stmt.executeUpdate();
       }
+      Identity current = selectRequired(pathHash);
+      Long deletedAt = current.deletedAtMs();
+      if (deletedAt == null) {
+        return current;
+      }
+      // Tempdoc 931 §C.6. Past the grace window this path's document is gone for good, so the file
+      // now standing there is a DIFFERENT document: mint a new uid onto the row (first-seen resets
+      // with it) so the replacement cannot inherit the old document's feedback. Inside the window
+      // the reappearance is the same document returning; clear the mark and keep the uid.
+      if (nowMs - deletedAt > deletionGraceMs) {
+        remintLocked(pathHash, UUID.randomUUID().toString(), nowMs);
+      } else {
+        clearDeletionMarkLocked(pathHash);
+      }
       return selectRequired(pathHash);
     } catch (SQLException e) {
       throw failure("resolve", pathHash, e);
     } finally {
       lock.unlock();
+    }
+  }
+
+  @Override
+  public void markDeleted(String pathHash, long nowMs) {
+    requireHash(pathHash);
+    lock.lock();
+    try (PreparedStatement stmt =
+        connection.prepareStatement(
+            "UPDATE document_identity SET deleted_at = ?"
+                + " WHERE path_hash = ? AND deleted_at IS NULL")) {
+      stmt.setLong(1, nowMs);
+      stmt.setString(2, pathHash);
+      stmt.executeUpdate();
+    } catch (SQLException e) {
+      throw failure("markDeleted", pathHash, e);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private void remintLocked(String pathHash, String docUid, long nowMs) throws SQLException {
+    try (PreparedStatement stmt =
+        connection.prepareStatement(
+            "UPDATE document_identity SET doc_uid = ?, first_seen_at = ?, last_seen_at = ?,"
+                + " deleted_at = NULL WHERE path_hash = ?")) {
+      stmt.setString(1, docUid);
+      stmt.setLong(2, nowMs);
+      stmt.setLong(3, nowMs);
+      stmt.setString(4, pathHash);
+      stmt.executeUpdate();
+    }
+  }
+
+  private void clearDeletionMarkLocked(String pathHash) throws SQLException {
+    try (PreparedStatement stmt =
+        connection.prepareStatement(
+            "UPDATE document_identity SET deleted_at = NULL WHERE path_hash = ?")) {
+      stmt.setString(1, pathHash);
+      stmt.executeUpdate();
     }
   }
 
@@ -216,6 +287,7 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
         boolean exists = select(oldPathHash).isPresent();
         if (exists) {
           touch(oldPathHash, nowMs);
+          clearDeletionMarkLocked(oldPathHash);
         }
         return exists ? RekeyResult.ALREADY_AT_DESTINATION : RekeyResult.NOT_FOUND;
       }
@@ -239,9 +311,13 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
           delete.setString(1, newPathHash);
           delete.executeUpdate();
         }
+        // A verified move is proof the document still exists, so it clears any deletion mark the
+        // source path carried (tempdoc 931 §C.6) — a rename observed after a confirmed deletion is
+        // the document being found again, not a new one.
         try (PreparedStatement stmt =
             connection.prepareStatement(
-                "UPDATE document_identity SET path_hash = ?, last_seen_at = ? WHERE path_hash = ?")) {
+                "UPDATE document_identity SET path_hash = ?, last_seen_at = ?, deleted_at = NULL"
+                    + " WHERE path_hash = ?")) {
           stmt.setString(1, newPathHash);
           stmt.setLong(2, nowMs);
           stmt.setString(3, oldPathHash);
@@ -281,19 +357,11 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
   private Optional<Identity> select(String pathHash) throws SQLException {
     try (PreparedStatement stmt =
         connection.prepareStatement(
-            "SELECT path_hash, doc_uid, first_seen_at, last_seen_at"
+            "SELECT path_hash, doc_uid, first_seen_at, last_seen_at, deleted_at"
                 + " FROM document_identity WHERE path_hash = ?")) {
       stmt.setString(1, pathHash);
       try (ResultSet rs = stmt.executeQuery()) {
-        if (!rs.next()) {
-          return Optional.empty();
-        }
-        return Optional.of(
-            new Identity(
-                rs.getString("path_hash"),
-                rs.getString("doc_uid"),
-                rs.getLong("first_seen_at"),
-                rs.getLong("last_seen_at")));
+        return rs.next() ? Optional.of(readIdentity(rs)) : Optional.empty();
       }
     }
   }
@@ -301,21 +369,27 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
   private Optional<Identity> selectByUid(String docUid) throws SQLException {
     try (PreparedStatement stmt =
         connection.prepareStatement(
-            "SELECT path_hash, doc_uid, first_seen_at, last_seen_at"
+            "SELECT path_hash, doc_uid, first_seen_at, last_seen_at, deleted_at"
                 + " FROM document_identity WHERE doc_uid = ?")) {
       stmt.setString(1, docUid);
       try (ResultSet rs = stmt.executeQuery()) {
-        if (!rs.next()) {
-          return Optional.empty();
-        }
-        return Optional.of(
-            new Identity(
-                rs.getString("path_hash"),
-                rs.getString("doc_uid"),
-                rs.getLong("first_seen_at"),
-                rs.getLong("last_seen_at")));
+        return rs.next() ? Optional.of(readIdentity(rs)) : Optional.empty();
       }
     }
+  }
+
+  private static Identity readIdentity(ResultSet rs) throws SQLException {
+    long rawDeletedAt = rs.getLong("deleted_at");
+    // wasNull() answers for the MOST RECENT getter, so the flag is captured here and not inlined
+    // into the constructor call below, where argument evaluation order would make it answer for
+    // last_seen_at instead.
+    Long deletedAt = rs.wasNull() ? null : rawDeletedAt;
+    return new Identity(
+        rs.getString("path_hash"),
+        rs.getString("doc_uid"),
+        rs.getLong("first_seen_at"),
+        rs.getLong("last_seen_at"),
+        deletedAt);
   }
 
   private void touch(String pathHash, long nowMs) throws SQLException {

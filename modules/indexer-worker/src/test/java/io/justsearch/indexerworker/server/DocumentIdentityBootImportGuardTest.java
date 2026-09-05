@@ -53,6 +53,11 @@ final class DocumentIdentityBootImportGuardTest {
     }
 
     @Override
+    public void markDeleted(String pathHash, long nowMs) {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Optional<Identity> lookup(String pathHash) {
       throw new UnsupportedOperationException();
     }
