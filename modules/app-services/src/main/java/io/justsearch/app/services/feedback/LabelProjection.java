@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -15,8 +16,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 580 §17.5 (Track C P5) — the LABEL projection: joins {@link ResultDisposition}s to the
- * per-query {@link FeatureSnapshot} that ranked them (by {@code interactionId} — the §17.4 join) and
- * writes real-label training triples in the existing trainer's NDJSON format.
+ * per-query {@link FeatureSnapshot} that ranked them (by {@code interactionId} plus stable UID, or
+ * the retained path key for legacy rows — the §17.4 join) and writes real-label training triples in
+ * the existing trainer's NDJSON format.
  *
  * <p>This is the structural answer to F-021: the learned layer's missing piece was <em>real labels</em>
  * (a data problem, not a feature-count problem). The projection derives them from actual outcomes, so
@@ -52,37 +54,63 @@ public final class LabelProjection {
       List<ResultDisposition> dispositions,
       List<FeatureSnapshot> snapshots,
       GplTrainingTripleStore realLabelStore) {
-    // Index hits by (interactionId → docId → features). UNION across snapshots that share an
-    // interactionId: the search-interaction path emits one snapshot per query, but an agent run
-    // (Fix B) emits one per search keyed by the run's sessionId, so its multiple per-search snapshots
-    // must combine. First-seen wins per docId (matching the agent's collectGroundingSources dedup).
-    Map<String, Map<String, FeatureSnapshot.HitFeatures>> byInteraction = new HashMap<>();
+    // Index each interaction twice: the primary map deduplicates the persisted identity (UID for
+    // new rows, path for legacy rows), while the alias map also accepts the path-oriented source id
+    // emitted by unchanged UI/agent surfaces. A conflicting alias is removed and stays unusable;
+    // arbitrary first-wins identity selection would attach a label to the wrong logical document.
+    Map<String, Map<String, FeatureSnapshot.HitFeatures>> primaryByInteraction = new HashMap<>();
+    Map<String, Map<String, FeatureSnapshot.HitFeatures>> aliasesByInteraction = new HashMap<>();
+    Set<String> conflictingAliases = new HashSet<>();
     for (FeatureSnapshot snap : snapshots) {
-      Map<String, FeatureSnapshot.HitFeatures> byDoc =
-          byInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
+      if (snap == null || snap.interactionId() == null || snap.hits() == null) {
+        continue;
+      }
+      Map<String, FeatureSnapshot.HitFeatures> primary =
+          primaryByInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
+      Map<String, FeatureSnapshot.HitFeatures> aliases =
+          aliasesByInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
       for (FeatureSnapshot.HitFeatures h : snap.hits()) {
-        byDoc.putIfAbsent(h.docId(), h);
+        if (h == null || h.docId() == null || h.docId().isBlank()) {
+          continue;
+        }
+        FeatureSnapshot.HitFeatures canonical = primary.putIfAbsent(h.docId(), h);
+        if (canonical == null) {
+          canonical = h;
+        }
+        aliases.putIfAbsent(canonical.docId(), canonical);
+        String sourceDocId = h.sourceDocId();
+        if (sourceDocId == null || sourceDocId.isBlank() || sourceDocId.equals(h.docId())) {
+          continue;
+        }
+        String aliasKey = disposedKey(snap.interactionId(), sourceDocId);
+        if (conflictingAliases.contains(aliasKey)) {
+          continue;
+        }
+        FeatureSnapshot.HitFeatures previous = aliases.putIfAbsent(sourceDocId, canonical);
+        if (previous != null && !previous.docId().equals(canonical.docId())) {
+          aliases.remove(sourceDocId);
+          conflictingAliases.add(aliasKey);
+        }
       }
     }
 
-    // Which queries carry an explicit positive, and which (interactionId, docId) pairs are already
-    // explicitly disposed (so the derived pass never double-writes a doc).
+    // Which queries carry a JOINED, successfully-written explicit positive, and which stable
+    // (interactionId, document key) pairs are already disposed so the derived pass cannot write the
+    // same UID again under a path alias.
     Set<String> interactionsWithPositive = new HashSet<>();
     Set<String> explicitlyDisposed = new HashSet<>();
-    for (ResultDisposition d : dispositions) {
-      explicitlyDisposed.add(disposedKey(d.interactionId(), d.docId()));
-      if (!labelFor(d.kind()).isNegative()) {
-        interactionsWithPositive.add(d.interactionId());
-      }
-    }
 
     // Per-group [hasPositive, hasNegative] for the contrast-group count.
     Map<String, boolean[]> groupFlags = new HashMap<>();
     int written = 0;
 
-    // Pass 1 — explicit dispositions.
+    // Resolve and coalesce explicit dispositions before writing. One stable UID may appear under
+    // multiple source-path aliases during an agent run or rename. Persisting each alias separately
+    // would create duplicate positives or, worse, both a positive and a negative for one document.
+    // A positive dominates a negative, and the strongest positive grade wins.
+    Map<String, ResolvedDisposition> resolvedDispositions = new LinkedHashMap<>();
     for (ResultDisposition d : dispositions) {
-      Map<String, FeatureSnapshot.HitFeatures> byDoc = byInteraction.get(d.interactionId());
+      Map<String, FeatureSnapshot.HitFeatures> byDoc = aliasesByInteraction.get(d.interactionId());
       if (byDoc == null) {
         continue; // no snapshot for this query → cannot form a featured label
       }
@@ -91,25 +119,40 @@ public final class LabelProjection {
         continue;
       }
       Label label = labelFor(d.kind());
-      if (append(realLabelStore, d.interactionId(), d.docId(), label, hf)) {
+      String stableKey = disposedKey(d.interactionId(), hf.docId());
+      resolvedDispositions.merge(
+          stableKey,
+          new ResolvedDisposition(d.interactionId(), hf, label),
+          LabelProjection::strongerDisposition);
+    }
+
+    // Pass 1 — coalesced explicit dispositions.
+    for (ResolvedDisposition resolved : resolvedDispositions.values()) {
+      FeatureSnapshot.HitFeatures hf = resolved.features();
+      Label label = resolved.label();
+      explicitlyDisposed.add(disposedKey(resolved.interactionId(), hf.docId()));
+      if (append(realLabelStore, resolved.interactionId(), hf.docId(), label, hf)) {
         written++;
-        mark(groupFlags, d.interactionId(), label.isNegative());
+        mark(groupFlags, resolved.interactionId(), label.isNegative());
+        if (!label.isNegative()) {
+          interactionsWithPositive.add(resolved.interactionId());
+        }
       }
     }
 
     // Pass 2 — derived SHOWN negatives for queries with a positive (the contrast).
     Label shown = labelFor(ResultDisposition.Kind.SHOWN);
-    for (FeatureSnapshot snap : snapshots) {
-      if (!interactionsWithPositive.contains(snap.interactionId())) {
+    for (var interaction : primaryByInteraction.entrySet()) {
+      if (!interactionsWithPositive.contains(interaction.getKey())) {
         continue; // no positive → an all-negative group; the trainer drops it anyway
       }
-      for (FeatureSnapshot.HitFeatures hf : snap.hits()) {
-        if (explicitlyDisposed.contains(disposedKey(snap.interactionId(), hf.docId()))) {
+      for (FeatureSnapshot.HitFeatures hf : interaction.getValue().values()) {
+        if (explicitlyDisposed.contains(disposedKey(interaction.getKey(), hf.docId()))) {
           continue; // already labelled explicitly (positive or negative)
         }
-        if (append(realLabelStore, snap.interactionId(), hf.docId(), shown, hf)) {
+        if (append(realLabelStore, interaction.getKey(), hf.docId(), shown, hf)) {
           written++;
-          mark(groupFlags, snap.interactionId(), shown.isNegative());
+          mark(groupFlags, interaction.getKey(), shown.isNegative());
         }
       }
     }
@@ -125,6 +168,17 @@ public final class LabelProjection {
 
   /** Projection outcome: total triples written + the number of contrast groups (Fix-C gate input). */
   public record Result(int triples, int contrastGroups) {}
+
+  private record ResolvedDisposition(
+      String interactionId, FeatureSnapshot.HitFeatures features, Label label) {}
+
+  private static ResolvedDisposition strongerDisposition(
+      ResolvedDisposition current, ResolvedDisposition candidate) {
+    if (current.label().isNegative() != candidate.label().isNegative()) {
+      return current.label().isNegative() ? candidate : current;
+    }
+    return candidate.label().score() > current.label().score() ? candidate : current;
+  }
 
   private static boolean append(
       GplTrainingTripleStore store,

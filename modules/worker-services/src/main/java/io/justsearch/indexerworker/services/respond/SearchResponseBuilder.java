@@ -645,6 +645,14 @@ public final class SearchResponseBuilder {
   }
 
   private void resolveParentMetadata(String parentDocId, SearchResult.Builder resultBuilder) {
+    // Tempdoc 915 Phase 2 PR-B: feedback is keyed by the stable parent UID. Chunk-only hits cannot
+    // obtain it from the chunk stored-field allowlist, so carry it through the existing parent
+    // metadata enrichment and generic fields map. This is not a new protobuf or frontend field;
+    // whole-document hits already carry the same stored field.
+    String docUid = documentFieldOps.getDocumentField(parentDocId, SchemaFields.DOC_UID);
+    if (docUid != null && !docUid.isEmpty()) {
+      resultBuilder.putFields(SchemaFields.DOC_UID, docUid);
+    }
     String title = documentFieldOps.getDocumentField(parentDocId, SchemaFields.TITLE);
     if (title != null && !title.isEmpty()) {
       resultBuilder.putFields(SchemaFields.TITLE, title);

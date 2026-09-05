@@ -2,10 +2,12 @@
 package io.justsearch.app.services.feedback;
 
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
+import io.justsearch.app.api.knowledge.KnowledgeSearchHitIdentity;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Tempdoc 580 §17 (Track C P1) — projects a search response into a {@link FeatureSnapshot} by
@@ -30,7 +32,10 @@ public final class FeatureSnapshots {
     if (response != null && response.results() != null) {
       int rank = 1;
       for (KnowledgeSearchResponse.Hit hit : response.results()) {
-        hits.add(hitFeatures(hit, rank++));
+        FeatureSnapshot.HitFeatures features = hitFeatures(hit, rank++);
+        if (features != null) {
+          hits.add(features);
+        }
       }
     }
     return new FeatureSnapshot(interactionId, query, occurredAtMs, hits);
@@ -38,15 +43,58 @@ public final class FeatureSnapshots {
 
   private static FeatureSnapshot.HitFeatures hitFeatures(
       KnowledgeSearchResponse.Hit hit, int rank) {
+    String docUid = KnowledgeSearchHitIdentity.stableParentDocUid(hit);
+    String sourceDocId = KnowledgeSearchHitIdentity.sourceDocId(hit);
+    if (docUid == null || sourceDocId == null) {
+      return null;
+    }
     SearchTrace.LegScores legs = SearchTrace.legScores(hit.trace(), (float) hit.score());
     return new FeatureSnapshot.HitFeatures(
-        hit.id(),
+        docUid,
+        sourceDocId,
         rank,
         legs.sparse(),
         legs.dense(),
         legs.splade(),
         legs.fused(),
         parentTokenCount(hit.fields()));
+  }
+
+  /**
+   * Resolves an unchanged path-oriented surface id to the stable UID captured for that interaction.
+   * Ambiguous evidence fails closed rather than minting a new path-keyed feedback row.
+   */
+  public static Optional<String> resolveStableDocId(
+      List<FeatureSnapshot> snapshots, String interactionId, String sourceDocId) {
+    if (snapshots == null
+        || interactionId == null
+        || interactionId.isBlank()
+        || sourceDocId == null
+        || sourceDocId.isBlank()) {
+      return Optional.empty();
+    }
+    String resolved = null;
+    for (FeatureSnapshot snapshot : snapshots) {
+      if (snapshot == null || !interactionId.equals(snapshot.interactionId())) {
+        continue;
+      }
+      if (snapshot.hits() == null) {
+        continue;
+      }
+      for (FeatureSnapshot.HitFeatures hit : snapshot.hits()) {
+        if (hit == null || !sourceDocId.equals(hit.sourceDocId())) {
+          continue;
+        }
+        if (hit.docId() == null || hit.docId().isBlank()) {
+          return Optional.empty();
+        }
+        if (resolved != null && !resolved.equals(hit.docId())) {
+          return Optional.empty();
+        }
+        resolved = hit.docId();
+      }
+    }
+    return Optional.ofNullable(resolved);
   }
 
   private static Long parentTokenCount(Map<String, String> fields) {

@@ -1,7 +1,7 @@
 ---
 title: "Lane D: one truthful index fingerprint, stable document identity, and the reindex bundle"
 type: tempdocs
-status: "PHASE 1 MERGED; PHASE 2 PR-A IMPLEMENTED AND LOCALLY VERIFIED, PR-B PENDING; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2/PR-C1 PENDING (2026-09-03). The required six-corpus PR-C0 evaluation and PR-C1's overnight evidence campaign remain deferred and block their respective merges."
+status: "PHASE 1 MERGED; PHASE 2 PR-A AND PR-B IMPLEMENTED AND LOCALLY VERIFIED; PHASE 3 PR-C0 IMPLEMENTED AND SHORT-CHECKED, PR-C2/PR-C1 PENDING IN A SEPARATE STACKED DRAFT (2026-09-05). PR-C0 six-corpus evaluation and PR-C1 evidence campaign: see tempdoc 931 §B rows 3a-3d."
 created: 2026-09-03
 updated: 2026-09-03
 lane: D (decision re-examination programme, wave 2)
@@ -21,9 +21,9 @@ related:
 
 Lane D of the decision re-examination programme. The brief (`lane-D-index-identity-migration.md`,
 written before wave 1 merged) is the contract; every `file:line` in it was a hypothesis, and §B
-records what re-verification found. Phase 1 is merged. Phase 2 is split between the implemented
-Worker-side PR-A and the pending Head-side PR-B. Phase 3 PR-C0 is implemented and short-checked;
-PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block merge.
+records what re-verification found. Phase 1 is merged. Phase 2 PR-A and PR-B are implemented and
+locally verified. Phase 3 PR-C0 is implemented and short-checked; PR-C2 and PR-C1 follow in a
+stacked draft (tempdoc 931 §B row 4), and the deferred evidence campaigns still block merge.
 
 ---
 
@@ -71,7 +71,7 @@ PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block 
 
 **§A's "Review round", "Delta review round", and "O7 round" (Phase 1 independent-review fix checklists)** moved to `docs/tempdocs/915-evidence/review-rounds.md` (size-cap split, 930 §19.3 F4).
 
-### Phase 2 — stable document identity (PR-A IMPLEMENTED; PR-B PENDING)
+### Phase 2 — stable document identity (PR-A AND PR-B IMPLEMENTED)
 
 - [x] B1. Mint `doc_uid` once per logical document; preserve across API-supported rename,
       re-extraction, and full reindex.
@@ -81,14 +81,14 @@ PR-C2 and PR-C1 remain pending, and the deferred evidence campaigns still block 
 - [x] B4. Worker admission carries the store-resolved UID through `IndexingDocumentOps` and
       `ChunkDocumentWriter`; `GrpcIngestService` re-keys it around API path updates; `KnowledgeServer`
       imports serving-index identities before normal or migration indexing starts.
-- [ ] B5. PR-B moves new feedback/GPL writes to `doc_uid` keys. Accepted compatibility rule:
+- [x] B5. PR-B moves new feedback/GPL writes to `doc_uid` keys. Accepted compatibility rule:
       **no path-to-uid backfill** for pre-Phase-2 rows; legacy path-keyed rows remain readable as
       legacy data, while newly projected feedback/triples use uid keys.
 - [x] B6a. PR-A test sources cover durable mint/reopen/import, distinct paths with equal content,
       API rename, delete/reindex, v10→v11 migration and rollback, chunk uid determinism, serving-
       index boot import, Blue→Green preservation, retry/idempotency, and fail-closed behavior.
       Execution evidence is recorded separately from this implementation checklist.
-- [ ] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
+- [x] B6b. PR-B owns the remaining label-store-survives-full-rebuild row.
 
 ### Phase 3 — the reindex bundle, one migration for users (PR-C0 IMPLEMENTED; PR-C2/PR-C1 PENDING)
 
@@ -527,10 +527,13 @@ and must not be read as saying that Phase 2 is still unstarted.
 ### §P2.D Boundaries, tests, docs, and gates
 
 **PR split.** PR-A is the Worker-side migration, store, boot import, admission/write plumbing,
-rename re-key, chunk UID derivation, canonical documentation, and governance update. PR-B alone owns
+rename re-key, chunk UID derivation, canonical documentation, and governance update. PR-B owns
 Head-side feedback/GPL re-keying (`FeatureSnapshot(s)`, `SearchTool`, `KnowledgeSearchController`,
 `LabelProjection`, `AgentDispositionWiring`, and `GplTrainingTripleStore`) and the label-survival
-test. PR-A does not expose UID on the wire or change the frontend. Lane E overlaps only
+test. Implementation review proved that a collapsed chunk-only result did not otherwise carry its
+parent UID to Head, so PR-B also owns the minimal `SearchResponseBuilder.resolveParentMetadata`
+enrichment that places the parent `doc_uid` in the existing generic fields map. This adds no
+protobuf field and requires no frontend change. Lane E overlaps only
 `ChunkDocumentWriter.java`; whichever change lands second must rebase while preserving both Lane E's
 chunk constants and Lane D's UID derivation.
 
@@ -545,7 +548,7 @@ was a counting error: PR-A owns nine rows and PR-B owns only the label-survival 
 | 4 | Delete then re-index preserves UID | PR-A | `GrpcIngestServiceDocumentIdentityTest.deleteAndReindexPreservesUid` |
 | 5 | Full Blue/Green rebuild preserves the imported UID | PR-A | `DocumentIdentityBootImportTest.blueUidIsImportedBeforePausedMigrationReindexesIntoGreen` |
 | 6 | Chunk UID regeneration is deterministic | PR-A | `ChunkDocumentWriterTest`; `GrpcIngestServiceChunkRegenerationTest` |
-| 7 | Feedback labels survive a full rebuild by UID | **PR-B** | Pending: `LabelStoreSurvivesRebuildTest` |
+| 7 | Feedback labels survive a full rebuild by UID | **PR-B** | `LabelStoreRegenerationKeepsUidKeysTest` (Head half: the derived store re-projects to the same UID keys) **+** `DocumentIdentityBootImportTest.blueUidIsImportedBeforePausedMigrationReindexesIntoGreen` (Worker half: the UID survives Blue→Green and is read back off the production gRPC search response's `fields["doc_uid"]`, the value Head keys feedback on) — *split and renamed 2026-09-05, tempdoc 931 §C.4; the single-test entry named a rebuild the test never performed* |
 | 8 | V10→V11 migration/refusal/rollback preserves queue data | PR-A | `JobQueueMigrationTest` |
 | 9 | Backup restore and fresh-store boot import recover identity | PR-A | `JobQueueMigrationTest`; `DocumentIdentityBootImportTest` |
 | 10 | ADR-0028 path-free schema and fail-closed authority | PR-A | runnable ADR probe targets `JobQueueMigrationTest#migratesV10ToV11WithPathFreeIdentitySchemaAndPreservesJobs`; `DocumentIdentityScanTest`; `SqliteDocumentIdentityStoreTest.unavailableStoreFailsClosed` |
@@ -635,14 +638,102 @@ pre-registered skip-rate and relevance criteria remain a merge prerequisite.
 PR-C0 avoids KNN search and fusion work for a skipped dense leg. It does **not** avoid query-embedding
 generation, which still happens before planning; performance claims must preserve that distinction.
 
-### §P3.C PR-C0 local verification (2026-09-03)
+**§P3.C PR-C0 local verification (2026-09-03)** moved to `docs/tempdocs/915-evidence/phase3-verification-log.md` (size-cap split, 930 §19.3 F4).
 
-Focused Java tests cover common-term skipping, discriminative-term retention, tiny-corpus behavior,
-dense-only and direct-RAG recall, truthful traces, field-local QPP denominators, retired entity-query
-behavior, configuration defaults/clamping, and the zeroed wire/status tombstone. Focused UI tests
-cover exact reason wording and fixture compatibility. The language-agnostic-analysis,
-search-degradation-reason-code, ADR-coverage, and config-surface gates pass; the generated runtime
-configuration matrix remains exactly `yaml_keys=111`, `env_sysprop_pairs=250`, `config_keys=56`.
+### §P3.D PR-C2 implemented semantics
 
-The six-corpus evaluation and hour-long benchmarks were not run. PR-C0 may be reviewed and stacked
-upon locally, but it must not merge until the six-corpus acceptance evidence is recorded here.
+- The canonical and runtime-mirror catalogs keep `chunk_content` analyzed and indexed but set
+  `stored:false`. Generic projections, chunk search, citation matching, embedding, SPLADE, BGE-M3,
+  and combined enrichment reconstruct the value from stored parent `content` plus
+  `chunk_start_char`/`chunk_end_char`.
+- Reconstruction is the exact Java UTF-16 substring with an exclusive end offset. It performs no
+  trimming or normalization, preserves CRLF, Markdown fences, whitespace, and surrogate pairs, and
+  produces no fabricated text on a missing parent or malformed/out-of-range geometry. Generic and
+  batch projections omit the unresolved value; the chunk-search result keeps its pre-existing
+  empty-string fallback. Batch paths read each distinct parent at most once.
+- `chunk_content` declares the dedicated `rederive-parent-slice` RMW policy. The policy is legal only
+  on that exact text field. Single, batch, and path-update RMW lanes reconstruct the old posting from
+  the old parent snapshot before applying an unrelated update; missing or invalid reconstruction
+  fails closed instead of silently erasing indexed chunk text.
+- BGE-M3 routing now determines chunkness from `is_chunk`, not from the former stored-content
+  presence. Combined enrichment also classifies pending documents structurally, preventing a chunk
+  discovered through another cache from receiving parent-only vector or NER status.
+- The three analyzed `entity_persons_text`, `entity_organizations_text`, and
+  `entity_locations_text` fields, schema constants, and NER writers are deleted. The retained
+  multi-valued `entity_*_raw` fields continue to serve filters, facets, and evidence-span membership.
+- The physical projection test proves both changes move `index_fingerprint` relative to the legacy
+  shape. The `rmwPolicy` annotation itself remains excluded from the fingerprint.
+
+Two independent audits found gaps before the short-check boundary. First, citation matching reads
+through generic `ReadPathOps`, not `ChunkSearchOps`; synthesis was added there rather than changing
+the citation contract. Second, Lucene RMW recreates a document from readable values, so merely
+removing storage would erase the chunk posting on any unrelated update; the dedicated policy and
+old-parent reconstruction close that hole. The combined-enrichment tests then exposed a third
+routing edge: reconstructed content allowed chunks to arrive through the SPLADE cache, so structural
+`is_chunk` routing was made authoritative across all pending IDs.
+
+**§P3.E PR-C2 local verification and deferred evidence (2026-09-03)** moved to `docs/tempdocs/915-evidence/phase3-verification-log.md` (size-cap split, 930 §19.3 F4).
+
+**§P3.F PR-C1 implementation, focused verification, and deferred evidence (2026-09-03)** moved to `docs/tempdocs/915-evidence/phase3-verification-log.md` (size-cap split, 930 §19.3 F4).
+
+### §P3.G PR-B stable feedback identity implementation (2026-09-03)
+
+New feedback snapshots and GPL triples now use the stable parent `doc_uid` as their persisted
+document key. `FeatureSnapshot.HitFeatures.docId` is the primary key: UID for new rows and the
+historical path for legacy rows. Its new nullable `sourceDocId` is only a path-oriented correlation
+alias so existing UI dispositions and agent citations can still join without a frontend or protobuf
+change. Old unversioned and version-1 snapshot rows whose hits lack `sourceDocId` remain readable and
+path-keyed; there is deliberately no path-to-UID backfill.
+
+`KnowledgeSearchHitIdentity` is the single Head-side projection from a search hit to source path and
+stable parent UID. Whole-document results use `doc_uid` directly. Collapsed chunk-only results are
+enriched in the Worker's existing generic fields map with the parent `doc_uid`; malformed,
+conflicting, or missing identities fail closed and do not create new feedback. Narrow HTTP
+projections temporarily request that field for capture and remove it before returning the response,
+while the agent's separate non-rendered feedback metadata carries both the path alias and UID.
+
+Projection resolves path aliases to the interaction's UID-bearing snapshot and persists the UID in
+the existing `ResultDisposition.docId` and GPL JSON `doc_id` properties. It deduplicates repeated
+hits by stable document key, drops ambiguous aliases, and coalesces repeated explicit dispositions
+by UID: a positive dominates a negative and the strongest positive grade wins. One logical document
+therefore cannot receive contradictory or duplicate labels through renamed path aliases. The
+property name remains compatible; its value is a UID for new real-feedback rows and may be a path
+for legacy or synthetic rows.
+
+> **Note 2026-09-05 (tempdoc 931 §C.4).** The paragraph below is the record as written on
+> 2026-09-03 and is left intact. Two corrections since: the class is now
+> `LabelStoreRegenerationKeepsUidKeysTest` (it regenerates the derived label store; it never
+> rebuilt an index), and "composes with PR-A's real Blue→Green identity test" is no longer a
+> delegation by comment — `DocumentIdentityBootImportTest.blueUidIsImportedBeforePausedMigrationReindexesIntoGreen`
+> now asserts the surviving `doc_uid` on the production gRPC search response, i.e. at the wire where
+> PR-B's consumer reads it.
+
+The fast rebuild contract is covered by `LabelStoreSurvivesRebuildTest`: it persists authored UID
+snapshots and dispositions, deletes and regenerates the derived label store twice, and asserts the
+same exact UIDs after each rebuild. It composes with PR-A's real Blue→Green identity test instead of
+opening Lucene from Head. Compatibility, alias ambiguity, repeated-hit deduplication, controller
+projection, agent capture, chunk-parent enrichment, and old-hit deserialization have focused Java
+regressions. The jseval feedback reader now accepts the Java writer's version-1 envelope as well as
+legacy unversioned rows; its compatibility suite covers both UID- and path-keyed output and mirrors
+the Java disposition-coalescing precedence.
+
+The final affected-suite sweep passed **194 app-api tests**, **653 app-agent tests**, **2,524
+app-services tests** (3 skipped), **933 ui tests** (1 skipped), and **1,170 worker-services tests**
+(2 skipped), all with zero failures or errors. The focused contract command passed first, including
+the new identity, projection, rebuild, controller, agent, and chunk-parent cases. The Python reader
+suite passed 7 tests. The repository-wide `build -x test` compile/static/assembly check passed, as did
+the LLM index, skill projection, canonical-link, module-boundary, runtime-configuration matrix,
+canonical Markdown, tempdoc Markdown, ADR coverage, SSOT catalog sync, locale-invariance,
+tempdoc-number, and pre-merge-table checks. `git diff --check` also passed.
+
+Independent refute-first review found and drove three substantive fixes before that final sweep:
+stable-UID coalescing for renamed aliases, fail-closed rejection of orphaned or nested child UIDs,
+and identical disposition precedence in the Python reader. No correctness, integration,
+compatibility, or security objection survived re-review.
+
+No ranking, candidate-generation, or scoring decision changed in PR-B, so the deferred multi-hour
+Phase 3 quality and storage campaigns were not run and no quality or performance claim is made here.
+
+---
+
+**Appendix A — Phase 2 and Phase 3 pre-implementation passes (transplanted verbatim, wave 3)** moved to `docs/tempdocs/915-evidence/appendix-a-preimplementation-passes.md` (size-cap split, 930 §19.3 F4).

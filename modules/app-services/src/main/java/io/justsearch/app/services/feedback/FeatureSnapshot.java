@@ -19,14 +19,32 @@ public record FeatureSnapshot(
   /**
    * Per-hit ranking features, extractable head-side from each response hit's per-hit
    * {@code SearchTrace.HitStage} list (sparse/dense/splade/fused stage scores) plus the
-   * {@code parent_token_count} field. {@code parentTokenCount} is nullable (not all hits carry it).
+   * {@code parent_token_count} field. New rows key {@code docId} with the stable parent
+   * {@code doc_uid}; {@code sourceDocId} retains the path-oriented id used by unchanged UI and agent
+   * events only long enough to correlate a later disposition. Records written before Phase 2 have
+   * no {@code sourceDocId}; their path-keyed {@code docId} remains the legacy join key.
+   * {@code parentTokenCount} is nullable (not all hits carry it).
    */
   public record HitFeatures(
       String docId,
+      String sourceDocId,
       int rank,
       float sparse,
       float dense,
       float splade,
       float fused,
-      Long parentTokenCount) {}
+      Long parentTokenCount) {
+
+    /** Source-compatible constructor for legacy path-keyed rows and callers. */
+    public HitFeatures(
+        String docId,
+        int rank,
+        float sparse,
+        float dense,
+        float splade,
+        float fused,
+        Long parentTokenCount) {
+      this(docId, null, rank, sparse, dense, splade, fused, parentTokenCount);
+    }
+  }
 }

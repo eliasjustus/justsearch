@@ -282,6 +282,54 @@ class SearchToolTest {
   }
 
   @Test
+  void feedbackEvidenceCarriesStableUidWithoutChangingRenderedEvidence() {
+    stubbedResponse =
+        KnowledgeSearchResponseBuilder.builder()
+            .totalHits(1)
+            .results(
+                List.of(
+                    KnowledgeSearchResponseHitBuilder.builder()
+                        .id("C:/docs/taxes.md")
+                        .score(0.9)
+                        .fields(
+                            Map.of(
+                                "title", "Tax Notes",
+                                "path", "C:/docs/taxes.md",
+                                "doc_uid", "stable-tax-uid"))
+                        .build()))
+            .build();
+
+    OperationResult result = tool.execute("{\"query\": \"taxes\"}");
+
+    List<?> feedback =
+        assertInstanceOf(
+            List.class, result.structuredData().get(OperationResult.FEEDBACK_FEATURES_KEY));
+    assertEquals(1, feedback.size());
+    Map<?, ?> feedbackHit = assertInstanceOf(Map.class, feedback.getFirst());
+    assertEquals("C:/docs/taxes.md", feedbackHit.get("docId"));
+    assertEquals("stable-tax-uid", feedbackHit.get("docUid"));
+
+    List<?> rendered =
+        assertInstanceOf(
+            List.class, result.structuredData().get(OperationResult.SEARCH_RESULTS_KEY));
+    Map<?, ?> renderedHit = assertInstanceOf(Map.class, rendered.getFirst());
+    assertFalse(renderedHit.containsKey("docUid"));
+    assertFalse(renderedHit.containsKey("doc_uid"));
+  }
+
+  @Test
+  void feedbackEvidenceOmitsHitWithoutUidInsteadOfFallingBackToPath() {
+    stubbedResponse = responseWithHits(1);
+
+    OperationResult result = tool.execute("{\"query\": \"documents\"}");
+
+    List<?> feedback =
+        assertInstanceOf(
+            List.class, result.structuredData().get(OperationResult.FEEDBACK_FEATURES_KEY));
+    assertTrue(feedback.isEmpty());
+  }
+
+  @Test
   void structuredDataCarriesQueryAndResultCount() {
     // Tempdoc S7 — additive structuredData keys alongside searchResults/feedbackFeatures: the
     // executed query text and the number of hits in THIS response.

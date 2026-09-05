@@ -8,9 +8,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 580 §17 P4 (Fix B) — wires the agent feedback contributors as a live listener on the agent
@@ -32,6 +33,8 @@ import java.util.function.Consumer;
  * {@link NdjsonAppendStore#append} swallows failures, so feedback never affects the loop.
  */
 public final class AgentDispositionWiring {
+
+  private static final Logger log = LoggerFactory.getLogger(AgentDispositionWiring.class);
 
   private AgentDispositionWiring() {}
 
@@ -66,13 +69,10 @@ public final class AgentDispositionWiring {
           } else if ("done".equals(eventType) && captureSettings.isEnabled()) {
             // Tempdoc 778 — the disposition (the behavioural signal) is gated by the default-on local
             // capture flag; off ⇒ the answer's citations are not recorded as dispositions.
-            // The run's sessionId is the join key. Fall back to a fresh id only if it is absent — then
-            // the disposition is still recorded but won't join (the honest pre-fix behavior).
-            String iid =
-                sessionId != null && !sessionId.isBlank()
-                    ? sessionId
-                    : "agent-" + UUID.randomUUID();
-            AgentCitationContributor.fromDoneEvent(iid, payload, now).forEach(dispositions::append);
+            // Persist only dispositions whose unchanged path-oriented citation id resolves through
+            // a captured snapshot to a stable UID. Falling back to the path would create a new
+            // path-keyed row and violate tempdoc 915 B5.
+            persistUidDispositions(dispositions, snapshots, sessionId, payload, now);
           }
         });
   }
@@ -104,11 +104,13 @@ public final class AgentDispositionWiring {
         continue;
       }
       String docId = str(f.get("docId"));
-      if (docId == null || docId.isBlank()) {
+      String docUid = str(f.get("docUid"));
+      if (docId == null || docId.isBlank() || docUid == null || docUid.isBlank()) {
         continue;
       }
       hits.add(
           new FeatureSnapshot.HitFeatures(
+              docUid,
               docId,
               intOf(f.get("rank")),
               floatOf(f.get("sparse")),
@@ -119,6 +121,45 @@ public final class AgentDispositionWiring {
     }
     if (!hits.isEmpty()) {
       store.append(new FeatureSnapshot(sessionId, "agent-search", now, hits));
+    }
+  }
+
+  private static void persistUidDispositions(
+      NdjsonAppendStore<ResultDisposition> dispositions,
+      NdjsonAppendStore<FeatureSnapshot> snapshots,
+      String sessionId,
+      Map<String, Object> payload,
+      long now) {
+    if (sessionId == null || sessionId.isBlank()) {
+      return;
+    }
+    List<FeatureSnapshot> captured;
+    try {
+      captured = snapshots.readAll();
+    } catch (Exception e) {
+      log.debug("agent feedback UID resolution failed (non-fatal): {}", e.toString());
+      return;
+    }
+    int unresolved = 0;
+    for (ResultDisposition disposition :
+        AgentCitationContributor.fromDoneEvent(sessionId, payload, now)) {
+      var stableDocId =
+          FeatureSnapshots.resolveStableDocId(
+              captured, disposition.interactionId(), disposition.docId());
+      if (stableDocId.isEmpty()) {
+        unresolved++;
+        continue;
+      }
+      dispositions.append(
+          new ResultDisposition(
+              disposition.interactionId(),
+              stableDocId.get(),
+              disposition.kind(),
+              disposition.contributor(),
+              disposition.occurredAtMs()));
+    }
+    if (unresolved > 0) {
+      log.debug("omitted {} agent feedback rows without stable document UID", unresolved);
     }
   }
 

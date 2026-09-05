@@ -127,23 +127,8 @@ public class KnowledgeSearchController {
   private void captureFeatureSnapshot(
       String interactionId, String query, KnowledgeSearchResponse response) {
     try {
-      NdjsonAppendStore<FeatureSnapshot> store = featureSnapshots;
-      if (store == null) {
-        synchronized (this) {
-          store = featureSnapshots;
-          if (store == null) {
-            store =
-                new NdjsonAppendStore<>(
-                    PlatformPaths.resolveDataDir()
-                        .resolve("feedback")
-                        .resolve("feature-snapshots.ndjson"),
-                    FeatureSnapshot.class,
-                    feedbackCipher);
-            featureSnapshots = store;
-          }
-        }
-      }
-      store.append(
+      featureSnapshotStore()
+          .append(
           FeatureSnapshots.capture(
               interactionId, query, java.time.Instant.now().toEpochMilli(), response));
     } catch (Exception e) {
@@ -189,10 +174,21 @@ public class KnowledgeSearchController {
       }
       String contributorStr = body.get("contributor") instanceof String s ? s : null;
       ResultDisposition.Contributor contributor = contributorFor(contributorStr);
+      var stableDocId =
+          FeatureSnapshots.resolveStableDocId(
+              featureSnapshotStore().readAll(), interactionId, docId);
+      if (stableDocId.isEmpty()) {
+        log.debug(
+            "omitting feedback row without stable document UID: interactionId={} docId={}",
+            interactionId,
+            docId);
+        ctx.status(204);
+        return;
+      }
       dispositionStore()
           .append(
               new ResultDisposition(
-                  interactionId, docId, kind, contributor,
+                  interactionId, stableDocId.get(), kind, contributor,
                   java.time.Instant.now().toEpochMilli()));
       ctx.status(204);
     } catch (Exception e) {
@@ -226,6 +222,26 @@ public class KnowledgeSearchController {
                   ResultDisposition.class,
                   feedbackCipher);
           dispositions = s;
+        }
+      }
+    }
+    return s;
+  }
+
+  private NdjsonAppendStore<FeatureSnapshot> featureSnapshotStore() {
+    NdjsonAppendStore<FeatureSnapshot> s = featureSnapshots;
+    if (s == null) {
+      synchronized (this) {
+        s = featureSnapshots;
+        if (s == null) {
+          s =
+              new NdjsonAppendStore<>(
+                  PlatformPaths.resolveDataDir()
+                      .resolve("feedback")
+                      .resolve("feature-snapshots.ndjson"),
+                  FeatureSnapshot.class,
+                  feedbackCipher);
+          featureSnapshots = s;
         }
       }
     }
@@ -320,6 +336,11 @@ public class KnowledgeSearchController {
         }
         projection = List.copyOf(p);
       }
+      // Feedback capture needs the internal stable UID even when a caller requests a narrow field
+      // projection. Inject it only into the Worker request, then remove it from the HTTP result
+      // unless the caller explicitly requested it. The public projection contract stays unchanged.
+      boolean injectedFeedbackUid = !projection.isEmpty() && !projection.contains("doc_uid");
+      List<String> workerProjection = withFeedbackUid(projection);
 
       // Optional: filters
       KnowledgeSearchRequest.Filters filters = null;
@@ -396,7 +417,7 @@ public class KnowledgeSearchController {
 
       KnowledgeSearchRequest req =
           new KnowledgeSearchRequest(
-              query, limit, modeText, sortText, cursorText, projection, filters, boostFilters,
+              query, limit, modeText, sortText, cursorText, workerProjection, filters, boostFilters,
               facets, querySyntaxText, includeExcerpts, debug, pipelineConfig);
       KnowledgeSearchResponse response = adapter.search(req);
 
@@ -413,7 +434,9 @@ public class KnowledgeSearchController {
       // Tempdoc 597: the true matched-document count — the FE headline binds to this.
       out.put("matchCount", response.matchCount());
       out.put("tookMs", response.tookMs());
-      out.put("results", response.results());
+      out.put(
+          "results",
+          injectedFeedbackUid ? withoutInternalDocUid(response.results()) : response.results());
       if (response.nextCursor() != null && !response.nextCursor().isBlank()) {
         out.put("nextCursor", response.nextCursor());
       }
@@ -462,6 +485,37 @@ public class KnowledgeSearchController {
     } finally {
       recordRequestMetricsBestEffort(ctx, startNs);
     }
+  }
+
+  static List<KnowledgeSearchResponse.Hit> withoutInternalDocUid(
+      List<KnowledgeSearchResponse.Hit> hits) {
+    return hits.stream()
+        .map(
+            hit -> {
+              if (!hit.fields().containsKey("doc_uid")) {
+                return hit;
+              }
+              Map<String, String> fields = new HashMap<>(hit.fields());
+              fields.remove("doc_uid");
+              return new KnowledgeSearchResponse.Hit(
+                  hit.id(),
+                  hit.score(),
+                  fields,
+                  hit.matchedFields(),
+                  hit.matchSpans(),
+                  hit.excerptRegions(),
+                  hit.trace());
+            })
+        .toList();
+  }
+
+  static List<String> withFeedbackUid(List<String> requestedProjection) {
+    if (requestedProjection.isEmpty() || requestedProjection.contains("doc_uid")) {
+      return requestedProjection;
+    }
+    List<String> withUid = new ArrayList<>(requestedProjection);
+    withUid.add("doc_uid");
+    return List.copyOf(withUid);
   }
 
   private void recordRequestMetricsBestEffort(Context ctx, long startNs) {

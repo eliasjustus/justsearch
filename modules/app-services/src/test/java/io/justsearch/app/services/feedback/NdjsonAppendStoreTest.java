@@ -24,7 +24,8 @@ class NdjsonAppendStoreTest {
             "the query",
             123L,
             List.of(
-                new FeatureSnapshot.HitFeatures("d1", 1, 0.9f, 0.8f, 0.7f, 0.85f, 1024L),
+                new FeatureSnapshot.HitFeatures(
+                    "uid-1", "C:/docs/d1", 1, 0.9f, 0.8f, 0.7f, 0.85f, 1024L),
                 new FeatureSnapshot.HitFeatures("d2", 2, 0.5f, 0.4f, 0.3f, 0.45f, null))));
 
     List<FeatureSnapshot> all = store.readAll();
@@ -32,7 +33,10 @@ class NdjsonAppendStoreTest {
     FeatureSnapshot got = all.get(0);
     assertEquals("iid-1", got.interactionId());
     assertEquals(2, got.hits().size());
+    assertEquals("uid-1", got.hits().get(0).docId());
+    assertEquals("C:/docs/d1", got.hits().get(0).sourceDocId());
     assertEquals(1024L, got.hits().get(0).parentTokenCount());
+    assertNull(got.hits().get(1).sourceDocId(), "legacy path rows have no source alias");
     assertNull(got.hits().get(1).parentTokenCount(), "absent token count must round-trip as null");
   }
 
@@ -74,10 +78,33 @@ class NdjsonAppendStoreTest {
     Path path = dir.resolve("feature-snapshots.ndjson");
     Files.writeString(
         path,
-        "{\"interactionId\":\"iid-legacy\",\"query\":\"q\",\"occurredAtMs\":1,\"hits\":[]}\n");
+        "{\"interactionId\":\"iid-legacy\",\"query\":\"q\",\"occurredAtMs\":1,"
+            + "\"hits\":[{\"docId\":\"C:/legacy.md\",\"rank\":1,\"sparse\":0.1,"
+            + "\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,\"parentTokenCount\":null}]}\n");
 
     var store = new NdjsonAppendStore<>(path, FeatureSnapshot.class);
-    assertEquals("iid-legacy", store.readAll().getFirst().interactionId());
+    FeatureSnapshot legacy = store.readAll().getFirst();
+    assertEquals("iid-legacy", legacy.interactionId());
+    assertEquals("C:/legacy.md", legacy.hits().getFirst().docId());
+    assertNull(legacy.hits().getFirst().sourceDocId());
+  }
+
+  @Test
+  void versionedPrePhase2HitWithoutSourceAliasRemainsReadable(@TempDir Path dir)
+      throws IOException {
+    Path path = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(
+        path,
+        "{\"schemaVersion\":1,\"record\":{\"interactionId\":\"iid-old\",\"query\":\"q\","
+            + "\"occurredAtMs\":1,\"hits\":[{\"docId\":\"C:/old.md\",\"rank\":1,"
+            + "\"sparse\":0.1,\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,"
+            + "\"parentTokenCount\":null}]}}\n");
+
+    FeatureSnapshot legacy =
+        new NdjsonAppendStore<>(path, FeatureSnapshot.class).readAll().getFirst();
+
+    assertEquals("C:/old.md", legacy.hits().getFirst().docId());
+    assertNull(legacy.hits().getFirst().sourceDocId());
   }
 
   @Test
