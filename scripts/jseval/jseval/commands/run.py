@@ -359,6 +359,7 @@ def _run_iteration(
     env_overrides,
     search_load_spec=None,
     first_search_probe_spec=None,
+    settle_index=False,
     json_flag,
     is_warmup,
 ):
