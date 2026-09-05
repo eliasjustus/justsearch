@@ -214,7 +214,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         ingestLifecycle != null ? ingestLifecycle.pruneOps() : null,
         ingestLifecycle != null ? ingestLifecycle.commitOps() : null,
         jobQueue,
-        this.indexingPacing);
+        this.indexingPacing,
+        // Read through a supplier: the identity store is wired by setDocumentIdentityStore AFTER
+        // this constructor runs, so capturing the field here would capture the UNAVAILABLE sentinel.
+        new ConfirmedDeletionMarker(() -> this.documentIdentityStore));
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
   }
@@ -756,6 +759,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // Overwrite content, language, embedding status; regenerate chunks
         String preview = contentPreview(extractedContent);
         updates.put(SchemaFields.CONTENT, extractedContent);
+        // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+        updates.put(
+            SchemaFields.CONTENT_SHA256,
+            io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
         updates.put(SchemaFields.CONTENT_PREVIEW, preview);
         updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
         updates.put(SchemaFields.VDU_PROCESSED, "true");
@@ -804,6 +811,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           if (!extractedContent.isBlank()) {
             String preview = contentPreview(extractedContent);
             updates.put(SchemaFields.CONTENT, extractedContent);
+            // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+            updates.put(
+                SchemaFields.CONTENT_SHA256,
+                io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
             updates.put(SchemaFields.CONTENT_PREVIEW, preview);
             updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
             updates.put(SchemaFields.EXTRACTION_METHOD, SchemaFields.EXTRACTION_METHOD_VDU);

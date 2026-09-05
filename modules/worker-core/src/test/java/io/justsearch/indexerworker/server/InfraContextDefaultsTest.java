@@ -77,6 +77,9 @@ final class InfraContextDefaultsTest {
           }
 
           @Override
+          public void markDeleted(String pathHash, long nowMs) {}
+
+          @Override
           public Optional<Identity> lookup(String pathHash) {
             return Optional.empty();
           }

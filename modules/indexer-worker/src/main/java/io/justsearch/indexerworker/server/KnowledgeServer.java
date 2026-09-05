@@ -875,7 +875,8 @@ public final class KnowledgeServer implements Closeable {
       // Import from the serving generation (Blue during migration) before the first possible
       // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
       this.documentIdentityStore =
-          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(dbPath);
+          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(
+              dbPath, rc.index().identityDeletionGraceMs());
       importDocumentIdentitiesFromActiveIndex(layout.activeGenerationId());
 
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred

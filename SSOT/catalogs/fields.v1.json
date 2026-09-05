@@ -61,6 +61,13 @@
       "analyzer": "icu"
     },
     {
+      "id": "content_sha256",
+      "type": "keyword",
+      "stored": true,
+      "docValues": false,
+      "roles": []
+    },
+    {
       "id": "content_preview",
       "type": "text",
       "stored": true,

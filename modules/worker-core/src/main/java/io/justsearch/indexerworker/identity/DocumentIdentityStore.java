@@ -58,12 +58,26 @@ public interface DocumentIdentityStore {
     }
 
     @Override
+    public void markDeleted(String pathHash, long nowMs) {
+      throw unavailable();
+    }
+
+    @Override
     public Optional<Identity> lookup(String pathHash) {
       throw unavailable();
     }
   };
 
-  /** Returns the existing identity for {@code pathHash}, or atomically mints and persists one. */
+  /**
+   * Returns the existing identity for {@code pathHash}, or atomically mints and persists one.
+   *
+   * <p>A row previously marked by {@link #markDeleted} resolves through the deletion grace window
+   * (tempdoc 931 §C.6): within the window the mark is cleared and the uid is KEPT, because a file
+   * reappearing that soon is the same document returning (a restored backup, a sync client that
+   * momentarily hid it). Past the window a NEW uid is minted onto the same row and
+   * {@code firstSeenAtMs} is reset, because a file appearing at a long-deleted path is a different
+   * document and must not inherit the old one's feedback.
+   */
   Identity resolve(String pathHash, long nowMs);
 
   /**
@@ -96,6 +110,16 @@ public interface DocumentIdentityStore {
    */
   RekeyResult rekey(String oldPathHash, String newPathHash, long nowMs);
 
+  /**
+   * Records that the Worker removed this path's document because the file is VERIFIED absent.
+   *
+   * <p>The row is kept, not dropped: dropping it would make every temporary absence — an unmounted
+   * drive, a cloud placeholder, a sync client mid-write — permanently break identity. The mark only
+   * starts the grace clock {@link #resolve} reads. Marking an unknown path, or a path already
+   * marked, is a no-op (the FIRST confirmed deletion owns the clock).
+   */
+  void markDeleted(String pathHash, long nowMs);
+
   /** Looks up an identity by path hash. */
   Optional<Identity> lookup(String pathHash);
 
@@ -104,8 +128,22 @@ public interface DocumentIdentityStore {
     return PathHash.sha256(normalizedPath);
   }
 
-  /** Persisted identity row. */
-  record Identity(String pathHash, String docUid, long firstSeenAtMs, long lastSeenAtMs) {}
+  /**
+   * Persisted identity row. {@code deletedAtMs} is {@code null} unless a confirmed deletion has
+   * been recorded for this path and no later admission has cleared it.
+   */
+  record Identity(
+      String pathHash,
+      String docUid,
+      long firstSeenAtMs,
+      long lastSeenAtMs,
+      Long deletedAtMs) {
+
+    /** Source-compatible constructor for rows and callers that carry no deletion mark. */
+    public Identity(String pathHash, String docUid, long firstSeenAtMs, long lastSeenAtMs) {
+      this(pathHash, docUid, firstSeenAtMs, lastSeenAtMs, null);
+    }
+  }
 
   /** Path-free row supplied by the serving-index bootstrap scan. */
   record ImportedIdentity(String pathHash, String docUid) {}

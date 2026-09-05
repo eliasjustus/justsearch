@@ -117,7 +117,8 @@ public final class AgentDispositionWiring {
               floatOf(f.get("dense")),
               floatOf(f.get("splade")),
               floatOf(f.get("fused")),
-              null));
+              null,
+              str(f.get("contentRevision"))));
     }
     if (!hits.isEmpty()) {
       store.append(new FeatureSnapshot(sessionId, "agent-search", now, hits));

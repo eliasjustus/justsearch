@@ -653,6 +653,14 @@ public final class SearchResponseBuilder {
     if (docUid != null && !docUid.isEmpty()) {
       resultBuilder.putFields(SchemaFields.DOC_UID, docUid);
     }
+    // Tempdoc 931 §C.6: feedback is keyed by (uid, content revision), so the revision travels the
+    // same route as the uid. A whole-document hit already carries it through the stored-field
+    // projection; only a chunk hit needs it lifted from its parent.
+    String contentRevision =
+        documentFieldOps.getDocumentField(parentDocId, SchemaFields.CONTENT_SHA256);
+    if (contentRevision != null && !contentRevision.isEmpty()) {
+      resultBuilder.putFields(SchemaFields.CONTENT_SHA256, contentRevision);
+    }
     String title = documentFieldOps.getDocumentField(parentDocId, SchemaFields.TITLE);
     if (title != null && !title.isEmpty()) {
       resultBuilder.putFields(SchemaFields.TITLE, title);

@@ -32,6 +32,17 @@ public final class LabelProjection {
 
   private static final Logger log = LoggerFactory.getLogger(LabelProjection.class);
 
+  /**
+   * Weight applied to a triple whose hit was ranked at an OLDER content revision than the newest
+   * one observed for that document (tempdoc 931 §C.6).
+   *
+   * <p>Dropping the label would be the wrong correction: the click happened, and a document that is
+   * edited often would contribute nothing at all. But the text that earned the click is gone, so
+   * the label is evidence about a version of the document the ranker will never see again. Halving
+   * it keeps the signal while letting a fresh label outweigh it.
+   */
+  static final float STALE_LABEL_WEIGHT = 0.5f;
+
   private LabelProjection() {}
 
   /**
@@ -61,6 +72,7 @@ public final class LabelProjection {
     Map<String, Map<String, FeatureSnapshot.HitFeatures>> primaryByInteraction = new HashMap<>();
     Map<String, Map<String, FeatureSnapshot.HitFeatures>> aliasesByInteraction = new HashMap<>();
     Set<String> conflictingAliases = new HashSet<>();
+    Map<String, String> newestRevisionByDoc = newestRevisionByDoc(snapshots);
     for (FeatureSnapshot snap : snapshots) {
       if (snap == null || snap.interactionId() == null || snap.hits() == null) {
         continue;
@@ -103,6 +115,7 @@ public final class LabelProjection {
     // Per-group [hasPositive, hasNegative] for the contrast-group count.
     Map<String, boolean[]> groupFlags = new HashMap<>();
     int written = 0;
+    int stale = 0;
 
     // Resolve and coalesce explicit dispositions before writing. One stable UID may appear under
     // multiple source-path aliases during an agent run or rename. Persisting each alias separately
@@ -131,8 +144,12 @@ public final class LabelProjection {
       FeatureSnapshot.HitFeatures hf = resolved.features();
       Label label = resolved.label();
       explicitlyDisposed.add(disposedKey(resolved.interactionId(), hf.docId()));
-      if (append(realLabelStore, resolved.interactionId(), hf.docId(), label, hf)) {
+      boolean isStale = isStale(hf, newestRevisionByDoc);
+      if (append(realLabelStore, resolved.interactionId(), hf.docId(), label, hf, isStale)) {
         written++;
+        if (isStale) {
+          stale++;
+        }
         mark(groupFlags, resolved.interactionId(), label.isNegative());
         if (!label.isNegative()) {
           interactionsWithPositive.add(resolved.interactionId());
@@ -150,8 +167,12 @@ public final class LabelProjection {
         if (explicitlyDisposed.contains(disposedKey(interaction.getKey(), hf.docId()))) {
           continue; // already labelled explicitly (positive or negative)
         }
-        if (append(realLabelStore, interaction.getKey(), hf.docId(), shown, hf)) {
+        boolean isStale = isStale(hf, newestRevisionByDoc);
+        if (append(realLabelStore, interaction.getKey(), hf.docId(), shown, hf, isStale)) {
           written++;
+          if (isStale) {
+            stale++;
+          }
           mark(groupFlags, interaction.getKey(), shown.isNegative());
         }
       }
@@ -163,11 +184,74 @@ public final class LabelProjection {
         contrastGroups++;
       }
     }
-    return new Result(written, contrastGroups);
+    if (stale > 0) {
+      log.info(
+          "Feedback labels: {} of {} triples were captured at a superseded content revision and"
+              + " were down-weighted to {}x",
+          stale,
+          written,
+          STALE_LABEL_WEIGHT);
+    }
+    return new Result(written, contrastGroups, stale);
   }
 
-  /** Projection outcome: total triples written + the number of contrast groups (Fix-C gate input). */
-  public record Result(int triples, int contrastGroups) {}
+  /**
+   * The newest observed content revision per document uid (tempdoc 931 §C.6). "Newest" is the
+   * revision seen in the LATEST capture, not the most frequent one: a snapshot is a dated
+   * observation, and the last observation is the one that describes the document as it stands.
+   * Documents with no revision anywhere are absent from the map and can never be stale.
+   */
+  private static Map<String, String> newestRevisionByDoc(List<FeatureSnapshot> snapshots) {
+    Map<String, String> newest = new HashMap<>();
+    Map<String, Long> newestAt = new HashMap<>();
+    for (FeatureSnapshot snap : snapshots) {
+      if (snap == null || snap.hits() == null) {
+        continue;
+      }
+      for (FeatureSnapshot.HitFeatures h : snap.hits()) {
+        if (h == null
+            || h.docId() == null
+            || h.docId().isBlank()
+            || h.contentRevision() == null
+            || h.contentRevision().isBlank()) {
+          continue;
+        }
+        Long seenAt = newestAt.get(h.docId());
+        if (seenAt == null || snap.occurredAtMs() >= seenAt) {
+          newestAt.put(h.docId(), snap.occurredAtMs());
+          newest.put(h.docId(), h.contentRevision());
+        }
+      }
+    }
+    return newest;
+  }
+
+  /**
+   * Whether this hit's label describes a superseded version of its document. A null revision on
+   * either side is UNKNOWN, never a mismatch — legacy rows and un-reindexed documents must not be
+   * silently down-weighted.
+   */
+  private static boolean isStale(
+      FeatureSnapshot.HitFeatures hf, Map<String, String> newestRevisionByDoc) {
+    String revision = hf.contentRevision();
+    if (revision == null || revision.isBlank()) {
+      return false;
+    }
+    String newest = newestRevisionByDoc.get(hf.docId());
+    return newest != null && !newest.equals(revision);
+  }
+
+  /**
+   * Projection outcome: total triples written, the number of contrast groups (Fix-C gate input),
+   * and how many of the written triples were down-weighted as revision-stale (931 §C.6).
+   */
+  public record Result(int triples, int contrastGroups, int staleTriples) {
+
+    /** Source-compatible constructor for callers that predate stale accounting. */
+    public Result(int triples, int contrastGroups) {
+      this(triples, contrastGroups, 0);
+    }
+  }
 
   private record ResolvedDisposition(
       String interactionId, FeatureSnapshot.HitFeatures features, Label label) {}
@@ -185,10 +269,12 @@ public final class LabelProjection {
       String interactionId,
       String docId,
       Label label,
-      FeatureSnapshot.HitFeatures hf) {
+      FeatureSnapshot.HitFeatures hf,
+      boolean stale) {
     try {
+      float score = stale ? label.score() * STALE_LABEL_WEIGHT : label.score();
       store.appendWithFeatures(
-          interactionId, docId, "", label.score(), label.isNegative(), payload(hf));
+          interactionId, docId, "", score, label.isNegative(), payload(hf), stale);
       return true;
     } catch (IOException e) {
       log.warn(

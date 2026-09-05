@@ -630,6 +630,10 @@ public final class KnowledgeServerMigrationOps {
                     String preview =
                         io.justsearch.indexerworker.services.LanguageUtils.contentPreview(extracted, 4096);
                     updates.put(SchemaFields.CONTENT, extracted);
+                    // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+                    updates.put(
+                        SchemaFields.CONTENT_SHA256,
+                        io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extracted));
                     updates.put(SchemaFields.CONTENT_PREVIEW, preview);
                     updates.put(
                         SchemaFields.LANGUAGE,
