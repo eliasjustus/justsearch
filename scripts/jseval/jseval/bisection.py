@@ -1,7 +1,7 @@
 """Manifest-hash bisection runner (tempdoc 400 LR5-d).
 
 Given two runs A and B whose aggregate metrics differ by more than
-±2σ of the cohort's non-determinism envelope (§9.1), this module
+:data:`DEFAULT_THRESHOLD` (or an explicit ``threshold``), this module
 walks the axis-wise diff between their manifests and attributes the
 observed delta to individual cohort-identity axes (e.g.
 ``commit_metadata.field_catalog_hash``, ``policy_hash``,
@@ -11,9 +11,9 @@ The algorithm per §13.9 C2 is single-axis: for each differing axis,
 build a synthetic manifest = A with that one axis swapped to B's
 value, hash it, and look up a cached run with matching hash. If the
 cached run's metric differs from A's metric by more than the
-envelope threshold, the axis is flagged. When no single-axis swap
-reproduces the delta inside envelope tolerance, the projection
-emits ``MULTI_AXIS_INTERACTION`` with the candidate axis set.
+threshold, the axis is flagged. When no single-axis swap reproduces
+the delta, the projection emits ``MULTI_AXIS_INTERACTION`` with the
+candidate axis set.
 
 Run cache:
 
@@ -51,13 +51,22 @@ SCHEMA_VERSION = 1
 INDEX_SUBDIR = "_index"
 INDEX_FILENAME = "manifests.jsonl"
 DEFAULT_METRIC_KEY = "nDCG@10"
-DEFAULT_SIGMA_MULTIPLIER = 2.0
+
+#: Absolute metric delta above which a single-axis swap is called ``attributed``.
+#: Tempdoc 930 §18.1 row 7 replaced the previous ``k * envelope_sigma`` threshold: the
+#: cohort envelope it read was never calibrated on any machine, so the threshold was
+#: unresolvable in practice and every axis fell through to ``no-envelope``. A fixed
+#: default keeps the tool usable; pass ``threshold=`` (``--threshold``) to override it
+#: with a number measured for the corpus at hand. 0.02 mirrors
+#: ``relevance_gate``'s ``tolerance_default_abs`` — the repo's existing "an nDCG@10
+#: move this big is worth explaining" line.
+DEFAULT_THRESHOLD = 0.02
 
 # Axes considered for bisection. These mirror the cohort-identity
 # keys in jseval.manifest (commit_metadata identity fields +
 # corpus_identity + policy_hash + eval_protocol_hash + git_sha +
 # dataset + query_count + doc_count + model_fingerprints). Volatile
-# fields (timestamp, run_id, envelope) are intentionally excluded
+# fields (timestamp, run_id, runtime snapshots) are intentionally excluded
 # because they do not change the cohort.
 _COHORT_IDENTITY_AXES: tuple[str, ...] = (
     "git_sha",
@@ -212,36 +221,24 @@ def bisect(
     manifest_a: dict,
     manifest_b: dict,
     *,
-    envelope: dict,
     output_dir: Path,
     metric: str = DEFAULT_METRIC_KEY,
     mode: str | None = None,
-    sigma_multiplier: float = DEFAULT_SIGMA_MULTIPLIER,
+    threshold: float | None = None,
 ) -> dict:
     """Bisect the A→B cohort delta by single-axis swap.
 
-    ``envelope`` is the cohort non-determinism envelope for *A*
-    (schema v1; see :mod:`jseval.calibrate`). Its ``metrics.<mode>
-    .<metric>.stdev`` sets the significance threshold. When the
-    envelope has no stdev for ``(mode, metric)``, every axis-swap
-    lookup falls back to ``status="no-envelope"``.
+    ``threshold`` is the absolute ``metric`` delta above which a single-axis swap is
+    called ``attributed``; ``None`` uses :data:`DEFAULT_THRESHOLD`. ``mode`` selects
+    which per-mode block of a run's ``summary.json`` the metric is read from; ``None``
+    lets :func:`_extract_metric` take the first mode present in each run.
     """
     run_a_hash = manifest_a.get("manifest_hash")
     run_b_hash = manifest_b.get("manifest_hash")
     axes = diff_axes(manifest_a, manifest_b)
 
-    # Resolve envelope σ.
     chosen_mode = mode
-    metrics_block = (envelope or {}).get("metrics") or {}
-    if chosen_mode is None:
-        modes_in_env = list(metrics_block.keys())
-        chosen_mode = modes_in_env[0] if len(modes_in_env) == 1 else None
-    sigma: float | None = None
-    if chosen_mode and chosen_mode in metrics_block:
-        stats = metrics_block[chosen_mode].get(metric) or {}
-        raw = stats.get("stdev")
-        if isinstance(raw, (int, float)):
-            sigma = float(raw)
+    threshold = DEFAULT_THRESHOLD if threshold is None else float(threshold)
 
     # A / B baseline metrics (from their run dirs).
     run_a_row = find_run_by_hash(output_dir, run_a_hash) if run_a_hash else None
@@ -271,17 +268,12 @@ def bisect(
         entry["synthetic_metric"] = syn_metric
         if syn_metric is None or metric_a is None:
             entry["status"] = "no-metric"
-        elif sigma is None or sigma <= 0:
-            entry["status"] = "no-envelope"
-            entry["delta"] = syn_metric - metric_a
         else:
             delta = syn_metric - metric_a
-            threshold = sigma * sigma_multiplier
             entry["delta"] = delta
-            entry["sigma"] = sigma
             entry["threshold"] = threshold
             entry["status"] = ("attributed"
-                               if abs(delta) > threshold else "within-envelope")
+                               if abs(delta) > threshold else "within-threshold")
         attributions.append(entry)
 
     attributed = [a for a in attributions if a.get("status") == "attributed"]
@@ -304,7 +296,7 @@ def bisect(
         "mode": chosen_mode,
         "metric_a": metric_a,
         "metric_b": metric_b,
-        "envelope_sigma": sigma,
+        "threshold": threshold,
         "axes_diff": axes,
         "attributions": attributions,
     }
@@ -323,7 +315,6 @@ def synthesize_and_bisect(
     manifest_a: dict,
     manifest_b: dict,
     *,
-    envelope: dict,
     output_dir: Path,
     data_dir: Path,
     dataset: str,
@@ -331,7 +322,7 @@ def synthesize_and_bisect(
     max_queries: int = 50,
     metric: str = DEFAULT_METRIC_KEY,
     mode: str | None = None,
-    sigma_multiplier: float = DEFAULT_SIGMA_MULTIPLIER,
+    threshold: float | None = None,
     python_executable: str | None = None,
     base_url: str | None = None,
     dry_run: bool = False,
@@ -367,9 +358,9 @@ def synthesize_and_bisect(
             "synthesized": [],
             "bisection": bisect(
                 manifest_a, manifest_b,
-                envelope=envelope, output_dir=output_dir,
+                output_dir=output_dir,
                 metric=metric, mode=mode,
-                sigma_multiplier=sigma_multiplier,
+                threshold=threshold,
             ),
         }
 
@@ -440,9 +431,9 @@ def synthesize_and_bisect(
 
     final_bisection = bisect(
         manifest_a, manifest_b,
-        envelope=envelope, output_dir=output_dir,
+        output_dir=output_dir,
         metric=metric, mode=mode,
-        sigma_multiplier=sigma_multiplier,
+        threshold=threshold,
     )
     return {
         "status": "ok",

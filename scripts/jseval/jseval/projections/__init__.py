@@ -21,7 +21,6 @@ Sub-modules:
   aggregator.
 - :mod:`jseval.projections.stratified_metrics` — LR4-c 2-dim
   stratification.
-- :mod:`jseval.projections.encoder_drift` — LR4-g PSI drift.
 """
 
 from __future__ import annotations
@@ -51,7 +50,6 @@ _PROJECTION_MODULE_NAMES = (
     # without further __init__.py edits.
     "bootstrap_ci",
     "cpu_fallback_counts",
-    "encoder_drift",
     "rank_diff",
     "rate_timeline",
     "stratified_metrics",

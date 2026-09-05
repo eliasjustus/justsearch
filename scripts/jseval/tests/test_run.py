@@ -6,6 +6,8 @@ import json
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from jseval.run import (
     METRIC_CONTRACT,
     _build_summary,
@@ -19,6 +21,34 @@ from jseval.run import (
     execute_run,
 )
 from jseval.types import AnnProofResult, ComparabilityResult, QueryRecord, ReadinessResult
+
+
+@pytest.fixture(autouse=True)
+def _offline_backend(monkeypatch):
+    """Stub the three helpers in ``execute_run`` that open a socket.
+
+    Nothing in this module runs against a live backend, but ``_MOCK_STACK`` does not
+    cover ``_snapshot_models`` / ``_snapshot_search_config`` (module-private) nor
+    ``manifest.capture_state_snapshots`` (``manifest_mod`` is unpatched). Un-stubbed
+    each one waits out an httpx connect against ``http://localhost:8080`` — eight
+    requests at ~4 s, ~34 s per ``execute_run`` test — for values every test ignores.
+
+    The stubs return exactly what the real helpers return when the backend is absent:
+    ``None`` from both snapshots (the ``except`` arms at ``run.py:98-100`` and
+    ``run.py:161-163``) and a per-endpoint ``{"_error": ...}`` marker from the
+    manifest capture (``manifest.py:157``). Production timeouts are untouched.
+    """
+    from jseval import manifest as manifest_mod
+    from jseval import run as run_mod
+
+    monkeypatch.setattr(run_mod, "_snapshot_models", lambda base_url: None)
+    monkeypatch.setattr(run_mod, "_snapshot_search_config", lambda base_url: None)
+    monkeypatch.setattr(
+        manifest_mod, "capture_state_snapshots",
+        lambda base_url, timeout=5.0: {
+            ep: {"_error": "ConnectError"} for ep in manifest_mod._STATE_ENDPOINTS
+        },
+    )
 
 
 def _setup_mocks(
@@ -1005,6 +1035,10 @@ def test_execute_run_always_emits_a_cadence_block(
         "reopen_total": None,
         "commit_total": None,
         "segments_since_reopen": None,
+        # tempdoc 912 item 2 (commit 33ffc3bb) added the reason-tagged pair; they degrade
+        # to null on the same no-telemetry path as the three counters above.
+        "commit_by_reason": None,
+        "commit_by_reason_total": None,
         "first_search_after_indexing": None,
     }
 
@@ -1050,3 +1084,88 @@ def test_execute_run_reads_worker_cadence_metrics_and_carries_the_probe(
     assert summary["cadence"]["commit_total"] == 4
     assert summary["cadence"]["segments_since_reopen"] == 2
     assert summary["cadence"]["first_search_after_indexing"] == probe
+
+
+# --- tempdoc 930 §18.1 row 7: encoder_latency block wiring --------------------
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_always_emits_an_encoder_latency_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    """Absent encoder spans degrade to an empty mapping — the key exists on every run."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path / "no-telemetry-here"))
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert summary["encoder_latency"] == {"encoders": {}}
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_reads_encoder_ort_run_spans_from_worker_telemetry(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir(parents=True)
+    (telemetry / "traces.ndjson").write_text(
+        "\n".join(json.dumps({
+            "name": "encoder.ort_run",
+            "attrs": {"encoder.name": "BgeM3Encoder"},
+            "duration_ms": d,
+        }) for d in (2.0, 4.0, 6.0)) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path))
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert summary["encoder_latency"]["encoders"] == {
+        "BgeM3Encoder": {"n": 3, "p50_ms": 4.0, "p95_ms": 6.0},
+    }
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_ingest_only_run_also_carries_the_encoder_latency_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    """The no-modes (ingest-only) summary branch composes its own dict — the key rides it too."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path / "no-telemetry-here"))
+
+    summary = execute_run("scifact", "http://localhost:8080", [])
+
+    assert summary["encoder_latency"] == {"encoders": {}}

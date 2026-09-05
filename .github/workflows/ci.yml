@@ -90,16 +90,14 @@ jobs:
         run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
 
       - name: Test release composition (Python)
-        # tempdoc 802. `scripts/jseval/tests/` (132 files) runs in CI NOWHERE — the same
-        # orphaned-layer class as the ~26 node files D6 wired above, and the reason a test
-        # added alongside a fix here would have been a claim rather than a guarantee.
-        # Scoped deliberately to the ONE file guarding release composition rather than the
-        # whole suite: the rest has never been run under CI's locked env, so enabling it
-        # wholesale would turn `main` red on failures this change does not own. The broader
-        # gap is logged for its own pass.
-        # pytest/hypothesis are not in requirements.lock.txt, so `-c` leaves them unpinned;
-        # that is why this installs the `dev` extra separately instead of widening the
-        # canonical install above (which the lock-drift guard keys on).
+        # tempdoc 802. Kept in THIS lane, alongside the claim checks it protects, so a
+        # release-composition break fails the check named "Public claims" rather than only
+        # the separate suite job. The rest of `scripts/jseval/tests/` now runs in the
+        # `jseval-suite` job below (tempdoc 930 §18.1 row 7 closed the "runs in CI
+        # NOWHERE" gap this comment used to record).
+        # pytest is not in requirements.lock.txt, so `-c` leaves it unpinned; that is why
+        # this installs it separately instead of widening the canonical install above
+        # (which the lock-drift guard keys on).
         run: |
           python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0"
           python -m pytest scripts/jseval/tests/test_release.py -q
@@ -552,6 +550,59 @@ jobs:
           name: governance-health-${{ github.run_id }}-${{ github.run_attempt }}
           path: tmp/governance-history.ndjson
           if-no-files-found: warn
+
+  jseval-suite:
+    name: jseval Python suite
+    # tempdoc 930 §18.1 row 7. `scripts/jseval/tests/` is ~47k lines that ran in CI
+    # NOWHERE — a measurement harness behind public claims whose own tests were a claim
+    # rather than a guarantee. The suite is pure-CPU and fully mocked (nothing here
+    # starts a backend, and `run.py`'s three socket-opening helpers are stubbed by
+    # `tests/test_run.py::_offline_backend`), so it runs on a hosted Linux runner.
+    #
+    # Optional-dependency behaviour, verified per module: `inspect_ai` (agent extra),
+    # `playwright` (ui extra) and `Pillow` (scan extra) are reached only through
+    # `pytest.importorskip`, so those tests SKIP rather than error and the ~80
+    # transitive deps of the agent extra stay out of this lane. `hypothesis` and
+    # `jsonschema` are NOT guarded (`tests/test_suite_stats_properties.py:10`), which is
+    # why the `dev` extra is installed in full below.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        # Only for the lock-drift guard below; no npm install happens in this job.
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        # Same fail-fast as the claims lane: if pyproject.toml and the committed lock
+        # disagree, the install below would resolve versions nobody reviewed.
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval
+        # Mirrors the claims lane's install: constraint-installed against the dependency
+        # lock (tempdoc 792 §6) so the suite resolves the same versions every run.
+        run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
+
+      - name: Install test dependencies
+        # The `dev` extra's four packages are absent from requirements.lock.txt, so `-c`
+        # leaves them unpinned and installing them through the canonical command above
+        # would trip the lock-drift guard. Named explicitly (rather than `[dev]`) so this
+        # step's resolution set is visible in the diff.
+        run: python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0" "hypothesis>=6.0" "jsonschema>=4.0"
+
+      - name: Run jseval test suite
+        # `-p no:cacheprovider`: a fresh runner has no cache to reuse and the plugin
+        # would only write .pytest_cache into the checkout.
+        run: python -m pytest scripts/jseval/tests -q -p no:cacheprovider
 
   license-and-notices:
     name: License and notices
