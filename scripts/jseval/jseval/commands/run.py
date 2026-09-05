@@ -276,6 +276,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             env_overrides=env_overrides,
             search_load_spec=search_load_spec,
             first_search_probe_spec=first_search_probe_spec,
+            settle_index=settle_index,
             json_flag=json_flag,
             is_warmup=is_warmup,
         )
@@ -442,6 +443,7 @@ def _run_iteration(
             suppress_stdout=is_warmup, index_cache=cache_outcome,
             query_syntax=query_syntax, search_load_spec=search_load_spec,
             first_search_probe_spec=first_search_probe_spec,
+            settle_index=settle_index,
         )
         # Publish only a fresh build (outcome != adopted) done under --clean, and
         # only when the selector key is available. Capture happens while up.
@@ -579,7 +581,8 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             context_coverage, thresholds, history_db, corpus_dir,
             skip_ingest, ingest_config, env_overrides=None,
             suppress_stdout=False, index_cache=None, query_syntax=None,
-            search_load_spec=None, first_search_probe_spec=None):
+            search_load_spec=None, first_search_probe_spec=None,
+            settle_index=False):
     """Inner run logic (extracted for backend lifecycle try/finally).
 
     When suppress_stdout is True (used by warmup iterations of --warmup N), the
