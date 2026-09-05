@@ -676,6 +676,16 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-060: int8 scalar quantization (lane D PR-C1, `JustSearchCodecV2` + `dot_product`) is ranking-neutral on the registered corpora but does NOT ship as the write default — the pre-registered storage leg fails by construction: `Lucene104HnswScalarQuantizedVectorsFormat` keeps the raw float32 vectors beside the int8 copy, so a 20k × 768 index grew 25.1 % (62.8 → 78.5 MB) instead of shrinking, ANN recall@50 fell 0.994 → 0.974 (ratio 0.980, inside the 915 ratio but 0.020 absolute below float32), and query p50 rose 0.7 ms; paired fresh-index jseval arms moved ≤ 0.0015 nDCG@10 on scifact and were identical-or-better on enron (vector +0.0089), zero errors, arm identity proven from `vectorFormatActual` (2026-09-05, tempdoc 931 §D "C1 campaign" + `931-evidence/c1-quantization-campaign-2026-09-05.md`; draft #662 closed, Float32 stays)
+
+- **Conditions/caveats:** one machine (RTX 4070), one day, one arm per corpus per format; the two
+  arms did not share a merge state (expunge-only settle, 181 vs 1,044 deleted docs on scifact),
+  fixed for future pairs by #685; RSS was not instrumented. The synthetic ANN fixture (64 clustered
+  centroids, exact brute-force truth) is a recall instrument, not a corpus.
+- **What would reopen it:** a format that drops the raw vectors (or a resident-memory criterion
+  in place of on-disk bytes) plus an RSS instrument in `EngineVectorIndexBench` — re-register the
+  rule first; do not re-run against the same criteria.
+
 ### F-059: lane D PR-C2 (unstored chunk/entity text) is byte-exact and storage-real — legal stored fields −75.8 % (21.03 → 5.09 MB) with 4,122/4,122 chunk vectors intact — but the wave-3 campaign found two masked enrichment defects on the way (a non-converging flag-off chunk-SPLADE loop, and `rag.chunk_splade.enabled` honoured by one lane of three); with the flag made truly OFF, legal hybrid is 0.5776 = the 832 scorecard, and the −0.012 vs a same-day control is race-encoded chunk postings plus tombstone-inflated BM25 statistics, not C2 (2026-09-05, tempdoc 931 §D findings 5/5b/6, §E 8-11)
 
 - **What C2 does.** `chunk_content` stays analyzed/indexed but `stored:false`; every consumer
@@ -705,8 +715,8 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   index moved +0.011 in ten minutes; re-query before trusting a fresh hybrid delta ≤ ~0.015.
   (ii) Paired arms need equal merge state — tombstones inflate BM25 collection statistics
   (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts 3–4 % with no code cause.
-- **Not measured.** C1 (quantization) quality/recall campaign — still owed before the C2+C1 draft
-  can undraft (915 §P3.F, 931 §B 3d).
+- **Measured the same night — see F-060.** The C1 (quantization) campaign ran on the C1-only
+  draft #662 and rejected the int8 write default (915 §P3.F).
 
 ### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
 
@@ -3516,8 +3526,12 @@ Questions — these are "we should eventually" not "we need to know."
 - **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
 - **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
 - **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
-- **FW-008: Vector quantization evidence** — **Implementation candidate updated 2026-09-03;
-  evidence remains open.** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
+- **FW-008: Vector quantization evidence** — **DECIDED 2026-09-05 (F-060): the int8 write default
+  does not ship; Float32 stays.** The campaign below ran on draft #662 and failed the storage leg
+  by construction (raw float32 retained beside the int8 copy, index +25 %) and the 0.01-absolute
+  recall@50 leg (−0.020), while ranking quality on scifact/enron was unaffected. #662 closed; the
+  codec work is reusable only if a raw-vector-dropping format or a resident-memory criterion is
+  pre-registered first. Earlier text (2026-09-03 candidate) kept for the rule as it was run:** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
   Int8, and makes quantization the unconfigured write default while retaining explicit Float32
   opt-out. Restart, mixed-segment, merge, and configuration tests are short-checkable, but they do
   not establish ranking quality or footprint. The default is not accepted or merge-ready until the
