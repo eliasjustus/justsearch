@@ -670,6 +670,72 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-059: lane D PR-C2 (unstored chunk/entity text) is byte-exact and storage-real — legal stored fields −75.8 % (21.03 → 5.09 MB) with 4,122/4,122 chunk vectors intact — but the wave-3 campaign found two masked enrichment defects on the way (a non-converging flag-off chunk-SPLADE loop, and `rag.chunk_splade.enabled` honoured by one lane of three); with the flag made truly OFF, legal hybrid is 0.5776 = the 832 scorecard, and the −0.012 vs a same-day control is race-encoded chunk postings plus tombstone-inflated BM25 statistics, not C2 (2026-09-05, tempdoc 931 §D findings 5/5b/6, §E 8-11)
+
+- **What C2 does.** `chunk_content` stays analyzed/indexed but `stored:false`; every consumer
+  re-derives the text from the stored parent `content` plus chunk offsets (`ChunkSplitter`'s
+  offset law). Direct Lucene inspection of a fresh legal index: 7,781,026 chars of stored chunk
+  text on the pre-C2 arm = 7,781,026 chars re-derived on C2, 0 mismatches / blanks / out-of-range.
+- **Storage (legal, on disk, by Lucene file type).** `fdt` 21.03 MB → 5.09 MB is the C2 effect.
+  Totals (74.66 MB vs 25.74 MB) are NOT comparable: the control carried 2,629 tombstoned docs in
+  142 un-merged files vs 222 in 58 — `vec`/`pos`/`doc`/`cfs` differ for that reason, and both
+  indexes hold 4,122 chunk vectors and 199 parent vectors (counted, not inferred).
+- **Finding 5 (fixed, `58c3c344`).** With `rag.chunk_splade.enabled` off (the default) C2's
+  combined backfill escalated every PENDING chunk through the SPLADE retry seam each cycle; a
+  retry bump is not stage progress, so the 5 s budget tripped 231 times, embeddings/NER starved
+  for ~25 min on 198 docs, and every chunk ended terminal-FAILED. Readiness 1,793 s → 235 s.
+- **Finding 6 (fixed, `286a97bc`).** `SpladeBackfillOps`/`BgeM3BackfillOps` selected
+  `splade_status=PENDING` with no chunk filter while `ChunkDocumentWriter` stamps PENDING on every
+  chunk, so chunk SPLADE postings were produced by whichever lane won a race — the 832 scorecard
+  and every hybrid baseline on a chunked corpus were measured on that race. Now every lane honours
+  the flag. **Owner decision (tempdoc 712):** the query-side chunk-SPLADE leg still runs off
+  `pipeline.spladeEnabled`; "default OFF" now means no chunk postings at all.
+- **Quality (legal, paired, same machine).** Flag truly off: C2 hybrid **0.5776** / P@1 0.360 /
+  R@10 0.805 vs control 0.5900 (settled re-query) — Δ −0.0125, inside the F-057 2σ line; vector-
+  only 0.6215 vs 0.6148 (R@10 0.83 vs 0.82); lexical 0.6858 vs 0.6873. The C2 number equals the
+  scorecard's 0.578. Verdict: no regression attributable to C2.
+- **Two measurement lessons (routed, 931 §E 9-10).** (i) jseval `--pipeline` readiness counts
+  parents only, so on chunked corpora the query phase can overlap chunk-lane encoding — the same
+  index moved +0.011 in ten minutes; re-query before trusting a fresh hybrid delta ≤ ~0.015.
+  (ii) Paired arms need equal merge state — tombstones inflate BM25 collection statistics
+  (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts 3–4 % with no code cause.
+- **Not measured.** C1 (quantization) quality/recall campaign — still owed before the C2+C1 draft
+  can undraft (915 §P3.F, 931 §B 3d).
+
+### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
+
+- **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
+  planner rule: skip dense only when another leg can answer AND the *rarest* analyzed query term
+  occurs in ≥ `index.hybrid.vector_skip_min_df_fraction` (default 0.25) of `content` documents, on
+  ≥ 100 field docs (`SearchPlanner.planDenseSkip`, `SearchInputCapture` min DF fraction). C5b asked
+  for comparable per-language skip rates and no material quality loss on the six pre-registered
+  corpora before PR-C0 may merge.
+- **Skip rate (index-only hybrid, PR-C0 tip `0bb0b8cb`, 17 min, every run `comparable=True`;
+  `denseStatus`/`denseReason` now persisted per query by jseval and rolled up by
+  `scripts/jseval/915_c0_skip_rate.py`).** legal-clerc-200 4/200 (2.0 %, all
+  `SKIPPED_NO_DISCRIMINATIVE_TERM`); scifact 0/300; enron-qa 0/300; ohr-bench-clean 0/962;
+  miracl-de-2k 0/305; miracl-fr-2k 0/343. The 4 legal hits prove the gate path is live; the zeros
+  are the rule's real answer (a natural-language query almost never has *every* term in ≥ 25 % of
+  documents). Per language: en 0–2 %, de 0 %, fr 0 % — comparable; the retired rule could only
+  ever fire for English.
+- **Quality (paired, same machine, same hour, fresh `--clean` index, `--pipeline --embedding`,
+  control = PR-A branch `c0e5dbf5` without C0).** legal-clerc-200: C0 0.5989 / P@1 0.390 / R@10
+  0.825 vs control 0.5914 / 0.365 / 0.830 → Δ +0.0075 nDCG@10, inside the F-057 legal 2σ line
+  (0.0136); miracl-de-2k: 0.8575 / 0.6656 / 0.9967 on both arms (identical; the rule fired 0/305 and
+  the old rule never fired on German, so C0 is a no-op there by construction). Every leg observed on
+  every arm. Scifact/enron/fr/OHR fully-enriched no-regression runs were not run (≈1.5 h, over the
+  wave's 2 h budget) — a limit, not a pass.
+- **Calibration worth keeping.** Two no-C2 legal arms share only 24/200 identical top-10 lists
+  (20 up, 21 down, mean +0.0075): top-10 churn on legal is run-to-run noise; only the mean and the
+  hit count carry signal. `summary.json`'s `ingest.index_size_bytes` is a mid-ingest status snapshot
+  (16.1 MB vs 33.6 MB reported for indexes that are 40.9 MB vs 43.0 MB on disk) — measure index
+  bytes on disk, by Lucene file type.
+- **Consequence for the owner.** At 0.25 the dense skip is a no-op on every corpus we measure, so
+  PR-C0 is a locale-invariance change, not a latency lever; if the old English savings mattered,
+  the knob to revisit is the DF fraction, and this row is the baseline to beat.
+- **Method + run dirs.** tempdoc 931 §D (3a table, 3b/3c design); runs under
+  `.claude/worktrees/wave3-{c0,pa}/scripts/jseval/tmp/eval-results/20260905T02*` (gitignored).
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
@@ -2690,9 +2756,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 
@@ -3325,6 +3391,16 @@ Questions — these are "we should eventually" not "we need to know."
 - **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
 - **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
 - **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
-- **FW-008: Vector quantization cross-machine evidence** — Codec wiring implemented (default off). Needs cross-machine benchmark evidence before enabling by default. Source: RAG-004 (retired from issues/). **Still open (verified 2026-06-15):** default remains Float32 (`JustSearchCodec.java:43`); only storage (~75%) is measured — the **nDCG quality cost of Int8 is unmeasured** (single-machine only, RAG-003/235). **Post-cutoff capability note (580 §14.1, Lucene-10.4.0-verified):** `Lucene104(Hnsw)ScalarQuantizedVectorsFormat` exposes **1/2/4/7/8-bit** + **asymmetric 2-bit-store/4-bit-query** ("2-bit recall-competitive with old 4-bit") — so a lower-bit path than Int8 is config-only (no new dep) but reindex-required and recall is corpus-dependent; an **efficiency** lever (memory), not a quality one — eval-gate recall before adopting.
+- **FW-008: Vector quantization evidence** — **Implementation candidate updated 2026-09-03;
+  evidence remains open.** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
+  Int8, and makes quantization the unconfigured write default while retaining explicit Float32
+  opt-out. Restart, mixed-segment, merge, and configuration tests are short-checkable, but they do
+  not establish ranking quality or footprint. The default is not accepted or merge-ready until the
+  tempdoc 915 campaign passes the stricter intersection: jseval nDCG@10 and R@10 within 0.010 on
+  the registered corpora, EngineVectorIndexBench Float32 recall@50 at least 0.97 and Int8 no more
+  than 0.01 absolute below it, smaller index bytes, and reported RSS. Cross-machine
+  replication remains desirable but is not silently claimed. The lower-bit
+  `SINGLE_BIT_QUERY_NIBBLE` `chunk_vector` arm remains report-only and cannot authorize a shipped
+  default.
 - **FW-009: Citation scorer threshold calibration** — Default 0.5 threshold works in tests but not validated across real-world content types. Source: RAG-006 (retired from issues/).
 - **FW-010: 1M+ vector scale benchmarks** — No runs at 1M+ vectors or cross-machine. Current evidence limited to smaller datasets on single machine. Source: RAG-003 (retired from issues/).
