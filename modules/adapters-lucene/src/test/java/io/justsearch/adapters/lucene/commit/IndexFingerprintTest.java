@@ -360,6 +360,83 @@ final class IndexFingerprintTest {
         "the guard must be able to name the input it could not resolve");
   }
 
+  /**
+   * Tempdoc 931 §C.5. The digest stays all-or-nothing, but the inputs it hashes can still be
+   * compared one by one when a model digest is missing — and the report has to name the input in
+   * terms an operator can act on. {@code fields} is an array, so an ordinal would be meaningless;
+   * it is keyed by field id instead.
+   */
+  @Test
+  void differingInputsNamesTheMovedInputByFieldIdNotByOrdinal() {
+    String stored = json(baseline());
+    String expected = json(with(in -> fields(in, List.of(textField(), vectorField(1024, "euclidean")))));
+
+    var differences = IndexFingerprint.differingInputs(stored, expected, List.of());
+    assertEquals(1, differences.size(), differences.toString());
+    assertEquals("fields[vector].vector.dimension", differences.getFirst().path());
+    assertEquals("768", differences.getFirst().stored());
+    assertEquals("1024", differences.getFirst().expected());
+  }
+
+  /**
+   * The ignored keys are supplied, never inferred: {@code INDETERMINATE} and {@code NOT_CONFIGURED}
+   * both render as JSON {@code null}, so the stored rendering alone cannot say which it was. Naming
+   * them removes the unanswerable question from both sides and leaves every answerable one.
+   */
+  @Test
+  void namedModelKeysAreDroppedFromBothSidesAndNothingElseIs() {
+    String stored = json(baseline());
+    String withNer = json(withModels(null, null, ModelFingerprint.present("d".repeat(64))));
+
+    assertEquals(
+        List.of("ner_model_sha256"),
+        IndexFingerprint.differingInputs(stored, withNer, List.of()).stream()
+            .map(IndexFingerprint.InputDifference::path)
+            .toList(),
+        "without the ignore list the model digest is just another input");
+    assertEquals(
+        List.of(),
+        IndexFingerprint.differingInputs(stored, withNer, List.of("ner_model_sha256")),
+        "naming it as unresolved removes it from the comparison entirely");
+
+    String withNerAndDimension =
+        json(
+            new Inputs(
+                baseline().catalogSchemaVersion(),
+                List.of(textField(), vectorField(1024, "euclidean")),
+                baseline().analyzerFingerprint(),
+                baseline().vectorFormat(),
+                baseline().hnsw(),
+                baseline().chunking(),
+                baseline().contentPreviewMaxChars(),
+                baseline().analysis(),
+                baseline().embeddingModel(),
+                baseline().spladeModel(),
+                ModelFingerprint.present("d".repeat(64))));
+    assertEquals(
+        List.of("fields[vector].vector.dimension"),
+        IndexFingerprint.differingInputs(stored, withNerAndDimension, List.of("ner_model_sha256"))
+            .stream()
+            .map(IndexFingerprint.InputDifference::path)
+            .toList(),
+        "dropping the unresolvable question must not drop the resolvable one beside it");
+  }
+
+  /**
+   * A rendering that cannot be parsed leaves the question unanswered, which is the same thing an
+   * uncomputable digest does — and the opposite of answering "different". Reporting a difference
+   * here would spend a full rebuild on unreadable bytes.
+   */
+  @Test
+  void anUnparseableRenderingIsNotADifference() {
+    assertEquals(List.of(), IndexFingerprint.differingInputs("not json", json(baseline()), List.of()));
+    assertEquals(List.of(), IndexFingerprint.differingInputs(json(baseline()), "[]", List.of()));
+  }
+
+  private static String json(Inputs in) {
+    return new String(IndexFingerprint.canonicalJson(in), StandardCharsets.UTF_8);
+  }
+
   @Test
   void theDefaultProvidersAreNotConfigured() {
     assertEquals(

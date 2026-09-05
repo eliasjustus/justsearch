@@ -91,7 +91,7 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       try (DirectoryReader reader = DirectoryReader.open(directory)) {
         Map<String, String> stored = reader.getIndexCommit().getUserData();
         Map<String, Object> expectedMetadata = expected.get();
-        warnIfFingerprintUncomputable(expectedMetadata);
+        warnIfFingerprintUncomputable(stored, expectedMetadata);
         // numDocs, not maxDoc: an index whose every document is deleted has nothing left whose
         // shape could be wrong, and migrating it would rebuild emptiness.
         return ParityDiagnostics.diff(stored, expectedMetadata, reader.numDocs());
@@ -167,11 +167,17 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
   }
 
   /**
-   * When this runtime cannot compute an {@code index_fingerprint}, the parity check declines to
-   * compare rather than declaring a mismatch. Declining silently would be indistinguishable from
-   * passing, so say it once per boot and name the input that went unresolved.
+   * When this runtime cannot compute an {@code index_fingerprint}, say so once per boot and name
+   * the input that went unresolved — a check that is not running must never look like a check that
+   * passed.
+   *
+   * <p>Two different things can follow, and the line says which. If both commits recorded
+   * {@code index_fingerprint_inputs}, the guard still compares every input the unresolved model
+   * does not touch (tempdoc 931 §C.5), so only the model digests are declined. If they did not — a
+   * legacy commit — nothing is compared at all.
    */
-  private static void warnIfFingerprintUncomputable(Map<String, Object> expected) {
+  private static void warnIfFingerprintUncomputable(
+      Map<String, String> stored, Map<String, Object> expected) {
     Object fingerprint =
         expected == null ? null : expected.get(IndexFingerprint.COMMIT_META_KEY);
     boolean computable = fingerprint != null && !String.valueOf(fingerprint).isBlank();
@@ -179,11 +185,23 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
       return;
     }
     var unresolved = IndexFingerprint.indeterminateModelInputs();
+    String cause =
+        unresolved.isEmpty() ? "no model input could be resolved" : "unresolved: " + unresolved;
+    if (ParityDiagnostics.determinateInputComparisonAvailable(stored, expected)) {
+      log.warn(
+          "Index parity is being checked WITHOUT the model digests: this runtime could not compute"
+              + " an index_fingerprint ({}), so the recorded index_fingerprint_inputs are compared"
+              + " minus those keys. Every other physical input is still verified; fix the model"
+              + " resolution to restore the full check.",
+          cause);
+      return;
+    }
     log.warn(
         "Index parity is NOT being checked: this runtime could not compute an index_fingerprint"
-            + " ({}). The index is opened without verifying its physical shape; fix the model"
+            + " ({}) and no recorded index_fingerprint_inputs are available to compare instead."
+            + " The index is opened without verifying its physical shape; fix the model"
             + " resolution to restore the check.",
-        unresolved.isEmpty() ? "no model input could be resolved" : "unresolved: " + unresolved);
+        cause);
   }
 
   private static boolean allowMismatch() {
