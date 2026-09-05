@@ -94,7 +94,7 @@ describe('MemorySurface — 806 W1 locked-state truthfulness', () => {
 
     const input = el.shadowRoot?.querySelector('input.draft') as HTMLInputElement;
     expect(input.disabled).toBe(true);
-    // The reason is VISIBLE (a `title` is unreachable on a disabled control — controls-a11y gate).
+    // The reason is VISIBLE (a `title` is unreachable on a disabled control — 596 §1.1).
     expect(input.placeholder).toContain('Unlock');
 
     // The button carries the same reason as typed availability (aria-disabled + a reachable reason),

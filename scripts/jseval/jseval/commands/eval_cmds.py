@@ -167,27 +167,55 @@ def cmd_retrieval_eval(ctx, queries, corpus_dir, corpus_jsonl, base_url, top_k, 
 @click.option("--allow-compact-model", is_flag=True, default=False,
               help="Permit tier-2 quality evals against the compact dev-tier chat model; "
                    "results are marked and NOT comparable to standard-model baselines.")
+@click.option("--baseline-results", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Saved tier2-eval.json to compare query-by-query with this run.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
 def cmd_tier2_eval(ctx, queries, base_url, llm_url, top_k, max_context_tokens,
                    types, max_queries, no_structured, paper_prompt, source_check,
-                   allow_compact_model, output_dir):
+                   allow_compact_model, baseline_results, output_dir):
     """Tier 2: Single-shot RAG eval (retrieve + local LLM, $0 cost)."""
     from .. import agent_retrieval_eval as are
 
     qa = are.load_queries(Path(queries))
     question_types = [t.strip() for t in types.split(",")] if types else None
     cp_dir = Path(output_dir) if output_dir else None
-    result = are.run_tier2_eval(
-        qa, base_url=base_url, llm_url=llm_url, top_k=top_k,
-        max_context_tokens=max_context_tokens,
-        question_types=question_types, max_queries=max_queries,
-        structured=not no_structured,
-        use_paper_prompt=paper_prompt,
-        source_check=source_check,
-        checkpoint_dir=cp_dir,
-        allow_compact_model=allow_compact_model,
-    )
+    baseline = None
+    if baseline_results:
+        try:
+            baseline = json.loads(Path(baseline_results).read_text(encoding="utf-8"))
+            are.validate_tier2_result(baseline)
+        except (OSError, json.JSONDecodeError, are.Tier2ComparisonError) as exc:
+            raise click.ClickException(
+                f"Tier-2 baseline is not canonical: {exc}") from None
+
+    try:
+        result = are.run_tier2_eval(
+            qa, base_url=base_url, llm_url=llm_url, top_k=top_k,
+            max_context_tokens=max_context_tokens,
+            question_types=question_types, max_queries=max_queries,
+            structured=not no_structured,
+            use_paper_prompt=paper_prompt,
+            source_check=source_check,
+            checkpoint_dir=cp_dir,
+            allow_compact_model=allow_compact_model,
+            comparison_baseline=baseline,
+            require_served_model=True,
+        )
+    except are.Tier2ComparisonError as exc:
+        raise click.ClickException(f"Tier-2 preflight failed: {exc}") from None
+
+    try:
+        are.validate_tier2_result(result)
+    except are.Tier2ComparisonError as exc:
+        raise click.ClickException(
+            f"Tier-2 result is not canonical: {exc}") from None
+
+    if baseline is not None:
+        try:
+            result["paired_comparison"] = are.compare_tier2_results(baseline, result)
+        except are.Tier2ComparisonError as exc:
+            raise click.ClickException(f"Tier-2 comparison is incompatible: {exc}") from None
 
     if ctx.obj.get("json"):
         click.echo(json.dumps(result, indent=2, default=str))

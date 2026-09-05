@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.loop;
 
 import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.path.PathResolutionStore;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -37,20 +38,39 @@ import java.util.function.Supplier;
 public record IndexingLoopOptions(
     boolean detailedTracing,
     PathResolutionStore pathResolutionStore,
+    DocumentIdentityStore documentIdentityStore,
     BooleanSupplier migrationActiveSupplier,
     Supplier<Map<String, String>> commitMetadataSupplier,
     EmbeddingTelemetryEvents embeddingTelemetryEvents) {
 
   public IndexingLoopOptions {
     pathResolutionStore = pathResolutionStore != null ? pathResolutionStore : PathResolutionStore.NOOP;
+    documentIdentityStore =
+        documentIdentityStore != null ? documentIdentityStore : DocumentIdentityStore.UNAVAILABLE;
     migrationActiveSupplier = migrationActiveSupplier != null ? migrationActiveSupplier : () -> false;
     commitMetadataSupplier = commitMetadataSupplier != null ? commitMetadataSupplier : Map::of;
     // embeddingTelemetryEvents may be null — EmbeddingProviderLifecycle keeps a no-op default
     // when this slot isn't wired.
   }
 
+  /** Back-compatible shape for callers that do not perform production indexing. */
+  public IndexingLoopOptions(
+      boolean detailedTracing,
+      PathResolutionStore pathResolutionStore,
+      BooleanSupplier migrationActiveSupplier,
+      Supplier<Map<String, String>> commitMetadataSupplier,
+      EmbeddingTelemetryEvents embeddingTelemetryEvents) {
+    this(
+        detailedTracing,
+        pathResolutionStore,
+        DocumentIdentityStore.UNAVAILABLE,
+        migrationActiveSupplier,
+        commitMetadataSupplier,
+        embeddingTelemetryEvents);
+  }
+
   /** Defaults for callers that don't need any of the optional slots (typically tests). */
   public static IndexingLoopOptions withDefaults() {
-    return new IndexingLoopOptions(false, null, null, null, null);
+    return new IndexingLoopOptions(false, null, null, null, null, null);
   }
 }

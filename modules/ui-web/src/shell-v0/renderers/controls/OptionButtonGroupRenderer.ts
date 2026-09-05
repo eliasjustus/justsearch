@@ -21,11 +21,12 @@
  * the plain-props `option.swatch` field and this schema extension consume it through the one
  * `renderSwatchFill()` below: one swatch vocabulary, not two.
  *
- * Each option is a native <button> in a role=radiogroup → keyboard-operable (controls-a11y gate).
+ * Each option is a native <button> in a role=radiogroup → keyboard-operable (the 559 operability
+ * contract; measured axe verifies it on the rendered page).
  * Tempdoc 855 §15.2/§17 R2 — the WAI-ARIA radiogroup keyboard model (ArrowLeft/Up = previous+select,
  * ArrowRight/Down = next+select, Home/End = first/last+select, wrapping, roving tabindex with focus
  * following selection) lives HERE, once — neither of this codebase's two prior radiogroup precedents
- * (this renderer, `AutonomyDial`) implemented it before (both were click-only, gate-passing via
+ * (this renderer, `AutonomyDial`) implemented it before (both were click-only — operable via
  * native `<button>` but not the real keyboard pattern).
  *
  * Plain-props path (855 §17 R2) — an ordinary Lit template can drive this element WITHOUT the

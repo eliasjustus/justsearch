@@ -10,6 +10,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
+import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
@@ -34,6 +38,9 @@ public final class DocumentFieldOps {
   private final String idField;
   private final RuntimeSession session;
   private final ReadPathOps readPathOps;
+
+  /** Stored parent identity used to seed/rebuild the Worker document-identity store. */
+  public record StoredDocumentIdentity(String docId, String docUid) {}
 
   DocumentFieldOps(
       RuntimeSession session,
@@ -415,6 +422,83 @@ public final class DocumentFieldOps {
     } catch (IOException e) {
       log.debug("Failed to query {}={}: {}", field, value, e.getMessage());
       return List.of();
+    }
+  }
+
+  /** Accounting for one identity recovery scan. */
+  public record ParentIdentityScanSummary(
+      long parentsSeen, long parentsEmitted, long parentsSkipped) {}
+
+  /**
+   * Streams every live parent document's stored identity from one searcher snapshot.
+   *
+   * <p>This deliberately has no corpus-size cap: omitting a tail of the active index during an
+   * identity-store import would cause those documents to be re-minted on their next write. The
+   * result is handed to {@code batchConsumer} in slices of {@code batchSize} instead of returned as
+   * one list, so the caller's peak heap is a batch rather than the corpus (tempdoc 931 §C.2).
+   *
+   * <p>A live parent whose {@code doc_id}/{@code doc_uid} docvalues are missing or blank is counted
+   * in {@code parentsSkipped} and omitted. That shape predates the identity store or comes from a
+   * partially-written legacy index; it mints a fresh identity at its next admission, which is a
+   * recoverable outcome, whereas failing the scan takes the whole Worker down. Genuine I/O failure
+   * is still surfaced — that is not a legacy shape, it is an unreadable index.
+   */
+  public ParentIdentityScanSummary scanParentDocumentIdentities(
+      int batchSize, Consumer<List<StoredDocumentIdentity>> batchConsumer) {
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
+    }
+    java.util.Objects.requireNonNull(batchConsumer, "batchConsumer");
+    try {
+      maybeRefreshBlockingIfCommittedSinceRefresh();
+      return bridge.withSearcher(
+          searcher -> {
+            long seen = 0;
+            long emitted = 0;
+            long skipped = 0;
+            List<StoredDocumentIdentity> batch = new ArrayList<>(batchSize);
+            for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
+              SortedDocValues docIds = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_ID);
+              SortedDocValues docUids = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_UID);
+              SortedDocValues isChunks = DocValues.getSorted(leaf.reader(), SchemaFields.IS_CHUNK);
+              var liveDocs = leaf.reader().getLiveDocs();
+              for (int doc = 0; doc < leaf.reader().maxDoc(); doc++) {
+                if (liveDocs != null && !liveDocs.get(doc)) {
+                  continue;
+                }
+                if (isChunks.advanceExact(doc)
+                    && "true".equals(isChunks.lookupOrd(isChunks.ordValue()).utf8ToString())) {
+                  continue;
+                }
+                seen++;
+                if (!docIds.advanceExact(doc) || !docUids.advanceExact(doc)) {
+                  skipped++;
+                  continue;
+                }
+                String docId = docIds.lookupOrd(docIds.ordValue()).utf8ToString();
+                String docUid = docUids.lookupOrd(docUids.ordValue()).utf8ToString();
+                if (docId.isBlank() || docUid.isBlank()) {
+                  skipped++;
+                  continue;
+                }
+                batch.add(new StoredDocumentIdentity(docId, docUid));
+                emitted++;
+                if (batch.size() == batchSize) {
+                  batchConsumer.accept(Collections.unmodifiableList(batch));
+                  batch = new ArrayList<>(batchSize);
+                }
+              }
+            }
+            if (!batch.isEmpty()) {
+              batchConsumer.accept(Collections.unmodifiableList(batch));
+            }
+            return new ParentIdentityScanSummary(seen, emitted, skipped);
+          });
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(
+          IndexRuntimeIOException.Reason.DISK_IO,
+          "Failed to read parent document identities",
+          e);
     }
   }
 }

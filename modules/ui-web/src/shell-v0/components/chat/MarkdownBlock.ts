@@ -984,7 +984,7 @@ export class MarkdownBlock extends JfElement {
        through to .cite-ref's blue and the WEAKEST tier wore the STRONGEST tier's color. The mark now
        speaks the sentence body's own tier vocabulary (none / secondary / warning, see .cite-sentence
        above), so mark and underline agree. The token is the warning role's TEXT member, not the fill
-       the body's border uses: check-accent-as-text forbids an --accent-* fill as a text color, and
+       the body's border uses: an --accent-* fill is not a text color, and
        --text-warning is the AA-checked foreground of the same role (sv3 bridges both to
        --warning-foreground, so the two are literally one color there). */
     .cite-ref.cite-ungrounded {

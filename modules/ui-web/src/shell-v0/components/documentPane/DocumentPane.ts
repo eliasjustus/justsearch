@@ -843,8 +843,8 @@ export class DocumentPane extends JfElement {
     }
     /* Tempdoc 596 face 1.1 — this is a SOFT block (aria-disabled, not native disabled): the button
        stays focusable and its title reason stays reachable via hover/focus. A native disabled
-       button suppresses its own title tooltip (596 §1.1) — the exact defect the controls-a11y gate's
-       title-on-disabled check flags. */
+       button suppresses its own title tooltip (596 §1.1) — the exact defect the retired
+       controls-a11y gate's title-on-disabled check used to flag. */
     .toggle-btn[aria-disabled='true'] {
       opacity: 0.5;
       cursor: not-allowed;
