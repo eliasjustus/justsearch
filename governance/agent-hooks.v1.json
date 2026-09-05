@@ -561,6 +561,10 @@
           {
             "hookId": "mcpb-repack-hint",
             "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
+          },
+          {
+            "hookId": "intervene",
+            "if": "Edit(docs/tempdocs/**)|Write(docs/tempdocs/**)"
           }
         ]
       },
