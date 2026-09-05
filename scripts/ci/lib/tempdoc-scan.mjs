@@ -257,8 +257,16 @@ export function divergentInFlightCollisions(claims) {
   for (const [n, byName] of [...claims.entries()].sort((a, b) => Number(a[0]) - Number(b[0]))) {
     // basenames for N that are NOT present on origin (in-flight additions only), and that are
     // TEMPDOCS — a basename claimed only by `:gates/<id>` labels is a changeset (see above).
+    // The `<N>-evidence` sidecar (tempdoc 930 §18.1 row 8 / §19.3 F4, check-tempdoc-size.mjs) is
+    // EXEMPT the same way a changeset is: its name is dictated by convention (bulk-evidence
+    // sidecar for tempdoc N), not a free choice, so a worktree adding it alongside N's existing
+    // main file is a companion directory, not a competing identity for N — the same tempdoc split
+    // across two worktrees is one claim, not two.
     const newBasenames = [...byName.entries()].filter(
-      ([, labels]) => ![...labels].some(isOrigin) && [...labels].some((l) => !isChangesetLabel(l)),
+      ([name, labels]) =>
+        name !== `${n}-evidence` &&
+        ![...labels].some(isOrigin) &&
+        [...labels].some((l) => !isChangesetLabel(l)),
     );
     if (newBasenames.length < 2) continue; // 0/1 distinct in-flight basename -> no divergent claim.
     // Compare by WORKTREE, not by label: the same tempdoc checked out in several worktrees is one

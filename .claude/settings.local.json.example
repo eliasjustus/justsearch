@@ -403,6 +403,14 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/mcpb-repack-hint.mjs"
             ],
             "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/intervene.mjs"
+            ],
+            "if": "Edit(docs/tempdocs/**)|Write(docs/tempdocs/**)"
           }
         ]
       },
