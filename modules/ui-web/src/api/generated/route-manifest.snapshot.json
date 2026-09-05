@@ -1,8 +1,8 @@
 {
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
-  "count": 242,
+  "count": 243,
   "namespace": "meta-routes",
-  "routeDigest": "sha256:20af51cd50396b09a92152e45daf256c39d1b891968fbbb1847c074802592043",
+  "routeDigest": "sha256:d282c68bf759eccfa48d472b5fcd6dfde1fca4be6dbcb00606213985fd1dcde8",
   "routes": [
     {
       "method": "GET",
@@ -1646,6 +1646,22 @@
     {
       "method": "POST",
       "path": "/api/indexing/roots",
+      "cohort": "indexing",
+      "owningModule": null,
+      "requiredCapabilities": [
+        "WORKER"
+      ],
+      "responseSchema": null,
+      "stability": null,
+      "sdkOperationId": null,
+      "requestSchema": null,
+      "queryParameters": null,
+      "responseSchemas": null,
+      "lifecycle": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/indexing/settle",
       "cohort": "indexing",
       "owningModule": null,
       "requiredCapabilities": [

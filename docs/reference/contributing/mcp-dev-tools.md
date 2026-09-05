@@ -189,6 +189,7 @@ Both `fetch_api_json` and `api_call` accept `jsonPath`, sharing one implementati
 | `/api/indexing/migration/pause` | POST |
 | `/api/indexing/migration/resume` | POST |
 | `/api/indexing/gc` | POST |
+| `/api/indexing/settle` | POST |
 | `/api/inference/status` | GET |
 | `/api/inference/mode` | POST |
 | `/api/inference/reload` | POST |

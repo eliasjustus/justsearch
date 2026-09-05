@@ -2200,6 +2200,22 @@
         ]
       }
     },
+    "/api/indexing/settle": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Successful response."
+          }
+        },
+        "summary": "POST /api/indexing/settle",
+        "tags": [
+          "indexing"
+        ],
+        "x-required-capabilities": [
+          "WORKER"
+        ]
+      }
+    },
     "/api/indexing/suggested-roots": {
       "get": {
         "responses": {
@@ -3864,8 +3880,8 @@
     }
   },
   "x-justsearch-route-source": {
-    "routeCount": 242,
-    "routeDigest": "sha256:20af51cd50396b09a92152e45daf256c39d1b891968fbbb1847c074802592043"
+    "routeCount": 243,
+    "routeDigest": "sha256:d282c68bf759eccfa48d472b5fcd6dfde1fca4be6dbcb00606213985fd1dcde8"
   },
   "x-justsearch-surface": {
     "classification": "reference-client-structural-inventory",
