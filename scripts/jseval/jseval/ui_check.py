@@ -710,19 +710,6 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                 )
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
-            if view_name == "governance":
-                # Live-only operator evidence: remove first-run chrome, then show the repository
-                # snapshot this step was added to verify rather than only the top of the gate roster.
-                dismiss = page.get_by_role("button", name="Dismiss", exact=True)
-                if await dismiss.count() > 0 and await dismiss.first.is_visible():
-                    await dismiss.first.click()
-                snapshot = page.get_by_role(
-                    "heading", name="Latest local repository snapshot", exact=True
-                )
-                await snapshot.wait_for(state="visible", timeout=10_000)
-                await snapshot.scroll_into_view_if_needed(timeout=5_000)
-                if cooldown_ms > 0:
-                    await asyncio.sleep(cooldown_ms / 1000)
         return setup
 
     async def _goto_surface(page, surface_id: str):
@@ -1906,8 +1893,6 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         "settings",
         "security",
         "help",
-        # Read-only operator dashboard, reached through its off-rail deep link.
-        "governance",
     ]
 
     return [

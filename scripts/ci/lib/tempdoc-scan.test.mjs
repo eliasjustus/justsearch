@@ -162,7 +162,7 @@ try {
   // changeset whose tempdoc it cannot resolve, so an unreadable value was a silent exemption. ---
   run('changeset frontmatter: bare, quoted, BOM-prefixed and long-block values all resolve', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(tmp, 'fm-'));
-    const csDir = path.join(fixtureRoot, 'gates', 'ts-any', '.changesets');
+    const csDir = path.join(fixtureRoot, 'gates', 'dead-code', '.changesets');
     fs.mkdirSync(csDir, { recursive: true });
     const write = (name, body) => fs.writeFileSync(path.join(csDir, name), body, 'utf8');
     // A char code, not a literal: a raw BOM in this source could be stripped by an editor or an
@@ -201,7 +201,7 @@ try {
 
   run('a quoted tempdoc value is still checked for orphanhood, not silently exempted', () => {
     const fixtureRoot = fs.mkdtempSync(path.join(tmp, 'orphan-'));
-    const csDir = path.join(fixtureRoot, 'gates', 'ts-any', '.changesets');
+    const csDir = path.join(fixtureRoot, 'gates', 'dead-code', '.changesets');
     fs.mkdirSync(csDir, { recursive: true });
     fs.writeFileSync(
       path.join(csDir, '907-quoted-orphan.md'),

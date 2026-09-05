@@ -39,7 +39,7 @@ _MIXED_CORPUS_FPS = {
 
 
 def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
-              envelope=None, dataset="beir/scifact", reranker_gpu=True,
+              dataset="beir/scifact", reranker_gpu=True,
               realized_engines=("dense", "reranker", "splade"), gpu_name="RTX 4070"):
     cm = dict(_CONFIG_GLOBAL)
     cm.update(corpus_fps or _SCIFACT_CORPUS_FPS)
@@ -59,7 +59,6 @@ def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
             # must form distinct cohorts so a degraded run can't be averaged with a CE-on baseline.
             "realized_engines": list(realized_engines),
         },
-        "non_determinism_envelope": envelope,
         "env_fingerprint": {"gpu": {"name": gpu_name}},
         "inference_status_snapshot": {
             "tier": "gpu_12gb_plus",
@@ -78,7 +77,7 @@ def _manifest(*, git_sha="commitAAA", corpus_fps=None, embed_gpu=True,
 
 
 def _summary(*, dataset="beir/scifact", git_sha="commitAAA", corpus_fps=None,
-             modes=None, query_count=300, embed_gpu=True, envelope=None, gpu_name="RTX 4070",
+             modes=None, query_count=300, embed_gpu=True, gpu_name="RTX 4070",
              run_metrics=None):
     """modes = {mode_name: {metric: value, ...}}"""
     modes = modes or {"hybrid": {"nDCG@10": 0.758, "P@1": 0.62, "R@10": 0.89}}
@@ -100,7 +99,7 @@ def _summary(*, dataset="beir/scifact", git_sha="commitAAA", corpus_fps=None,
         "run_metrics": run_metrics or {},
         "manifest": _manifest(
             git_sha=git_sha, corpus_fps=corpus_fps, embed_gpu=embed_gpu,
-            envelope=envelope, dataset=dataset, gpu_name=gpu_name,
+            dataset=dataset, gpu_name=gpu_name,
         ),
     }
 
@@ -218,16 +217,12 @@ def test_compose_records_ablations():
     assert any(a["config_mode"] == "full" and a["metrics"]["nDCG@10"] == 0.925 for a in abls)
 
 
-def test_compose_tolerance_band_from_envelope():
-    env = {"metrics": {"hybrid": {"nDCG@10": {"mean": 0.758, "stdev": 0.0011, "n": 5}}}}
-    r = release.compose([_summary(envelope=env)], default_mode="hybrid", composed_at=_AT)
-    band = r["measured"]["beir/scifact"]["tolerance_band"]
-    assert band["nDCG@10"]["two_sigma"] == pytest.approx(0.0022)
-
-
-def test_compose_tolerance_band_none_when_uncalibrated():
-    r = release.compose([_summary(envelope=None)], default_mode="hybrid", composed_at=_AT)
-    assert r["measured"]["beir/scifact"]["tolerance_band"] is None
+def test_compose_carries_no_tolerance_band():
+    # Tempdoc 930 §18.1 row 7: the +/-2 sigma band was projected from a cohort envelope
+    # that was never calibrated, so every composed release recorded `tolerance_band: null`.
+    # The key is gone rather than always-null.
+    r = release.compose([_summary()], default_mode="hybrid", composed_at=_AT)
+    assert "tolerance_band" not in r["measured"]["beir/scifact"]
 
 
 def test_compose_hardware_projection():

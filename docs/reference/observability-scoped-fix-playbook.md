@@ -182,9 +182,9 @@ After shipping:
   is what prevents silent regression. No test → the defect will
   recur.
 - Generalize the fix to adjacent code speculatively. If
-  rate_timeline had the same class of bug as encoder_drift, file
-  a separate D-N entry; a single "fix both at once" commit hides
-  the recurrence signal.
+  rate_timeline had the same class of bug as another projection,
+  file a separate D-N entry; a single "fix both at once" commit
+  hides the recurrence signal.
 - Skip the pillar classification. The classification keeps the
   engineering record crisp.
 - Open a new tempdoc for every instance. Only when the fix scope
@@ -206,8 +206,10 @@ Reference implementations of the pattern already in the codebase:
 
 1. **D-1 fix** (`5bc9bbee3`) — producer-side field addition +
    consumer-side fallback + `TestDurationMsExtractionContract`
-   class in `test_projections_encoder_drift.py`. 8 contract tests
-   pinning shape.
+   class, now in `test_encoder_latency.py` (tempdoc 930 §18.1 row 7
+   moved the reader out of the retired `encoder_drift` projection;
+   the producer-side contract is unchanged). Contract tests pinning
+   shape.
 
 2. **D-3 fix** (`3ece672e1`) — producer-aware consumer logic
    (rotation-aware mirror) + `TestMirrorTelemetryRotatedSiblings`
@@ -239,7 +241,7 @@ pattern. Resist the impulse to generalize prematurely.
 - **Tempdoc 405 §7** — the recommendation that makes this playbook
   the canonical path.
 - **Owning tempdoc's open-items section** — silent-failure log, per route-at-discovery (tempdoc 872; the former `docs/observations.md` silent-failure log is retired, history in git).
-- **`scripts/jseval/tests/test_projections_encoder_drift.py::
+- **`scripts/jseval/tests/test_encoder_latency.py::
   TestDurationMsExtractionContract`** — reference contract-test
   template.
 - **`scripts/jseval/tests/test_projections_rate_timeline.py::

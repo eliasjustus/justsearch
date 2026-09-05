@@ -632,10 +632,6 @@ public class LocalApiServer {
         convApi.agentToolsController());
     // Tempdoc 834 §1.6 — the run-stream family (POST managed SSE, already token-covered).
     RunRoutes.register(app, convApi.runStreamController(), convApi.agentSessionController());
-    // Tempdoc 530 Layer 4 §4.2: surface the discipline-gate kernel's latest
-    // SARIF as flat JSON for UI consumers. Read-only; doesn't run gates.
-    GovernanceStateController governanceStateController = new GovernanceStateController();
-    app.get("/api/governance/state", governanceStateController::handle);
     // Tempdoc 583 §D.2a/§D.3: the /api/meta/* self-description family (route manifest + OpenAPI) is
     // bound by MetaApiModule via the apiModules loop below — not inline here (dogfoods the seam).
     // Tempdoc 526 §4.2 — typed DocumentAddress → canonical-coordinate translator.
