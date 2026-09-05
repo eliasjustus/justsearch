@@ -526,21 +526,6 @@ public final class IndexCountOps {
     }
   }
 
-  /**
-   * The reader's {@code maxDoc} — live documents PLUS deleted-but-unmerged ones (tempdoc 931 §E
-   * item 8). Paired with {@link #docCount()} ({@code numDocs}) it makes merge state observable: the
-   * difference is the deleted-document backlog a merge has not reclaimed yet, which an evaluator
-   * needs to tell "the corpus shrank" apart from "the index has not merged yet".
-   *
-   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
-   */
-  public long maxDoc() {
-    try {
-      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
-    } catch (IOException e) {
-      log.debug("Failed to read maxDoc: {}", e.getMessage());
-      return 0;
-    }
   }
 
   /**
