@@ -13,12 +13,10 @@ import path from 'node:path';
 import {
   shouldBlockHotFile,
   shouldCapExplicitLimit,
-  getOtherPathsWithSameBasename,
   tempdocNumberFromPath,
   tempdocSizeHint,
 } from './intervene.mjs';
 import { CAP_LINES } from '../../ci/check-tempdoc-size.mjs';
-import { telemetryDir } from '../lib/hook-base.mjs';
 
 let passed = 0;
 const failures = [];
@@ -104,46 +102,6 @@ try {
   });
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-}
-
-// --- getOtherPathsWithSameBasename (tempdoc 727 F-7a): reads the basename index a real
-// trackRead() call would have written; tests the reader's contract against a synthetic cache
-// file rather than exercising the private writer directly.
-{
-  const sessionId = `intervene-test-${process.pid}-${Date.now()}`;
-  const cacheFile = path.join(telemetryDir, `read-counts-${sessionId}.json`);
-  // telemetryDir is real per-session hook state, not an injectable path — don't leave an
-  // empty dir behind for a fresh checkout/worktree that never had one.
-  const telemetryDirPreexisted = fs.existsSync(telemetryDir);
-  fs.mkdirSync(telemetryDir, { recursive: true });
-  try {
-    const synthetic = {
-      'f:/repo/tempdoc.md': { total: 1, unbounded: 1 },
-      'f:/repo/.claude/worktrees/x/tempdoc.md': { total: 1, unbounded: 1 },
-      _byBasename: {
-        'tempdoc.md': ['f:/repo/tempdoc.md', 'f:/repo/.claude/worktrees/x/tempdoc.md'],
-      },
-    };
-    fs.writeFileSync(cacheFile, JSON.stringify(synthetic));
-
-    run('cross-root basename match found', () => {
-      const others = getOtherPathsWithSameBasename(sessionId, 'f:/repo/.claude/worktrees/x/tempdoc.md');
-      assert.deepEqual(others, ['f:/repo/tempdoc.md']);
-    });
-    run('no other path → empty array, not null', () => {
-      const others = getOtherPathsWithSameBasename(sessionId, 'f:/repo/only-one.md');
-      assert.deepEqual(others, []);
-    });
-    run('unknown session → empty array', () => {
-      const others = getOtherPathsWithSameBasename('no-such-session', 'f:/repo/tempdoc.md');
-      assert.deepEqual(others, []);
-    });
-  } finally {
-    fs.rmSync(cacheFile, { force: true });
-    if (!telemetryDirPreexisted) {
-      try { fs.rmdirSync(telemetryDir); } catch { /* not empty — another writer landed there first, leave it */ }
-    }
-  }
 }
 
 // --- tempdocNumberFromPath (tempdoc 930 §18.1 row 8 / §19.3 F4) ---

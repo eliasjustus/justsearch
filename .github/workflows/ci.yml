@@ -218,14 +218,6 @@ jobs:
       - name: ui-web gate runner parses the whole recipe
         run: node scripts/ci/run-ui-web-gates.test.mjs
 
-      # Tempdoc 872: expected-state pins are dated exceptions with exits. Checked here: every
-      # pin declares an exit (exitProbe and/or reviewBy) and none is past its reviewBy — so
-      # the known-state-hint cannot deliver a claim nobody has re-affirmed. exitProbes are
-      # `slow:` and run only locally (`--slow`); a pin past reviewBy turns this step red for
-      # every PR by design — re-affirm it with evidence or delete it.
-      - name: expected-state pins declare an exit and are not expired
-        run: node scripts/agent-analytics/expected-state-probe.mjs --gate
-
       # Tempdoc 872: the observations inbox is retired; a shard from a session still on the
       # old brief would otherwise land unread. Fail legibly, with the routing remedy.
       - name: no observations shards (inbox retired)
@@ -303,8 +295,8 @@ jobs:
       #                  have inspected nothing -- the first version of this step did exactly that
       #                  and logged three `snapshot-missing` warnings as part of a green. They now
       #                  run in the unit-tests app-ui lane, after the task that builds the snapshot.
-      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
-      #                  (countAny scores the English word "any"); wiring a known red would make
+      #   - ts-any       a known red on `main` (tempdoc 930 retired the expected-state pin that
+      #                  recorded it: countAny scores the English word "any"); wiring a known red would make
       #                  every PR red for a reason no PR caused. Wire it with the counting fix.
       #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
       #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
@@ -356,8 +348,8 @@ jobs:
       #
       # These three are input-free (they read the register JSONs + walk the source tree, no
       # produced artifact), so they cost nothing to run here. Scoped to the register family
-      # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
-      # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
+      # implicated by D1 rather than "the rest of the kernel": ts-any is a known red on main,
+      # and `wire` is environment-sensitive (needs the buf CLI installed),
       # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
       #
       # Census (corrected by review of #617 -- the first count missed the six kernel gates the
@@ -376,7 +368,7 @@ jobs:
       # `contracts/**` either, so a breaking .proto change had nothing to stop it. It is wired with
       # its install rather than without, because `buf` absent is not a failure in this gate -- it
       # emits `contract-governance/buf-cli-missing` and still returns verdict `pass`
-      # (expected-state pin `wire-gate-buf-cli-missing` documents exactly this fail-open). A step
+      # (a deliberate fail-open, formerly recorded as an expected-state pin). A step
       # that ran the gate without installing buf would be a permanent green that inspects nothing.
       # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
       - name: Wire contract gate (protobuf breaking changes)

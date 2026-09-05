@@ -23,26 +23,54 @@ const MANIFEST_PATH = path.join(repoRoot, 'governance', 'agent-hooks.v1.json');
 // live in Claude; omission here is explicit rather than a silent no-op.
 export const CODEX_EXCLUDED_HOOKS = new Map([
   ['subagent-model-guard', 'Codex uses project agent roles and inherited/default model configuration, not Claude model aliases.'],
-  ['spawn-cost-hint', 'Codex rollout lineage does not currently expose a reliable completed-spawn-to-parent-tool join.'],
-  ['taskcreate-guard', 'TaskCreate is a Claude-only tool shape.'],
 ]);
 
 const PATH_SENSITIVE_HOOKS = new Set([
   'intervene',
-  'consult-doc-hint',
   'docs-regen-hint',
   'ssot-hint',
-  'ui-shot-hint',
-  'test-edit-hint',
-  'stress-test-hint',
-  'seam-hint',
-  'search-engine-hint',
   'mcpb-repack-hint',
   'lockfile-hint',
-  'governance-hint',
-  'tempdoc-age-hint',
-  'edit-reread-hint',
 ]);
+
+// Force-push refusal, Codex side only. Claude gets this from native `permissions.deny`
+// (`.claude/settings.json`), which has no Codex equivalent — without this the retirement of
+// the Bash guard (tempdoc 930 row 4) would leave Codex unprotected. Deliberately stateless
+// and token-exact: the retired guard's regex matched `[^"']*` across `&&` and blocked
+// `git push -u … && gh workflow run -f sign=true`, which was 3 of its 4 force-push blocks.
+const FORCE_FLAGS = new Set(['--force', '--force-with-lease', '-f']);
+
+/** Drop quoted spans so a command message or `echo "git push --force"` cannot trigger. */
+function stripQuotedSpans(command) {
+  return command.replace(/"(?:[^"\\]|\\.)*"/g, ' ').replace(/'[^']*'/g, ' ');
+}
+
+/**
+ * The refusal reason for a shell command that force-pushes, or null.
+ * Segments are split on shell separators (quotes already removed, so a separator inside a
+ * string does not split), and only a segment whose own first two tokens are `git push` is
+ * examined — a later segment's `-f` belongs to that segment's command, not to git.
+ */
+export function forcePushRefusal(command) {
+  if (typeof command !== 'string' || command.trim() === '') return null;
+  for (const raw of stripQuotedSpans(command).split(/\|\||&&|[;|\r\n]/)) {
+    const tokens = raw.trim().split(/\s+/).filter(Boolean);
+    if (tokens[0] !== 'git' || tokens[1] !== 'push') continue;
+    for (const token of tokens.slice(2)) {
+      if (FORCE_FLAGS.has(token) || token.startsWith('--force-with-lease=')) {
+        return `Force push is blocked: \`${token}\` rewrites shared remote history. `
+          + 'Catch a pushed branch up to a moving base with `git merge`, not `git rebase` '
+          + '(.claude/rules/agent-lessons.md). Recover a bad rebase with '
+          + '`git reset --hard origin/<your-branch>`, then merge.';
+      }
+      if (token.length > 1 && token.startsWith('+')) {
+        return `Force push is blocked: the refspec \`${token}\` is a force push in another spelling. `
+          + 'Push without the leading `+`, or merge the base in first.';
+      }
+    }
+  }
+  return null;
+}
 
 export function patchTargets(command) {
   if (typeof command !== 'string') return [];
@@ -222,6 +250,14 @@ async function main() {
     denials: [], blocks: [], context: [], systemMessages: [],
     permissionDecision: null, permissionDecisionReason: null, updatedInput: null, continue: true,
   };
+
+  if (input.hook_event_name === 'PreToolUse' && normalizedToolName(input.tool_name) === 'Bash') {
+    const refusal = forcePushRefusal(input.tool_input?.command);
+    if (refusal) {
+      process.stderr.write(refusal);
+      process.exit(2);
+    }
+  }
 
   for (const group of groups) {
     if (!matcherMatches(group.matcher, input.tool_name)) continue;

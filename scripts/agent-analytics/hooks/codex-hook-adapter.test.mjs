@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   buildResponse,
   extractExitCode,
+  forcePushRefusal,
   matcherMatches,
   patchTargets,
   toolAliases,
 } from './codex-hook-adapter.mjs';
-import { editedFiles } from './maintain-doc-hint.mjs';
-import { lastCodexContext, nextCodexThreshold } from './context-ceiling-hint.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..', '..');
@@ -74,53 +71,76 @@ test('combines context and rewrite fields into one Codex response', () => {
   assert.deepEqual(response.hookSpecificOutput.updatedInput, { sessionId: 's1' });
 });
 
-test('maintain-doc transcript reader accepts Codex FileChange items', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-codex-hook-'));
-  try {
-    const transcript = path.join(dir, 'rollout.jsonl');
-    fs.writeFileSync(transcript, JSON.stringify({
-      type: 'event_msg',
-      payload: {
-        type: 'item_completed',
-        item: { type: 'FileChange', changes: { 'modules/ui-web/src/shell-v0/probe.ts': { type: 'add' } } },
-      },
-    }) + '\n');
-    assert.deepEqual([...editedFiles(transcript)], ['modules/ui-web/src/shell-v0/probe.ts']);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+// The Codex-side force-push refusal (930 E1 follow-up). Claude gets this from native
+// `permissions.deny`; Codex has no such mechanism, so the adapter carries it.
+test('forcePushRefusal: token-exact, quote-stripped, per-segment', () => {
+  const blocked = [
+    'git push --force origin main',
+    'git push -f',
+    'cd modules/ui-web && git push -f',
+    'git push origin +HEAD:main',
+    'git push --force-with-lease origin main',
+    'git push --force-with-lease=refs/heads/main origin main',
+    'npm test; git push --force',
+  ];
+  for (const cmd of blocked) {
+    assert.ok(forcePushRefusal(cmd), `expected a refusal for: ${cmd}`);
+  }
+  const allowed = [
+    'git push -u origin feature && gh workflow run ci.yml -f sign=true',
+    'echo "git push --force"',
+    "echo 'git push --force'",
+    'git push origin main',
+    'git commit -m "do not force push" && git push',
+    'gh workflow run build-installer.yml -f tag=v1',
+    'git log --oneline -f',
+    '',
+  ];
+  for (const cmd of allowed) {
+    assert.equal(forcePushRefusal(cmd), null, `expected no refusal for: ${cmd}`);
   }
 });
 
-test('context ceiling reads Codex token snapshots and applies ratio thresholds', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-codex-context-'));
-  try {
-    const transcript = path.join(dir, 'rollout.jsonl');
-    fs.writeFileSync(transcript, JSON.stringify({
-      type: 'event_msg',
-      payload: {
-        type: 'token_count',
-        info: { last_token_usage: { input_tokens: 230_000 }, model_context_window: 250_000 },
-      },
-    }) + '\n');
-    const snapshot = lastCodexContext(transcript);
-    assert.deepEqual(snapshot, { contextTokens: 230_000, contextWindow: 250_000 });
-    assert.equal(nextCodexThreshold(snapshot, {}).key, 'codexNotified90');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('end-to-end adapter preserves the force-push guard', () => {
-  const result = spawnSync(process.execPath, [ADAPTER], {
+/** Drive the adapter end-to-end on one PreToolUse shell command. */
+function adapterOnCommand(command, label) {
+  return spawnSync(process.execPath, [ADAPTER], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     input: JSON.stringify({
       hook_event_name: 'PreToolUse',
-      session_id: `codex-adapter-test-${process.pid}`,
+      session_id: `codex-adapter-${label}-${process.pid}`,
       tool_name: 'Bash',
-      tool_input: { command: 'git push --force origin main' },
+      tool_input: { command },
     }),
   });
+}
+
+test('end-to-end adapter refuses a plain force push', () => {
+  const result = adapterOnCommand('git push --force origin main', 'force');
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Force push is blocked/);
+});
+
+test('end-to-end adapter allows a -f flag belonging to a later segment', () => {
+  const result = adapterOnCommand('git push -u origin feature && gh workflow run ci.yml -f sign=true', 'gh-f');
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stderr, /Force push is blocked/);
+});
+
+test('end-to-end adapter allows a force-push spelling inside a quoted string', () => {
+  const result = adapterOnCommand('echo "git push --force"', 'quoted');
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stderr, /Force push is blocked/);
+});
+
+test('end-to-end adapter refuses the + refspec spelling', () => {
+  const result = adapterOnCommand('git push origin +HEAD:main', 'refspec');
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Force push is blocked/);
+});
+
+test('end-to-end adapter refuses a force push in a later compound segment', () => {
+  const result = adapterOnCommand('cd modules/ui-web && git push -f', 'compound');
   assert.equal(result.status, 2);
   assert.match(result.stderr, /Force push is blocked/);
 });

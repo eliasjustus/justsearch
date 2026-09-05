@@ -122,12 +122,10 @@ record. For later diagnosis, the same count remains a useful end-to-end probe.
 ## Hook coverage
 
 Codex hooks are repository-governed: edit `governance/agent-hooks.v1.json` and
-regenerate `.codex/hooks.json`, never hand-edit it. The shared context-ceiling
-hint reads Codex rollout `token_count` events and warns at 75% and 90% of the
-reported model context window. `spawn-cost-hint` remains Claude-only because
-Codex rollouts do not expose a reliable parent-tool-to-spawn transcript join;
-aggregate Codex multi-agent economics remain available through the neutral
-ledger reports.
+regenerate `.codex/hooks.json`, never hand-edit it. Codex rollouts do not
+expose a reliable parent-tool-to-spawn transcript join, so per-spawn cost
+attribution is Claude-only; aggregate Codex multi-agent economics remain
+available through the neutral ledger reports.
 
 ## References
 

@@ -2,12 +2,11 @@
 /**
  * Tempdoc 727: batch friction/timewaste miner over local Claude Code session transcripts.
  *
- * Sibling to evaluate-session.mjs (which judges task COMPLETION) — this judges PROCESS
- * friction instead: what wasted turns/tokens/time during a session, independent of whether
- * the task ultimately succeeded. Reuses the same condense-then-judge-via-headless-CLI shape
- * as evaluate-session.mjs, with a different rubric and a friction-tuned condenser (keeps
- * more error/hook-block/warning content; evaluate-session.mjs deliberately hides process
- * signals from its judge to avoid anchoring the completion verdict on them).
+ * Judges PROCESS friction: what wasted turns/tokens/time during a session, independent of
+ * whether the task ultimately succeeded. Condense-then-judge-via-headless-CLI, with a
+ * friction-tuned condenser that keeps error/hook-block/warning content. (It once had a
+ * task-COMPLETION sibling, evaluate-session.mjs; tempdoc 930 deleted that script — no
+ * invoker since 2026-07 — so this is now the only judge in the lane.)
  *
  * Reads raw transcripts directly from the local Claude Code projects directory (these are
  * NOT the same as tmp/agent-telemetry/events.ndjson — they're the full JSONL conversation

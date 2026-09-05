@@ -26,7 +26,7 @@
  * `--session-id` is an escape hatch for headless/cron contexts where neither
  * env var is set.
  *
- * Read-only w.r.t. git (rev-parse + log); append-only telemetry. bash-guard safe.
+ * Read-only w.r.t. git (rev-parse + log); append-only telemetry. Non-destructive.
  */
 
 import fs from 'node:fs';
