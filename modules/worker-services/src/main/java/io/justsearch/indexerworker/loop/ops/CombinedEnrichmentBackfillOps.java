@@ -161,9 +161,11 @@ public final class CombinedEnrichmentBackfillOps {
       int batchSize,
       Logger log,
       boolean chunkVectorsEnabled,
-      // Tempdoc 712: encode chunk docs' chunk_content into the splade FeatureField so the
-      // chunk-merge sparse sub-leg (searchChunksSplade) has data. Default false — flag-off keeps
-      // the historical behavior of marking chunk docs' splade_status COMPLETED without encoding.
+      // Tempdoc 712: encode chunk docs' text into the splade FeatureField so the chunk-merge
+      // sparse sub-leg (searchChunksSplade) has data. Default false. Flag off, a chunk is not a
+      // SPLADE candidate at all: it is neither selected on splade_status nor enrolled nor
+      // rewritten, and the PENDING its writer stamped is left standing so flipping the flag on
+      // picks it up (tempdoc 931 — no status is COMPLETED/FAILED for a stage that never ran).
       boolean chunkSpladeEnabled,
       boolean lateChunkingEnabled,
       // Tempdoc 710 Wave-1.5 Move 4 item 2: was the bare `chunkSlotsPerBatch = 50` local literal
@@ -325,13 +327,27 @@ public final class CombinedEnrichmentBackfillOps {
                       Integer.MAX_VALUE));
         }
         if (spladeAvailable) {
+          // ChunkDocumentWriter stamps splade_status=PENDING on every chunk whatever the
+          // chunk-SPLADE flag says, so with the flag off that status is not a work signal: the
+          // stage will never run for those documents, and selecting them hands each batch slots it
+          // can only rewrite. Excluding them here is what makes the pass converge — a selected
+          // chunk with no runnable stage is neither progress nor terminal, so the tight loop's
+          // `progressed` continue-condition goes false while the population never shrinks
+          // (tempdoc 931: 4,632 rewrite-only escalations across 231 zero-advancement cycles).
           allPending.addAll(
-              context
-                  .documentFieldOps()
-                  .queryDocIdsByField(
-                      SchemaFields.SPLADE_STATUS,
-                      SchemaFields.SPLADE_STATUS_PENDING,
-                      Integer.MAX_VALUE));
+              context.chunkSpladeEnabled()
+                  ? context
+                      .documentFieldOps()
+                      .queryDocIdsByField(
+                          SchemaFields.SPLADE_STATUS,
+                          SchemaFields.SPLADE_STATUS_PENDING,
+                          Integer.MAX_VALUE)
+                  : context
+                      .documentFieldOps()
+                      .queryNonChunkDocIdsByField(
+                          SchemaFields.SPLADE_STATUS,
+                          SchemaFields.SPLADE_STATUS_PENDING,
+                          Integer.MAX_VALUE));
         }
         if (nerAvailable) {
           allPending.addAll(
@@ -484,7 +500,11 @@ public final class CombinedEnrichmentBackfillOps {
               }
               updates.putAll(escalation);
             }
-            if (spladeAvailable && SchemaFields.SPLADE_STATUS_PENDING.equals(chunkSpladeStatus)) {
+            // Same flag gate as the enrollment below: with chunk SPLADE off the stage never ran,
+            // so it has no retry seam to escalate and no FAILED to claim.
+            if (spladeAvailable
+                && context.chunkSpladeEnabled()
+                && SchemaFields.SPLADE_STATUS_PENDING.equals(chunkSpladeStatus)) {
               Map<String, Object> escalation =
                   SpladeBackfillOps.computeSpladeFailureUpdate(
                       parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
@@ -502,28 +522,20 @@ public final class CombinedEnrichmentBackfillOps {
             embedContents.add(chunkContent);
             chunkIdsInBatch.add(docId);
           }
-          if (spladeAvailable && chunkSpladeStatus != null) {
-            if (context.chunkSpladeEnabled()) {
+          // Flag off, the SPLADE stage does not apply to a chunk at all: it is not enrolled and its
+          // status is left exactly as written. Escalating it instead (retry-bump, FAILED at max)
+          // was rewrite-without-advance — the pass's non-convergence, and a FAILED poison pill for
+          // a stage that was never attempted. PENDING is also the reversible state: flip the flag
+          // on and the very next cycle picks the chunk up.
+          if (spladeAvailable && chunkSpladeStatus != null && context.chunkSpladeEnabled()) {
             // Enroll on PENDING, and also on COMPLETED: this lane's own RMW cannot carry splade
             // postings it does not re-derive — omitting splade here would destroy the data and
             // reset-status it back to PENDING (WritePathOps rmwPolicy lane, tempdoc 711), costing
             // a full destroy → re-queue → re-encode cycle. Re-encoding into the same bundled
             // write is strictly cheaper. FAILED is respected (poison-pill).
-              if (!SchemaFields.SPLADE_STATUS_FAILED.equals(chunkSpladeStatus)) {
-                spladeDocIds.add(docId);
-                spladeContents.add(chunkContent);
-              }
-            } else if (SchemaFields.SPLADE_STATUS_PENDING.equals(chunkSpladeStatus)) {
-              // Flag-off chunks have no sparse artifact to write. Keep the historical retry/fail
-              // seam instead of claiming a data-less COMPLETED state.
-              Map<String, Object> escalation =
-                  SpladeBackfillOps.computeSpladeFailureUpdate(
-                      parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
-              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) {
-                blankContentTerminal++;
-                spladeTerminalFailures.add(docId + "(chunk-splade-disabled)");
-              }
-              updatesByDocId.get(docId).putAll(escalation);
+            if (!SchemaFields.SPLADE_STATUS_FAILED.equals(chunkSpladeStatus)) {
+              spladeDocIds.add(docId);
+              spladeContents.add(chunkContent);
             }
           }
           continue;
@@ -563,25 +575,18 @@ public final class CombinedEnrichmentBackfillOps {
             updates.putAll(escalation);
           }
           if (spladeAvailable && SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus)) {
-            // A splade-PENDING doc with no reconstructed text is a chunk doc picked up via the
-            // splade-status query. With chunk-SPLADE on (tempdoc 712) its parent slice is encoded
-            // here and lands in this doc's bundled write.
-            // Flag-off there is nothing to encode, so the stage escalates like any other
-            // artifact-less outcome rather than claiming COMPLETED with no postings.
-            String chunkContent = contentByDocId.get(docId);
-            if (context.chunkSpladeEnabled() && chunkContent != null && !chunkContent.isBlank()) {
-              spladeDocIds.add(docId);
-              spladeContents.add(chunkContent);
-            } else {
-              Map<String, Object> escalation =
-                  SpladeBackfillOps.computeSpladeFailureUpdate(
-                      parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
-              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) {
-                blankContentTerminal++;
-                spladeTerminalFailures.add(docId + "(blank-content)");
-              }
-              updates.putAll(escalation);
+            // No text means no postings can be produced. A chunk never reaches here — the IS_CHUNK
+            // branch above owns every chunk and reconstructs its slice from the parent — so this is
+            // a parent whose CONTENT read came back blank, escalated like any other artifact-less
+            // outcome rather than claiming COMPLETED with no postings.
+            Map<String, Object> escalation =
+                SpladeBackfillOps.computeSpladeFailureUpdate(
+                    parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
+            if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) {
+              blankContentTerminal++;
+              spladeTerminalFailures.add(docId + "(blank-content)");
             }
+            updates.putAll(escalation);
           }
           continue;
         }
