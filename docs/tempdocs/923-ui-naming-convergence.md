@@ -1,9 +1,9 @@
 ---
 title: "UI naming convergence: Detailed mode and canonical Ask"
 type: tempdocs
-status: complete
+status: active
 created: 2026-09-03
-updated: 2026-09-04
+updated: 2026-09-05
 parent: 893-hygiene-registers
 related:
   - 504-systematic-ux-audit
@@ -167,3 +167,55 @@ authority persists one origin client ID and sequence, allocates with Web Locks, 
 allocation and the network request with the same aborting timeout. Reload and deliberately held-lock
 regressions passed. The reviewer then reported no remaining release objection and judged the reviewed
 scope release-ready.
+
+## Capability-realization closure plan
+
+The 2026-09-05 realization pass found no new product-design decision, but it did find four places
+where the implemented capability was not yet fully exercised or described through its intended
+development paths. This follow-up closes those gaps without changing the compatible `advanced` wire
+value or publishing the branch.
+
+- [x] Catch the worktree up to `origin/main` and run the mandatory post-merge compile gate.
+- [x] Add a production-stack HTTP contract proving the mode-intent header survives the real CORS,
+  security-filter, route, controller, whole-document store, stale-intent, and restart path while an
+  unrelated setting is preserved.
+- [x] Register the shared `uiModeState` authority in the UI affected-step index so changes to the
+  authority select every user-visible projection that depends on it; prove the affected-step query
+  is non-empty and run the selected captures with measurement evidence.
+- [x] Reconcile canonical and developer-facing prose: all three mode controls are top bar, Settings,
+  and Brain; **Detailed** is the product label while `advanced` remains a compatibility identifier.
+- [ ] Run targeted backend and frontend tests, frontend typecheck/unit tests, documentation
+  regeneration and drift checks, UI coverage and affected captures, then retry the post-merge suite
+  once concurrent Gradle pressure subsides. Record any unrelated baseline failure rather than
+  weakening its test.
+- [ ] Perform a fresh refute-first review of the final diff, fix every in-scope finding, and commit a
+  self-contained closeout whose tempdoc evidence is sufficient for another agent.
+
+Publishing, opening a pull request, enqueueing, and merging are explicitly excluded from this pass.
+
+### Closure evidence in progress
+
+- `UiModeIntentHttpContractTest` passed through a real loopback `LocalApiServer`. It verifies the
+  CORS preflight admits `X-JustSearch-UI-Mode-Intent`, sends `simple:1`, `advanced:2`, then a stale
+  `simple:1` request carrying `theme: dark`, and confirms both the immediate GET and a fresh-server
+  GET retain `mode: advanced` plus the unrelated theme patch.
+- The `uiModeState.ts` affected-step row is the exact deduplicated union of the seven direct
+  consumer rows: 51 expected and 51 registered, with no missing or extra step. The UI-step coverage,
+  baseline-schema, and jseval index tests passed.
+- Targeted captures for `home`, `settings`, `ai-brain`, `ai-brain-advanced`, `chat-bands`, and
+  `chat-bands-detailed` produced PNG and measurement companions under
+  `tmp/ui-shot/923-closure/`. All six had zero axe violations and no overflow. The Brain fixtures
+  still emit two real console diagnostics (an unnamed `jf-control` self-check and a timed-out DOM
+  transition); those are retained as capture evidence and are not presented as clean console runs.
+- The full accessibility gate passed all 20 registered surfaces with no new violation, and the full
+  proportion gate reported every geometric constraint held.
+- Frontend typecheck passed. The unit suite passed 6,285 tests and hit only the two recorded cold-load
+  timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated rerun
+  passed all 35 tests. The complete `:modules:ui:test` task, including the new HTTP contract, passed.
+- Documentation regeneration and all five canonical drift checks passed. The wording sweep now
+  reserves **Detailed** for the product disclosure mode while retaining `advanced` only where it is
+  a wire value, internal identifier, or exact historical label.
+- Standards challenge: the WHATWG Fetch Standard confirms that a non-safelisted request header is
+  preflight-relevant and checked against `Access-Control-Allow-Headers`; the W3C Web Locks draft
+  confirms exclusive same-name locks prevent another context from acquiring that lock concurrently.
+  Those are the two platform properties the HTTP preflight and cross-window sequence design rely on.

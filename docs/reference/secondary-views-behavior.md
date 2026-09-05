@@ -527,7 +527,8 @@ The `ui.mode` setting (`'simple'` default / `'advanced'`) gates features across 
 | Settings | All 6 sections visible | _(no difference)_ |
 | Health | Full dashboard | _(no difference)_ |
 
-The toggle lives in Settings → Interface and the Brain surface header; both project the same live `uiModeState` value.
+The toggle lives in the top bar, Settings → Interface, and the Brain surface header; all three
+controls project the same live `uiModeState` value.
 
 ### ConfirmDialog pattern
 
