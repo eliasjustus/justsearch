@@ -386,6 +386,38 @@ discovery safeguards, not cosmetic cleanup. Body size is a different axis: progr
 keeps it out of the initial catalog, but a selected 90k-token skill can still dominate the task
 context and manual tool-read paths visibly truncate it.
 
+### Caught-up publication-candidate rerun (2026-09-05)
+
+Rebasing the implementation onto the then-current `origin/main` changed the current skill files
+used as proof targets without changing the fixed transcript population. The pre-rebase figures
+above therefore remain dated evidence, but they are not the current-file baseline for the
+publication candidate. Two complete schema-v2 reports from the caught-up candidate matched
+byte-for-byte in memory and produced the following current baseline:
+
+- Native inventory: 28 present, Git-tracked, `HEAD`-matching skills in each harness. Codex has
+  633,762 skill characters, 5,868 description characters, and a 7,154-character catalog-field
+  lower bound. Claude has 638,698, 5,863, and 7,149 respectively. Both have four explicit-only
+  skills and no invalid metadata.
+- Concentration: Codex `search-quality` is 377,110 characters and `inference-runtime` is 112,392;
+  together they are 77.2% of the current native Codex skill body surface.
+- Corpus: 768 active/archive fragments existed as of the cutoff; 201 fragments contributed
+  20,522 exchanges from 185 matching-project session ids. The audit found 820 targeted exchanges,
+  1,071 harness-qualified skill-path attempts, and 142 sessions with attempts.
+- Classifications: 59 exact current-file proofs (5.5%), 204 explicitly truncated results (19.0%),
+  287 intentional partial reads (26.8%), 247 ambiguous batches (23.1%), zero missing outputs, and
+  274 unproven historical/current mismatches (25.6%). These remain delivery observations, not
+  native-loader selection, attention, adherence, or task-success measurements.
+- `codex-cli:search-quality`: 210 attempts in 24 sessions, zero exact current-file proofs and 48
+  truncated results across 18 sessions. `codex-cli:inference-runtime`: 51 attempts in 10 sessions,
+  zero exact proofs and 16 truncated results across eight sessions.
+- Coverage diagnostics remained clean: two available source roots; zero missing/error roots,
+  unreadable fragments, malformed lines, omitted untimestamped starts, indeterminate untimestamped
+  outputs, surviving duplicate copies, or quarantined conflicting copies for this cutoff.
+
+The changed proof counts are expected under the declared proof target: exact containment compares
+historical output with the current local harness-specific file. They reinforce why a non-match is
+`unproven`, not evidence that a historical read was incomplete.
+
 ## First implementation verification
 
 - `node scripts/agent-analytics/skill-delivery.test.mjs` — 11 passed.
@@ -480,6 +512,30 @@ Two boundaries remain deliberate rather than broken wiring: there is no event th
 skill-loader selection or model attention, and a full uncached transcript scan is too expensive
 for a hook/per-turn gate. The deferred paired pilot remains the next evidence-producing decision;
 no current skill should be slimmed solely from these observational counts.
+
+## Publication-candidate verification (2026-09-05)
+
+The branch was rebuilt on the then-current `origin/main` before publication. The caught-up
+candidate passed `gradlew build -x test`, the complete `gradlew test`, web-enabled `assemble`, and
+all three exact publish-manifest unit-test partitions. Agent analytics passed all 51 registered
+test files, governance passed all 30 registered test files, and the documentation, Codex parity,
+workflow-trigger, tempdoc-collision, agent-instruction-sync, always-loaded-budget, prompt-surface,
+and publish-preflight classification checks were green. The jseval suite passed 2,819 tests with
+84 skips under the configured Python 3.12 runtime.
+
+Two host-specific preflight defects were kept separate from product evidence:
+
+- The local preflight wrapper invokes manifest `./gradlew.bat` commands through `cmd.exe`, which
+  rejects the POSIX-style prefix on Windows. Every remaining manifest command was run directly
+  with the equivalent native `.\gradlew.bat` spelling; the wrapper itself is outside this change.
+- Running the directory secret scan after Gradle in the same populated worktree found a generic
+  API-key-shaped protobuf field in a generated `build/` source. The exact scan passed in a pristine
+  detached checkout of the same commit (79.12 MB scanned, no leaks), proving the publishable tree
+  clean without suppressing the rule or editing the generated artifact.
+
+License and notice checks passed with the already-installed stable Rust toolchain selected only
+for those processes. Hosted-only Windows-native, Rust-shell, and contributor-license checks remain
+the pull request's required CI responsibility; no local result is presented as a substitute.
 
 ## Session retrospective
 
