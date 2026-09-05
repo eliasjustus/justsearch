@@ -195,6 +195,22 @@ jobs:
       - name: Always-loaded agent-doc budget ratchet
         run: node scripts/ci/check-always-loaded-budget.mjs
 
+      # Tempdoc 930 §18.1 row 8 / §19.3 F4: docs/tempdocs/ is append-only design history, so nothing
+      # shrinks a tempdoc back down on its own — the same always-loaded-budget argument above, applied
+      # to working history. Only tempdocs TOUCHED in this diff are checked (a pre-existing over-cap
+      # tempdoc nobody touched doesn't fail an unrelated PR). The PR base is passed explicitly when one
+      # exists; on push/merge_group the script's own default (origin/main, else HEAD~1) applies — this
+      # job's `fetch-depth: 0` checkout above gives both enough history to resolve.
+      - name: Tempdoc size cap (per number, evidence sidecar exempt)
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE_SHA" ]; then
+            node scripts/ci/check-tempdoc-size.mjs --base "$PR_BASE_SHA"
+          else
+            node scripts/ci/check-tempdoc-size.mjs
+          fi
+
       # Tempdoc 872: the ui-web gate set (authority: the `ui-web-gates` recipe in
       # governance/consult-register.v1.json) was advisory-only — pushed at edit time, run in
       # CI nowhere — so `gen-token-names --check` sat RED on main for weeks and twelve sessions
@@ -392,6 +408,12 @@ jobs:
 
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
+
+      - name: Release baseline stays in sync with the ratchet + scorecard
+        run: node scripts/ci/check-release-baseline-sync.mjs
+
+      - name: Generated scorecard matches the canonical release
+        run: node scripts/docs/gen-scorecard.mjs --check
 
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs

@@ -1335,7 +1335,7 @@ describe('the chat column caps on one token, not three literals', () => {
       const styles = styleTextOf(ctor);
       expect(styles).toContain('max-inline-size: var(--measure-prose)');
       // Bare `var()` with NO fallback: a `var(--measure-prose, 48rem)` would pass the line above
-      // while quietly restoring the literal, and the strip-token-fallbacks gate forbids the form.
+      // while quietly restoring the literal. This assertion is the regression pin for that.
       expect(styles).not.toContain('48rem');
       // EXCLUSIVITY. A consumer must only ever READ the property, never DECLARE it. Its own
       // `:host { --measure-prose: … }` would shadow the inline value `SearchV3View.applyChatWidth`

@@ -41,9 +41,22 @@ run('every script name literally present in the recipe is in the parsed list (st
   }
 });
 
-run('the self-test parenthetical is parsed as a command, not stripped', () => {
-  const parsed = parseUiWebGateCommands(register).map((c) => c.join(' '));
-  assert.ok(parsed.includes('node scripts/ci/check-printable-keybinding-policy.test.mjs'), parsed.join('\n'));
+run('a self-test parenthetical is parsed as a command, not stripped', () => {
+  // Synthetic fixture (930 chunk H retired the recipe's one prior real example,
+  // check-printable-keybinding-policy's self-test) — the mechanism still needs coverage
+  // independent of whether any current recipe line happens to carry one.
+  const fake = {
+    entries: [
+      {
+        id: 'ui-web-gates',
+        recipe: [
+          'Any modules/ui-web/src/** edit — run the ui-web gate set before merge (node scripts/ci/<name>.mjs): check-fixture-gate (with its self-test: node scripts/ci/check-fixture-gate.test.mjs).',
+        ],
+      },
+    ],
+  };
+  const parsed = parseUiWebGateCommands(fake).map((c) => c.join(' '));
+  assert.ok(parsed.includes('node scripts/ci/check-fixture-gate.test.mjs'), parsed.join('\n'));
 });
 
 run('a reworded recipe (marker dropped) parses below the floor — the guard has something to catch', () => {

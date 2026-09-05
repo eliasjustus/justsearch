@@ -99,6 +99,29 @@ check('a tempdoc collision is NOT masked by a changeset sharing the number', () 
   assert.equal(divergentInFlightCollisions(c).length, 1);
 });
 
+// --- the `<N>-evidence` sidecar is a companion, not a competing identity (tempdoc 930 chunk G) ---
+
+check('a fresh <N>-evidence sidecar in one worktree, main file already elsewhere -> NOT a collision', () => {
+  const c = claims([
+    ['930', '930-replace-bounded-areas-with-maintained-oss.md', [
+      'worktree:lane-A', 'worktree:lane-B', 'worktree:lane-C',
+    ]],
+    ['930', '930-evidence', ['worktree:lane-A']],
+  ]);
+  assert.deepEqual(divergentInFlightCollisions(c), []);
+});
+
+check('a genuine second MAIN basename alongside an evidence sidecar is still caught', () => {
+  const c = claims([
+    ['930', '930-replace-bounded-areas-with-maintained-oss.md', ['worktree:lane-A']],
+    ['930', '930-evidence', ['worktree:lane-A']],
+    ['930', '930-a-totally-different-doc.md', ['worktree:lane-B']],
+  ]);
+  const got = divergentInFlightCollisions(c);
+  assert.equal(got.length, 1, 'the evidence exemption must not swallow a real divergent basename');
+  assert.ok(!got[0].detail.includes('930-evidence'), 'the evidence sidecar itself is not named in the collision detail');
+});
+
 // --- changesets are not claimants (the residue fix) --------------------------------------------
 
 check('two different worktrees, changesets for the SAME existing tempdoc -> NOT a collision', () => {

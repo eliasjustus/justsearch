@@ -228,12 +228,12 @@ _APP_MARKERS = (
 # family" ARE named — accname slot-flatten + axe's `button-name` agree it is NOT a violation, §43).
 # We demote it because it is an UNRELIABLE, false-positive-prone heuristic — NOT because full
 # coverage is proven elsewhere (the §43 independent review's caveat: do not overclaim). Real
-# nameless controls are still caught by (a) the build-time `controls-a11y` gate, which statically
-# forbids a nameless top-level `<jf-control>`, and (b) axe's `button-name`/control-name on captured
-# surfaces. Acknowledged residual: a nameless *interpolated* control on an *un-captured* surface or
-# state is caught by neither — but that case was only ever "caught" by this same false-positive-prone
-# self-check, so the right fix is strengthening the static gate / axe coverage, not trusting a noisy
-# signal. Counting it as `app` pollutes `console_real` with phantoms (the §33 trust-pollution class,
+# nameless controls are caught by axe's `button-name`/control-name on captured surfaces. (The
+# build-time `controls-a11y` gate that also statically forbade a nameless top-level `<jf-control>`
+# was retired in tempdoc 930 chunk H.) Acknowledged residual: a nameless control on an *un-captured*
+# surface or state is caught by neither — but that case was only ever "caught" by this same
+# false-positive-prone self-check, so the right fix is widening axe capture coverage, not trusting a
+# noisy signal. Counting it as `app` pollutes `console_real` with phantoms (the §33 trust-pollution class,
 # in a11y guise); so it is bucketed informational, excluded from `console_real`.
 _SELFCHECK_MARKERS = (
     "[jf-control] no accessible name",

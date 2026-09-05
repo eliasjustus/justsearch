@@ -20,7 +20,7 @@
  * HONEST SCOPE (tempdoc 565 §12.10 — register + DISCIPLINE, not a hard gate): this catches a fork that
  * IMPORTS the canonical types / MOUNTS the canonical tag. A re-model that hand-rolls its own tool-card
  * markup (a different tag) or its own run assembly WITHOUT importing the canonical symbols is
- * import-invisible and slips this grep — the same ceiling as check-controls-a11y. It is an early-warning
+ * import-invisible and slips this grep. It is an early-warning
  * that forces review on a declared second renderer, not absolute prevention. Lighter scripts/ci tier;
  * wired as a ci.yml step + the CLAUDE.md pre-merge list.
  */

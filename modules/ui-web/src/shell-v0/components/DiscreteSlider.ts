@@ -3,8 +3,8 @@
  * DiscreteSlider (`jf-discrete-slider`) — tempdoc 855 §15.2 (T2's small-ordinal-scale shape). @atom
  *
  * A themed discrete slider over a small fixed set of steps (owner's Density idiom:
- * compact/comfortable/spacious) — a native `<input type="range">` (gate-clean by construction,
- * NATIVE_OK in `check-controls-a11y`) with tick labels below and `aria-valuetext` carrying the
+ * compact/comfortable/spacious) — a native `<input type="range">` (keyboard-operable by
+ * construction) with tick labels below and `aria-valuetext` carrying the
  * CURRENT step's own label (the native range's index-based `aria-valuenow`/min/max are meaningless
  * to a screen reader on their own — no themed slider existed anywhere in the codebase before this;
  * radios remain the documented fallback if a future consumer's steps don't fit this shape).
