@@ -113,7 +113,7 @@ node scripts/governance/run.mjs --gate wire --mode gate
 
 #### PMD Rule Configuration
 
-PMD is configured in `config/pmd/ruleset.xml` across 5 categories:
+PMD is configured in `config/pmd/ruleset.xml` across 6 categories:
 
 | Category | Rules |
 |----------|-------|
@@ -121,7 +121,27 @@ PMD is configured in `config/pmd/ruleset.xml` across 5 categories:
 | errorprone (10) | `BrokenNullCheck`, `DoNotTerminateVM`, `EmptyCatchBlock`, `EqualsNull`, `ImplicitSwitchFallThrough`, `MisplacedNullCheck`, `OverrideBothEqualsAndHashcode`, `ReturnFromFinallyBlock`, `UnconditionalIfStatement`, `UselessOperationOnImmutable` |
 | multithreading (3) | `AvoidThreadGroup`, `DoubleCheckedLocking`, `NonThreadSafeSingleton` |
 | security (2) | `HardCodedCryptoKey`, `InsecureCryptoIv` |
-| bestpractices (4) | `UnusedLocalVariable`, `UnusedPrivateField`, `UnusedPrivateMethod`, `UnusedAssignment` |
+| bestpractices (6) | `UnusedLocalVariable`, `UnusedPrivateField`, `UnusedPrivateMethod`, `UnusedAssignment`, `UnusedFormalParameter`, `SystemPrintln` |
+| documentation (1) | `CommentContent` — the parked-marker (TODO/FIXME/XXX) ban, successor to the retired `todo-fixme` kernel gate |
+
+**Scope — every Java source set.** `pmdMain` uses `ruleset.xml`; every other source set
+(`test`, `integrationTest`, `systemTest`, `soakTest`, `determinismTest`, `testFixtures`) uses
+`config/pmd/ruleset-tests.xml`, which is the same ruleset minus `SystemPrintln` (a test's console
+output is its report) and `NonThreadSafeSingleton` (it fires on `@BeforeAll`/`@AfterAll` fixture
+assignment, which JUnit serialises). CLI-entry-point modules (`ssot-tools`, `core-contracts`) point
+`pmdMain` at `config/pmd/ruleset-cli-tools.xml`, which drops `SystemPrintln` and `DoNotTerminateVM`.
+
+All three files inline their rules — PMD's `rule ref` resolves against the CLASSPATH, not the
+working directory, and an unresolvable ref makes PMD analyse **zero files while Gradle reports
+success**. `scripts/ci/check-pmd-ruleset-sync.mjs` therefore enforces that each derived ruleset is
+the authority minus its declared, description-justified subtraction, and that no ref is a file path.
+
+Run everything with `./gradlew.bat pmdAll` (root aggregate over all 93 PMD tasks); CI runs the same
+task in the required `Build (no model blobs)` job, measured at 188 s there. Running it instead on
+`Unit tests (platform-contracts)` was tried and measured worse (201 s, and that lane over its
+advisory budget) — `pmdAll` compiles every source set of every module either way, so the placement
+is decided by which job has wall-time headroom, not by which already compiles tests.
+`-PskipPmd=true` is the local fast-iteration escape hatch; CI never sets it.
 
 **Exception handling policy:**
 

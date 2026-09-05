@@ -31,7 +31,6 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.SamplingParams;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.TestResolvedConfigHelper;
-import io.justsearch.telemetry.Telemetry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -209,21 +208,21 @@ class AgentLoopServiceTest {
           agentRegistry.counterValue(
                   AgentMetricCatalog.RETRY_TOTAL,
                   new AgentTags.AgentRetryTags(
-                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE, "1"))
+                      AgentErrorCode.EMPTY_RESPONSE, "1"))
               >= 1,
           "Should record retry on first empty response");
       assertTrue(
           agentRegistry.counterValue(
                   AgentMetricCatalog.RETRY_EXHAUSTED_TOTAL,
                   new AgentTags.AgentRetryExhaustedTags(
-                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE))
+                      AgentErrorCode.EMPTY_RESPONSE))
               >= 1,
           "Should record retry exhausted after max retries");
       assertTrue(
           agentRegistry.counterValue(
                   AgentMetricCatalog.ERROR_TOTAL,
                   new AgentTags.AgentErrorTags(
-                      io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE,
+                      AgentErrorCode.EMPTY_RESPONSE,
                       io.justsearch.agent.api.AgentErrorClass.TRANSIENT))
               >= 1,
           "Should record error counter on terminal empty response");
@@ -307,7 +306,7 @@ class AgentLoopServiceTest {
     session.markTerminated(TerminalDisposition.MAX_ITERATIONS, null, null);
     // Simulate the catch-path re-mark a throwing terminal checkpoint would trigger.
     session.markTerminated(
-        TerminalDisposition.ERRORED, io.justsearch.agent.api.AgentErrorCode.INTERNAL_ERROR, null);
+        TerminalDisposition.ERRORED, AgentErrorCode.INTERNAL_ERROR, null);
     assertEquals(
         TerminalDisposition.MAX_ITERATIONS,
         session.disposition(),
@@ -458,7 +457,7 @@ class AgentLoopServiceTest {
               AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
               new AgentTags.SessionEndedTags(
                   TerminalDisposition.ERRORED,
-                  io.justsearch.agent.api.AgentErrorCode.UNKNOWN_TOOL,
+                  AgentErrorCode.UNKNOWN_TOOL,
                   null)));
     }
   }
@@ -482,7 +481,7 @@ class AgentLoopServiceTest {
               AgentMetricCatalog.SESSION_TERMINATE_TOTAL,
               new AgentTags.SessionEndedTags(
                   TerminalDisposition.ERRORED,
-                  io.justsearch.agent.api.AgentErrorCode.EMPTY_RESPONSE,
+                  AgentErrorCode.EMPTY_RESPONSE,
                   null)));
     }
   }
@@ -553,7 +552,7 @@ class AgentLoopServiceTest {
     var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
     var rejected = new java.util.concurrent.atomic.AtomicBoolean(false);
     var pendingSeen = new java.util.concurrent.CountDownLatch(1);
-    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    var loopDone = new CompletableFuture<Boolean>();
     Consumer<AgentEvent> sink = event -> {
       if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
       if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
@@ -606,7 +605,7 @@ class AgentLoopServiceTest {
 
     var rejected = new java.util.concurrent.atomic.AtomicBoolean(false);
     var pendingSeen = new java.util.concurrent.atomic.AtomicBoolean(false);
-    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    var loopDone = new CompletableFuture<Boolean>();
     Consumer<AgentEvent> sink = event -> {
       if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.set(true);
       if (event instanceof AgentEvent.ToolCallRejected) rejected.set(true);
@@ -645,7 +644,7 @@ class AgentLoopServiceTest {
 
     var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
     var pendingSeen = new java.util.concurrent.CountDownLatch(1);
-    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    var loopDone = new CompletableFuture<Boolean>();
     Consumer<AgentEvent> primary = event -> {
       if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
       if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
@@ -665,8 +664,8 @@ class AgentLoopServiceTest {
     // events, so this observer asserts on event NAMES. That is what lets the native attach write
     // frames straight to the socket and the AG-UI attach re-project them, with no second vocabulary.
     var attachEvents =
-        new java.util.concurrent.CopyOnWriteArrayList<io.justsearch.agent.api.RunObservation.WireFrame>();
-    var attachReturned = new java.util.concurrent.CompletableFuture<Boolean>();
+        new CopyOnWriteArrayList<io.justsearch.agent.api.RunObservation.WireFrame>();
+    var attachReturned = new CompletableFuture<Boolean>();
     var attachThread = new Thread(() ->
         attachReturned.complete(service.attachToRun(sessionId.get(), attachEvents::add)));
     attachThread.setDaemon(true);
@@ -788,8 +787,7 @@ class AgentLoopServiceTest {
 
       // Reattach: replays the buffered history INCLUDING the park narration, and releases the park.
       var replay =
-          new java.util.concurrent.CopyOnWriteArrayList<
-              io.justsearch.agent.api.RunObservation.WireFrame>();
+          new CopyOnWriteArrayList<io.justsearch.agent.api.RunObservation.WireFrame>();
       var attachReturned = new CompletableFuture<Boolean>();
       var attachThread = new Thread(() ->
           attachReturned.complete(service.attachToRun(sessionId.get(), replay::add)));
@@ -832,7 +830,7 @@ class AgentLoopServiceTest {
     var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
     var approved = new java.util.concurrent.atomic.AtomicBoolean(false);
     var pendingSeen = new java.util.concurrent.CountDownLatch(1);
-    var loopDone = new java.util.concurrent.CompletableFuture<Boolean>();
+    var loopDone = new CompletableFuture<Boolean>();
     Consumer<AgentEvent> sink = event -> {
       if (event instanceof AgentEvent.SessionStarted s) sessionId.set(s.sessionId());
       if (event instanceof AgentEvent.ToolCallPendingApproval) pendingSeen.countDown();
@@ -1714,7 +1712,7 @@ class AgentLoopServiceTest {
     // The reflective half: no OTHER public factory returns a non-success result at all, so the two
     // above are the whole failure surface. A new one would have to be added here to be reachable.
     List<String> failureFactories =
-        java.util.Arrays.stream(OperationResult.class.getDeclaredMethods())
+        Arrays.stream(OperationResult.class.getDeclaredMethods())
             .filter(m -> java.lang.reflect.Modifier.isStatic(m.getModifiers()))
             .filter(m -> m.getReturnType() == OperationResult.class)
             .map(java.lang.reflect.Method::getName)
@@ -2710,8 +2708,8 @@ class AgentLoopServiceTest {
                 ScriptedResponse.textOnly("Synthesized answer from search results")));
     var service = buildServiceWithSmallBudget(ai, 400);
 
-    var events = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
-    var done = new java.util.concurrent.CompletableFuture<Boolean>();
+    var events = new CopyOnWriteArrayList<AgentEvent>();
+    var done = new CompletableFuture<Boolean>();
     Consumer<AgentEvent> sink =
         e -> {
           events.add(e);
@@ -2764,8 +2762,7 @@ class AgentLoopServiceTest {
     return first.get(0).tokensRemaining();
   }
 
-  private static List<AgentEvent> runWithEffort(
-      AgentLoopService service, String effort, AgentRunStore runStore) {
+  private static List<AgentEvent> runWithEffort(AgentLoopService service, String effort) {
     var request =
         new AgentRequest(
             userMessage("do the thing"), List.of(), 1, List.of(), null, null, null, null,
@@ -2783,10 +2780,10 @@ class AgentLoopServiceTest {
     // and silently defaulted? Dropped-at-the-boundary is exactly how 561 P-D's autonomy level was
     // lost, so it is the failure this checks for.
     int contextWindow = 400;
-    var quick = runWithEffort(freshBudgetService(contextWindow), "quick", null);
-    var standard = runWithEffort(freshBudgetService(contextWindow), "standard", null);
-    var thorough = runWithEffort(freshBudgetService(contextWindow), "thorough", null);
-    var absent = runWithEffort(freshBudgetService(contextWindow), null, null);
+    var quick = runWithEffort(freshBudgetService(contextWindow), "quick");
+    var standard = runWithEffort(freshBudgetService(contextWindow), "standard");
+    var thorough = runWithEffort(freshBudgetService(contextWindow), "thorough");
+    var absent = runWithEffort(freshBudgetService(contextWindow), null);
 
     int quickBudget = initialBudgetFrom(quick);
     int standardBudget = initialBudgetFrom(standard);
@@ -2824,7 +2821,7 @@ class AgentLoopServiceTest {
                 null,
                 runStore,
                 null));
-    var events = runWithEffort(service, "quick", runStore);
+    var events = runWithEffort(service, "quick");
     var started = lastEventOfType(events, AgentEvent.SessionStarted.class);
     assertNotNull(started, "the run announced its session");
 
@@ -3177,7 +3174,7 @@ class AgentLoopServiceTest {
                 ScriptedResponse.textOnly("Done").withUsage(20, 10)));
     var service = buildServiceWithSmallBudget(ai, 4000); // Standard (8x) ⇒ 32,000; never exhausted
 
-    var events = new java.util.concurrent.CopyOnWriteArrayList<AgentEvent>();
+    var events = new CopyOnWriteArrayList<AgentEvent>();
     var sessionId = new java.util.concurrent.atomic.AtomicReference<String>();
     var raised = new java.util.concurrent.atomic.AtomicBoolean(false);
     var finished = new CompletableFuture<Boolean>();
@@ -3534,7 +3531,7 @@ class AgentLoopServiceTest {
     // 0.8*200=160 and D4's 0.95*200=190; see budgetEdgeFinalize_synthesizesFromToolResults).
     // Organizer's iteration_start: projected = messages.size() * 10 = some positive value >= -35
     // → budgetExhausted=true, but shouldForceToolCall=true → bypass → Organizer LLM call fires.
-    var service = buildServiceWithSmallBudgetAndProfiles(ai, 200, profiles);
+    var service = buildServiceWithSmallBudgetAndProfiles(ai, 200);
     var request = new AgentRequest(
         userMessage("Ingest doc.md"), List.<String>of(), 10, profiles, "primary");
     runWithRequest(service, request);
@@ -3590,7 +3587,7 @@ class AgentLoopServiceTest {
         // Organizer E0a + done
         ScriptedResponse.toolCall("ic-1", "core_ingest_files", "{\"paths\":[\"doc.md\"]}"),
         ScriptedResponse.textOnly("Done."));
-    var service = buildServiceWithSmallBudgetAndProfiles(ai, 500, profiles);
+    var service = buildServiceWithSmallBudgetAndProfiles(ai, 500);
     var request = new AgentRequest(
         userMessage("Ingest doc.md"), List.<String>of(), 10, profiles, "primary");
     runWithRequest(service, request);
@@ -3618,7 +3615,8 @@ class AgentLoopServiceTest {
     try {
       // TracingBootstrap.close() calls tracerProvider.close() which synchronously flushes
       // all pending spans via BatchSpanProcessor.shutdown() — no Thread.sleep needed.
-      try (var bootstrap = new io.justsearch.telemetry.TracingBootstrap(tempDir)) {
+      var bootstrapResource = new io.justsearch.telemetry.TracingBootstrap(tempDir);
+      try (bootstrapResource) {
         var ai = new ScriptedAiService(List.of(
             ScriptedResponse.toolCall("call_1", "core_search", "{\"query\":\"test\"}")
                 .withUsage(100, 50),
@@ -3633,7 +3631,7 @@ class AgentLoopServiceTest {
 
       // Parse NDJSON lines into JSON objects for structural verification
       var mapper = new tools.jackson.databind.ObjectMapper();
-      var spans = new java.util.HashMap<String, tools.jackson.databind.JsonNode>();
+      var spans = new HashMap<String, tools.jackson.databind.JsonNode>();
       for (String line : traces.strip().split("\n")) {
         var node = mapper.readTree(line);
         spans.put(node.get("name").asText(), node);
@@ -3704,7 +3702,7 @@ class AgentLoopServiceTest {
   }
 
   private static void withSysProps(Map<String, String> values, Runnable assertion) {
-    var original = new java.util.HashMap<String, String>();
+    var original = new HashMap<String, String>();
     for (var entry : values.entrySet()) {
       original.put(entry.getKey(), System.getProperty(entry.getKey()));
       System.setProperty(entry.getKey(), entry.getValue());
@@ -3753,19 +3751,6 @@ class AgentLoopServiceTest {
         null));
   }
 
-  private static AgentLoopService buildServiceWithTelemetry(
-      OnlineAiService ai, Telemetry telemetry, StubTool... tools) {
-    return observed(new AgentLoopService(
-        ai,
-        stubCatalog(tools),
-        stubExecutor(tools),
-        stubEmitter(),
-        null,
-        null,
-        null,
-        telemetry));
-  }
-
   private static AgentLoopService buildServiceWithAgentTelemetry(
       OnlineAiService ai, AgentTelemetry agentTelemetry, StubTool... tools) {
     return observed(AgentLoopService.forTesting(
@@ -3780,7 +3765,7 @@ class AgentLoopServiceTest {
   }
 
   private static AgentLoopService buildServiceWithSmallBudgetAndProfiles(
-      ScriptedAiService baseAi, int contextWindow, List<AgentProfile> profiles) {
+      ScriptedAiService baseAi, int contextWindow) {
     // Create a wrapper that delegates to baseAi but overrides the context window size.
     // Tempdoc 491 §C5: streamSummary + streamAnswer overrides removed (deleted from interface).
     var aiWithSmallContext = new OnlineAiService() {
@@ -3815,7 +3800,7 @@ class AgentLoopServiceTest {
       }
 
       @Override
-      public java.util.Optional<Integer> countPromptTokens(
+      public Optional<Integer> countPromptTokens(
           List<Map<String, Object>> messages) {
         return baseAi.countPromptTokens(messages);
       }
@@ -3902,7 +3887,7 @@ class AgentLoopServiceTest {
       }
 
       @Override
-      public java.util.Optional<Integer> countPromptTokens(
+      public Optional<Integer> countPromptTokens(
           List<Map<String, Object>> messages) {
         return baseAi.countPromptTokens(messages);
       }
@@ -5135,9 +5120,9 @@ class AgentLoopServiceTest {
     }
 
     @Override
-    public java.util.Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+    public Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
       // Best-effort simulation: 10 tokens per message
-      return java.util.Optional.of(messages.size() * 10);
+      return Optional.of(messages.size() * 10);
     }
 
     @Override
@@ -5235,8 +5220,8 @@ class AgentLoopServiceTest {
     }
 
     @Override
-    public java.util.Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
-      return java.util.Optional.of(messages.size() * PROJECTED_PER_MESSAGE);
+    public Optional<Integer> countPromptTokens(List<Map<String, Object>> messages) {
+      return Optional.of(messages.size() * PROJECTED_PER_MESSAGE);
     }
 
     @Override

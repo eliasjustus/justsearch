@@ -139,7 +139,7 @@ final class HealthEventStreamControllerTest {
                 Instant.parse("2026-04-30T11:59:00Z"),
                 Optional.empty(),
                 Optional.empty(),
-                java.util.List.of()));
+                List.of()));
     registry.broadcast(HealthEventChangeRegistry.Kind.CONDITION_ADDED, change);
 
     verify(client, atLeastOnce())
@@ -154,10 +154,10 @@ final class HealthEventStreamControllerTest {
 
   /** Mocks an SseClient whose ctx().queryParam("since") returns the supplied token. */
   private SseClient mockSseClientWithToken(String sinceToken) {
-    SseClient client = org.mockito.Mockito.mock(SseClient.class);
-    io.javalin.http.Context ctx = org.mockito.Mockito.mock(io.javalin.http.Context.class);
-    org.mockito.Mockito.when(client.ctx()).thenReturn(ctx);
-    org.mockito.Mockito.when(ctx.queryParam("since")).thenReturn(sinceToken);
+    SseClient client = mock(SseClient.class);
+    Context ctx = mock(Context.class);
+    when(client.ctx()).thenReturn(ctx);
+    when(ctx.queryParam("since")).thenReturn(sinceToken);
     return client;
   }
 
@@ -179,7 +179,7 @@ final class HealthEventStreamControllerTest {
                 Instant.parse("2026-04-30T11:59:00Z"),
                 Optional.empty(),
                 Optional.empty(),
-                java.util.List.of()));
+                List.of()));
     registry.broadcast(HealthEventChangeRegistry.Kind.CONDITION_ADDED, change);
 
     // Build a token at seq=0 — replay should send the one UPDATE frame.
@@ -187,8 +187,8 @@ final class HealthEventStreamControllerTest {
         io.justsearch.app.observability.stream.ResumeTokenCodec.encode(
             HealthEventChangeRegistry.STREAM_ID, 0L);
     SseClient client = mockSseClientWithToken(token);
-    java.util.List<String> sent = new java.util.ArrayList<>();
-    org.mockito.Mockito.doAnswer(
+    List<String> sent = new ArrayList<>();
+    doAnswer(
             inv -> {
               sent.add(inv.getArgument(1, String.class));
               return null;
@@ -224,8 +224,8 @@ final class HealthEventStreamControllerTest {
         io.justsearch.app.observability.stream.ResumeTokenCodec.encode(
             HealthEventChangeRegistry.STREAM_ID, 999L);
     SseClient client = mockSseClientWithToken(expiredToken);
-    java.util.List<String> sent = new java.util.ArrayList<>();
-    org.mockito.Mockito.doAnswer(
+    List<String> sent = new ArrayList<>();
+    doAnswer(
             inv -> {
               sent.add(inv.getArgument(1, String.class));
               return null;

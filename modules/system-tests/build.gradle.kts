@@ -408,17 +408,17 @@ tasks.named("check") {
   dependsOn(tasks.named("test"))
 }
 
-// Disable strict coverage and PMD for test utilities module
-// These are test harnesses, not production code
+// Disable strict coverage for this module — these are test harnesses, not production code.
 tasks.withType<JacocoCoverageVerification>().configureEach {
   isEnabled = false
 }
 
-plugins.withId("pmd") {
-  configure<PmdExtension> {
-    isIgnoreFailures = true
-  }
-}
+// The blanket `pmd { isIgnoreFailures = true }` that used to sit here is gone (tempdoc 930
+// §22.2 follow-up 10). It was the same dormancy hole `modules/benchmarks` carried until
+// follow-up 2 removed it: every PMD task in this module reported and then passed. `pmdMain`
+// was already clean; the 84 violations it was hiding in `systemTest`/`soakTest`/`integrationTest`
+// were cleared, and `config/pmd/ruleset-tests.xml` drops the two rules that a system test
+// genuinely disproves (`SystemPrintln`, `NonThreadSafeSingleton`) instead of ignoring all of them.
 
 // Generate frozen embeddings for passage-retrieval corpus via llama-server
 tasks.register<JavaExec>("generatePassageVectors") {

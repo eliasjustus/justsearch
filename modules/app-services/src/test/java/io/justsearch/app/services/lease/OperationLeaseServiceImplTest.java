@@ -129,7 +129,8 @@ final class OperationLeaseServiceImplTest {
   void tryWithResourcesReleasesOnExit() throws IOException {
     Path file = tmp.resolve("op-leases.json");
     var svc = new OperationLeaseServiceImpl(file);
-    try (var h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null)) {
+    var h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null);
+    try (h) {
       assertEquals(1, readEntryCount(file));
     }
     assertEquals(0, readEntryCount(file));
@@ -139,7 +140,8 @@ final class OperationLeaseServiceImplTest {
   void tryWithResourcesReleasesOnException() throws IOException {
     Path file = tmp.resolve("op-leases.json");
     var svc = new OperationLeaseServiceImpl(file);
-    try (var h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null)) {
+    var h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null);
+    try (h) {
       throw new RuntimeException("synthetic");
     } catch (RuntimeException ignored) {
       // expected
@@ -299,7 +301,7 @@ final class OperationLeaseServiceImplTest {
     var ready = new java.util.concurrent.CountDownLatch(threads);
     var go = new java.util.concurrent.CountDownLatch(1);
     var errors = new java.util.concurrent.atomic.AtomicInteger();
-    var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+    var futures = new ArrayList<java.util.concurrent.Future<?>>();
     try {
       for (int t = 0; t < threads; t++) {
         final int threadIdx = t;
@@ -308,9 +310,10 @@ final class OperationLeaseServiceImplTest {
           try {
             go.await();
             for (int i = 0; i < opsPerThread; i++) {
-              try (OperationLeaseHandle h =
+              OperationLeaseHandle h =
                   svc.register("stress.op." + threadIdx, OpCriticality.MUST_COMPLETE, 60,
-                      Map.of("i", i))) {
+                      Map.of("i", i));
+              try (h) {
                 // simulate a tiny bit of work between register and release
                 Thread.yield();
               }

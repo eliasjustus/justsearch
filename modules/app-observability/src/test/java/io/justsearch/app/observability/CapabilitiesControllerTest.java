@@ -38,6 +38,10 @@ final class CapabilitiesControllerTest {
       assertEquals(200, response.statusCode());
       JsonNode node = JSON.readTree(response.body());
       assertNotNull(node.get("schema_versions"));
+      assertEquals(
+          expected.schemaVersions().schemaVer(),
+          node.get("schema_versions").get("schema_ver").asText(),
+          "served schema_ver must match the service's own capabilities view");
       assertEquals("application/json; charset=utf-8", response.headers().firstValue("content-type").orElse(null));
     } finally {
       server.stop(0);

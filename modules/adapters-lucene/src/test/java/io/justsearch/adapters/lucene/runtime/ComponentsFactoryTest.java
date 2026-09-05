@@ -53,6 +53,7 @@ class ComponentsFactoryTest {
       JsonNode root = new ObjectMapper(new YAMLFactory()).readTree(yaml);
       builder.contributeYaml(root);
     } catch (Exception ignored) {
+      // test helper: invalid/empty yaml falls back to the env-registry-only config
     }
     return builder.build();
   }

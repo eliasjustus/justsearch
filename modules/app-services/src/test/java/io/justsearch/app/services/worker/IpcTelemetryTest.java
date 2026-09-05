@@ -45,7 +45,8 @@ class IpcTelemetryTest {
       noop.recordShutdownTimeout();
       noop.recordForcibleKill();
       noop.recordReconnect();
-      try (var sample = noop.startPortDiscovery()) {
+      var sample = noop.startPortDiscovery();
+      try (sample) {
         // timer sample closes without error
       }
     });
@@ -55,7 +56,8 @@ class IpcTelemetryTest {
   void noop_timerSampleCanBeUsedInTryWithResources() {
     IpcTelemetry noop = IpcTelemetry.noop();
     assertDoesNotThrow(() -> {
-      try (var sample = noop.startPortDiscovery()) {
+      var sample = noop.startPortDiscovery();
+      try (sample) {
         Thread.sleep(1);
       }
     });
@@ -101,7 +103,8 @@ class IpcTelemetryTest {
 
   @Test
   void timerSampleRecordsLatency() {
-    try (var sample = ipc.startPortDiscovery()) {
+    var sample = ipc.startPortDiscovery();
+    try (sample) {
       Thread.sleep(10);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();

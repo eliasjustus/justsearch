@@ -655,7 +655,7 @@ final class AgentInteractionMapperTest {
   @Test
   @DisplayName("859 §A M-6: three tools, three regions — three separate carriers, never accumulated")
   void everyStepCarriesItsOwnThinking() {
-    List<Map<String, Object>> records = new java.util.ArrayList<>();
+    List<Map<String, Object>> records = new ArrayList<>();
     for (int i = 1; i <= 3; i++) {
       records.add(reasoningAt("2026-01-01T00:00:0" + (i * 2 - 1) + "Z", "thought " + i));
       records.add(at("2026-01-01T00:00:0" + (i * 2) + "Z", "budget_update",

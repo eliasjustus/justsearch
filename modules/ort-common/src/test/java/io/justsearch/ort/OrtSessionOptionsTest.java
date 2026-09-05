@@ -211,14 +211,14 @@ final class OrtSessionOptionsTest {
         new ModelSessionPolicy(
             null,
             new ModelSessionPolicy.Gpu(1024L, 0, Optional.empty()),
-            new ModelSessionPolicy.Cpu(ai.onnxruntime.OrtSession.SessionOptions.OptLevel.EXTENDED_OPT),
+            new ModelSessionPolicy.Cpu(OrtSession.SessionOptions.OptLevel.EXTENDED_OPT),
             new ModelSessionPolicy.Lifecycle(false, false, 0L),
             new ModelSessionPolicy.RunOptions(/* arenaShrinkage= */ true));
     ModelSessionPolicy disabled =
         new ModelSessionPolicy(
             null,
             new ModelSessionPolicy.Gpu(1024L, 0, Optional.empty()),
-            new ModelSessionPolicy.Cpu(ai.onnxruntime.OrtSession.SessionOptions.OptLevel.EXTENDED_OPT),
+            new ModelSessionPolicy.Cpu(OrtSession.SessionOptions.OptLevel.EXTENDED_OPT),
             new ModelSessionPolicy.Lifecycle(false, false, 0L),
             new ModelSessionPolicy.RunOptions(/* arenaShrinkage= */ false));
 

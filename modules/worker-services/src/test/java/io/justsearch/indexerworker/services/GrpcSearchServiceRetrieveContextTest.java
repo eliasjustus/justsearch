@@ -894,13 +894,13 @@ class GrpcSearchServiceRetrieveContextTest {
     /** Indexes a parent + one chunk, both tagged with {@code collection} when non-null. */
     private void indexDocWithChunk(String parentDocId, String collection, String chunkText)
         throws Exception {
-      Map<String, Object> parent = new java.util.HashMap<>(Map.of(
+      Map<String, Object> parent = new HashMap<>(Map.of(
           SchemaFields.DOC_ID, parentDocId,
           SchemaFields.DOC_UID, parentDocId + "#0",
           SchemaFields.PATH, parentDocId,
           SchemaFields.CONTENT, chunkText,
           SchemaFields.MIME, "text/markdown"));
-      Map<String, Object> chunk = new java.util.HashMap<>(Map.of(
+      Map<String, Object> chunk = new HashMap<>(Map.of(
           SchemaFields.DOC_ID, "chunk:" + parentDocId,
           SchemaFields.DOC_UID, "chunk:" + parentDocId + "#0",
           SchemaFields.PATH, parentDocId,
@@ -1050,14 +1050,14 @@ class GrpcSearchServiceRetrieveContextTest {
         throws Exception {
       String chunkText = "Unrelated appendix about stationery inventory.";
       String parentContent = content + "\n" + chunkText;
-      Map<String, Object> parent = new java.util.HashMap<>(Map.of(
+      Map<String, Object> parent = new HashMap<>(Map.of(
           SchemaFields.DOC_ID, docId,
           SchemaFields.DOC_UID, docId + "#0",
           SchemaFields.PATH, docId,
           SchemaFields.CONTENT, parentContent,
           SchemaFields.MIME, "text/markdown"));
       int chunkStart = parentContent.indexOf(chunkText);
-      Map<String, Object> chunk = new java.util.HashMap<>(Map.of(
+      Map<String, Object> chunk = new HashMap<>(Map.of(
           SchemaFields.DOC_ID, "chunk:" + docId,
           SchemaFields.DOC_UID, "chunk:" + docId + "#0",
           SchemaFields.PATH, docId,

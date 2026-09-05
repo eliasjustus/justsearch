@@ -55,12 +55,6 @@ final class AdvisoryChangeRegistryTest {
     };
   }
 
-  private AdvisoryChangeRegistry registry(Clock clock) {
-    var projector = testProjector(false);
-    var classRegistry = AdvisoryClassRegistry.builder().register(projector).build();
-    return new AdvisoryChangeRegistry(classRegistry, clock);
-  }
-
   @Test
   @DisplayName("project publishes and returns stamped record")
   void projectPublishesAndReturnsStamped() {

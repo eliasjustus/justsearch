@@ -207,7 +207,7 @@ As of 2026-01-18, `./gradlew check --no-configuration-cache` is a **green gate**
 
 - Compilation success
 - Unit + integration tests
-- PMD static analysis (see `config/pmd/ruleset.xml` for the full rule set) + Error Prone compile-time checks
+- PMD static analysis over **every** Java source set, test sources included — `config/pmd/ruleset.xml` for `main`, `config/pmd/ruleset-tests.xml` for the rest (`./gradlew.bat pmdAll`) — plus Error Prone compile-time checks
 - Spotless code formatting
 - Architecture guardrails
 

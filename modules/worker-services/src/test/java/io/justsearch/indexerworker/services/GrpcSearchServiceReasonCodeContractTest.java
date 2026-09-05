@@ -695,10 +695,10 @@ final class GrpcSearchServiceReasonCodeContractTest {
     try {
       // Tempdoc 406 Gap A: resolvedConfig now lives directly on RuntimeSession
       // (RuntimeContext was deleted; field is reachable via session.resolvedConfig).
-      java.lang.reflect.Field sessionField = RunningRuntime.class.getDeclaredField("session");
+      Field sessionField = RunningRuntime.class.getDeclaredField("session");
       sessionField.setAccessible(true);
       Object session = sessionField.get(lifecycle);
-      java.lang.reflect.Field rcField = session.getClass().getDeclaredField("resolvedConfig");
+      Field rcField = session.getClass().getDeclaredField("resolvedConfig");
       rcField.setAccessible(true);
 
       var builder = io.justsearch.configuration.resolved.ResolvedConfig.builder();

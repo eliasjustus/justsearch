@@ -13,6 +13,11 @@
 
     KEEP IN SYNC with `ruleset.xml` — rules are inlined here rather than referenced
     because PMD's `rule ref` resolves against the classpath, not the working directory.
+    That is no longer only advice: `scripts/ci/check-pmd-ruleset-sync.mjs` fails the build
+    if this file is not `ruleset.xml` minus exactly the two rules named above, because a
+    forgotten rule stops applying to these modules with nothing red — which is how
+    `CommentContent` sat un-applied to `ssot-tools` and `core-contracts` until 930 §22.2
+    follow-up 2 noticed.
   </description>
 
   <!-- Codestyle -->

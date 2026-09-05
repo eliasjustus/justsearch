@@ -1022,11 +1022,13 @@ class RmwFieldPreservationTest {
                     try {
                       Files.deleteIfExists(p);
                     } catch (Exception ignored) {
+                      // best-effort cleanup; a locked file (e.g. Windows file lock) should not fail the test
                     }
                   });
         }
       }
     } catch (Exception ignored) {
+      // best-effort cleanup; failures here must not mask the test's actual assertions
     }
   }
 }

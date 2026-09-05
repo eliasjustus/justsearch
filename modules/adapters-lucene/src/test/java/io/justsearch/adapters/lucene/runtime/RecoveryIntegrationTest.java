@@ -586,7 +586,7 @@ class RecoveryIntegrationTest extends RuntimeTestBase {
     final IndexOpenGuard delegate;
     final AtomicInteger invocations = new AtomicInteger();
     final AtomicBoolean observedCorruptionClassification = new AtomicBoolean();
-    final java.util.List<String> observedExceptions = new java.util.ArrayList<>();
+    final List<String> observedExceptions = new ArrayList<>();
 
     GuardSpy(IndexOpenGuard delegate) {
       this.delegate = delegate;

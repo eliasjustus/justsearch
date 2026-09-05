@@ -49,6 +49,10 @@ final class WorkerPidValidationTest {
     }
   }
 
+  // Used as a method reference (WorkerPidValidationTest::neverRecovers) against the
+  // KnowledgeServerBootstrap.StalePortRecovery functional-interface target, which requires this
+  // parameter even though the fake never inspects it.
+  @SuppressWarnings("PMD.UnusedFormalParameter")
   private static void neverRecovers(long remainingMs) {
     throw new AssertionError("stale-port recovery must not run when PIDs match or calls fail");
   }

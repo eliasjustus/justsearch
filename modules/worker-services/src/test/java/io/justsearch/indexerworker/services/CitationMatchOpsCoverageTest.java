@@ -216,6 +216,10 @@ class CitationMatchOpsCoverageTest {
    * EXAMINED, not about what matched, so a stub that mints no match keeps the two apart: a test
    * that needed matches to observe coverage would be measuring the wrong thing.
    */
+  // passages/passageDocIds/threshold/deadlineMs are unused in this stub body, but the method
+  // reference below is installed as a CitationMatchOps.CrossEncoderProducer, a
+  // @FunctionalInterface whose scoreAll signature fixes this parameter list exactly.
+  @SuppressWarnings("PMD.UnusedFormalParameter")
   private static CitationScorer.ScoringResult scoreNothing(
       List<String> sentences,
       List<String> passages,

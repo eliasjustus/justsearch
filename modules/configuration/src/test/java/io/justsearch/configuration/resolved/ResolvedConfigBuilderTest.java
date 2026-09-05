@@ -416,11 +416,11 @@ final class ResolvedConfigBuilderTest {
     @DisplayName("an auto-detected rung wins over nothing and loses to settings_json")
     void contextSizeOrdinalChain() {
       ResolvedConfigBuilder derived = new ResolvedConfigBuilder();
-      derived.contributeAutoDetected(java.util.Map.of("justsearch.context.size", "32768"));
+      derived.contributeAutoDetected(Map.of("justsearch.context.size", "32768"));
       assertEquals(32768, derived.build().ai().contextSize());
 
       ResolvedConfigBuilder overridden = new ResolvedConfigBuilder();
-      overridden.contributeAutoDetected(java.util.Map.of("justsearch.context.size", "32768"));
+      overridden.contributeAutoDetected(Map.of("justsearch.context.size", "32768"));
       overridden.putSettings("justsearch.context.size", "8192");
       assertEquals(8192, overridden.build().ai().contextSize());
     }
@@ -1159,7 +1159,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("toWorkerSnapshot and contributeWorkerSnapshot round-trip")
-    void roundTrip(@org.junit.jupiter.api.io.TempDir Path tempDir) {
+    void roundTrip(@TempDir Path tempDir) {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("justsearch.data.dir", "/data");
       builder.putDefault("justsearch.api.port", "9090");
@@ -1180,7 +1180,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("worker snapshot includes derived and explicit path values")
-    void workerSnapshotIncludesResolvedPaths(@org.junit.jupiter.api.io.TempDir Path tempDir) {
+    void workerSnapshotIncludesResolvedPaths(@TempDir Path tempDir) {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("justsearch.data.dir", "/data");
       builder.putDefault("justsearch.models.dir", "/shared/models");
@@ -1191,7 +1191,7 @@ final class ResolvedConfigBuilderTest {
       Path snapshotFile = tempDir.resolve("worker-snapshot.json");
       config.toWorkerSnapshot(snapshotFile);
 
-      java.util.Map<String, String> snapshot = ResolvedConfig.loadWorkerSnapshot(snapshotFile);
+      Map<String, String> snapshot = ResolvedConfig.loadWorkerSnapshot(snapshotFile);
       assertEquals(Path.of("/data").toAbsolutePath().normalize().toString(), snapshot.get("justsearch.data.dir"));
       assertEquals(
           Path.of("/data").toAbsolutePath().normalize().resolve("index").resolve("default").toString(),
@@ -1209,7 +1209,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("worker snapshot ordinal 450 beats env (400) but loses to JVM (500)")
-    void snapshotOrdinalPriority(@org.junit.jupiter.api.io.TempDir Path tempDir) {
+    void snapshotOrdinalPriority(@TempDir Path tempDir) {
       // Create a snapshot with a known value
       ResolvedConfigBuilder headBuilder = new ResolvedConfigBuilder();
       headBuilder.putDefault("test.key", "from-snapshot");
@@ -1231,7 +1231,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("missing snapshot file is ignored")
-    void missingFileIgnored(@org.junit.jupiter.api.io.TempDir Path tempDir) {
+    void missingFileIgnored(@TempDir Path tempDir) {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("justsearch.data.dir", "/fallback");
       builder.contributeWorkerSnapshot(tempDir.resolve("nonexistent.json"));
@@ -1242,7 +1242,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("snapshot round-trips Windows paths containing backslash-n and backslash-r")
-    void roundTripsWindowsPaths(@org.junit.jupiter.api.io.TempDir Path tempDir) {
+    void roundTripsWindowsPaths(@TempDir Path tempDir) {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       // Paths with segments that look like escape sequences after escaping
       builder.put("test.path", 500, "test", "test", "C:\\new\\results");
@@ -1281,7 +1281,7 @@ final class ResolvedConfigBuilderTest {
     @DisplayName("auto-detected value at ordinal 150 is available")
     void autoDetectedValueAvailable() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeAutoDetected(java.util.Map.of("justsearch.gpu.enabled", "true"));
+      builder.contributeAutoDetected(Map.of("justsearch.gpu.enabled", "true"));
       ConfigResolution r = builder.resolve("justsearch.gpu.enabled");
       assertEquals("true", r.value());
       assertEquals(150, r.sourceOrdinal());
@@ -1291,7 +1291,7 @@ final class ResolvedConfigBuilderTest {
     @DisplayName("env var at ordinal 400 overrides auto-detected at 150")
     void envVarOverridesAutoDetected() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeAutoDetected(java.util.Map.of("test.gpu", "true"));
+      builder.contributeAutoDetected(Map.of("test.gpu", "true"));
       builder.put("test.gpu", ResolvedConfigBuilder.ORDINAL_ENV_VAR, "env_var",
           "TEST_GPU", "false");
       ConfigResolution r = builder.resolve("test.gpu");
@@ -1303,7 +1303,7 @@ final class ResolvedConfigBuilderTest {
     @DisplayName("sysprop at ordinal 500 overrides auto-detected at 150")
     void syspropOverridesAutoDetected() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeAutoDetected(java.util.Map.of("test.gpu", "true"));
+      builder.contributeAutoDetected(Map.of("test.gpu", "true"));
       builder.put("test.gpu", ResolvedConfigBuilder.ORDINAL_JVM_ARG, "jvm_arg",
           "test.gpu", "false");
       ConfigResolution r = builder.resolve("test.gpu");
@@ -1326,7 +1326,7 @@ final class ResolvedConfigBuilderTest {
     @DisplayName("empty map is a no-op")
     void emptyMapNoOp() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeAutoDetected(java.util.Map.of());
+      builder.contributeAutoDetected(Map.of());
       builder.putDefault("justsearch.data.dir", "/fallback");
       ResolvedConfig config = builder.build();
       assertEquals(Path.of("/fallback"), config.paths().dataDir());
@@ -1596,7 +1596,7 @@ final class ResolvedConfigBuilderTest {
     @Test
     @DisplayName("Every EnvRegistry configKey is unique")
     void configKeysAreUnique() {
-      java.util.Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
+      Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
       for (EnvRegistry entry : EnvRegistry.values()) {
         String key = entry.configKey();
         EnvRegistry existing = seen.put(key, entry);
@@ -1609,7 +1609,7 @@ final class ResolvedConfigBuilderTest {
     @Test
     @DisplayName("Every EnvRegistry sysProp is unique")
     void syspropsAreUnique() {
-      java.util.Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
+      Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
       for (EnvRegistry entry : EnvRegistry.values()) {
         String key = entry.sysProp();
         EnvRegistry existing = seen.put(key, entry);
@@ -1622,7 +1622,7 @@ final class ResolvedConfigBuilderTest {
     @Test
     @DisplayName("Every EnvRegistry envVar is unique")
     void envVarsAreUnique() {
-      java.util.Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
+      Map<String, EnvRegistry> seen = new java.util.LinkedHashMap<>();
       for (EnvRegistry entry : EnvRegistry.values()) {
         String key = entry.envVar();
         EnvRegistry existing = seen.put(key, entry);
@@ -1667,7 +1667,7 @@ final class ResolvedConfigBuilderTest {
     void noConfigKeySysPropCollision() {
       // If entry A's configKey == entry B's sysProp (and A != B),
       // contributeEnvRegistry would register two different entries under the same key.
-      java.util.Map<String, EnvRegistry> bySysProp = new java.util.HashMap<>();
+      Map<String, EnvRegistry> bySysProp = new java.util.HashMap<>();
       for (EnvRegistry entry : EnvRegistry.values()) {
         bySysProp.put(entry.sysProp(), entry);
       }
@@ -1757,7 +1757,7 @@ final class ResolvedConfigBuilderTest {
 
     @Test
     @DisplayName("Master fallthrough via worker snapshot at ord 450 (mimics round-6 sandbox)")
-    void masterFallthroughViaWorkerSnapshot(@org.junit.jupiter.api.io.TempDir Path tempDir)
+    void masterFallthroughViaWorkerSnapshot(@TempDir Path tempDir)
         throws Exception {
       // Round-6 sandbox: worker-config-snapshot.json has justsearch.gpu.enabled=true but
       // embed.gpuEnabled=false at the worker. Mimic exact worker setup: snapshot at 450 +
@@ -1782,10 +1782,10 @@ final class ResolvedConfigBuilderTest {
             + "  \"justsearch.gpu.layers\": \"99\",\n"
             + "  \"justsearch.rerank.gpu.enabled\": \"true\"\n"
             + "}\n";
-        java.nio.file.Files.writeString(snapshotFile, snapshotJson);
+        Files.writeString(snapshotFile, snapshotJson);
 
         ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-        builder.contributeAutoDetected(java.util.Map.of()); // empty (worker probe failed)
+        builder.contributeAutoDetected(Map.of()); // empty (worker probe failed)
         builder.contributeWorkerSnapshot(snapshotFile);
         builder.contributeEnvRegistry();
         ResolvedConfig config = builder.build();

@@ -168,7 +168,7 @@ class InstallContractIOTest {
             + "  \"downloadProfile\": \"CPU\",\n"
             + "  \"models\": {}\n"
             + "}\n";
-    java.nio.file.Files.writeString(
+    Files.writeString(
         tempDir.resolve(InstallContract.CONTRACT_FILENAME), oldContractJson);
 
     InstallContract loaded = InstallContractIO.read(tempDir);

@@ -272,9 +272,9 @@ final class StatusRecordSchemaTest {
               .chunk(new ChunkCoverageView(42, 42, 0, 0, 100.0, true, true, 42, 0, 100.0))
               .embeddingDocCount(42).embeddingCompletedCount(42).embeddingCoveragePercent(100.0)
               .spladeDocCount(42)
-              .enrichmentCompleted(java.util.Map.of())
+              .enrichmentCompleted(Map.of())
               .batchTiming(BatchTimingView.empty())
-              .encoderProfiles(java.util.Map.of())
+              .encoderProfiles(Map.of())
               .build())
           .gpu(GpuDiagnosticsView.empty())
           .vectorFormat(VectorFormatView.empty())
@@ -371,11 +371,11 @@ final class StatusRecordSchemaTest {
               .spladeDocCount(200).spladeCompletedCount(150)
               .spladePendingCount(40).spladeFailedCount(10).spladeCoveragePercent(75.0)
               .pendingNerCount(8).completedNerCount(4)
-              .enrichmentCompleted(java.util.Map.of("embed", 500L, "splade", 400L, "ner", 100L))
+              .enrichmentCompleted(Map.of("embed", 500L, "splade", 400L, "ner", 100L))
               .batchTiming(new BatchTimingView(
-                  java.util.Map.of("embed", 10L, "splade", 10L, "ner", 8L),
-                  java.util.Map.of("embed", 5200L, "splade", 3800L, "ner", 1400L)))
-              .encoderProfiles(java.util.Map.of())
+                  Map.of("embed", 10L, "splade", 10L, "ner", 8L),
+                  Map.of("embed", 5200L, "splade", 3800L, "ner", 1400L)))
+              .encoderProfiles(Map.of())
               .build())
           .gpu(GpuDiagnosticsView.empty())
           .vectorFormat(VectorFormatView.empty())
@@ -859,7 +859,7 @@ final class StatusRecordSchemaTest {
         .signalBus(new SignalBusView(0, 0))
         .uptimeMs(60000)
         .healthCheck(new HealthNodeView(true, "1.0.0", 12345, "RUNNING", true, true))
-        .effectiveConfig(java.util.Map.of("ort.version", "1.20.0"))
+        .effectiveConfig(Map.of("ort.version", "1.20.0"))
         .build();
   }
 

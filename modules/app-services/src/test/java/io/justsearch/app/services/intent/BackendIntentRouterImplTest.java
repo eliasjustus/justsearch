@@ -328,7 +328,7 @@ final class BackendIntentRouterImplTest {
         SurfaceConsumes.empty(),
         "jf-example-surface",
         Provenance.core("1.0"),
-        java.util.Optional.empty(),
+        Optional.empty(),
         riskTier);
   }
 

@@ -147,7 +147,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 | Hot-reload after edit | `reload` (requires `hotReload: true` on dev-stack start) |
 | Pre-merge gate | `./gradlew.bat build -x test` from main before merge |
 
-`spotlessCheck` and `pmdMain` run in `check`/`build`. `spotlessApply` fixes whitespace, **not** Java formatting.
+`spotlessCheck` and `pmdAll` (PMD over **every** Java source set, main and test) run in `check`/`build`. `spotlessApply` fixes whitespace, **not** Java formatting.
 
 Public hosted `CI` runs on PRs, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted/specialty workflows remain manual. Local-first verification stays primary. For CI triage load `/ci-triage`; for profiling/live stack load `/jseval` and `/dev-stack`.
 
@@ -166,6 +166,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | any `package-lock.json` | `check-lockfile-completeness` · `regen-all --check --only notices` · `node scripts/dev/generate-dev-mcp-runtime.mjs --check` |
 | NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
+| `config/pmd/**` | `check-pmd-ruleset-sync` |
 | `docs/tempdocs/**` | `check-tempdoc-numbers` · `check-tempdoc-size` |
 | `docs/{explanation,reference,how-to,decisions}/**` | `docs-validate` |
 | indexing-job lifecycle surfaces | `--gate operation-surface` |

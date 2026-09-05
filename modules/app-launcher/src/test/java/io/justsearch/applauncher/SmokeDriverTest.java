@@ -282,6 +282,7 @@ final class SmokeDriverTest {
       try {
         return c.getDeclaredField(name);
       } catch (NoSuchFieldException ignored) {
+        // field may be declared on a superclass; keep walking up until we find it or run out
       }
     }
     throw new NoSuchFieldException(name);
@@ -311,10 +312,12 @@ final class SmokeDriverTest {
     var rcBuilder = io.justsearch.configuration.resolved.ResolvedConfig.builder();
     rcBuilder.contributeEnvRegistry();
     try {
-      rcBuilder.contributeYaml(new tools.jackson.databind.ObjectMapper(
+      rcBuilder.contributeYaml(new ObjectMapper(
           new tools.jackson.dataformat.yaml.YAMLFactory()).readTree(
               Files.readString(profileFile)));
-    } catch (Exception ignored) {}
+    } catch (Exception ignored) {
+      // test helper: invalid/empty yaml falls back to the env-registry-only config
+    }
     io.justsearch.configuration.resolved.ConfigStore.setGlobal(
         new io.justsearch.configuration.resolved.ConfigStore(rcBuilder.build()));
 
@@ -401,9 +404,11 @@ final class SmokeDriverTest {
       var rcBuilder = io.justsearch.configuration.resolved.ResolvedConfig.builder();
       rcBuilder.contributeEnvRegistry();
       try {
-        rcBuilder.contributeYaml(new tools.jackson.databind.ObjectMapper(
+        rcBuilder.contributeYaml(new ObjectMapper(
             new tools.jackson.dataformat.yaml.YAMLFactory()).readTree(yaml));
-      } catch (Exception ignored) {}
+      } catch (Exception ignored) {
+        // test helper: invalid/empty yaml falls back to the env-registry-only config
+      }
       io.justsearch.configuration.resolved.ConfigStore.setGlobal(
           new io.justsearch.configuration.resolved.ConfigStore(rcBuilder.build()));
     }

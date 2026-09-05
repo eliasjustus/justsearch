@@ -75,7 +75,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("recoverable WARNING condition → advisory with primaryAction")
     void recoverableWarningCondition() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED,
               conditionEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -92,7 +92,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("recoverable ERROR condition → advisory")
     void recoverableErrorCondition() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_MODIFIED,
               conditionEvent(Severity.ERROR, Optional.of(RECOVERY)));
 
@@ -103,7 +103,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("INFO severity → no advisory")
     void infoSeverityFiltered() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED,
               conditionEvent(Severity.INFO, Optional.of(RECOVERY)));
 
@@ -114,7 +114,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("no recovery → no advisory")
     void noRecoveryFiltered() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED,
               conditionEvent(Severity.WARNING, Optional.empty()));
 
@@ -125,7 +125,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("CONDITION_REMOVED → no advisory")
     void conditionRemovedFiltered() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_REMOVED,
               conditionEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -136,7 +136,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("dedupKey uses lastTransitionTime")
     void dedupKeyUsesLastTransitionTime() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED,
               conditionEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -149,7 +149,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("dedupKey is idempotent")
     void dedupKeyIdempotent() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED,
               conditionEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -165,7 +165,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("recoverable WARNING lifecycle → advisory")
     void recoverableWarningLifecycle() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.OCCURRENCE_APPENDED,
               lifecycleEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -179,7 +179,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("no recovery → no advisory")
     void noRecoveryFiltered() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.OCCURRENCE_APPENDED,
               lifecycleEvent(Severity.WARNING, Optional.empty()));
 
@@ -190,7 +190,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("INFO severity → no advisory")
     void infoSeverityFiltered() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.OCCURRENCE_APPENDED,
               lifecycleEvent(Severity.INFO, Optional.of(RECOVERY)));
 
@@ -201,7 +201,7 @@ final class HealthRecoveryProjectorTest {
     @DisplayName("dedupKey uses event timestamp (no lastTransitionTime)")
     void dedupKeyUsesEventTimestamp() {
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.OCCURRENCE_APPENDED,
               lifecycleEvent(Severity.WARNING, Optional.of(RECOVERY)));
 
@@ -234,7 +234,7 @@ final class HealthRecoveryProjectorTest {
                   Optional.empty(),
                   List.of()));
       var change =
-          HealthRecoveryProjectorTest.change(
+          change(
               HealthEventChangeRegistry.Kind.CONDITION_ADDED, event);
 
       assertTrue(projector.project(change).isEmpty());

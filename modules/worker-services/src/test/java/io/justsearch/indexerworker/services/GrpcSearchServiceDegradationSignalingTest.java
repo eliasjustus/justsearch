@@ -184,15 +184,15 @@ final class GrpcSearchServiceDegradationSignalingTest {
     Field stateField = EmbeddingCompatibilityController.class.getDeclaredField("state");
     stateField.setAccessible(true);
     @SuppressWarnings("unchecked")
-    java.util.concurrent.atomic.AtomicReference<State> stateRef =
-        (java.util.concurrent.atomic.AtomicReference<State>) stateField.get(controller);
+    AtomicReference<State> stateRef =
+        (AtomicReference<State>) stateField.get(controller);
     stateRef.set(state);
 
     Field reasonField = EmbeddingCompatibilityController.class.getDeclaredField("reasonCode");
     reasonField.setAccessible(true);
     @SuppressWarnings("unchecked")
-    java.util.concurrent.atomic.AtomicReference<String> reasonRef =
-        (java.util.concurrent.atomic.AtomicReference<String>) reasonField.get(controller);
+    AtomicReference<String> reasonRef =
+        (AtomicReference<String>) reasonField.get(controller);
     reasonRef.set(reasonCode);
   }
 }

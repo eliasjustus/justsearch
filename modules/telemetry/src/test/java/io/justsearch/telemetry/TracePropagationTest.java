@@ -24,7 +24,7 @@ class TracePropagationTest {
     OpenTelemetrySdk.builder().setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance())).buildAndRegisterGlobal();
     Tracer tracer = GlobalOpenTelemetry.get().getTracer("test");
     var span = tracer.spanBuilder("root").setSpanKind(SpanKind.INTERNAL).startSpan();
-    try (var scope = span.makeCurrent()) {
+    try (var _ = span.makeCurrent()) {
       Map<String, String> carrier = new HashMap<>();
       var setter = new TextMapSetter<Map<String, String>>() { @Override public void set(Map<String, String> c, String k, String v) { c.put(k, v); } };
       var getter = new TextMapGetter<Map<String, String>>() { @Override public String get(Map<String, String> c, String k) { return c.get(k); } @Override public Iterable<String> keys(Map<String, String> c) { return c.keySet(); } };

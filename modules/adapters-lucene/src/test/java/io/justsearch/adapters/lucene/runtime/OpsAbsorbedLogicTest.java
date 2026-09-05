@@ -81,7 +81,7 @@ class OpsAbsorbedLogicTest {
   void guardWritable_normalPath_passesGuard() throws Exception {
     Path dir = tempDir.resolve("guardWritable-normal");
     Files.createDirectories(dir);
-    var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
+    var runtime = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
     try {
       // updateDocument on a non-existent doc returns false — but no ISE.
       // This proves guardWritable() passed.
@@ -105,7 +105,7 @@ class OpsAbsorbedLogicTest {
   void commitAndTrack_updatesCountersAndFiresTelemetry() throws Exception {
     Path dir = tempDir.resolve("commitAndTrack");
     Files.createDirectories(dir);
-    var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
+    var runtime = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
     try {
       // Index a doc to simulate pending work
       runtime.indexingCoordinator().indexSingle(
@@ -156,7 +156,7 @@ class OpsAbsorbedLogicTest {
   void getOrComputeCorpusProfile_cachesBetweenCalls() throws Exception {
     Path dir = tempDir.resolve("corpusProfile");
     Files.createDirectories(dir);
-    var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
+    var runtime = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
     try {
       // Index a few docs so the profile has something to compute
       for (int i = 0; i < 3; i++) {
@@ -215,7 +215,7 @@ class OpsAbsorbedLogicTest {
 
     java.util.function.Supplier<RunningRuntime> opener =
         () ->
-            io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+            IndexSchema.fromCatalog(
                     FieldCatalogDef.forTesting(4),
                     new SsotCommitMetadataSource(),
                     new JsonSchemaCommitMetadataValidator())

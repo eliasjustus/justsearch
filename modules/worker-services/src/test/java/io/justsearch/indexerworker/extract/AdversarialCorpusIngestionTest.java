@@ -74,7 +74,7 @@ final class AdversarialCorpusIngestionTest {
             new TimeboxedContentExtractor(
                 new PolicyDrivenTikaExtractor(),
                 Duration.ofSeconds(10),
-                (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
+                (ExtractionMetricCatalog) null),
             null,
             identityOptions());
   }
@@ -247,7 +247,7 @@ final class AdversarialCorpusIngestionTest {
             new TimeboxedContentExtractor(
                 mutatingExtractor,
                 Duration.ofSeconds(10),
-                (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
+                (ExtractionMetricCatalog) null),
             null,
             identityOptions());
 
@@ -279,7 +279,7 @@ final class AdversarialCorpusIngestionTest {
   @DisplayName("real Tika truncation produces SUCCESS_PARTIAL ledger event end-to-end")
   void realTikaTruncationProducesSuccessPartialLedgerEvent() throws Exception {
     Path file = tempDir.resolve("long-content.txt");
-    Files.writeString(file, "x".repeat(2_000), java.nio.charset.StandardCharsets.UTF_8);
+    Files.writeString(file, "x".repeat(2_000), StandardCharsets.UTF_8);
 
     TikaExtractionPolicy tightPolicy =
         new TikaExtractionPolicy(
@@ -314,7 +314,7 @@ final class AdversarialCorpusIngestionTest {
             new TimeboxedContentExtractor(
                 tightExtractor,
                 Duration.ofSeconds(10),
-                (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
+                (ExtractionMetricCatalog) null),
             null,
             identityOptions());
 

@@ -82,7 +82,12 @@ class WindowsTortureTest {
       }
     }
     if (processManager != null) {
-        try { processManager.close(); } catch (Exception e) {}
+        try {
+          processManager.close();
+        } catch (Exception e) {
+          // Best-effort teardown: this suite kills and starves the managed process on purpose,
+          // so a close failure here says nothing about the assertions that already ran.
+        }
     }
     // Best effort cleanup
     try {

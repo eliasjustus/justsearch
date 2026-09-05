@@ -232,7 +232,7 @@ class CommitOpsTest {
     var meta = new SsotCommitMetadataSource();
     var val = new JsonSchemaCommitMetadataValidator();
     Path dir = Files.createTempDirectory("lucene-lag");
-    var r = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, val).atPath(dir).open();
+    var r = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, val).atPath(dir).open();
     r.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "lag-1", SchemaFields.DOC_UID, "lag-1#0")));
@@ -312,7 +312,7 @@ class CommitOpsTest {
     var meta = new SsotCommitMetadataSource();
     var val = new JsonSchemaCommitMetadataValidator();
     Path dir = Files.createTempDirectory("lucene-lag-0");
-    var r = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, val).atPath(dir).open();
+    var r = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, val).atPath(dir).open();
     assertTrue(r.commitOps().refreshLagMs() == 0L);
     r.close();
   }

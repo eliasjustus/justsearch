@@ -46,9 +46,9 @@ final class InfraHealthDiagnosticsIntegrationTest {
     ConfigManagerBootstrap configManager = new ConfigManagerBootstrap();
     InfraDiagnosticsService diagnostics =
         new InfraDiagnosticsService(new io.justsearch.infra.health.InfraHealthAggregator.Config(
-            java.time.Duration.ofMillis(5000),
-            java.time.Duration.ofMillis(30000),
-            java.time.Duration.ofMillis(120000),
+            Duration.ofMillis(5000),
+            Duration.ofMillis(30000),
+            Duration.ofMillis(120000),
             75));
     diagnostics.setMetadataSupplier(
         () ->

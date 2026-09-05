@@ -45,7 +45,7 @@ final class CleanShutdownMarkerLifecycleTest {
 
     // The g-20260903-052152 shape: the same generation served read-only, boot after boot.
     for (int boot = 1; boot <= 5; boot++) {
-      try (LuceneRuntime r = builder(index).openReadOnly()) {
+      try (LuceneRuntime _ = builder(index).openReadOnly()) {
         assertTrue(
             CleanShutdownMarker.wasClean(index),
             "boot " + boot + ": a read-only open writes nothing, so it cannot make the index"

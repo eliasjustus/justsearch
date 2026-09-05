@@ -885,7 +885,7 @@ class McpProtocolHandlerTest {
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
                 + "{\"clientInfo\":{\"name\":\"Claude Code\",\"version\":\"1.0\"}}}");
     ArgumentCaptor<String> sessionIdCaptor = ArgumentCaptor.forClass(String.class);
-    when(initCtx.header(org.mockito.ArgumentMatchers.eq("Mcp-Session-Id"), sessionIdCaptor.capture()))
+    when(initCtx.header(eq("Mcp-Session-Id"), sessionIdCaptor.capture()))
         .thenReturn(initCtx);
     when(initCtx.result(anyString())).thenReturn(initCtx);
     when(initCtx.contentType(anyString())).thenReturn(initCtx);
