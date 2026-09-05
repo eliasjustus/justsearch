@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from jseval.manifest import (
     _COMMIT_METADATA_IDENTITY_FIELDS,
+    _RETIRED_VOLATILE_FIELDS,
     _VOLATILE_FIELDS,
     _compute_cohort_hash,
     _normalise_commit_metadata,
@@ -119,7 +120,6 @@ class TestComputeManifest:
             eval_protocol={"gain_function": "linear"},
             state_snapshots=_fake_state_snapshots(),
             workflow_run_id=None,
-            non_determinism_envelope=None,
         )
         args.update(overrides)
         return args
@@ -137,8 +137,8 @@ class TestComputeManifest:
             "status_snapshot", "debug_state_snapshot",
             "inference_status_snapshot", "env_fingerprint",
             "telemetry_health_tag",
-            # Calibration artefact + derived identity
-            "non_determinism_envelope", "manifest_hash",
+            # Derived identity
+            "manifest_hash",
         }
         assert required <= set(m.keys())
 
@@ -218,13 +218,17 @@ class TestComputeManifest:
         # ...but the raw fingerprint is retained on the manifest.
         assert baseline["env_fingerprint"] != changed_env["env_fingerprint"]
 
-    def test_envelope_does_not_affect_cohort_hash(self):
-        # The envelope is a per-cohort calibration artefact — adding it must
-        # not change the cohort identity.
+    def test_retired_envelope_fields_still_do_not_affect_cohort_hash(self):
+        # Tempdoc 930 §18.1 row 7 stopped WRITING these two fields but they must stay
+        # excluded from the hash: `corpus_certify` re-hashes archived run manifests that
+        # carry them (corpus_certify.py:487-494) and compares against the recorded
+        # manifest_hash. Promoting them into the hash would invalidate every 707
+        # certificate on disk.
         bare = compute_manifest(**self._baseline())
-        calibrated = compute_manifest(
-            **self._baseline(non_determinism_envelope={"nDCG@10_stdev": 0.001}))
-        assert bare["manifest_hash"] == calibrated["manifest_hash"]
+        archived = dict(bare)
+        archived["non_determinism_envelope"] = {"metrics": {"full": {}}}
+        archived["envelope_staleness_days"] = 41
+        assert _compute_cohort_hash(archived) == bare["manifest_hash"]
 
     def test_workflow_run_id_propagates(self):
         m = compute_manifest(**self._baseline(workflow_run_id="wf-123"))
@@ -249,14 +253,14 @@ class TestVolatileFields:
             "run_id": "r1",
             "timestamp": "t1",
             "manifest_hash": "x",
-            "non_determinism_envelope": {"foo": 1},
+            "env_fingerprint": {"captured_at": "2026-04-22T01:00:00Z"},
             "git_sha": "abc",
         }
         same_content_volatile_diff = {
             "run_id": "r2",
             "timestamp": "t2",
             "manifest_hash": "y",
-            "non_determinism_envelope": {"foo": 2},
+            "env_fingerprint": {"captured_at": "2026-09-05T09:00:00Z"},
             "git_sha": "abc",
         }
         assert _compute_cohort_hash(manifest) == _compute_cohort_hash(
@@ -265,21 +269,37 @@ class TestVolatileFields:
     def test_volatile_set_documents_scope(self):
         # Locks the known volatile set so additions/removals are deliberate.
         # Phase 2.0 expanded the set to exclude runtime-state snapshots +
-        # informational fields per tempdoc 400 §24. Phase 2.2d added
-        # envelope_staleness_days as a derived informational field.
+        # informational fields per tempdoc 400 §24.
         assert _VOLATILE_FIELDS == {
             "run_id",
             "timestamp",
             "workflow_run_id",
             "manifest_hash",
-            "non_determinism_envelope",
-            "envelope_staleness_days",
             "status_snapshot",
             "debug_state_snapshot",
             "inference_status_snapshot",
             "env_fingerprint",
             "telemetry_health_tag",
         }
+
+    def test_retired_volatile_set_is_exclusion_only_and_locked(self):
+        # These names are no longer emitted (930 §18.1 row 7) but must stay excluded so
+        # archived manifests keep hashing to their recorded value. Locked separately from
+        # _VOLATILE_FIELDS so a future writer cannot quietly re-adopt one of them.
+        assert _RETIRED_VOLATILE_FIELDS == {
+            "non_determinism_envelope",
+            "envelope_staleness_days",
+        }
+        assert not (_VOLATILE_FIELDS & _RETIRED_VOLATILE_FIELDS)
+        emitted = set(compute_manifest(
+            dataset_name="scifact",
+            meta=_fake_meta(),
+            env_fingerprint={"cpu": "amd64"},
+            models_snapshot={"embed_fingerprint": "f" * 64},
+            eval_protocol={"gain_function": "linear"},
+            state_snapshots=_fake_state_snapshots(),
+        ))
+        assert not (emitted & _RETIRED_VOLATILE_FIELDS)
 
 
 class TestCohortStabilityAgainstRuntimeState:
@@ -305,7 +325,6 @@ class TestCohortStabilityAgainstRuntimeState:
             eval_protocol={"gain_function": "linear"},
             state_snapshots=_fake_state_snapshots(),
             workflow_run_id=None,
-            non_determinism_envelope=None,
         )
         args.update(overrides)
         return args
@@ -415,170 +434,6 @@ class TestCohortStabilityAgainstRuntimeState:
         assert m["status_snapshot"]["uptimeMs"] == 12345
         assert m["env_fingerprint"]["captured_at"] == "2026-04-22T01:00:00Z"
         assert m["telemetry_health_tag"] == "LIFECYCLE_STATE_READY"
-
-
-class TestEnvelopeAutoEmbed:
-    """Phase 2.2b: compute_manifest auto-embeds calibrated envelopes."""
-
-    def _baseline(self, **overrides):
-        args = dict(
-            dataset_name="scifact",
-            meta=_fake_meta(),
-            env_fingerprint={"cpu": "amd64"},
-            models_snapshot={"embed_fingerprint": "f" * 64},
-            eval_protocol={"gain_function": "linear"},
-            state_snapshots=_fake_state_snapshots(),
-            workflow_run_id=None,
-            non_determinism_envelope=None,
-        )
-        args.update(overrides)
-        return args
-
-    def test_missing_sidecar_leaves_envelope_none(self, tmp_path):
-        m = compute_manifest(
-            **self._baseline(),
-            envelope_data_dir=tmp_path,
-        )
-        assert m["non_determinism_envelope"] is None
-
-    def test_matching_sidecar_is_embedded(self, tmp_path):
-        from jseval.calibrate import write_envelope
-
-        # First compute_manifest determines what cohort_hash this baseline
-        # produces.
-        base = compute_manifest(**self._baseline())
-        cohort_hash = base["manifest_hash"]
-
-        # Now write an envelope keyed by that hash.
-        envelope = {
-            "cohort_hash": cohort_hash,
-            "schema_version": 1,
-            "n_runs": 5,
-            "metrics": {"full": {"nDCG@10": {"mean": 0.82, "stdev": 0.001, "n": 5}}},
-        }
-        write_envelope(tmp_path, cohort_hash, envelope)
-
-        # A subsequent compute_manifest with the same inputs + the
-        # registry dir auto-embeds the envelope.
-        m = compute_manifest(
-            **self._baseline(),
-            envelope_data_dir=tmp_path,
-        )
-        assert m["non_determinism_envelope"] == envelope
-        # Cohort hash unchanged (envelope is in _VOLATILE_FIELDS).
-        assert m["manifest_hash"] == cohort_hash
-
-    def test_explicit_envelope_wins_over_registry(self, tmp_path):
-        from jseval.calibrate import write_envelope
-
-        base = compute_manifest(**self._baseline())
-        cohort_hash = base["manifest_hash"]
-
-        registry_envelope = {"cohort_hash": cohort_hash, "n_runs": 5}
-        write_envelope(tmp_path, cohort_hash, registry_envelope)
-
-        explicit = {"cohort_hash": cohort_hash, "n_runs": 9999, "source": "explicit"}
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=explicit),
-            envelope_data_dir=tmp_path,
-        )
-        assert m["non_determinism_envelope"] == explicit
-
-
-class TestEnvelopeStalenessSignal:
-    """Phase 2.2d: envelope_staleness_days informational signal.
-
-    Partial implementation of the Phase 2 §25.4 deferral: surfaces how
-    old the embedded envelope is without committing to any invalidation
-    rule. Full freshness policy (TTL / driver-change / model-reload
-    triggers) deferred to Phase 3/4.
-    """
-
-    def _baseline(self, **overrides):
-        args = dict(
-            dataset_name="scifact",
-            meta=_fake_meta(),
-            env_fingerprint={"cpu": "amd64"},
-            models_snapshot={"embed_fingerprint": "f" * 64},
-            eval_protocol={"gain_function": "linear"},
-            state_snapshots=_fake_state_snapshots(),
-            workflow_run_id=None,
-            non_determinism_envelope=None,
-        )
-        args.update(overrides)
-        return args
-
-    def test_no_envelope_gives_none_staleness(self):
-        m = compute_manifest(**self._baseline())
-        assert m["non_determinism_envelope"] is None
-        assert m["envelope_staleness_days"] is None
-
-    def test_fresh_envelope_reports_zero_or_one_days(self):
-        from datetime import datetime, timezone
-        now_iso = datetime.now(timezone.utc).isoformat()
-        envelope = {
-            "cohort_hash": "abc", "schema_version": 1,
-            "calibrated_at": now_iso, "n_runs": 5, "metrics": {},
-        }
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=envelope))
-        assert m["envelope_staleness_days"] in (0, 1)
-
-    def test_year_old_envelope_reports_hundreds_of_days(self):
-        envelope = {
-            "cohort_hash": "abc", "schema_version": 1,
-            "calibrated_at": "2025-04-22T00:00:00+00:00",
-            "n_runs": 5, "metrics": {},
-        }
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=envelope))
-        assert m["envelope_staleness_days"] is not None
-        assert m["envelope_staleness_days"] >= 300
-
-    def test_missing_calibrated_at_yields_none(self):
-        envelope = {"cohort_hash": "abc", "n_runs": 5, "metrics": {}}
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=envelope))
-        assert m["envelope_staleness_days"] is None
-
-    def test_unparseable_calibrated_at_yields_none(self):
-        envelope = {
-            "cohort_hash": "abc", "calibrated_at": "not-a-date",
-            "n_runs": 5, "metrics": {},
-        }
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=envelope))
-        assert m["envelope_staleness_days"] is None
-
-    def test_z_suffix_iso_timestamp_parses(self):
-        # OTel / Java code tends to emit ISO with a trailing Z rather than
-        # +00:00. Phase 2.2d must handle both shapes.
-        envelope = {
-            "cohort_hash": "abc", "calibrated_at": "2026-04-22T00:00:00Z",
-            "n_runs": 5, "metrics": {},
-        }
-        m = compute_manifest(
-            **self._baseline(non_determinism_envelope=envelope))
-        assert m["envelope_staleness_days"] is not None
-        assert m["envelope_staleness_days"] >= 0
-
-    def test_staleness_does_not_affect_cohort_hash(self):
-        # envelope_staleness_days is in _VOLATILE_FIELDS so it must not
-        # enter the cohort hash. Two manifests with different staleness
-        # values (because the envelope was calibrated at different times)
-        # but identical config should hash identically.
-        e_fresh = {
-            "cohort_hash": "abc", "calibrated_at": "2026-04-22T00:00:00Z",
-            "n_runs": 5, "metrics": {},
-        }
-        e_old = {
-            "cohort_hash": "abc", "calibrated_at": "2025-01-01T00:00:00Z",
-            "n_runs": 5, "metrics": {},
-        }
-        a = compute_manifest(**self._baseline(non_determinism_envelope=e_fresh))
-        b = compute_manifest(**self._baseline(non_determinism_envelope=e_old))
-        assert a["envelope_staleness_days"] != b["envelope_staleness_days"]
-        assert a["manifest_hash"] == b["manifest_hash"]
 
 
 class TestWriteManifest:

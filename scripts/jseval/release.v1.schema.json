@@ -61,7 +61,6 @@
           },
           "comparable": { "type": "boolean" },
           "ann_proof_status": { "type": ["string", "null"] },
-          "tolerance_band": { "type": ["object", "null"] },
           "confidence_tier": { "type": "string", "enum": ["A", "B", "C"] },
           "corpus_source": {
             "type": "object",

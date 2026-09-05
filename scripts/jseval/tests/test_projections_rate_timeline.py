@@ -303,7 +303,8 @@ class TestMetricNdjsonContract:
     NdjsonMetricExporter.java`` (counter-type records at
     ``sumLine`` L269-275). Until this test existed, nothing asserted
     the consumer's read-shape matched the producer's write-shape —
-    exactly the class of defect that hid D-1 (encoder_drift) for
+    exactly the class of defect that hid D-1 (the span-duration
+    reader, now `jseval.encoder_latency`) for
     months (producer emits X, consumer reads Y, synthetic fixture
     matches Y so tests pass regardless).
 

@@ -298,23 +298,18 @@ class TestStartBackendDataDirResolution:
 class TestStartBackendCleanWipesEverything:
     """Tempdoc 716: the tempdoc-400 protected-set carve-out is retired.
 
-    Calibration state no longer lives in the backend data dir (it is filed
-    under the jseval-owned root — see test_calibrate.py's physical-separation
-    test), so --clean wipes the WHOLE dir; leftover pre-716 calibration state
-    inside a backend dir is reachable read-only via the legacy-root fallback
-    until the next wipe, never load-bearing."""
+    No durable jseval artifact lives in the backend data dir (they are filed under
+    the jseval-owned root, `_paths.DEFAULT_JSEVAL_DATA_DIR`), so --clean wipes the
+    WHOLE dir with nothing carved out."""
 
     @patch("jseval.backend.subprocess.Popen")
     @patch("jseval.backend._wait_for_health", return_value=True)
     def test_clean_wipes_entire_data_dir_no_protected_set(self, _health, mock_popen,
                                                           tmp_path):
         data_dir = tmp_path / "data"
-        # Pre-716 leftover calibration state: now wiped like everything else.
-        (data_dir / "cohort_baselines" / "hash-a").mkdir(parents=True)
-        (data_dir / "cohort_baselines" / "hash-a" / "envelope.json").write_text(
-            "{}", encoding="utf-8")
-        (data_dir / "non_determinism_envelopes").mkdir()
-        (data_dir / "non_determinism_envelopes" / "legacy.json").write_text(
+        # Anything a prior run left behind here is wiped, whatever its name.
+        (data_dir / "leftover-state" / "hash-a").mkdir(parents=True)
+        (data_dir / "leftover-state" / "hash-a" / "keep-me.json").write_text(
             "{}", encoding="utf-8")
         (data_dir / "index").mkdir()
         (data_dir / "index" / "segments.json").write_text("{}", encoding="utf-8")

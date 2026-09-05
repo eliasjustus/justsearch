@@ -109,19 +109,16 @@ time. `cc` — CC fusion weights. `mode` — jseval mode. `legs` — retrieval
 legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
 tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
 
-**Cross-run noise vs signal** — before flagging a nDCG@10 change as a
-regression, consult the cohort envelope: `scripts/jseval/tmp/
-cohort_baselines/<hash>/envelope.json` — the jseval-owned data root where
-calibration state is filed since tempdoc 716 (readers fall back to a
-pre-716 backend data dir with a WARN) — gives σ per metric (tempdoc 400
-LR1-b). Deltas
-inside ±2σ are noise. For encoder-level latency distribution drift
-(different question — "did ORT session.run() durations shift even
-without a nDCG change?"), use `jseval calibrate-drift-baseline` + the
-nightly `jseval gate`: PSI > 0.2 on any `encoder.ort_run` duration
-distribution flags a drift signal independent of aggregate quality.
-See `docs/explanation/08-observability.md` §Contract Tiers + §Run
-Manifest and `docs/how-to/triage-psi-drift.md`.
+**Cross-run noise vs signal** — there is no calibrated cohort envelope; the
+`jseval calibrate` machinery that was supposed to supply σ per metric never
+produced a baseline on any machine and was removed (tempdoc 930 §18.1 row 7).
+Judge a nDCG@10 change against the runs themselves: re-run the arm and compare
+the spread, and read each run's own `summary.json` — `latency_stats` for query
+latency and `encoder_latency.encoders.<name>` for absolute per-encoder ONNX
+p50/p95. For the "did ORT session.run() durations shift even without a nDCG
+change?" question, compare that `encoder_latency` block across runs and read
+the `cpu_fallback_counts` projection alongside it. See
+`docs/explanation/08-observability.md` §Contract Tiers + §Run Manifest.
 
 <!-- manually maintained Codex snapshot of the release scorecard -->
 
@@ -3183,10 +3180,10 @@ picking up items here over inventing new experiments.
   measured recurrence of silent regression.
 - **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
 - **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
-- **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
+- **Prior art:** `jseval gate` exists but is manual-CI-only. It used to be paired with `calibrate-drift-baseline` and a cohort `envelope.json` (±2σ); both were removed in tempdoc 930 §18.1 row 7 having never produced a baseline, so a noise/signal separation is now part of what this question would have to build, not prior art. The missing pieces are wiring, baseline-pinning, a tolerance source, and the asymmetry argument.
 - **Status:** Named in tempdoc 580 §4c; deliberately NOT built. **§4a (2026-06-13) resolved the trigger negatively** — HEAD hybrid nDCG@10=0.758 is on-baseline (vs 0.754), no silent regression found, so there is no proof-by-example endorsement. Q-010 now rests only on the stagnation+asymmetry argument; awaits a user decision rather than self-endorsing.
 - **Partially operationalized (2026-06-24, 636 §IMPLEMENTED / D-005):** the nDCG-mean ratchet question is now *complemented* by a recall-survival ratchet — **`jseval leak-gate`** fails a build when a corpus's pinned `leak_rate` ceiling (from the Staged Recall Accounting projection) is exceeded. It is the engine-quality "fail loudly" gate Q-010 asked for, on a **leak** metric rather than nDCG mean (and on the cross-mode projection, not the per-mode envelope). Pinning per-corpus ceilings is the deliberate governance step that still awaits a user decision (like the nDCG ratchet — un-pinned corpora do not gate).
-- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
+- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance hand-pinned per corpus (`relevance_gate`'s `tolerance_abs` / `tolerance_default_abs`), since there is no calibrated envelope to derive it from.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
 

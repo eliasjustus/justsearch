@@ -169,33 +169,6 @@ def config_cohort_key(manifest: dict) -> str:
 
 # --- Per-run projections ----------------------------------------------------
 
-def _tolerance_band(manifest: dict, mode: str) -> dict | None:
-    """Within-machine ±2σ envelope for ``mode`` from the run's manifest (F-α).
-
-    Returns ``{"metric": {"mean", "stdev", "two_sigma", "n"}}`` or ``None`` when
-    the cohort is uncalibrated (no ``non_determinism_envelope`` embedded). The
-    reproduction claim that rides this band is scoped to "equivalent setup".
-    """
-    env = manifest.get("non_determinism_envelope")
-    if not isinstance(env, dict):
-        return None
-    mode_metrics = (env.get("metrics") or {}).get(mode)
-    if not isinstance(mode_metrics, dict):
-        return None
-    band: dict = {}
-    for metric, stats in mode_metrics.items():
-        if not isinstance(stats, dict):
-            continue
-        stdev = stats.get("stdev")
-        band[metric] = {
-            "mean": stats.get("mean"),
-            "stdev": stdev,
-            "two_sigma": (2 * stdev) if isinstance(stdev, (int, float)) else None,
-            "n": stats.get("n"),
-        }
-    return band or None
-
-
 def _hardware_projection(manifest: dict) -> dict:
     """Stable hardware identity projected from the run's (volatile) snapshots.
 
@@ -286,7 +259,6 @@ def _measured_for_mode(summary: dict, mode: str) -> dict | None:
         "run_metrics": run_metrics,
         "comparable": bool(per_mode.get("comparable")),
         "ann_proof_status": per_mode.get("ann_proof_status"),
-        "tolerance_band": _tolerance_band(manifest, mode),
         "confidence_tier": _confidence_tier(summary, qsum),
         "corpus_source": _corpus_source(summary),
         "qrels_id": qsum.get("relevance_mode"),
