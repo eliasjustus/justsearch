@@ -695,7 +695,11 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    findings, zero consumers); 96 canonical/runbook docs repaired at the cause; 33 tempdoc
    frontmatter blocks re-quoted so they parse; 743's U+FFFD restored to `ä`. Exit 0, and the
    script now runs in the `Public claims` job, `public-ci-local-repro.v1.json`, `npm run
-   lint:docs` and the CLAUDE.md pre-merge table.
+   lint:docs` and the CLAUDE.md pre-merge table. One knock-on: chunk G's `check-tempdoc-size`
+   failed any PR that *touched* one of the 195 already-over-cap tempdocs, so a mechanical
+   frontmatter repair was unlandable without an unrelated content move. It now compares against
+   the base ref and fails only when an over-cap tempdoc GREW (crossing the cap still fails);
+   the cap's own rationale is unbounded growth, not any edit. Covered by 5 new tests.
 8. `modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
    lint` has 24 pre-existing errors on `main`.
 9. Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.
