@@ -345,7 +345,6 @@ export function registerTemplate(reg: TemplateRegistration): void {
   }
   if (parsed.slots.length > TEMPLATE_SLOT_SOFT_CAP) {
     try {
-      // eslint-disable-next-line no-console
       console.warn(
         `[TemplateCatalog] template '${reg.id}' has ${parsed.slots.length} slots; ` +
           `soft cap is ${TEMPLATE_SLOT_SOFT_CAP}. Above this, multi-prompt UX is awkward — ` +

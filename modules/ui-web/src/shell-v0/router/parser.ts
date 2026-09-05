@@ -53,7 +53,6 @@ export const DEFAULT_ANSWER_SHAPE = 'core.rag-ask';
 // happens at the resolver.
 const ID_REGEX = /^(core|vendor\.[a-z][a-z0-9-]*)\.[a-z][a-z0-9-]*$/;
 // Trailing prose punctuation strip — mirrors scorer's `trailingPunctRe`.
-// eslint-disable-next-line no-useless-escape
 const TRAILING_PUNCT_REGEX = /[.,;:!?”'"]+$/;
 
 /**

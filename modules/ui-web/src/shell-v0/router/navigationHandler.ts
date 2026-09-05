@@ -119,7 +119,6 @@ export function createNavigationHandler(config: NavigationHandlerConfig): Naviga
   const onUnknown =
     config.onUnknownSurface ??
     ((surfaceId) => {
-      // eslint-disable-next-line no-console
       console.error(
         `[NavigationHandler] BUG: received unresolved surfaceId "${surfaceId}". ` +
           'The IntentRouter should have caught this during resolution (tempdoc 499 §4.7).',
@@ -238,7 +237,6 @@ function applyState(surfaceId: string, state: StateSnapshot, traversal = false):
   if (!schema) return;
   const validation = coerceAndValidate(state, schema.schema);
   if (!validation.ok) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[NavigationHandler] state validation failed for surfaceId="${surfaceId}":`,
       validation.errors,
@@ -266,7 +264,6 @@ function applyState(surfaceId: string, state: StateSnapshot, traversal = false):
     try {
       adapter.restore(bag);
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[NavigationHandler] restore failed for storeId="${adapter.storeId}":`,
         err,

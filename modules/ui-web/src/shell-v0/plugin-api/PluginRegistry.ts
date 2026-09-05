@@ -660,11 +660,9 @@ export class PluginRegistry {
       },
       ai: {
         invokeShape: () => Promise.reject(new Error('Host API deps not initialized')),
-        // eslint-disable-next-line require-yield
         streamShape: async function* () {},
         openSession: () => ({
           id: 'noop',
-          // eslint-disable-next-line require-yield
           send: async function* () {},
           close: () => {},
         }),
