@@ -2,9 +2,9 @@
 /**
  * Tempdoc 743 second wave, Slice 3 — P-L: mechanical error-signature census.
  *
- * Extension of the alive 727 friction-mining pass (analyze-session.mjs,
- * mine-friction.mjs — untouched by this file): those miners judge WHOLE
- * SESSIONS via an LLM; this is the cheap, mechanical complement that scans
+ * Extension of the alive 727 friction-mining pass (mine-friction.mjs —
+ * untouched by this file): that miner judges WHOLE SESSIONS via an LLM;
+ * this is the cheap, mechanical complement that scans
  * every session in a window for a small SEEDED table of known recurring
  * error signatures (743 Finding A: "the same error signatures recur in
  * every session with no feedback loop") and counts them — no LLM call.
@@ -91,7 +91,7 @@ export const SIGNATURES = [
     id: 'edit-not-read',
     description: 'Edit tool called on a file that was not Read first, or was modified since the last Read (cross-root worktree/main-checkout copy confusion is one cause).',
     regex: /has not been read yet|has (not been read|been modified) since/i,
-    pavedPath: 'edit-reread-hint.mjs (agent-lessons.md rule 41) already fires on this failure — a persisting count means the hint is not reaching every case, not that no remedy exists.',
+    pavedPath: 'The `edit-reread-cross-root` rule in .claude/rules/agent-lessons.md is the remedy: re-read the exact worktree-qualified path before editing, not "a" copy of the same basename.',
   },
 ];
 

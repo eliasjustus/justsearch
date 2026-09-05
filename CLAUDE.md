@@ -90,7 +90,7 @@ When asked "what should we do next?", consult the active tempdoc for remaining i
 There is no inbox (tempdoc 872 retired the observations store: 565 notes, none read). A finding outside your task goes where it is acted on, at discovery — a note is not knowledge, it is a deferred fix:
 
 - **Wrong doc/comment, verified one-line fix** → fix it in place; it rides along in your PR.
-- **Red or flaky verification command on `main`** → a dated pin with an exit in `scripts/agent-analytics/expected-state.v1.json` (`known-state-hint` delivers it) **and** the fix as a tracked item. Main being red is a defect, not a fact to remember.
+- **Red or flaky verification command on `main`** → fix it, or quarantine the flaky test in its own runner with a tracked item; main being red is a defect.
 - **Platform/process lesson** → a hook if it is a must/never, else `.claude/rules/agent-lessons.md`.
 - **Product defect you won't fix now** → the owning tempdoc's open-items section (or its domain register).
 - **Do not investigate further** — route and return to your task. Issues caused by your change are yours to fix.
@@ -109,7 +109,7 @@ This file is loaded every session; the always-loaded-budget ratchet caps its byt
 
 Parent hooks do **not** fire inside a subagent, and task-specific context is inherited by no type — so the brief in the Agent prompt is mandatory and self-contained (plan, acceptance criteria, constraints), and must require primary-source `file:line` evidence for load-bearing claims: subagent findings are a starting point, not a result (`audit-without-test`). Which types inherit `CLAUDE.md` + `.claude/rules/`: `agent-lessons.md` (`subagents-no-inheritance`) — do not restate it here.
 
-No-hooks consequences: destructive git is **not blocked** for subagents — never delegate it; no repeat-guard/build-counter/Read-limits — don't delegate long iterative refactor loops; no PostToolUse hints — after a subagent edits `SSOT/catalogs/`, canonical docs, `build.gradle.kts`, or `modules/ui-web/src/`, run the relevant regen step yourself; `isolation: "worktree"` base-ref caveats ([claude-code#50850](https://github.com/anthropics/claude-code/issues/50850)) — verify the base (`verify-worktree-base`).
+No-hooks consequences: never delegate destructive git; no repeat-guard/build-counter/Read-limits — don't delegate long iterative refactor loops; no regen pointers — after a subagent edits `SSOT/catalogs/`, canonical docs, or `build.gradle.kts`, run the relevant regen step yourself; `isolation: "worktree"` base-ref caveats ([claude-code#50850](https://github.com/anthropics/claude-code/issues/50850)) — verify the base (`verify-worktree-base`).
 
 **Model routing (delegation economics).** Binds the ORCHESTRATOR — whatever model runs the main loop.
 
@@ -175,9 +175,9 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `justsearch-dev-mcp/**` | `check-dev-mcp-doc-sync` |
 | `StoreCatalog.java` · store construction sites | `check-store-recoverability` |
 | `UnifiedChatView.ts` / `CoreConversationShapeCatalog.java` | `check-intent-tier-coverage` |
-| **`modules/ui-web/src/**`** (ui-web gate set) | pushed by the consult hook — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
+| **`modules/ui-web/src/**`** (ui-web gate set) | `node scripts/ci/run-ui-web-gates.mjs` — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
-| `expected-state.v1.json` pins | `node scripts/agent-analytics/run-all-tests.mjs` |
+| `scripts/agent-analytics/**` | `node scripts/agent-analytics/run-all-tests.mjs` |
 
 ## Common Pitfalls
 

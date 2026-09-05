@@ -382,7 +382,7 @@ async function gatherAgentSpawnOrientation({
  * `recordFilter` (861 W5 review F-5) applies BEFORE the process-table read, not after: the
  * build hint's per-session marker de-dup passes `(e) => !alreadyNudged(sessionId, e.recordId)`
  * here so an already-nudged holder never causes a PowerShell spawn on a subsequent gradlew/npm
- * call, mirroring `exec-substrate-hint.mjs`'s check-before-work order.
+ * call — check before work, not after.
  *
  * Returns `{ holders: [] }` fast (no process-table read) when the pre-filter finds nothing —
  * the common case, and the reason this hint stays cheap enough for a PreToolUse hook budget.

@@ -258,20 +258,6 @@ function pruneStaleCountFiles() {
   }
 }
 
-// Tempdoc 727 F-7a: reserved key for the basename→[full paths] index (below), stored
-// alongside the per-path counts in the same read-counts-<sessionId>.json file rather than a
-// second cache file — one source of truth for "what has this session read." Prefixed with an
-// underscore so it can't collide with a normalized file path (all real paths contain `/`).
-// Review Finding D: living in the SAME cache file means compact-save.mjs's read-counts reset
-// wipes this index too on every compaction (deliberate for its original hot-file-cap purpose)
-// — cross-root recognition in edit-reread-hint.mjs only covers reads since the last compaction.
-const BASENAME_INDEX_KEY = '_byBasename';
-
-function basenameOf(normPath) {
-  const idx = normPath.lastIndexOf('/');
-  return idx === -1 ? normPath : normPath.slice(idx + 1);
-}
-
 function trackRead(sessionId, filePath, isUnbounded) {
   if (!sessionId || !filePath) return { total: 0, unbounded: 0 };
   const counts = loadReadCounts(sessionId);
@@ -287,36 +273,12 @@ function trackRead(sessionId, filePath, isUnbounded) {
   counts[norm].total += 1;
   if (isUnbounded) counts[norm].unbounded += 1;
 
-  // Tempdoc 727 F-7a: index this read by basename too, so a later Edit-before-fresh-Read
-  // failure on a DIFFERENT full path with the same basename (the worktree-copy vs.
-  // main-checkout-copy case) can be recognized as "you read this file, just under a
-  // different root" rather than staying silent or restating the platform's own generic error.
-  const byBasename = counts[BASENAME_INDEX_KEY] ?? (counts[BASENAME_INDEX_KEY] = {});
-  const base = basenameOf(norm);
-  const paths = byBasename[base] ?? (byBasename[base] = []);
-  if (!paths.includes(norm)) paths.push(norm);
-
   saveReadCounts(sessionId, counts);
 
   // Prune stale cache files on first read of a new session
   if (isFirst) pruneStaleCountFiles();
 
   return counts[norm];
-}
-
-/**
- * Tempdoc 727 F-7a: full normalized paths read this session sharing `filePath`'s basename,
- * EXCLUDING `filePath` itself — used by edit-reread-hint.mjs to recognize a cross-root
- * re-read miss. Returns `[]` if nothing else with this basename was read (including when
- * `filePath` was never read at all, or is the only path read under this basename).
- */
-export function getOtherPathsWithSameBasename(sessionId, filePath) {
-  if (!sessionId || !filePath) return [];
-  const counts = loadReadCounts(sessionId);
-  const norm = normalizePath(filePath);
-  const base = basenameOf(norm);
-  const paths = counts[BASENAME_INDEX_KEY]?.[base] ?? [];
-  return paths.filter(p => p !== norm);
 }
 
 function trackEdit(sessionId, filePath) {

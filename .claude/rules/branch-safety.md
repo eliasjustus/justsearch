@@ -83,26 +83,18 @@ the session continues (e.g., merging from main).
    618 §1 — local `main` can be dozens of commits ahead of `origin`) into an
    immediate, legible failure. <!-- rule:verify-worktree-base -->
 
-## Enforced by `bash-guard.mjs`
+## Enforced by native `permissions.deny`
 
-The following commands are **blocked by the PreToolUse hook** at
-`scripts/agent-analytics/hooks/bash-guard.mjs` (wired via
-`.claude/settings.local.json`) and will fail with an error message.
-This is not advisory — the hook prevents execution.
+`.claude/settings.json` carries `Bash(git push --force*)` / `Bash(git push -f*)`: the harness
+refuses them everywhere, including under `bypassPermissions`. Prefix-match, per
+compound-command segment. The refspec form `git push origin +main:main` is not expressible
+as a prefix rule and is **not** blocked — don't use it. <!-- rule:never-force-push -->
 
-**Blocked in the main worktree** (where `.git` is a directory):
-| Command | Why |
-|---------|-----|
-| `git checkout <branch>` / `git checkout -- .` | Main stays on `main`. Use worktrees. **Single-file restore `git checkout -- <path>` is allowed** (tempdoc 520 P0c). |
-| `git switch` | Same as checkout. |
-| `git reset --hard` | Destroys uncommitted tracked changes from other agents. |
-| `git clean -f` | Deletes untracked files (tempdocs, new code) from other agents. |
-| `git restore .` | Discards all uncommitted modifications. |
-
-**Blocked everywhere** (main and worktrees):
-| Command | Why |
-|---------|-----|
-| `git push --force` / `-f` | Rewrites shared remote history. <!-- rule:never-force-push --> |
+**Destructive git in the main worktree is a prose rule, not a block** (930 row 4: the hook
+had 0 true positives and 11 false over 30 days, and deny can't be scoped to one worktree).
+In the main checkout do not run `git checkout <branch>`, `git switch`, `git reset --hard`,
+`git clean -f`, `git restore .`, or whole-tree `git checkout -- .` — they destroy other
+agents' work. Single-file `git checkout -- <path>` is fine. Check `pwd` first.
 
 **Allowed in the main worktree:** `git status`, `git log`, `git diff`,
 `git add`, `git commit`, `git push`, `git merge`, `git worktree`,
@@ -191,10 +183,9 @@ question of whether a change should be its **own** public PR at all (tempdoc 653
   chain's root PR carried canonical docs, which this rule lets stand alone).
   Re-qualify each push on this rule's own terms.
 
-The `docs-granularity-hint` hook surfaces this at `git push` when a branch changes
-exactly ONE working-history file; it never blocks. Multi-file batches (a fold,
-several tempdoc edits) are what this rule asks for, so they don't trigger it
-(tempdoc 739 §6). Rationale and the worked example live in
+The trigger to self-check is a branch whose whole diff is exactly ONE working-history
+file. Multi-file batches (a fold, several tempdoc edits) are what this rule asks for.
+Rationale and the worked example live in
 `docs/reference/contributing/agent-guide.md` (History publication).
 
 ### Verifying whether squash-merged work already landed <!-- rule:squash-merge-verify-content-not-ancestry -->
