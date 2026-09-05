@@ -2,6 +2,7 @@
 package io.justsearch.configuration.resolved;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.configuration.EnvRegistry;
@@ -57,8 +58,11 @@ final class IdentityDeletionGraceConfigForwardingTest {
   @Test
   @DisplayName("the value exceeds int range and must resolve as a long")
   void thirtyDaysDoesNotFitInAnInt() {
-    assertTrue(
-        ResolvedConfig.Index.DEFAULT_IDENTITY_DELETION_GRACE_MS > Integer.MAX_VALUE,
+    // Math.toIntExact rather than a > Integer.MAX_VALUE comparison: errorprone folds the constant
+    // comparison and rejects it as ComparisonOutOfRange (CI -Werror).
+    assertThrows(
+        ArithmeticException.class,
+        () -> Math.toIntExact(ResolvedConfig.Index.DEFAULT_IDENTITY_DELETION_GRACE_MS),
         "resolving this key as an int would silently truncate the default window");
   }
 
