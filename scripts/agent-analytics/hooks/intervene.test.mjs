@@ -10,7 +10,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shouldBlockHotFile, shouldCapExplicitLimit, getOtherPathsWithSameBasename } from './intervene.mjs';
+import {
+  shouldBlockHotFile,
+  shouldCapExplicitLimit,
+  getOtherPathsWithSameBasename,
+  tempdocNumberFromPath,
+  tempdocSizeHint,
+} from './intervene.mjs';
+import { CAP_LINES } from '../../ci/check-tempdoc-size.mjs';
 import { telemetryDir } from '../lib/hook-base.mjs';
 
 let passed = 0;
@@ -136,6 +143,41 @@ try {
     if (!telemetryDirPreexisted) {
       try { fs.rmdirSync(telemetryDir); } catch { /* not empty — another writer landed there first, leave it */ }
     }
+  }
+}
+
+// --- tempdocNumberFromPath (tempdoc 930 §18.1 row 8 / §19.3 F4) ---
+run('main tempdoc file resolves its number', () =>
+  assert.equal(tempdocNumberFromPath('docs/tempdocs/930-replace-bounded-areas-with-maintained-oss.md'), '930'));
+run('a sidecar file resolves the owning number', () =>
+  assert.equal(tempdocNumberFromPath('docs/tempdocs/930-evidence/verification.md'), '930'));
+run('a backslash (Windows) path resolves the number', () =>
+  assert.equal(tempdocNumberFromPath('docs\\tempdocs\\930-evidence\\verification.md'), '930'));
+run('a non-tempdoc path resolves to null', () => assert.equal(tempdocNumberFromPath('docs/reference/foo.md'), null));
+run('no path resolves to null', () => assert.equal(tempdocNumberFromPath(undefined), null));
+
+// --- tempdocSizeHint: the write-time advisory, using a real fixture repo tree ---
+{
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intervene-tempdoc-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'docs', 'tempdocs'), { recursive: true });
+    const under = Array.from({ length: 10 }, (_, i) => `line ${i}`).join('\n') + '\n';
+    const over = Array.from({ length: CAP_LINES + 20 }, (_, i) => `line ${i}`).join('\n') + '\n';
+    fs.writeFileSync(path.join(fixtureRoot, 'docs', 'tempdocs', '400-under.md'), under);
+    fs.writeFileSync(path.join(fixtureRoot, 'docs', 'tempdocs', '500-over.md'), over);
+
+    run('under-cap edit → no hint (null)', () => {
+      assert.equal(tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/tempdocs/400-under.md')), null);
+    });
+    run('over-cap edit → a hint naming the three remedies, not "summarise"', () => {
+      const hint = tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/tempdocs/500-over.md'));
+      assert.ok(hint && /canonical doc/.test(hint) && /500-evidence\//.test(hint) && !/summarise/i.test(hint));
+    });
+    run('a non-tempdoc path → no hint (null)', () => {
+      assert.equal(tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/reference/foo.md')), null);
+    });
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 

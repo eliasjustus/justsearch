@@ -255,6 +255,22 @@ export function loadOtlpStream(dir, base) {
 }
 
 /**
+ * Read the compact `ledger.ndjson` stream — otlp-sink.py's body-free
+ * projection of the log stream (tempdoc 930 F2) — archives first, current
+ * last, exactly like every other rotated stream.
+ *
+ * It exists as its own reader (rather than callers passing the literal
+ * 'ledger' to `loadOtlpStream`) because the base name is the contract between
+ * the sink and this module: logs.ndjson keeps 2 archives (~1 GB/active day of
+ * embedded request bodies) while ledger.ndjson keeps 90 (~1 MB/day), so a
+ * reader that wants tokens/cost/tool outcomes older than the last hour must
+ * read THIS stream, and naming it here is what makes that discoverable.
+ */
+export function readOtlpLedger(dir) {
+  return loadOtlpStream(dir, 'ledger');
+}
+
+/**
  * Reconstruct the dispatch.mjs-style `input_summary` from an OTLP `tool_input`
  * JSON string, so OTLP-sourced events match the legacy event shape the scorers
  * read (file_path / command / has_offset / *_string_length / …).
