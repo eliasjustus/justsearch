@@ -3,10 +3,11 @@
  * projected onto the neutral `Call`/`ToolEvent` shape (tempdoc 886 §12 PR 1,
  * independent-review fix-up).
  *
- * Source: `${codexHome}/sessions/**\/rollout-*.jsonl` (recursing the
- * `YYYY/MM/DD` layout). `archived_sessions` is skipped wherever it appears in
- * the walk (it lives as a SIBLING of `sessions/` on this machine, but the
- * skip is defensive against a layout that nests it).
+ * Neutral-ledger source: `${codexHome}/sessions/**\/rollout-*.jsonl`
+ * (recursing the `YYYY/MM/DD` layout). `archived_sessions` is skipped wherever
+ * it appears in that walk. The raw attribution reader intentionally has a
+ * wider source contract: it reads both active and archived fragments and
+ * performs event-time snapshotting/deduplication itself.
  *
  * Every rule below is from tempdoc 886 §11's derisk pass (A1/A2/A7), verified
  * against the real corpus (51,740 `token_count` events, 289 sessions) before
@@ -60,41 +61,49 @@ export const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');
 const OUTPUT_CHAR_CAP = 65536;
 const ARCHIVED_DIR_NAME = 'archived_sessions';
 
-function walkRolloutFiles(dir, out) {
+function walkRolloutFiles(dir, out, errors = null) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    if (errors) errors.push({ path: dir, code: error.code ?? 'READ_ERROR' });
+    return false;
   }
   for (const e of entries) {
     if (e.name === ARCHIVED_DIR_NAME) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      walkRolloutFiles(p, out);
+      walkRolloutFiles(p, out, errors);
     } else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
       out.push(p);
     }
   }
+  return true;
 }
 
-function parseLines(file) {
+function parseLinesWithDiagnostics(file) {
   let content;
   try {
     content = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
+  } catch (error) {
+    return { entries: [], malformedLines: 0, readError: error };
   }
-  const out = [];
+  const entries = [];
+  let malformedLines = 0;
   for (const raw of content.split('\n')) {
     if (!raw.trim()) continue;
     try {
-      out.push(JSON.parse(raw));
+      entries.push(JSON.parse(raw));
     } catch {
       // truncated/corrupt line — skip it, matching every other reader's per-line tolerance
+      malformedLines += 1;
     }
   }
-  return out;
+  return { entries, malformedLines, readError: null };
+}
+
+function parseLines(file) {
+  return parseLinesWithDiagnostics(file).entries;
 }
 
 function outputStringOf(payload) {
@@ -220,6 +229,7 @@ export function processCodexToolExchanges(entries, { file } = {}) {
         outputText: null,
         rawOutputChars: null,
         missingOutput: true,
+        outputTimestampUnknown: false,
         startedTs: entry.timestamp ?? null,
         completedTs: null,
       });
@@ -234,6 +244,7 @@ export function processCodexToolExchanges(entries, { file } = {}) {
         outputText: codexToolOutputText(p.output),
         rawOutputChars: outputStringOf(p).length,
         missingOutput: false,
+        outputTimestampUnknown: timestampMs(entry.timestamp) == null,
         completedTs: entry.timestamp ?? null,
       });
       pendingByCallId.delete(p.call_id);
@@ -480,6 +491,72 @@ function rolloutFilesInWindow({ codexHome, sinceMs, untilMs }) {
   return files;
 }
 
+function rawRolloutFiles(codexHome) {
+  const home = codexHome ?? DEFAULT_CODEX_HOME;
+  const discovered = [];
+  const sourceRootErrors = [];
+  let sourceRootsAvailable = 0;
+  let sourceRootsMissing = 0;
+  for (const root of [path.join(home, 'sessions'), path.join(home, ARCHIVED_DIR_NAME)]) {
+    const walkErrors = [];
+    if (walkRolloutFiles(root, discovered, walkErrors)) {
+      sourceRootsAvailable += 1;
+      sourceRootErrors.push(...walkErrors);
+      continue;
+    }
+    const missingRoot = walkErrors.some((error) => error.path === root && error.code === 'ENOENT');
+    if (missingRoot) sourceRootsMissing += 1;
+    sourceRootErrors.push(...walkErrors.filter((error) => !(error.path === root && error.code === 'ENOENT')));
+  }
+  return {
+    files: [...new Set(discovered)].sort(),
+    sourceRootsAvailable,
+    sourceRootsMissing,
+    sourceRootErrors,
+  };
+}
+
+function timestampMs(value) {
+  const millis = Date.parse(value ?? '');
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function entriesAsOf(entries, untilMs) {
+  if (untilMs == null) return entries;
+  return entries.filter((entry) => {
+    const millis = timestampMs(entry?.timestamp);
+    if (entry?.type === 'session_meta') return millis == null || millis <= untilMs;
+    if (millis == null && entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call_output' || entry.payload?.type === 'custom_tool_call_output')) {
+      return true;
+    }
+    return millis != null && millis <= untilMs;
+  });
+}
+
+function exchangeStartInWindow(exchange, sinceMs, untilMs) {
+  const millis = timestampMs(exchange.startedTs);
+  if (millis == null) return false;
+  if (sinceMs != null && millis < sinceMs) return false;
+  if (untilMs != null && millis > untilMs) return false;
+  return true;
+}
+
+function exchangeIdentity(exchange) {
+  return `${exchange.sessionId}\u0000${exchange.callId ?? ''}\u0000${timestampMs(exchange.startedTs) ?? 'invalid'}`;
+}
+
+function exchangeContentSignature(exchange) {
+  return JSON.stringify([
+    exchange.name ?? null,
+    exchange.input ?? null,
+    exchange.outputText ?? null,
+    exchange.missingOutput,
+    exchange.outputTimestampUnknown,
+    timestampMs(exchange.completedTs),
+  ]);
+}
+
 /**
  * Every Codex CLI `Call`/`ToolEvent` this machine holds, across every
  * session under `${codexHome}/sessions`, in the `sinceMs`/`untilMs` mtime
@@ -515,27 +592,103 @@ export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, proj
 }
 
 /**
- * Full raw tool exchanges for Codex attribution readers. Discovery/windowing
- * exactly matches `listCodexCalls`; unlike that neutral projection, outputs
- * are not capped. Nothing is written to disk here.
+ * Full raw tool exchanges for Codex attribution readers. Unlike the neutral
+ * ledger, this includes both active and archived rollout fragments and uses
+ * exchange-start event time rather than file mtime. `untilMs` is an as-of
+ * boundary: entries after it are removed before calls and outputs are paired,
+ * so later appends cannot rewrite a fixed-window missing-output observation.
+ * Duplicate fragment copies are unioned by session/call/start identity.
+ * Outputs are not capped. Nothing is written to disk here.
  */
 export function listCodexToolExchanges({ codexHome, sinceMs = null, untilMs = null, projectFilter = null } = {}) {
-  const files = rolloutFilesInWindow({ codexHome, sinceMs, untilMs });
-  const exchanges = [];
-  const sessions = [];
+  const discovery = rawRolloutFiles(codexHome);
+  const exchangeStates = new Map();
+  const sessionsById = new Map();
   const skipped = [];
+  let fragmentsDiscovered = 0;
+  let fragmentsContributing = 0;
+  let unreadableFragments = 0;
+  let malformedLines = 0;
+  let untimestampedExchanges = 0;
+  let untimestampedOutputs = 0;
+  let duplicateExchangeCopies = 0;
+  let conflictingExchangeCopies = 0;
 
-  for (const file of files) {
-    const entries = parseLines(file);
+  for (const file of discovery.files) {
+    const parsed = parseLinesWithDiagnostics(file);
+    malformedLines += parsed.malformedLines;
+    if (parsed.readError) {
+      unreadableFragments += 1;
+      skipped.push({ file, reason: `could not read rollout: ${parsed.readError.code ?? parsed.readError.message}` });
+      continue;
+    }
+    const allEntries = parsed.entries;
+    const entries = entriesAsOf(allEntries, untilMs);
+    if (entries.length === 0) continue;
+    fragmentsDiscovered += 1;
     const result = processCodexToolExchanges(entries, { file });
     if (result.skip) {
-      skipped.push(result.skip);
+      const hasInWindowEvent = entries.some((entry) => {
+        const millis = timestampMs(entry?.timestamp);
+        return millis != null
+          && (sinceMs == null || millis >= sinceMs)
+          && (untilMs == null || millis <= untilMs);
+      });
+      if (hasInWindowEvent) skipped.push(result.skip);
       continue;
     }
     if (projectFilter && !(result.session.project && projectFilter.test(result.session.project))) continue;
-    exchanges.push(...result.exchanges);
-    sessions.push(result.session);
+
+    untimestampedExchanges += allEntries.filter((entry) => (
+      entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
+      && timestampMs(entry.timestamp) == null
+    )).length;
+    untimestampedOutputs += allEntries.filter((entry) => (
+      entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call_output' || entry.payload?.type === 'custom_tool_call_output')
+      && timestampMs(entry.timestamp) == null
+    )).length;
+
+    const inWindow = [];
+    for (const exchange of result.exchanges) {
+      if (timestampMs(exchange.startedTs) == null) continue;
+      if (exchangeStartInWindow(exchange, sinceMs, untilMs)) inWindow.push(exchange);
+    }
+    if (inWindow.length === 0) continue;
+    fragmentsContributing += 1;
+    if (!sessionsById.has(result.session.sessionId)) sessionsById.set(result.session.sessionId, result.session);
+
+    for (const exchange of inWindow) {
+      const key = exchangeIdentity(exchange);
+      const signature = exchangeContentSignature(exchange);
+      const state = exchangeStates.get(key);
+      if (!state) {
+        exchangeStates.set(key, { exchange, signature, conflicted: false });
+        continue;
+      }
+      duplicateExchangeCopies += 1;
+      if (state.signature !== signature) {
+        conflictingExchangeCopies += 1;
+        state.conflicted = true;
+      }
+    }
   }
 
-  return { exchanges, sessions, skipped, filesScanned: files.length };
+  return {
+    exchanges: [...exchangeStates.values()].filter((state) => !state.conflicted).map((state) => state.exchange),
+    sessions: [...sessionsById.values()],
+    skipped,
+    sourceRootsAvailable: discovery.sourceRootsAvailable,
+    sourceRootsMissing: discovery.sourceRootsMissing,
+    sourceRootErrors: discovery.sourceRootErrors,
+    fragmentsDiscovered,
+    fragmentsContributing,
+    unreadableFragments,
+    malformedLines,
+    untimestampedExchanges,
+    untimestampedOutputs,
+    duplicateExchangeCopies,
+    conflictingExchangeCopies,
+  };
 }

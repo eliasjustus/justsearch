@@ -2,8 +2,8 @@
 /**
  * Skill inventory + Codex transcript delivery evidence (tempdoc 928).
  *
- * This reader is intentionally asymmetric. An exact copy of today's checked-
- * in skill in a tool result proves full current-snapshot delivery. A missing
+ * This reader is intentionally asymmetric. An exact copy of today's named
+ * harness skill file proves full current-snapshot delivery. A missing
  * match does NOT prove failure because the transcript may predate the current
  * skill revision. Tool truncation, partial intent, and batching are therefore
  * reported as separate observable facts instead of collapsed into a score.
@@ -14,7 +14,10 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import matter from 'gray-matter';
+import yaml from 'js-yaml';
 import {
   DEFAULT_CODEX_HOME,
   listCodexToolExchanges,
@@ -24,9 +27,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO_ROOT = path.resolve(HERE, '..', '..');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_WINDOW_DAYS = 30;
+const SKILL_SURFACES = [
+  { harness: 'codex-cli', root: '.agents/skills', kind: 'agents' },
+  { harness: 'claude-code', root: '.claude/skills', kind: 'claude' },
+];
 
 export const DELIVERY_CLASSIFICATIONS = [
   'proven_full_current',
+  'timestamp_indeterminate',
   'tool_output_truncated',
   'partial_intent',
   'ambiguous_batched',
@@ -38,38 +46,11 @@ function normalizeText(value) {
   return String(value ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
 }
 
-function parseScalar(raw) {
-  const value = raw.trim();
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    if (value.startsWith('"')) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        // Fall through to quote stripping for permissive frontmatter parsing.
-      }
-    }
-    return value.slice(1, -1);
-  }
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  return value;
-}
-
-/** Minimal parser for the simple scalar frontmatter used by project skills. */
+/** Parse skill YAML with the same established dependency used by repository docs tooling. */
 export function parseSkillFrontmatter(text) {
   const normalized = normalizeText(text);
-  if (!normalized.startsWith('---\n')) return { frontmatter: {}, body: normalized };
-  const end = normalized.indexOf('\n---\n', 4);
-  if (end < 0) return { frontmatter: {}, body: normalized };
-
-  const frontmatter = {};
-  for (const line of normalized.slice(4, end).split('\n')) {
-    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*?)\s*$/);
-    if (match && match[2] && !['>', '>-', '|', '|-'].includes(match[2])) {
-      frontmatter[match[1]] = parseScalar(match[2]);
-    }
-  }
-  return { frontmatter, body: normalized.slice(end + '\n---\n'.length) };
+  const parsed = matter(normalized);
+  return { frontmatter: parsed.data ?? {}, body: normalizeText(parsed.content) };
 }
 
 function readIfPresent(file) {
@@ -81,56 +62,118 @@ function readIfPresent(file) {
   }
 }
 
-/** Inventory the Claude source skills and their generated Codex projections. */
-export function inventorySkills(repoRoot = DEFAULT_REPO_ROOT) {
-  const sourceRoot = path.join(repoRoot, '.claude', 'skills');
-  let entries;
+function gitTrackedPaths(repoRoot) {
   try {
-    entries = fs.readdirSync(sourceRoot, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === 'ENOENT') return [];
-    throw error;
+    const output = execFileSync(
+      'git',
+      ['ls-files', '-z', '--', '.agents/skills', '.claude/skills'],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 },
+    );
+    let changedOutput = null;
+    try {
+      changedOutput = execFileSync(
+        'git',
+        ['diff', '--name-only', '-z', 'HEAD', '--', '.agents/skills', '.claude/skills'],
+        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 },
+      );
+    } catch {
+      // An unborn repository can have index membership without a HEAD comparison.
+    }
+    return {
+      known: true,
+      paths: new Set(output.split('\0').filter(Boolean).map((file) => file.replaceAll('\\', '/'))),
+      headComparisonKnown: changedOutput != null,
+      changedPaths: new Set((changedOutput ?? '').split('\0').filter(Boolean).map((file) => file.replaceAll('\\', '/'))),
+    };
+  } catch {
+    return { known: false, paths: new Set(), headComparisonKnown: false, changedPaths: new Set() };
   }
+}
 
+/** Inventory the independent Codex and Claude skill authorities in this worktree. */
+export function inventorySkills(repoRoot = DEFAULT_REPO_ROOT, tracking = null) {
+  const tracked = tracking ?? gitTrackedPaths(repoRoot);
   const inventory = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const name = entry.name;
-    const sourcePath = path.join(sourceRoot, name, 'SKILL.md');
-    const sourceText = readIfPresent(sourcePath);
-    if (sourceText == null) continue;
+  for (const surface of SKILL_SURFACES) {
+    const surfaceRoot = path.join(repoRoot, ...surface.root.split('/'));
+    let entries;
+    try {
+      entries = fs.readdirSync(surfaceRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      throw error;
+    }
 
-    const projectedPath = path.join(repoRoot, '.agents', 'skills', name, 'SKILL.md');
-    const projectionText = readIfPresent(projectedPath);
-    const openAiPolicy = readIfPresent(path.join(repoRoot, '.agents', 'skills', name, 'agents', 'openai.yaml'));
-    const parsed = parseSkillFrontmatter(sourceText);
-    const description = typeof parsed.frontmatter.description === 'string'
-      ? parsed.frontmatter.description
-      : '';
-    const explicitOnly = parsed.frontmatter['disable-model-invocation'] === true
-      || /allow_implicit_invocation:\s*false/i.test(openAiPolicy ?? '');
-
-    inventory.push({
-      name,
-      sourcePath: path.relative(repoRoot, sourcePath).replaceAll('\\', '/'),
-      projectedPath: projectionText == null
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const name = entry.name;
+      const skillFile = path.join(surfaceRoot, name, 'SKILL.md');
+      const skillText = readIfPresent(skillFile);
+      if (skillText == null) continue;
+      const relativePath = path.relative(repoRoot, skillFile).replaceAll('\\', '/');
+      const policyFile = surface.harness === 'codex-cli'
+        ? path.join(surfaceRoot, name, 'agents', 'openai.yaml')
+        : null;
+      const policyText = policyFile == null ? null : readIfPresent(policyFile);
+      const policyPath = policyFile == null
         ? null
-        : path.relative(repoRoot, projectedPath).replaceAll('\\', '/'),
-      description,
-      descriptionChars: description.length,
-      bodyChars: parsed.body.length,
-      totalChars: normalizeText(sourceText).length,
-      approxTokens: Math.ceil(normalizeText(sourceText).length / 4),
-      explicitOnly,
-      sourceText: normalizeText(sourceText),
-      projectionText: projectionText == null ? null : normalizeText(projectionText),
-    });
+        : path.relative(repoRoot, policyFile).replaceAll('\\', '/');
+      const parsed = parseSkillFrontmatter(skillText);
+      const normalized = normalizeText(skillText);
+      const declaredName = typeof parsed.frontmatter.name === 'string'
+        ? parsed.frontmatter.name
+        : null;
+      const description = typeof parsed.frontmatter.description === 'string'
+        ? parsed.frontmatter.description
+        : '';
+      const metadataErrors = [];
+      if (surface.harness === 'codex-cli' && declaredName == null) {
+        metadataErrors.push('missing string frontmatter name');
+      } else if (declaredName != null && declaredName !== name) {
+        metadataErrors.push(`frontmatter name ${JSON.stringify(declaredName)} does not match directory ${JSON.stringify(name)}`);
+      }
+      if (description.length === 0) metadataErrors.push('missing non-empty string frontmatter description');
+      const explicitOnly = surface.harness === 'codex-cli'
+        ? yaml.load(policyText ?? '')?.policy?.allow_implicit_invocation === false
+        : parsed.frontmatter['disable-model-invocation'] === true;
+      const trackedPath = tracked.known ? tracked.paths.has(relativePath) : null;
+      const policyTracked = policyPath == null ? null : (tracked.known ? tracked.paths.has(policyPath) : null);
+      const currentMatchesHead = tracked.headComparisonKnown
+        ? trackedPath === true
+          && !tracked.changedPaths.has(relativePath)
+          && (policyPath == null || (
+            policyTracked === true && !tracked.changedPaths.has(policyPath)
+          ))
+        : null;
+
+      inventory.push({
+        harness: surface.harness,
+        kind: surface.kind,
+        root: surface.root,
+        name,
+        declaredName,
+        metadataValid: metadataErrors.length === 0,
+        metadataErrors,
+        path: relativePath,
+        tracked: trackedPath,
+        currentMatchesHead,
+        policyPath: policyText == null && policyTracked !== true ? null : policyPath,
+        policyTracked,
+        description,
+        descriptionChars: description.length,
+        bodyChars: parsed.body.length,
+        totalChars: normalized.length,
+        approxTokens: Math.ceil(normalized.length / 4),
+        explicitOnly,
+        text: normalized,
+      });
+    }
   }
-  return inventory.sort((a, b) => a.name.localeCompare(b.name));
+  return inventory.sort((a, b) => a.harness.localeCompare(b.harness) || a.name.localeCompare(b.name));
 }
 
 /**
- * Find checked-in skill paths in a tool input. Repeated separators support
+ * Find locally inventoried skill-path syntax in a tool input. Repeated separators support
  * JavaScript command strings whose Windows paths contain escaped backslashes.
  */
 export function findSkillTargets(input) {
@@ -140,11 +183,12 @@ export function findSkillTargets(input) {
   let match;
   while ((match = regex.exec(String(input ?? ''))) !== null) {
     const kind = match[1].toLowerCase() === '.agents' ? 'agents' : 'claude';
+    const harness = kind === 'agents' ? 'codex-cli' : 'claude-code';
     const name = match[2];
     const key = `${kind}:${name.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    targets.push({ kind, name });
+    targets.push({ kind, harness, name });
   }
   return targets;
 }
@@ -192,9 +236,17 @@ function looksBatched(input, targetCount) {
   return producers.length > 1;
 }
 
-export function classifySkillAttempt({ input, outputText, missingOutput, expectedText, targetCount = 1 }) {
+export function classifySkillAttempt({
+  input,
+  outputText,
+  missingOutput,
+  outputTimestampUnknown = false,
+  expectedText,
+  targetCount = 1,
+}) {
   const output = normalizeText(outputText);
   const expected = normalizeText(expectedText);
+  if (outputTimestampUnknown) return 'timestamp_indeterminate';
   if (!missingOutput && expected.length > 0 && output.includes(expected)) return 'proven_full_current';
   if (missingOutput) return 'missing_output';
   if (hasExplicitTruncation(output)) return 'tool_output_truncated';
@@ -209,9 +261,17 @@ function emptyClassificationCounts() {
 
 function publicInventoryItem(skill) {
   return {
+    harness: skill.harness,
+    root: skill.root,
     name: skill.name,
-    sourcePath: skill.sourcePath,
-    projectedPath: skill.projectedPath,
+    declaredName: skill.declaredName,
+    metadataValid: skill.metadataValid,
+    metadataErrors: skill.metadataErrors,
+    path: skill.path,
+    tracked: skill.tracked,
+    currentMatchesHead: skill.currentMatchesHead,
+    policyPath: skill.policyPath,
+    policyTracked: skill.policyTracked,
     description: skill.description,
     descriptionChars: skill.descriptionChars,
     bodyChars: skill.bodyChars,
@@ -225,20 +285,33 @@ function publicInventoryItem(skill) {
 export function buildSkillDeliveryReport({
   inventory,
   exchanges,
-  filesScanned = 0,
   sessionsScanned = 0,
   skippedFiles = 0,
+  fragmentsDiscovered = 0,
+  fragmentsContributing = 0,
+  unreadableFragments = 0,
+  malformedLines = 0,
+  untimestampedExchanges = 0,
+  untimestampedOutputs = 0,
+  duplicateExchangeCopies = 0,
+  conflictingExchangeCopies = 0,
+  sourceRootsAvailable = null,
+  sourceRootsMissing = null,
+  sourceRootErrorCount = null,
   since = null,
   until = null,
   repoName = null,
+  projectPattern = null,
 } = {}) {
-  const byName = new Map(inventory.map((skill) => [skill.name.toLowerCase(), skill]));
+  const keyOf = (harness, name) => `${harness}:${name.toLowerCase()}`;
+  const byKey = new Map(inventory.map((skill) => [keyOf(skill.harness, skill.name), skill]));
   const classifications = emptyClassificationCounts();
   const classificationSessions = Object.fromEntries(
     DELIVERY_CLASSIFICATIONS.map((name) => [name, new Set()]),
   );
   const readSessions = new Set();
-  const perSkill = new Map(inventory.map((skill) => [skill.name, {
+  const perSkill = new Map(inventory.map((skill) => [keyOf(skill.harness, skill.name), {
+    harness: skill.harness,
     name: skill.name,
     attempts: 0,
     sessions: new Set(),
@@ -253,25 +326,25 @@ export function buildSkillDeliveryReport({
   for (const exchange of exchanges) {
     if (!isSkillReadExchange(exchange)) continue;
     const allTargets = findSkillTargets(exchange.input);
-    const targets = allTargets.filter((target) => byName.has(target.name.toLowerCase()));
+    const targets = allTargets.filter((target) => byKey.has(keyOf(target.harness, target.name)));
     if (targets.length === 0) continue;
     targetedExchanges += 1;
     if (exchange.sessionId) readSessions.add(exchange.sessionId);
 
     for (const target of targets) {
-      const skill = byName.get(target.name.toLowerCase());
-      const expectedText = target.kind === 'agents' ? skill.projectionText : skill.sourceText;
+      const skill = byKey.get(keyOf(target.harness, target.name));
       const classification = classifySkillAttempt({
         input: exchange.input,
         outputText: exchange.outputText,
         missingOutput: exchange.missingOutput,
-        expectedText,
-        targetCount: targets.length,
+        outputTimestampUnknown: exchange.outputTimestampUnknown,
+        expectedText: skill.text,
+        targetCount: allTargets.length,
       });
       attempts += 1;
       classifications[classification] += 1;
       if (exchange.sessionId) classificationSessions[classification].add(exchange.sessionId);
-      const row = perSkill.get(skill.name);
+      const row = perSkill.get(keyOf(skill.harness, skill.name));
       row.attempts += 1;
       row.classifications[classification] += 1;
       if (exchange.sessionId) row.classificationSessions[classification].add(exchange.sessionId);
@@ -280,31 +353,104 @@ export function buildSkillDeliveryReport({
   }
 
   const safeInventory = inventory.map(publicInventoryItem);
-  const inventoryTotalChars = safeInventory.reduce((sum, skill) => sum + skill.totalChars, 0);
-  const bodyChars = safeInventory.reduce((sum, skill) => sum + skill.bodyChars, 0);
-  const descriptionChars = safeInventory.reduce((sum, skill) => sum + skill.descriptionChars, 0);
+  const surfaceStats = SKILL_SURFACES.map((surface) => {
+    const skills = safeInventory.filter((skill) => skill.harness === surface.harness);
+    const trackedSkills = skills.filter((skill) => skill.tracked === true);
+    const trackingKnown = skills.every((skill) => skill.tracked !== null);
+    const headComparisonKnown = skills.every((skill) => skill.currentMatchesHead !== null);
+    const checkedInSkills = skills.filter((skill) => skill.currentMatchesHead === true);
+    return {
+      harness: surface.harness,
+      root: surface.root,
+      trackingKnown,
+      presentSkillCount: skills.length,
+      trackedSkillCount: trackingKnown ? trackedSkills.length : null,
+      untrackedSkillCount: trackingKnown ? skills.length - trackedSkills.length : null,
+      invalidMetadataSkillCount: skills.filter((skill) => !skill.metadataValid).length,
+      headComparisonKnown,
+      checkedInSkillCount: headComparisonKnown ? checkedInSkills.length : null,
+      modifiedTrackedSkillCount: headComparisonKnown
+        ? trackedSkills.filter((skill) => skill.currentMatchesHead === false).length
+        : null,
+      presentTotalChars: skills.reduce((sum, skill) => sum + skill.totalChars, 0),
+      currentTotalCharsOnTrackedPaths: trackingKnown
+        ? trackedSkills.reduce((sum, skill) => sum + skill.totalChars, 0)
+        : null,
+      checkedInTotalChars: headComparisonKnown
+        ? checkedInSkills.reduce((sum, skill) => sum + skill.totalChars, 0)
+        : null,
+      presentDescriptionChars: skills.reduce((sum, skill) => sum + skill.descriptionChars, 0),
+      currentDescriptionCharsOnTrackedPaths: trackingKnown
+        ? trackedSkills.reduce((sum, skill) => sum + skill.descriptionChars, 0)
+        : null,
+      checkedInDescriptionChars: headComparisonKnown
+        ? checkedInSkills.reduce((sum, skill) => sum + skill.descriptionChars, 0)
+        : null,
+      presentCatalogFieldCharsLowerBound: skills.reduce(
+        (sum, skill) => sum + skill.name.length + skill.path.length + skill.descriptionChars,
+        0,
+      ),
+      currentCatalogFieldCharsOnTrackedPathsLowerBound: trackingKnown
+        ? trackedSkills.reduce(
+          (sum, skill) => sum + skill.name.length + skill.path.length + skill.descriptionChars,
+          0,
+        )
+        : null,
+      checkedInCatalogFieldCharsLowerBound: headComparisonKnown
+        ? checkedInSkills.reduce(
+          (sum, skill) => sum + skill.name.length + skill.path.length + skill.descriptionChars,
+          0,
+        )
+        : null,
+      presentExplicitOnlyCount: skills.filter((skill) => skill.explicitOnly).length,
+      currentExplicitOnlyCountOnTrackedPaths: trackingKnown
+        ? trackedSkills.filter((skill) => skill.explicitOnly).length
+        : null,
+      checkedInExplicitOnlyCount: headComparisonKnown
+        ? checkedInSkills.filter((skill) => skill.explicitOnly).length
+        : null,
+    };
+  });
+  const trackingKnown = safeInventory.every((skill) => skill.tracked !== null);
+  const trackedSkills = safeInventory.filter((skill) => skill.tracked === true);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scope: {
       harness: 'codex-cli',
       repoName,
-      transcriptWindow: { basis: 'rollout-file-mtime', since, until },
-      proofTarget: 'current-checked-in-snapshot',
+      projectPattern,
+      transcriptWindow: { basis: 'exchange-start-event-time', snapshotAsOfUntil: true, since, until },
+      proofTarget: 'current-local-harness-skill-file',
     },
     inventory: {
-      skillCount: safeInventory.length,
-      explicitOnlyCount: safeInventory.filter((skill) => skill.explicitOnly).length,
-      totalChars: inventoryTotalChars,
-      bodyChars,
-      descriptionChars,
-      approxTokens: Math.ceil(inventoryTotalChars / 4),
-      skills: safeInventory.sort((a, b) => b.totalChars - a.totalChars || a.name.localeCompare(b.name)),
+      snapshot: 'current-working-tree',
+      gitMembership: 'index',
+      trackingKnown,
+      presentSkillCount: safeInventory.length,
+      trackedSkillCount: trackingKnown ? trackedSkills.length : null,
+      untrackedSkillCount: trackingKnown ? safeInventory.length - trackedSkills.length : null,
+      surfaces: surfaceStats,
+      skills: safeInventory.sort((a, b) => (
+        a.harness.localeCompare(b.harness)
+        || b.totalChars - a.totalChars
+        || a.name.localeCompare(b.name)
+      )),
     },
     delivery: {
-      rolloutFilesScanned: filesScanned,
+      rolloutFragmentsDiscovered: fragmentsDiscovered,
+      rolloutFragmentsContributing: fragmentsContributing,
       sessionsScanned,
       skippedFiles,
+      unreadableFragments,
+      malformedLines,
+      untimestampedExchanges,
+      untimestampedOutputs,
+      duplicateExchangeCopies,
+      conflictingExchangeCopies,
+      sourceRootsAvailable,
+      sourceRootsMissing,
+      sourceRootErrorCount,
       toolExchangesScanned: exchanges.length,
       targetedExchanges,
       attempts,
@@ -315,6 +461,7 @@ export function buildSkillDeliveryReport({
       ),
       bySkill: [...perSkill.values()]
         .map((row) => ({
+          harness: row.harness,
           name: row.name,
           attempts: row.attempts,
           sessions: row.sessions.size,
@@ -323,14 +470,22 @@ export function buildSkillDeliveryReport({
             DELIVERY_CLASSIFICATIONS.map((name) => [name, row.classificationSessions[name].size]),
           ),
         }))
-        .sort((a, b) => b.attempts - a.attempts || a.name.localeCompare(b.name)),
+        .sort((a, b) => (
+          b.attempts - a.attempts
+          || a.harness.localeCompare(b.harness)
+          || a.name.localeCompare(b.name)
+        )),
     },
     limitations: [
-      'Exact containment proves delivery only for the current checked-in skill snapshot; historical revision drift remains unproven.',
+      'Exact containment proves delivery only for the current local harness-specific skill file; historical revision drift remains unproven.',
       'An explicit tool-output truncation proves the combined result was capped, not which target section was omitted.',
       'Tool selection and tool-result delivery do not prove model attention, rule adherence, or task correctness.',
       'This slice audits Codex rollouts only; it makes no Claude delivery-parity claim.',
+      'A Codex transcript read of .agents or .claude content is tool-read evidence, not native skill-loader selection telemetry.',
       'Multiple partial/windowed reads are not reconstructed into cumulative coverage; they may collectively cover a full historical skill.',
+      'Fixed event-time windows are append-stable, but source rollout deletion or retroactive editing can still change a rerun.',
+      'Outputs without a parseable timestamp are retained but classified as timestamp_indeterminate because their as-of eligibility cannot be proven.',
+      'Conflicting copies of the same session/call/start identity are quarantined rather than selected arbitrarily.',
       'Raw prompts, tool inputs, and tool outputs are processed in memory and omitted from this aggregate report.',
     ],
   };
@@ -385,16 +540,32 @@ function printHuman(report) {
   const inv = report.inventory;
   const delivery = report.delivery;
   console.log('Skill delivery evidence (Codex rollouts)');
-  console.log(`Inventory: ${inv.skillCount} skills, ${inv.totalChars.toLocaleString()} chars (~${inv.approxTokens.toLocaleString()} tokens), ${inv.explicitOnlyCount} explicit-only`);
-  console.log(`Catalog descriptions: ${inv.descriptionChars.toLocaleString()} chars`);
-  console.log('\nLargest checked-in source skills:');
-  for (const skill of inv.skills.slice(0, 10)) {
-    console.log(`  ${skill.name.padEnd(22)} ${skill.totalChars.toLocaleString().padStart(10)} chars  ~${skill.approxTokens.toLocaleString().padStart(8)} tokens`);
+  for (const surface of inv.surfaces) {
+    const tracked = surface.trackingKnown
+      ? `${surface.trackedSkillCount} index-tracked, ${surface.untrackedSkillCount} untracked`
+      : 'Git tracking unknown';
+    const checkedIn = surface.headComparisonKnown
+      ? `${surface.checkedInSkillCount} current files match HEAD, ${surface.modifiedTrackedSkillCount} tracked paths modified`
+      : 'HEAD comparison unknown';
+    console.log(`Inventory ${surface.harness}: ${surface.presentSkillCount} present (${tracked}; ${checkedIn}; ${surface.invalidMetadataSkillCount} invalid metadata), ${surface.presentTotalChars.toLocaleString()} current chars, ${surface.presentDescriptionChars.toLocaleString()} description chars, >=${surface.presentCatalogFieldCharsLowerBound.toLocaleString()} catalog-field chars`);
+  }
+  console.log('\nLargest present skills by harness:');
+  for (const surface of inv.surfaces) {
+    console.log(`  ${surface.harness} (${surface.root})`);
+    for (const skill of inv.skills.filter((row) => row.harness === surface.harness).slice(0, 10)) {
+      const status = skill.tracked === null
+        ? 'Git status ?'
+        : (!skill.tracked ? 'untracked' : (skill.currentMatchesHead ? 'matches HEAD' : 'modified/index-only'));
+      console.log(`    ${skill.name.padEnd(22)} ${skill.totalChars.toLocaleString().padStart(10)} chars  ~${skill.approxTokens.toLocaleString().padStart(8)} tokens  ${status}`);
+    }
   }
 
   console.log('\nTranscript evidence:');
-  console.log(`  ${delivery.rolloutFilesScanned.toLocaleString()} rollout files in mtime window; ${delivery.sessionsScanned.toLocaleString()} matching-project sessions`);
+  console.log(`  ${delivery.rolloutFragmentsContributing.toLocaleString()} of ${delivery.rolloutFragmentsDiscovered.toLocaleString()} active/archive fragments present as of the cutoff contributed; ${delivery.sessionsScanned.toLocaleString()} matching-project sessions`);
   console.log(`  ${delivery.toolExchangesScanned.toLocaleString()} tool exchanges; ${delivery.targetedExchanges.toLocaleString()} targeted exchanges; ${delivery.attempts.toLocaleString()} skill-path attempts in ${delivery.sessionsWithReadAttempts.toLocaleString()} sessions`);
+  console.log(`  source roots available=${delivery.sourceRootsAvailable}; missing=${delivery.sourceRootsMissing}; errors=${delivery.sourceRootErrorCount}`);
+  console.log(`  unreadable fragments=${delivery.unreadableFragments.toLocaleString()}; malformed lines=${delivery.malformedLines.toLocaleString()}; omitted untimestamped starts=${delivery.untimestampedExchanges.toLocaleString()}; indeterminate untimestamped outputs=${delivery.untimestampedOutputs.toLocaleString()}`);
+  console.log(`  duplicate copies=${delivery.duplicateExchangeCopies.toLocaleString()}; quarantined conflicting copies=${delivery.conflictingExchangeCopies.toLocaleString()}`);
   for (const name of DELIVERY_CLASSIFICATIONS) {
     const count = delivery.classifications[name];
     console.log(`  ${name.padEnd(24)} ${count.toLocaleString().padStart(6)}  ${pct(count, delivery.attempts)}`);
@@ -407,7 +578,7 @@ function printHuman(report) {
       const proof = row.classifications.proven_full_current;
       const truncated = row.classifications.tool_output_truncated;
       const truncatedSessions = row.sessionsByClassification.tool_output_truncated;
-      console.log(`  ${row.name.padEnd(22)} attempts=${String(row.attempts).padStart(4)} sessions=${String(row.sessions).padStart(3)} proven=${String(proof).padStart(3)} truncated-results=${String(truncated).padStart(3)} truncated-sessions=${String(truncatedSessions).padStart(3)}`);
+      console.log(`  ${(row.harness + ':' + row.name).padEnd(34)} attempts=${String(row.attempts).padStart(4)} sessions=${String(row.sessions).padStart(3)} proven=${String(proof).padStart(3)} truncated-results=${String(truncated).padStart(3)} truncated-sessions=${String(truncatedSessions).padStart(3)}`);
     }
   }
 
@@ -418,10 +589,10 @@ function usage() {
   return [
     'Usage: node scripts/agent-analytics/skill-delivery.mjs [options]',
     '',
-    '  --since <ISO>            rollout file mtime lower bound (default: trailing 30 days)',
-    '  --until <ISO>            rollout file mtime upper bound',
-    '  --repo-root <path>        repository whose checked-in skills are inventoried',
-    '  --codex-home <path>       Codex home containing sessions/ rollouts',
+    '  --since <ISO>            exchange-start lower bound (default: trailing 30 days)',
+    '  --until <ISO>            exchange-start upper bound and transcript as-of time',
+    '  --repo-root <path>        repository whose native skill trees are inventoried',
+    '  --codex-home <path>       Codex home containing active/archived rollouts',
     '  --project-pattern <regex> session cwd filter (default: justsearch)',
     '  --json                   emit the privacy-safe aggregate as JSON',
   ].join('\n');
@@ -434,7 +605,7 @@ export function main(argv = process.argv.slice(2)) {
     return;
   }
   const inventory = inventorySkills(opts.repoRoot);
-  if (inventory.length === 0) throw new Error(`no source skills found under ${path.join(opts.repoRoot, '.claude', 'skills')}`);
+  if (inventory.length === 0) throw new Error(`no skills found under .agents/skills or .claude/skills in ${opts.repoRoot}`);
 
   const raw = listCodexToolExchanges({
     codexHome: opts.codexHome,
@@ -442,15 +613,29 @@ export function main(argv = process.argv.slice(2)) {
     untilMs: opts.untilMs,
     projectFilter: new RegExp(opts.projectPattern, 'i'),
   });
+  if (raw.sourceRootsAvailable === 0) {
+    throw new Error(`no readable Codex rollout roots under ${opts.codexHome}`);
+  }
   const report = buildSkillDeliveryReport({
     inventory,
     exchanges: raw.exchanges,
-    filesScanned: raw.filesScanned,
+    fragmentsDiscovered: raw.fragmentsDiscovered,
+    fragmentsContributing: raw.fragmentsContributing,
     sessionsScanned: raw.sessions.length,
     skippedFiles: raw.skipped.length,
+    unreadableFragments: raw.unreadableFragments,
+    malformedLines: raw.malformedLines,
+    untimestampedExchanges: raw.untimestampedExchanges,
+    untimestampedOutputs: raw.untimestampedOutputs,
+    duplicateExchangeCopies: raw.duplicateExchangeCopies,
+    conflictingExchangeCopies: raw.conflictingExchangeCopies,
+    sourceRootsAvailable: raw.sourceRootsAvailable,
+    sourceRootsMissing: raw.sourceRootsMissing,
+    sourceRootErrorCount: raw.sourceRootErrors.length,
     since: new Date(opts.sinceMs).toISOString(),
     until: opts.untilMs == null ? null : new Date(opts.untilMs).toISOString(),
     repoName: path.basename(opts.repoRoot),
+    projectPattern: opts.projectPattern,
   });
   if (opts.json) console.log(JSON.stringify(report, null, 2));
   else printHuman(report);
