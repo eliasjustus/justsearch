@@ -436,14 +436,6 @@
       {
         "hooks": [
           {
-            "hookId": "compact-restore",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
             "hookId": "agent-spawn-session-end-reap",
             "timeout": 10
           }
