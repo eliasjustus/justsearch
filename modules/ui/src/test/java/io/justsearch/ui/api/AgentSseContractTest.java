@@ -45,7 +45,7 @@ final class AgentSseContractTest {
     HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
-    io.justsearch.agent.api.AgentService __agent = new ContractAgentService();
+    AgentService __agent = new ContractAgentService();
 
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).agentService(__agent).build();
     try {
@@ -122,7 +122,7 @@ final class AgentSseContractTest {
     HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings-error.json"));
-    io.justsearch.agent.api.AgentService __agent = new ContractAgentErrorService();
+    AgentService __agent = new ContractAgentErrorService();
 
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).agentService(__agent).build();
     try {
@@ -164,7 +164,7 @@ final class AgentSseContractTest {
     HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings-session.json"));
-    io.justsearch.agent.api.AgentService __agent = new PersistedSessionAgentService();
+    AgentService __agent = new PersistedSessionAgentService();
 
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).agentService(__agent).build();
     try {
@@ -210,7 +210,7 @@ final class AgentSseContractTest {
         new UiSettingsStore(
             UiSettingsStore.PersistenceMode.IN_MEMORY,
             tempDir.resolve("settings-sessions.json"));
-    io.justsearch.agent.api.AgentService __agent = new PersistedSessionAgentService();
+    AgentService __agent = new PersistedSessionAgentService();
 
     LocalApiServer server =
         LocalApiServer.builder(settingsStore, tempDir.resolve("index")).agentService(__agent).build();
@@ -328,7 +328,7 @@ final class AgentSseContractTest {
     HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings-resume.json"));
-    io.justsearch.agent.api.AgentService __agent = new PersistedSessionAgentService();
+    AgentService __agent = new PersistedSessionAgentService();
 
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).agentService(__agent).build();
     try {
@@ -630,7 +630,7 @@ final class AgentSseContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(
             UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings-handoff.json"));
-    io.justsearch.agent.api.AgentService __agent = new ContractHandoffAgentService();
+    AgentService __agent = new ContractHandoffAgentService();
 
     LocalApiServer server =
         LocalApiServer.builder(settingsStore, tempDir.resolve("index-handoff")).agentService(__agent).build();
@@ -685,7 +685,7 @@ final class AgentSseContractTest {
         new UiSettingsStore(
             UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings-profiles.json"));
     CapturingAgentService agentService = new CapturingAgentService();
-    io.justsearch.agent.api.AgentService __agent = agentService;
+    AgentService __agent = agentService;
 
     LocalApiServer server =
         LocalApiServer.builder(settingsStore, tempDir.resolve("index-profiles")).agentService(__agent)

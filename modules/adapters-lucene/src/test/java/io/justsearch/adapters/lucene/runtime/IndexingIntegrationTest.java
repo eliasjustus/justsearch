@@ -38,7 +38,7 @@ class IndexingIntegrationTest {
         + "      days: 7\n";
     withConfig(config, () -> {
       RunningRuntime runtime =
-          io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
+          IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
       runtime.indexingCoordinator().indexSingle(new IndexDocument(document("doc-1", "doc-1#0", "first")));
       runtime.commitOps().commitAndTrack();
 
@@ -67,7 +67,7 @@ class IndexingIntegrationTest {
         + "      days: 7\n";
     withConfig(config, () -> {
       RunningRuntime runtime =
-          io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
+          IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).atPath(dir).open();
       runtime.indexingCoordinator().indexSingle(new IndexDocument(document("doc-1", "doc-1#0", "visible")));
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();

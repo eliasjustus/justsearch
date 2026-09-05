@@ -201,6 +201,10 @@ final class BrakeExhaustedWorkerServesReadOnlyTest {
    * different, fingerprint. This drives that exact sequence.
    */
   @Test
+  // The `server = null` after the first close() is not dead: if
+  // clearAutoRebuildFieldsByHand() throws before the second `server = new KnowledgeServer(...)`,
+  // tearDown() reads this field and must not double-close the already-closed first server.
+  @SuppressWarnings("PMD.UnusedAssignment")
   void clearingTheBudgetByHandMigratesAsAMismatchNotAsALegacyIndex(@TempDir Path tempDir)
       throws Exception {
     WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);

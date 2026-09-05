@@ -692,7 +692,7 @@ class BatchUpdateIntegrationTest {
           """;
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
+      return new IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -723,7 +723,7 @@ class BatchUpdateIntegrationTest {
           """;
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
+      return new IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -755,7 +755,7 @@ class BatchUpdateIntegrationTest {
           """;
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
+      return new IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -777,11 +777,13 @@ class BatchUpdateIntegrationTest {
                     try {
                       Files.deleteIfExists(p);
                     } catch (Exception ignored) {
+                      // best-effort cleanup; a locked file (e.g. Windows file lock) should not fail the test
                     }
                   });
         }
       }
     } catch (Exception ignored) {
+      // best-effort cleanup; failures here must not mask the test's actual assertions
     }
   }
 }

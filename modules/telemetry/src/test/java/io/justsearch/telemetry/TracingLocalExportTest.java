@@ -38,7 +38,7 @@ class TracingLocalExportTest {
       try {
         var stage = tracer.spanBuilder("pipeline.stage.rerank").setSpanKind(SpanKind.INTERNAL)
             .setAttribute("stage_id", "rerank").startSpan();
-        stage.addEvent("skip", io.opentelemetry.api.common.Attributes.of(AttributeKey.stringKey("reason_code"), "rerank_skipped_deadline"));
+        stage.addEvent("skip", Attributes.of(AttributeKey.stringKey("reason_code"), "rerank_skipped_deadline"));
         stage.end();
       } finally {
         root.setStatus(StatusCode.OK);

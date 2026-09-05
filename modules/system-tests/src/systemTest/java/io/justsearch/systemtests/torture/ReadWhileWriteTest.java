@@ -74,7 +74,12 @@ class ReadWhileWriteTest {
   @AfterEach
   void cleanup() {
     if (mmfHarness != null) {
-        try { mmfHarness.close(); } catch (IOException e) {}
+        try {
+          mmfHarness.close();
+        } catch (IOException e) {
+          // Best-effort teardown: this suite leaves the mapped file contended on purpose, so a
+          // close failure here says nothing about the assertions that already ran.
+        }
     }
     if (processManager != null) {
         processManager.close();
@@ -99,7 +104,13 @@ class ReadWhileWriteTest {
         try {
           mmfHarness.keepAlive();
           Thread.sleep(1000);
-        } catch (Exception e) {}
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (Exception e) {
+          // A keepAlive failure is a datapoint for the test, not a reason to stop heart-beating:
+          // the assertions read the harness state afterwards.
+        }
       }
     });
     heartbeatThread.setDaemon(true);
@@ -207,8 +218,15 @@ class ReadWhileWriteTest {
     try (var walk = Files.walk(dir)) {
       walk.sorted(java.util.Comparator.reverseOrder())
           .forEach(p -> {
-            try { Files.deleteIfExists(p); } catch (IOException e) {}
+            try {
+              Files.deleteIfExists(p);
+            } catch (IOException e) {
+              // Best-effort: this suite deliberately leaves Windows file handles contended, so a
+              // temp file that will not delete yet is expected and must not fail teardown.
+            }
           });
-    } catch (IOException e) {}
+    } catch (IOException e) {
+      // Same: the walk itself can fail on a locked directory. Leave the temp dir to the OS.
+    }
   }
 }

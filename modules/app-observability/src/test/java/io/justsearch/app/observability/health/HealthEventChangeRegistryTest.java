@@ -32,7 +32,7 @@ final class HealthEventChangeRegistryTest {
             Instant.parse("2026-04-30T11:59:00Z"),
             Optional.empty(),
             Optional.empty(),
-            java.util.List.of()));
+            List.of()));
   }
 
   @Test

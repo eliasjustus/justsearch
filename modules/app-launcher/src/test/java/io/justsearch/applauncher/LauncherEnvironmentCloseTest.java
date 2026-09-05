@@ -103,6 +103,7 @@ final class LauncherEnvironmentCloseTest {
       try {
         return c.getDeclaredField(name);
       } catch (NoSuchFieldException ignored) {
+        // field may be declared on a superclass; keep walking up until we find it or run out
       }
     }
     throw new NoSuchFieldException(name);

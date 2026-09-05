@@ -13,6 +13,9 @@ import org.junit.jupiter.api.Test;
 /** Tempdoc 402 §3.3: @SampleContract attribute round-trip + retention. */
 class SampleContractTest {
 
+  // Annotation-fixture site: never invoked directly, only read via reflection
+  // (getDeclaredMethod("annotatedSite").getAnnotation(...)) below.
+  @SuppressWarnings("PMD.UnusedPrivateMethod")
   @SampleContract(
       description = "smoke",
       tempdoc = "402 P5",
@@ -20,6 +23,9 @@ class SampleContractTest {
       validator = "dummy.Validator")
   private static void annotatedSite() {}
 
+  // Annotation-fixture site: never invoked directly, only read via reflection
+  // (getDeclaredMethod("defaultedSite").getAnnotation(...)) below.
+  @SuppressWarnings("PMD.UnusedPrivateMethod")
   @SampleContract(description = "defaults", tempdoc = "402 P5")
   private static void defaultedSite() {}
 

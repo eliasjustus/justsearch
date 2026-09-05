@@ -197,8 +197,8 @@ final class BackendRegistryTest {
           () -> descriptors.add(
               new BackendDescriptor(
                   "fake",
-                  java.util.List.of(),
-                  new CapabilityProfile(1000, 1.0, SecurityTier.LOCAL_ONLY, java.util.List.of()))));
+                  List.of(),
+                  new CapabilityProfile(1000, 1.0, SecurityTier.LOCAL_ONLY, List.of()))));
     }
   }
 }

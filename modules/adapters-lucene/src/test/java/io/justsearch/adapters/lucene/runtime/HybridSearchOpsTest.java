@@ -24,6 +24,7 @@ class HybridSearchOpsTest {
                 .readTree(yaml);
         builder.contributeYaml(root);
       } catch (Exception ignored) {
+        // test helper: invalid/empty yaml falls back to the env-registry-only config
       }
     }
     return builder.build();
@@ -186,7 +187,7 @@ class HybridSearchOpsTest {
 
   /** Flat leg: n hits all with {@code topScore} (top2/top1 == 1.0 → incoherent). */
   private static SearchResult legOf(String idPrefix, float topScore, int n) {
-    java.util.List<SearchHit> hits = new java.util.ArrayList<>();
+    List<SearchHit> hits = new java.util.ArrayList<>();
     for (int i = 0; i < n; i++) {
       hits.add(new SearchHit(idPrefix + i, topScore, Map.of()));
     }
@@ -195,7 +196,7 @@ class HybridSearchOpsTest {
 
   /** Descending leg: hits[i] = topScore - i*step (a real top1−top2 gap / peaked distribution). */
   private static SearchResult legDescending(String idPrefix, float topScore, float step, int n) {
-    java.util.List<SearchHit> hits = new java.util.ArrayList<>();
+    List<SearchHit> hits = new java.util.ArrayList<>();
     for (int i = 0; i < n; i++) {
       hits.add(new SearchHit(idPrefix + i, topScore - i * step, Map.of()));
     }

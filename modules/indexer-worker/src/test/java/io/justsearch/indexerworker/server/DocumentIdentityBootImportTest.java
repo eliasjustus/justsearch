@@ -81,6 +81,9 @@ final class DocumentIdentityBootImportTest {
 
   @Test
   @DisplayName("the recorded generation import stops the next boot from re-scanning the index")
+  // server = null after the mid-test close() guards tearDown() against a double-close if a
+  // later step throws before the second `server = new KnowledgeServer(...)` below.
+  @SuppressWarnings("PMD.UnusedAssignment")
   void secondBootOverTheSameGenerationDoesNotRescan(@TempDir Path tempDir) throws Exception {
     WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
     WorkerBootFixture.seed(layout.activePath(), null, 3);
@@ -165,6 +168,9 @@ final class DocumentIdentityBootImportTest {
 
   @Test
   @DisplayName("Blue identity is imported before a paused migration reindexes into Green")
+  // channel/server = null between the mid-test close() and the later reassignment guard
+  // tearDown() against acting on an already-torn-down handle if a later step throws.
+  @SuppressWarnings("PMD.UnusedAssignment")
   void blueUidIsImportedBeforePausedMigrationReindexesIntoGreen(@TempDir Path tempDir)
       throws Exception {
     WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
@@ -245,7 +251,7 @@ final class DocumentIdentityBootImportTest {
         "the supported rename moves Green's adverse row without rewriting its uid");
 
     server.indexGenerationManagerForTests().setMigrationPaused(false, null);
-    awaitGreenUid(layout, renamedDocId, blueUid, Duration.ofSeconds(15));
+    awaitGreenUid(renamedDocId, blueUid, Duration.ofSeconds(15));
 
     // The chunks are written in a pass AFTER the parent (ChunkDocumentWriter
     // .regenerateChunksFromExistingParent runs once the parent row is in), so "the parent's uid is
@@ -278,6 +284,9 @@ final class DocumentIdentityBootImportTest {
     // Blue's own uid, proving nothing about the rebuild.
     server.lifecycleManagerForTests().commitOps().commitAndTrack();
     channel.shutdownNow();
+    // channel/server = null: if promoteBuildingGenerationToActive() below throws before the
+    // reassignments further down, tearDown() reads these fields and must not act on the
+    // already-shut-down channel / already-closed server.
     channel = null;
     server.close();
     server = null;
@@ -424,7 +433,7 @@ final class DocumentIdentityBootImportTest {
     server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
     server.start();
 
-    awaitGreenUid(layout, docId, blueUid, Duration.ofSeconds(15));
+    awaitGreenUid(docId, blueUid, Duration.ofSeconds(15));
     try (SqliteDocumentIdentityStore probe =
         new SqliteDocumentIdentityStore(layout.dataDir().resolve("jobs.db"))) {
       assertEquals(
@@ -433,8 +442,7 @@ final class DocumentIdentityBootImportTest {
     }
   }
 
-  private void awaitGreenUid(
-      WorkerBootFixture.Layout layout, String docId, String expectedUid, Duration timeout)
+  private void awaitGreenUid(String docId, String expectedUid, Duration timeout)
       throws Exception {
     long deadline = System.nanoTime() + timeout.toNanos();
     String observed = null;

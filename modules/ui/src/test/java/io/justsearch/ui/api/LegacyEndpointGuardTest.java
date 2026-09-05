@@ -223,7 +223,7 @@ class LegacyEndpointGuardTest {
     InfraRoutes.register(
         app,
         mock(io.justsearch.app.services.HeadAssembly.class),
-        mock(io.justsearch.ui.api.CapabilitiesStreamController.class));
+        mock(CapabilitiesStreamController.class));
     // Tempdoc 541 §4.2: BootRoutes registers GET /api/boot/phases.
     io.justsearch.ui.api.routes.BootRoutes.register(
         app, mock(io.justsearch.app.services.HeadAssembly.class));

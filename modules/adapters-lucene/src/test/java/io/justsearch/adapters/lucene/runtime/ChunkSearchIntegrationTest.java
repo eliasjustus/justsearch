@@ -60,7 +60,7 @@ class ChunkSearchIntegrationTest {
     System.setProperty("justsearch.config", cfg.toString());
 
     // Use chunk-aware testing catalog with 4-dim vectors
-    runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(4)).ephemeral().open();
+    runtime = IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(4)).ephemeral().open();
   }
 
   @AfterEach
@@ -762,7 +762,7 @@ class ChunkSearchIntegrationTest {
 
     var filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-            .docIds(java.util.List.of(insideDoc))
+            .docIds(List.of(insideDoc))
             .build();
     var chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
     var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
@@ -832,7 +832,7 @@ class ChunkSearchIntegrationTest {
     var chunkFilter =
         QueryFilterBuilder.buildChunkFilterQuery(
             LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-                .collection(java.util.List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
+                .collection(List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
                 .build());
     var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
 
@@ -894,7 +894,7 @@ class ChunkSearchIntegrationTest {
 
     var filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-            .collection(java.util.List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
+            .collection(List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
             .build();
     var result = runtime.textQueryOps().searchText("neural", 10, filters);
 

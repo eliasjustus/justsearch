@@ -180,7 +180,7 @@ class CitationMatchOpsLiteralPassageTest {
 
     assertEquals(2, response.getMatchesCount(), "both sentences find their own source");
 
-    var bySource = new java.util.HashMap<Integer, String>();
+    var bySource = new HashMap<Integer, String>();
     for (var m : response.getMatchesList()) {
       bySource.put(m.getSourceIndex(), m.getTextSource());
     }
@@ -320,6 +320,10 @@ class CitationMatchOpsLiteralPassageTest {
    * overlap, which reproduces the property the real scorer has and the tests depend on — text that
    * supports the sentence scores higher than text that does not.
    */
+  // deadlineMs is unused in this stub body, but the method reference above is installed as a
+  // CitationMatchOps.CrossEncoderProducer, a @FunctionalInterface whose scoreAll signature
+  // fixes this parameter list exactly.
+  @SuppressWarnings("PMD.UnusedFormalParameter")
   private static CitationScorer.ScoringResult bagOfWordsCrossEncoder(
       List<String> sentences,
       List<String> passages,

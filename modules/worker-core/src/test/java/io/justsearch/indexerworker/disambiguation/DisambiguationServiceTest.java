@@ -169,7 +169,7 @@ class DisambiguationServiceTest {
     void maxClusterSizeCap() throws Exception {
       // Fill a cluster to MAX_CLUSTER_SIZE with mentions that share the same tokens.
       // Use "john smith <suffix>" variants so SoftTFIDF clusters them together.
-      java.util.List<String> batch = new java.util.ArrayList<>();
+      List<String> batch = new java.util.ArrayList<>();
       for (int i = 0; i < DisambiguationService.MAX_CLUSTER_SIZE; i++) {
         batch.add("john smith " + (char) ('a' + (i % 26)) + (i / 26));
       }

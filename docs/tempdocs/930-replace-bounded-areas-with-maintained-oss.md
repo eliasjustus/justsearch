@@ -724,11 +724,6 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    Both wired in CI's "Script lint" step. Markers found: 3 JS + 1 ps1 — 2 fixed at the cause
    (`scripts/docs/tempdoc-staleness-triage.mjs`, where the marker word was the subject matter, not
    debt), 2 pinned in suppression lists.
-   Java TEST sources are the same shape and remain uncovered: `pmdTest` stays behind
-   `-Ppmd.includeTests=true`, and measured 2026-09-05 it holds 455 violations (324
-   `UnnecessaryFullyQualifiedName`, 62 `SystemPrintln`, 19 `UnusedLocalVariable`, 17
-   `UnusedAssignment`, 16 `EmptyCatchBlock`, 10 `UnusedFormalParameter`, 6 `UnusedPrivateMethod`,
-   1 `UnusedPrivateField`) — but zero `CommentContent`, so no marker is parked there today either.
 4. ~~Promote `jseval-suite` to a required check (branch protection + the two inventories).~~
    **DONE 2026-09-05** — PR #665 (inventories, walltime lane, ADR-0044 amendment; 15/15 hosted
    passes, median 384 s) and the owner PATCH to classic branch protection (the ruleset holds no
@@ -776,6 +771,12 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 9. ~~Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.~~
    **DONE 2026-09-05** — applied in place to the (still untracked, owner-lane) 919 file as a
    "Status amendment" scoped to §4.5 only; it publishes with 919.
+10. ~~Java TEST sources stay uncovered: `pmdTest` sits behind `-Ppmd.includeTests=true` (455 violations; zero `CommentContent`).~~
+    **DONE 2026-09-05.** Flag removed; `pmdAll` (all 93 PMD tasks) runs in `check`/`build` and as CI's `Static analysis (PMD, all source sets)` step.
+    Real count 569 — `modules/system-tests` carried a blanket `isIgnoreFailures` hiding 84, the hole `benchmarks` had. All cleared at the cause
+    (344 UFQN, 23 `EmptyCatchBlock`, 46 `Unused*`, 2 `CommentContent` — real parked markers, so the "zero" above was an artifact of the flag);
+    127 `SystemPrintln` + 17 `NonThreadSafeSingleton` excluded by the new `config/pmd/ruleset-tests.xml` (premise false in a test); 9 reasoned
+    `@SuppressWarnings`; `check-pmd-ruleset-sync.mjs` guards the three inlined rulesets, since a ref PMD cannot resolve analyses zero files and still exits 0.
 
 ### 22.3 Follow-up publication (2026-09-05; founder: "proceed with the owner actions as well as the remaining work")
 

@@ -103,7 +103,7 @@ class RuntimeProbeControllerTest {
 
     verify(ctx).status(200);
     // HEAD must NOT call json() — body-less response is the convention.
-    org.mockito.Mockito.verify(ctx, org.mockito.Mockito.never()).json(any());
+    verify(ctx, org.mockito.Mockito.never()).json(any());
   }
 
   @Test
@@ -118,7 +118,7 @@ class RuntimeProbeControllerTest {
     new RuntimeProbeController(publisher).handleReadyHead(ctx);
 
     verify(ctx).status(503);
-    org.mockito.Mockito.verify(ctx, org.mockito.Mockito.never()).json(any());
+    verify(ctx, org.mockito.Mockito.never()).json(any());
   }
 
   @Test
@@ -130,7 +130,7 @@ class RuntimeProbeControllerTest {
     new RuntimeProbeController(publisher).handleLiveHead(ctx);
 
     verify(ctx).status(200);
-    org.mockito.Mockito.verify(ctx, org.mockito.Mockito.never()).json(any());
+    verify(ctx, org.mockito.Mockito.never()).json(any());
   }
 
   @Test

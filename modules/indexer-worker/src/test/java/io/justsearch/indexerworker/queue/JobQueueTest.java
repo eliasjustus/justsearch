@@ -311,7 +311,7 @@ final class JobQueueTest {
   void attemptsSemanticsOnlyIncrementOnFailure() throws Exception {
     // Use a real temp file so path normalization is consistent across platforms
     Path testFile = tempDir.resolve("attempts_test.txt");
-    java.nio.file.Files.writeString(testFile, "test");
+    Files.writeString(testFile, "test");
 
     // Get the normalized path that will be stored in the DB
     String normalizedPath = PathNormalizer.normalizePath(testFile.toAbsolutePath().toString());

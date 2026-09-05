@@ -1,6 +1,7 @@
 package io.justsearch.app.services.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -36,6 +37,7 @@ final class ConfigStoreRebuilderTest {
     ConfigStore store = new ConfigStore(initial);
 
     int originalPort = store.get().ports().apiPort();
+    assertNotEquals(7777, originalPort, "precondition: default port must differ from the rebuilt value");
 
     // Simulate runtime sysprop write (as RuntimeActivationService does)
     System.setProperty(TEST_SYSPROP, "7777");

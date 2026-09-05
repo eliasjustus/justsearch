@@ -245,7 +245,7 @@ class VduPoisonPillTest {
         return 0;
       }
 
-      java.util.List<String> pendingDocIds = knowledgeClient.queryPendingVduDocIds();
+      List<String> pendingDocIds = knowledgeClient.queryPendingVduDocIds();
       if (pendingDocIds.isEmpty()) {
         return 0;
       }

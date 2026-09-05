@@ -614,14 +614,14 @@ final class ResourceAreaValidatorTest {
             new ResourceRef("core.test-tabular"),
             samplePresentation(),
             "https://example/schema.json",
-            io.justsearch.agent.api.registry.Category.TABULAR,
-            io.justsearch.agent.api.registry.SubscriptionMode.SSE_STREAM,
+            Category.TABULAR,
+            SubscriptionMode.SSE_STREAM,
             "/api/test/stream",
             "test-kind",
             Optional.empty(),
             Optional.empty(),
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
-            io.justsearch.agent.api.registry.Privacy.noPaths(),
+            Provenance.core("1.0"),
+            Privacy.noPaths(),
             Set.of(new OperationRef("core.unknown-op")),
             Set.of(),
             "id");
@@ -645,14 +645,14 @@ final class ResourceAreaValidatorTest {
             new ResourceRef("core.test-tabular"),
             samplePresentation(),
             "https://example/schema.json",
-            io.justsearch.agent.api.registry.Category.TABULAR,
-            io.justsearch.agent.api.registry.SubscriptionMode.SSE_STREAM,
+            Category.TABULAR,
+            SubscriptionMode.SSE_STREAM,
             "/api/test/stream",
             "test-kind",
             Optional.empty(),
             Optional.empty(),
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
-            io.justsearch.agent.api.registry.Privacy.noPaths(),
+            Provenance.core("1.0"),
+            Privacy.noPaths(),
             Set.of(new OperationRef("core.unknown-op")),
             Set.of(),
             "id");
@@ -672,14 +672,14 @@ final class ResourceAreaValidatorTest {
             new ResourceRef("core.test-tabular"),
             samplePresentation(),
             "https://example/schema.json",
-            io.justsearch.agent.api.registry.Category.TABULAR,
-            io.justsearch.agent.api.registry.SubscriptionMode.SSE_STREAM,
+            Category.TABULAR,
+            SubscriptionMode.SSE_STREAM,
             "/api/test/stream",
             "test-kind",
             Optional.empty(),
             Optional.empty(),
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
-            io.justsearch.agent.api.registry.Privacy.hashedWithResolver(
+            Provenance.core("1.0"),
+            Privacy.hashedWithResolver(
                 new OperationRef("core.unknown-resolver")),
             Set.of(),
             Set.of(),
@@ -702,14 +702,14 @@ final class ResourceAreaValidatorTest {
             new ResourceRef("core.test-tabular"),
             samplePresentation(),
             "https://example/schema.json",
-            io.justsearch.agent.api.registry.Category.TABULAR,
-            io.justsearch.agent.api.registry.SubscriptionMode.SSE_STREAM,
+            Category.TABULAR,
+            SubscriptionMode.SSE_STREAM,
             "/api/test/stream",
             "test-kind",
             Optional.empty(),
             Optional.empty(),
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
-            io.justsearch.agent.api.registry.Privacy.noPaths(),
+            Provenance.core("1.0"),
+            Privacy.noPaths(),
             Set.of(knownId),
             Set.of(),
             "id");
@@ -738,7 +738,7 @@ final class ResourceAreaValidatorTest {
                     io.justsearch.agent.api.registry.OperationAvailability.empty(),
                     io.justsearch.agent.api.registry.OperationLineage.empty(),
                     io.justsearch.agent.api.registry.Binding.of(knownId),
-                    new io.justsearch.agent.api.registry.Provenance(
+                    new Provenance(
                         io.justsearch.agent.api.registry.TrustTier.CORE, "test", "1.0"),
                     Set.of(io.justsearch.agent.api.registry.ExecutorTag.UI)));
           }
@@ -829,15 +829,6 @@ final class ResourceAreaValidatorTest {
         Optional.of(Duration.ofDays(90)),
         OnOverflow.EVICT_OLDEST,
         Duration.ofMinutes(15));
-  }
-
-  private static HistoryPolicy sampleExternalPolicy() {
-    return new HistoryPolicy(
-        HistoryPolicy.Mode.EXTERNAL,
-        Optional.of(500),
-        Optional.empty(),
-        OnOverflow.EVICT_OLDEST,
-        Duration.ofMinutes(1));
   }
 
   private static void assertMatrixPermitted(

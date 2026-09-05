@@ -28,7 +28,7 @@ class SoftDeletesMetricsTest {
     System.setProperty("justsearch.config", cfg.toString());
     try {
       RunningRuntime runtime =
-          io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+          IndexSchema.fromCatalog(
                   FieldCatalogDef.forTesting(768),
                   new SsotCommitMetadataSource(),
                   new JsonSchemaCommitMetadataValidator())
@@ -63,7 +63,7 @@ class SoftDeletesMetricsTest {
     System.setProperty("justsearch.config", cfg.toString());
     try {
       RunningRuntime runtime =
-          io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).ephemeral().open();
+          IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).ephemeral().open();
       var a = new LifecycleTestAccessor(runtime);
       assertNotNull(a.mergePolicy());
       assertInstanceOf(SoftDeletesRetentionMergePolicy.class, a.mergePolicy());

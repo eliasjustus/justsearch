@@ -298,7 +298,7 @@ final class FileConversationStoreTest {
   void branchFromRejectsUnknownBranchPoint(@TempDir Path tmp) {
     var store = new FileConversationStore(tmp);
     store.appendMessage("p", "core.free-chat", userMsg("only"));
-    org.junit.jupiter.api.Assertions.assertThrows(
+    assertThrows(
         IllegalArgumentException.class,
         () -> store.branchFrom("p", "nonexistent-id", "b"));
     // No branch directory should have been created.
@@ -310,7 +310,7 @@ final class FileConversationStoreTest {
   @DisplayName("Slice 515 FIX-2: branchFrom rejects non-existent parent session")
   void branchFromRejectsUnknownParent(@TempDir Path tmp) {
     var store = new FileConversationStore(tmp);
-    org.junit.jupiter.api.Assertions.assertThrows(
+    assertThrows(
         IllegalArgumentException.class,
         () -> store.branchFrom("no-such-parent", "any-id", "child"));
   }
@@ -372,7 +372,7 @@ final class FileConversationStoreTest {
     String branchPoint = (String) history.get(0).get("id");
     store.branchFrom("p", branchPoint, "b");
 
-    var ex = org.junit.jupiter.api.Assertions.assertThrows(
+    var ex = assertThrows(
         BranchesPreventDeletionException.class,
         () -> store.deleteSession("p"));
     assertTrue(ex.childSessionIds().contains("b"),
@@ -429,7 +429,7 @@ final class FileConversationStoreTest {
     store.deleteSession(ConversationStore.THROWAWAY_SESSION_PREFIX + "auto-1");
     assertFalse(tmp.resolve(ConversationStore.THROWAWAY_SESSION_PREFIX + "auto-1").toFile().exists());
     // Non-throwaway parent still has the branches-prevent-deletion guard.
-    org.junit.jupiter.api.Assertions.assertThrows(
+    assertThrows(
         BranchesPreventDeletionException.class,
         () -> store.deleteSession("parent"));
   }

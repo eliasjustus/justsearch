@@ -29,14 +29,14 @@ class ParityGuardTest {
     CommitMetadataValidator validator = new JsonSchemaCommitMetadataValidator();
 
     var goodMeta = new GoodMeta();
-    var r1 = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), goodMeta, validator).atPath(dir).open();
+    var r1 = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), goodMeta, validator).atPath(dir).open();
     r1.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "parity-3", SchemaFields.DOC_UID, "parity-3#0")));
     r1.commitOps().commitAndTrack();
     r1.close();
 
-    var r2 = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), goodMeta, validator).atPath(dir).open();
+    var r2 = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), goodMeta, validator).atPath(dir).open();
     // Should not throw
     r2.indexingCoordinator().indexSingle(
         new IndexDocument(
@@ -58,7 +58,7 @@ class ParityGuardTest {
       return m;
     };
 
-    var r1 = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), good, validator).atPath(dir).open();
+    var r1 = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), good, validator).atPath(dir).open();
     r1.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "parity-5", SchemaFields.DOC_UID, "parity-5#0")));
@@ -69,7 +69,7 @@ class ParityGuardTest {
         assertThrows(
             IllegalStateException.class,
             () ->
-                io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                IndexSchema.fromCatalog(
                         FieldCatalogDef.forTesting(768), badBoosts, validator)
                     .atPath(dir)
                     .open());
@@ -171,7 +171,7 @@ class ParityGuardTest {
     Path dir = Files.createTempDirectory("lucene-parity-corrupt");
     var meta = new GoodMeta();
     var r =
-        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+        IndexSchema.fromCatalog(
                 FieldCatalogDef.forTesting(768), meta, new JsonSchemaCommitMetadataValidator())
             .atPath(dir)
             .open();
@@ -208,7 +208,7 @@ class ParityGuardTest {
     Path dir = Files.createTempDirectory("lucene-parity-count");
     var meta = new GoodMeta();
     var r =
-        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+        IndexSchema.fromCatalog(
                 FieldCatalogDef.forTesting(768), meta, new JsonSchemaCommitMetadataValidator())
             .atPath(dir)
             .open();

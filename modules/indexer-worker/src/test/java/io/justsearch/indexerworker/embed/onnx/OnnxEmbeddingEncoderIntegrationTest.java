@@ -38,7 +38,7 @@ final class OnnxEmbeddingEncoderIntegrationTest {
     io.justsearch.ort.SessionHandle sessions =
         io.justsearch.ort.testing.InferenceCompositionRootTestHelper.cpuSessionFor(
             "embed-test", modelDir);
-    io.justsearch.indexerworker.embed.onnx.EmbeddingAssembly assembly =
+    EmbeddingAssembly assembly =
         OnnxEmbeddingEncoder.buildAssembly(sessions, modelDir, MAX_SEQ_LEN, 0, false);
     encoder =
         new OnnxEmbeddingEncoder(assembly.sessions(), assembly.shape(), assembly.tokenizer());

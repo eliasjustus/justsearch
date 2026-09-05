@@ -90,6 +90,10 @@ final class ResumableFetchTest {
       return result;
     }
 
+    // PMD flags the `lastFailure = null` reset below as overwritten by line 103, but that only
+    // holds on the injected-failure branch: the from>to and IOException false-return paths (and
+    // the success path) rely on this reset to clear a failure carried over from a prior call.
+    @SuppressWarnings("PMD.UnusedAssignment")
     private boolean runTransfer(
         Path destPartial,
         DownloadResume.Decision decision,

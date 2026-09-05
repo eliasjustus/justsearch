@@ -136,7 +136,7 @@ final class RuntimeReconcilerTest {
     assertTrue(r.awaitQuiescent(5_000));
     assertEquals(Mode.ONLINE, control.currentModeValue(), "engine must return to spec (ONLINE) after procedure");
     assertEquals(
-        java.util.List.of("online", "indexing", "online"),
+        List.of("online", "indexing", "online"),
         control.switchLog,
         "exact §3d sequence: up for VDU, park for embeddings, back up to spec");
     assertEquals(
@@ -293,7 +293,7 @@ final class RuntimeReconcilerTest {
     assertTrue(r.awaitQuiescent(5_000));
     assertEquals(Mode.ONLINE, control.currentModeValue(), "spec true + already online → stays online");
     assertEquals(
-        java.util.List.of(),
+        List.of(),
         control.switchLog,
         "no reconciler switch at all — the engine was brought up by activation, spec agrees");
     r.close();
@@ -321,7 +321,7 @@ final class RuntimeReconcilerTest {
     assertNotEquals(Mode.ONLINE, control.currentModeValue(), "spec off: engine returns down (install != enable)");
     assertEquals(1, control.indexingSwitchCount.get(), "exactly one return-to-spec down-switch");
     assertEquals(
-        java.util.List.of("online", "indexing"),
+        List.of("online", "indexing"),
         control.switchLog,
         "up for the smoke test, then one park back to spec");
     r.close();
@@ -360,7 +360,7 @@ final class RuntimeReconcilerTest {
     assertEquals(Mode.ONLINE, control.currentModeValue(), "last procedure ended → converge to spec");
     assertEquals(2, control.onlineSwitchCount.get(), "exactly one convergence after both ended");
     assertEquals(
-        java.util.List.of("online", "online"),
+        List.of("online", "online"),
         control.switchLog,
         "boot up, then one convergence up after the last procedure ends (the foreign park is not a switch call)");
     r.close();

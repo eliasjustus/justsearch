@@ -48,14 +48,6 @@ class FilterNormalizationServiceTest {
         .build();
   }
 
-  private static KnowledgeSearchRequest.Filters filtersWithSourceAndAuthor(
-      List<String> sources, List<String> authors) {
-    return KnowledgeSearchRequestFiltersBuilder.builder()
-        .metaSource(sources)
-        .metaAuthor(authors)
-        .build();
-  }
-
   @Nested
   @DisplayName("parseFacetValues")
   class ParseFacetValues {

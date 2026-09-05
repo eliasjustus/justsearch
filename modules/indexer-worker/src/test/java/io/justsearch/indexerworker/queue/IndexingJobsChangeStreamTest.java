@@ -154,7 +154,7 @@ final class IndexingJobsChangeStreamTest {
     // the change-stream emits one delta per commit. The contract: count
     // matches the mutation count, monotonic seq, no drops.
     int n = 1000;
-    java.util.List<Path> paths = new java.util.ArrayList<>(n);
+    List<Path> paths = new java.util.ArrayList<>(n);
     for (int i = 0; i < n; i++) {
       paths.add(Path.of("/tmp/stress-" + i + ".txt"));
     }
@@ -180,6 +180,10 @@ final class IndexingJobsChangeStreamTest {
       assertInstanceOf(IndexingJobChangeFeed.Delta.Insert.class, delta);
       var insert = (IndexingJobChangeFeed.Delta.Insert) delta;
       assertEquals("PENDING", insert.row().state());
+      assertTrue(
+          insert.row().lastUpdatedMs() >= previousSeq,
+          "causal order: lastUpdatedMs must be non-decreasing across the delta sequence");
+      previousSeq = insert.row().lastUpdatedMs();
       seenHashes.add(insert.row().pathHash());
     }
     assertEquals(n, seenHashes.size(), "every row distinct (no dup deliveries)");

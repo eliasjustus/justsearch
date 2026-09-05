@@ -367,8 +367,8 @@ class VduBatchProcessorE2ETest {
    */
   private String normalizeDocId(Path path) {
     String absolutePath = path.toAbsolutePath().toString();
-    if (System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")) {
-      return absolutePath.toLowerCase(java.util.Locale.ROOT);
+    if (System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+      return absolutePath.toLowerCase(Locale.ROOT);
     }
     return absolutePath;
   }
@@ -541,8 +541,8 @@ class VduBatchProcessorE2ETest {
 
       int processed = 0;
       int failed = 0;
-      java.util.List<String> extractedTexts = new java.util.ArrayList<>();
-      java.util.List<String> enrichments = new java.util.ArrayList<>();
+      List<String> extractedTexts = new java.util.ArrayList<>();
+      List<String> enrichments = new java.util.ArrayList<>();
       String lastExtractedText = "";
       String lastEnrichment = "";
       String lastFailureReason = "";
@@ -654,7 +654,7 @@ class VduBatchProcessorE2ETest {
         String lastExtractedText,
         String lastEnrichment,
         String lastFailureReason,
-        java.util.List<String> allExtractedTexts,
-        java.util.List<String> allEnrichments) {}
+        List<String> allExtractedTexts,
+        List<String> allEnrichments) {}
   }
 }

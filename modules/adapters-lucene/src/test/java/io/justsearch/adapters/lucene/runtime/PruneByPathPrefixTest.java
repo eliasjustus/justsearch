@@ -77,7 +77,7 @@ class PruneByPathPrefixTest {
     indexDir = Files.createTempDirectory("prune-test-index-");
     testFilesDir = Files.createTempDirectory("prune-test-files-");
 
-    runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(createTestCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(indexDir).open();
+    runtime = IndexSchema.fromCatalog(createTestCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(indexDir).open();
   }
 
   @AfterEach

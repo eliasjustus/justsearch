@@ -22,7 +22,7 @@ class NrtGatingTriggerTest {
     String prev = System.getProperty("justsearch.config");
     System.setProperty("justsearch.config", cfg.toString());
     try {
-      var r = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).ephemeral().open();
+      var r = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).ephemeral().open();
       r.indexingCoordinator().indexSingle(
           new IndexDocument(
               java.util.Map.of(

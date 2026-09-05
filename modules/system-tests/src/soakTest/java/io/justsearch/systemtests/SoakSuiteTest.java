@@ -205,7 +205,7 @@ class SoakSuiteTest {
     @DisplayName("Search operations do not leak memory over " + SEARCH_ITERATIONS + " iterations")
     @Timeout(value = 60, unit = TimeUnit.MINUTES)
     void searchDoesNotLeakMemory() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution not available");
 
       mmfHarness.open();
@@ -277,7 +277,7 @@ class SoakSuiteTest {
     @DisplayName("Repeated worker restarts do not leak handles")
     @Timeout(value = 30, unit = TimeUnit.MINUTES)
     void repeatedRestartDoesNotLeakHandles() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution not available");
 
       HandleLeakDetector handleDetector = new HandleLeakDetector();
@@ -288,7 +288,7 @@ class SoakSuiteTest {
         handlesBefore = handleDetector.findAllHandles(mainPid).size();
       } catch (IOException | InterruptedException e) {
         log.warn("Could not count handles (platform may not support it): {}", e.getMessage());
-        org.junit.jupiter.api.Assertions.assertTrue(false, "❌ Handle counting not available");
+        assertTrue(false, "❌ Handle counting not available");
       }
 
       log.info("Starting {} restart cycles", RESTART_CYCLES);
@@ -391,7 +391,7 @@ class SoakSuiteTest {
     @DisplayName("Worker remains healthy under sustained load")
     @Timeout(value = 15, unit = TimeUnit.MINUTES)
     void workerRemainsHealthyUnderSustainedLoad() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution not available");
 
       mmfHarness.open();

@@ -68,7 +68,7 @@ class DtoRoundTripSchemaTest {
         com.networknt.schema.SchemaLocation.of(f.toURI().toString()), schemaNode, null);
   }
 
-  private static String join(java.util.List<com.networknt.schema.Error> messages) {
+  private static String join(List<com.networknt.schema.Error> messages) {
     return messages.stream().map(com.networknt.schema.Error::getMessage).sorted().reduce((a, b) -> a + "; " + b).orElse("");
   }
 

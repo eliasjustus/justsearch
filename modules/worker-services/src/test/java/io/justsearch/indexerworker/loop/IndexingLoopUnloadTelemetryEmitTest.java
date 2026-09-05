@@ -318,7 +318,7 @@ final class IndexingLoopUnloadTelemetryEmitTest {
   private static void invokeUnloadEmbeddingService(IndexingLoop loop) throws Exception {
     // Tempdoc 516 Slice 4c: unloadEmbeddingService moved to EmbeddingProviderLifecycle.
     Method m =
-        io.justsearch.indexerworker.loop.EmbeddingProviderLifecycle.class.getDeclaredMethod(
+        EmbeddingProviderLifecycle.class.getDeclaredMethod(
             "unloadEmbeddingService");
     m.setAccessible(true);
     m.invoke(loop.getEmbeddingLifecycle());

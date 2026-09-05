@@ -46,7 +46,7 @@ final class MdcPopulationTest {
           SpanContext spanCtx =
               Span.fromContext(TracingServerInterceptor.currentOtelContext()).getSpanContext();
           String traceId = spanCtx.isValid() ? spanCtx.getTraceId() : null;
-          try (MdcContext mdc =
+          try (MdcContext _ =
               MdcContext.request(traceId, RequestMetadataInterceptor.currentRequestId())) {
             observedTraceId.set(MDC.get("trace_id"));
             observedRequestId.set(MDC.get("request_id"));
@@ -68,7 +68,7 @@ final class MdcPopulationTest {
   @Test
   void mdcClearedAfterScopeCloses() {
     MDC.clear();
-    try (MdcContext mdc = MdcContext.request("some-trace", "some-request")) {
+    try (MdcContext _ = MdcContext.request("some-trace", "some-request")) {
       assertEquals("some-trace", MDC.get("trace_id"));
     }
     assertNull(MDC.get("trace_id"));

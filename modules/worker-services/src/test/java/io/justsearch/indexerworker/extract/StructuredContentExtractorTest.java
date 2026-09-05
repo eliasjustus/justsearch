@@ -246,7 +246,7 @@ class StructuredContentExtractorTest {
           org.apache.tika.metadata.TikaCoreProperties.RESOURCE_NAME_KEY,
           file.getFileName().toString());
       try (var in =
-          org.apache.tika.io.TikaInputStream.get(java.nio.file.Files.newInputStream(file))) {
+          org.apache.tika.io.TikaInputStream.get(Files.newInputStream(file))) {
         var defaultType =
             org.apache.tika.config.TikaConfig.getDefaultConfig()
                 .getDetector()

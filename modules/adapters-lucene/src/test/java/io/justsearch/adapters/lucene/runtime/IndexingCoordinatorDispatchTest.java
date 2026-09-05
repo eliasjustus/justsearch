@@ -207,7 +207,7 @@ class IndexingCoordinatorDispatchTest {
           """;
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(
+      return new IndexSchema(
               fieldMapper,
               new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(),
               io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new,
@@ -236,11 +236,13 @@ class IndexingCoordinatorDispatchTest {
                     try {
                       Files.deleteIfExists(p);
                     } catch (Exception ignored) {
+                      // best-effort cleanup; a locked file (e.g. Windows file lock) should not fail the test
                     }
                   });
         }
       }
     } catch (Exception ignored) {
+      // best-effort cleanup; failures here must not mask the test's actual assertions
     }
   }
 }

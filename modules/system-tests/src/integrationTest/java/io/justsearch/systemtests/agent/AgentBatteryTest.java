@@ -314,7 +314,7 @@ class AgentBatteryTest {
             "List files in docs/explanation",
             "What files are in docs/explanation?",
             3,
-            new PathValidationSuccessCriteria("core_browse_folders", "parent_path")));
+            new ToolInvokedSuccessCriteria("core_browse_folders")));
 
     // EXP 5: What is configuration.md about? (response quality)
     cases.add(
@@ -353,7 +353,7 @@ class AgentBatteryTest {
             "Read configuration.md",
             "Read the content of docs/explanation/configuration.md",
             3,
-            new PathValidationSuccessCriteria("core_file_operations", "file_path")));
+            new ToolInvokedSuccessCriteria("core_file_operations")));
 
     // EXP 9: Search for "inference" (tool usage)
     cases.add(
@@ -380,7 +380,7 @@ class AgentBatteryTest {
             "Ingest new file",
             "Ingest the file docs/README.md into the index",
             3,
-            new PathValidationSuccessCriteria("core_ingest_files", "paths")));
+            new ToolInvokedSuccessCriteria("core_ingest_files")));
 
     // EXP 12: Multi-step: search + browse (tool usage)
     cases.add(
@@ -453,12 +453,17 @@ class AgentBatteryTest {
     assertTrue(passed, "Test " + testCase.id() + " failed: " + testCase.name());
   }
 
+  /**
+   * Reports the battery's aggregate success rate. It deliberately asserts nothing about the rate
+   * itself: the per-case {@code assertTrue(passed, ...)} above is what fails a regression, and the
+   * 85% target is an agent-quality goal, not a property of a code change. The name says "reports",
+   * not "meets", because a test named for a threshold it does not check reads as coverage it does
+   * not provide. Raising it to an assertion is tracked in tempdoc 930 §22.2 open items.
+   */
   @Test
-  @DisplayName("Agent battery meets 85% success threshold")
+  @DisplayName("Agent battery reports its aggregate success rate")
   void aggregateSuccessRate() {
-    // Wait for all parameterized tests to complete
-    // (This test runs after them due to JUnit ordering)
-
+    // Runs after the parameterized cases by JUnit ordering, so testResults is complete.
     int total = testResults.size();
     int passed = (int) testResults.stream().filter(TestCaseResult::passed).count();
     double successRate = total > 0 ? (double) passed / total : 0.0;
@@ -474,17 +479,10 @@ class AgentBatteryTest {
           result.passed() ? "PASS" : "FAIL");
     }
 
-    // For now, don't assert on the threshold - just log it
-    // The baseline is expected to be ~42%, which is below 85%
-    // This test will be enabled once Phase 1 improvements are complete
     log.info(
-        "Success rate threshold check: {}.0% {} 85% (assertion disabled for baseline measurement)",
+        "Success rate threshold check: {}.0% {} 85% (measured, not asserted; baseline is ~42%)",
         (int) (successRate * 100),
         successRate >= 0.85 ? ">=" : "<");
-
-    // TODO: Enable assertion after Phase 1 improvements
-    // assertTrue(successRate >= 0.85,
-    //     String.format("Success rate %.1f%% below 85%% threshold", successRate * 100));
   }
 
   // ===== Test Case Model =====
@@ -610,39 +608,27 @@ class AgentBatteryTest {
     }
   }
 
-  /** Type 3: Path validation. */
-  record PathValidationSuccessCriteria(String toolName, String parameter)
-      implements SuccessCriteria {
+  /**
+   * Type 3: the named tool was invoked at least once.
+   *
+   * <p>This used to be called {@code PathValidationSuccessCriteria} and carried a {@code parameter}
+   * component naming the path argument it would one day check. It cannot: {@link
+   * AgentEvent.ToolExecutionStarted} carries only {@code callId}, {@code toolName} and a trace
+   * context — tool arguments are not on that event at all, so no amount of JSON parsing here
+   * reaches them. The name and the component were describing an assertion the type could never
+   * make. Validating argument paths needs the arguments put on the wire first.
+   */
+  record ToolInvokedSuccessCriteria(String toolName) implements SuccessCriteria {
     @Override
     public boolean evaluate(List<AgentEvent> events) {
-      // Extract all tool executions for the specified tool
-      List<AgentEvent.ToolExecutionStarted> toolCalls =
+      boolean invoked =
           events.stream()
               .filter(e -> e instanceof AgentEvent.ToolExecutionStarted)
               .map(e -> (AgentEvent.ToolExecutionStarted) e)
-              .filter(e -> e.toolName().equals(toolName))
-              .toList();
+              .anyMatch(e -> e.toolName().equals(toolName));
 
-      if (toolCalls.isEmpty()) {
-        log.debug("PathValidationSuccessCriteria failed: tool {} not called", toolName);
-        return false;
-      }
-
-      // For each tool call, check if path parameters are absolute
-      // Note: This is simplified - would need to parse JSON arguments properly
-      // For now, just check the string representation
-      for (AgentEvent.ToolExecutionStarted call : toolCalls) {
-        // TODO: Parse JSON and extract path parameter
-        // For now, assume arguments are in the call somehow
-        log.debug(
-            "PathValidationSuccessCriteria: checking tool {} for absolute paths",
-            toolName);
-      }
-
-      // Simplified: just check if the tool was called
-      // Full implementation would parse JSON arguments and validate paths
-      log.debug("PathValidationSuccessCriteria passed (simplified validation)");
-      return true;
+      log.debug("ToolInvokedSuccessCriteria {}: tool {}", invoked ? "passed" : "failed", toolName);
+      return invoked;
     }
   }
 

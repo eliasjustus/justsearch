@@ -65,7 +65,7 @@ final class SseEnvelopeContractTest {
                 Instant.parse("2026-04-30T11:59:00Z"),
                 Optional.empty(),
                 Optional.empty(),
-                java.util.List.of()));
+                List.of()));
     registry.broadcast(HealthEventChangeRegistry.Kind.CONDITION_ADDED, event);
 
     assertContractHolds(seen, StreamId.surface("health-events"));
@@ -142,8 +142,8 @@ final class SseEnvelopeContractTest {
       "Fix D: cross-stream sequence isolation — broadcasts on one channel don't bump another")
   void crossStreamSequenceIsolation() {
     HealthEventChangeRegistry health = new HealthEventChangeRegistry();
-    io.justsearch.app.observability.runtime.RuntimeContextChangeRegistry runtime =
-        new io.justsearch.app.observability.runtime.RuntimeContextChangeRegistry();
+    RuntimeContextChangeRegistry runtime =
+        new RuntimeContextChangeRegistry();
 
     long healthBefore = health.currentSeq();
     long runtimeBefore = runtime.currentSeq();
@@ -164,7 +164,7 @@ final class SseEnvelopeContractTest {
                 Instant.parse("2026-04-30T11:59:00Z"),
                 Optional.empty(),
                 Optional.empty(),
-                java.util.List.of()));
+                List.of()));
     health.broadcast(HealthEventChangeRegistry.Kind.CONDITION_ADDED, event);
 
     assertTrue(health.currentSeq() > healthBefore, "health seq must advance");

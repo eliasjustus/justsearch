@@ -100,10 +100,10 @@ class AgentEventSealedTest {
   void agentProfileFromMapMissingRequiredFieldThrows() {
     // Absent agentId must throw NullPointerException via the compact constructor,
     // not silently produce agentId="null" from String.valueOf(null).
-    assertThrows(NullPointerException.class, () -> AgentProfile.fromMap(java.util.Map.of()));
+    assertThrows(NullPointerException.class, () -> AgentProfile.fromMap(Map.of()));
     assertThrows(
         NullPointerException.class,
-        () -> AgentProfile.fromMap(java.util.Map.of("agentId", "x"))); // name absent
+        () -> AgentProfile.fromMap(Map.of("agentId", "x"))); // name absent
   }
 
   @Test

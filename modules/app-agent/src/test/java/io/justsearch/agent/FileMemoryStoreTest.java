@@ -126,7 +126,7 @@ final class FileMemoryStoreTest {
     // Write a memory while unlocked → memory.json is sealed (not the plaintext content).
     new FileMemoryStore(tmp, cipher)
         .remember(rec("s1", "SECRET-memory-content", Instant.parse("2026-03-03T00:00:00Z")));
-    String onDisk = java.nio.file.Files.readString(tmp.resolve("memory.json"));
+    String onDisk = Files.readString(tmp.resolve("memory.json"));
     assertTrue(onDisk.startsWith("JSEv1:"), "memory.json is sealed");
     assertTrue(!onDisk.contains("SECRET-memory-content"), "plaintext content is NOT on disk");
 
@@ -154,15 +154,15 @@ final class FileMemoryStoreTest {
     var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
     new FileMemoryStore(tmp, cipher)
         .remember(rec("s1", "original", Instant.parse("2026-03-03T00:00:00Z")));
-    String before = java.nio.file.Files.readString(tmp.resolve("memory.json"));
+    String before = Files.readString(tmp.resolve("memory.json"));
 
     key.locked = true;
     var store = new FileMemoryStore(tmp, cipher); // locked-at-launch → empty cache
-    org.junit.jupiter.api.Assertions.assertThrows(
+    assertThrows(
         io.justsearch.agent.api.encryption.KeyLockedException.class,
         () -> store.remember(rec("s2", "should-not-persist", Instant.parse("2026-03-03T00:01:00Z"))),
         "persist while locked is refused");
-    assertEquals(before, java.nio.file.Files.readString(tmp.resolve("memory.json")), "ciphertext intact");
+    assertEquals(before, Files.readString(tmp.resolve("memory.json")), "ciphertext intact");
   }
 
   // ── Tempdoc 806 W1 — locked-state truthfulness (round-12 finding R12-F3) ──────────────────────

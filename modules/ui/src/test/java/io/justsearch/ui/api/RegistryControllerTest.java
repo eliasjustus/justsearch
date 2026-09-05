@@ -205,7 +205,7 @@ final class RegistryControllerTest {
     verify(ctx).result(body.capture());
     JsonNode envelope = MAPPER.readTree(body.getValue());
     assertEquals(2, envelope.get("entries").size());
-    java.util.List<String> ids = new java.util.ArrayList<>();
+    List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(ids.contains("core.head-log"));
     assertTrue(ids.contains("vendor.example.demo-log"), "the plugin-composed channel must surface");
@@ -253,7 +253,7 @@ final class RegistryControllerTest {
     ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
     verify(ctx).result(body.capture());
     JsonNode envelope = MAPPER.readTree(body.getValue());
-    java.util.List<String> ids = new java.util.ArrayList<>();
+    List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(
         ids.contains("vendor.example.demo-resource"), "the plugin-composed resource must surface");
@@ -295,7 +295,7 @@ final class RegistryControllerTest {
     ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
     verify(ctx).result(body.capture());
     JsonNode envelope = MAPPER.readTree(body.getValue());
-    java.util.List<String> ids = new java.util.ArrayList<>();
+    List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(
         ids.contains("vendor.example.demo-prompt"), "the plugin-composed prompt must surface");
@@ -361,16 +361,16 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface entry =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("core.library-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey(
+            Presentation.of(
+                new I18nKey(
                     "registry-surface.library-surface.label"),
-                new io.justsearch.agent.api.registry.I18nKey(
+                new I18nKey(
                     "registry-surface.library-surface.description")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
             "jf-library-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
+            Provenance.core("1.0"),
             java.util.Optional.of(
                 new io.justsearch.agent.api.registry.SurfaceStateSchema(
                     "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}",
@@ -403,14 +403,14 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface host =
         new io.justsearch.agent.api.registry.Surface(
                 new io.justsearch.agent.api.registry.SurfaceRef("core.library-surface"),
-                io.justsearch.agent.api.registry.Presentation.of(
-                    new io.justsearch.agent.api.registry.I18nKey("a"),
-                    new io.justsearch.agent.api.registry.I18nKey("b")),
+                Presentation.of(
+                    new I18nKey("a"),
+                    new I18nKey("b")),
                 io.justsearch.agent.api.registry.Audience.USER,
                 io.justsearch.agent.api.registry.Placement.RAIL,
                 io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
                 "jf-library-surface",
-                io.justsearch.agent.api.registry.Provenance.core("1.0"))
+                Provenance.core("1.0"))
             .withMembers(
                 List.of(new io.justsearch.agent.api.registry.SurfaceRef("core.browse-surface")));
     RegistryController withSurface = controllerWithSurface(host);
@@ -440,9 +440,9 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface activity =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("core.activity-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey("a"),
-                new io.justsearch.agent.api.registry.I18nKey("b")),
+            Presentation.of(
+                new I18nKey("a"),
+                new I18nKey("b")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             new io.justsearch.agent.api.registry.SurfaceConsumes(
@@ -451,7 +451,7 @@ final class RegistryControllerTest {
                 java.util.Set.of(),
                 java.util.Set.of()),
             "jf-activity-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"));
+            Provenance.core("1.0"));
     io.justsearch.agent.api.registry.SurfaceCatalog cat =
         io.justsearch.agent.api.registry.SurfaceCatalog.of("core", List.of(activity));
     RegistryController withSurface =
@@ -486,14 +486,14 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface entry =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("core.activity-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey("a"),
-                new io.justsearch.agent.api.registry.I18nKey("b")),
+            Presentation.of(
+                new I18nKey("a"),
+                new I18nKey("b")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
             "jf-activity-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
+            Provenance.core("1.0"),
             java.util.Optional.empty(),
             io.justsearch.agent.api.registry.RiskTier.LOW,
             io.justsearch.agent.api.registry.Altitude.TRUST);
@@ -523,16 +523,16 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface entry =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("core.library-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey(
+            Presentation.of(
+                new I18nKey(
                     "registry-surface.library-surface.label"),
-                new io.justsearch.agent.api.registry.I18nKey(
+                new I18nKey(
                     "registry-surface.library-surface.description")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
             "jf-library-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
+            Provenance.core("1.0"),
             java.util.Optional.of(
                 new io.justsearch.agent.api.registry.SurfaceStateSchema(
                     "{not json",
@@ -565,16 +565,16 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface entry =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("core.library-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey(
+            Presentation.of(
+                new I18nKey(
                     "registry-surface.library-surface.label"),
-                new io.justsearch.agent.api.registry.I18nKey(
+                new I18nKey(
                     "registry-surface.library-surface.description")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
             "jf-library-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"));
+            Provenance.core("1.0"));
     io.justsearch.agent.api.registry.SurfaceCatalog cat =
         io.justsearch.agent.api.registry.SurfaceCatalog.of("core", List.of(entry));
 
@@ -617,16 +617,16 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.Surface vendor =
         new io.justsearch.agent.api.registry.Surface(
             new io.justsearch.agent.api.registry.SurfaceRef("vendor.example.demo-surface"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey(
+            Presentation.of(
+                new I18nKey(
                     "registry-surface.vendor-example-demo-surface.label"),
-                new io.justsearch.agent.api.registry.I18nKey(
+                new I18nKey(
                     "registry-surface.vendor-example-demo-surface.description")),
             io.justsearch.agent.api.registry.Audience.USER,
             io.justsearch.agent.api.registry.Placement.RAIL,
             io.justsearch.agent.api.registry.SurfaceConsumes.empty(),
             "jf-log-surface",
-            io.justsearch.agent.api.registry.Provenance.core("1.0"));
+            Provenance.core("1.0"));
     Telemetry telemetry = mock(Telemetry.class);
     RegistryController withPlugin =
         new RegistryController(
@@ -647,7 +647,7 @@ final class RegistryControllerTest {
     ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
     verify(ctx).result(body.capture());
     JsonNode envelope = MAPPER.readTree(body.getValue());
-    java.util.List<String> ids = new java.util.ArrayList<>();
+    List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(ids.contains("vendor.example.demo-surface"), "the plugin-composed surface must surface");
   }
@@ -658,13 +658,13 @@ final class RegistryControllerTest {
     io.justsearch.agent.api.registry.ConversationShape vendor =
         new io.justsearch.agent.api.registry.ConversationShape(
             new io.justsearch.agent.api.registry.ConversationShapeRef("vendor.example.demo-shape"),
-            io.justsearch.agent.api.registry.Presentation.of(
-                new io.justsearch.agent.api.registry.I18nKey(
+            Presentation.of(
+                new I18nKey(
                     "registry-shape.vendor-example-demo-shape.label"),
-                new io.justsearch.agent.api.registry.I18nKey(
+                new I18nKey(
                     "registry-shape.vendor-example-demo-shape.description")),
             io.justsearch.agent.api.registry.Audience.USER,
-            io.justsearch.agent.api.registry.Provenance.core("1.0"),
+            Provenance.core("1.0"),
             io.justsearch.agent.api.conversation.ExecutionMode.SHAPE_DRIVEN,
             io.justsearch.agent.api.conversation.IterationMode.ONE_SHOT,
             io.justsearch.agent.api.conversation.PersistenceMode.EPHEMERAL,
@@ -696,7 +696,7 @@ final class RegistryControllerTest {
     ArgumentCaptor<byte[]> body = ArgumentCaptor.forClass(byte[].class);
     verify(ctx).result(body.capture());
     JsonNode envelope = MAPPER.readTree(body.getValue());
-    java.util.List<String> ids = new java.util.ArrayList<>();
+    List<String> ids = new java.util.ArrayList<>();
     envelope.get("entries").forEach(e -> ids.add(e.get("id").asText()));
     assertTrue(ids.contains("vendor.example.demo-shape"), "the plugin-composed shape must surface");
   }

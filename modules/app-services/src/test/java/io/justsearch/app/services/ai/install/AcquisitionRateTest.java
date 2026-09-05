@@ -284,7 +284,7 @@ final class AcquisitionRateTest {
         rate.estimate(10_000_000L),
         "three samples is one short of the configured minimum of four — must stay silent");
 
-    rate.sample(bytes += 1_000_000L); // the fourth sample reaches minSamples exactly
+    rate.sample(bytes + 1_000_000L); // the fourth sample reaches minSamples exactly
     assertEquals(4, rate.sampleCount());
     assertTrue(
         rate.estimate(10_000_000L).rateKnown(),
@@ -437,7 +437,7 @@ final class AcquisitionRateTest {
     }
     assertEquals(512, rate.sampleCount(), "exactly the cap must not trigger eviction");
 
-    rate.sample(bytes += 1_000L);
+    rate.sample(bytes + 1_000L);
     assertEquals(
         512,
         rate.sampleCount(),
