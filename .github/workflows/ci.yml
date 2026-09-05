@@ -885,12 +885,26 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
 
-      # PMD used to run here (follow-up 2, `pmdMain` only, 49s on top of the completed assemble).
-      # Follow-up 10 extended it to every Java source set and the step measured 188s on run
-      # 33967299967 — the growth is `compileTestJava` and the other suites' compiles, which
-      # `assemble` does not do, not PMD itself (22s locally for all 72 tasks with classes already
-      # compiled). It moved to the `Unit tests (platform-contracts)` lane, which already compiles
-      # test sources. See `scripts/ci/ci-walltime-policy.v1.json` for both measurements.
+      # PMD rides this job because it needs compiled classes and nothing else, and this job has
+      # already compiled main via `assemble`. Tempdoc 930 §22.2 follow-up 2 — before this step no
+      # workflow put PMD in its task graph, so the ruleset (incl. the `CommentContent` parked-marker
+      # ban) never ran in CI. It is a separate step, not an `assemble` dependency: `assemble`
+      # produces artifacts, `check` verifies them, and PMD is verification.
+      #
+      # `pmdAll` (root build.gradle.kts), not a list of task names: it is every `Pmd` task in every
+      # module, so a module that registers a new `JvmTestSuite` is covered without anyone
+      # remembering — the same dormancy shape follow-up 2 found in `pmdMain` and follow-up 10 found
+      # in `modules/system-tests`.
+      #
+      # PLACEMENT IS MEASURED, NOT ASSUMED. Follow-up 10 widened the step from `pmdMain` (49s) to
+      # every source set (188s here) and it was tried in `Unit tests (platform-contracts)` on the
+      # theory that a lane already compiling test sources would run it cheaper. It did not: 201s
+      # there, and that lane hit 488s against its 360s advisory budget, while this job runs 469s
+      # against 600s. `pmdAll` needs main plus every non-main source set for all ~30 modules, so
+      # neither placement avoids the compile — this is the job with the headroom. Do not relocate
+      # again without re-measuring; `scripts/ci/ci-walltime-policy.v1.json` holds both numbers.
+      - name: Static analysis (PMD, all source sets)
+        run: ./gradlew pmdAll --console=plain
 
       # `gen-api-client --check` is an entry of the regen set (run in `Public claims`); the
       # classified OpenAPI snapshot's check shells out to Gradle, so it stays its own step and
@@ -1026,24 +1040,6 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
           "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
-
-      # PMD over every Java source set (tempdoc 930 §22.2 follow-up 10). It rides THIS lane rather
-      # than `Build (no model blobs)` because `pmdAll` needs test classes, not just main: measured
-      # at 188s there on run 33967299967, where `assemble` compiles no test source at all. This
-      # lane already compiles the `test` source set for fifteen modules, so more of that cost is
-      # already paid. PMD's own analysis is ~22s for all 72 tasks once classes exist.
-      #
-      # `pmdAll` (root build.gradle.kts), not a list of task names: it is every `Pmd` task in every
-      # module, so a module that registers a new `JvmTestSuite` is covered without anyone
-      # remembering — the same dormancy shape follow-up 2 found in `pmdMain` and follow-up 10 found
-      # in `modules/system-tests`. One lane runs it, not all three, because the task is repo-wide.
-      - name: Static analysis (PMD, all source sets)
-        if: matrix.lane == 'platform-contracts'
-        shell: bash
-        run: |
-          chmod +x ./gradlew 2>/dev/null || true
-          GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
-          "$GW" pmdAll -PskipWebBuild=true --console=plain
 
       # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
       # snapshot exported below, and each returns verdict `pass` with a `snapshot-missing` WARNING

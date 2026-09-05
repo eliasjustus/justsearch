@@ -65,8 +65,7 @@
     the same for every non-`main` source set, which runs `ruleset-tests.xml` (a marker parked in a
     test file now fails the build, not review) and cleared 569 more. CI runs `pmdAll`, the root
     aggregate over every PMD task, as the `Static analysis (PMD, all source sets)` step of the
-    required `Unit tests (platform-contracts)` lane — that lane, because `pmdAll` needs test
-    classes and `assemble` compiles none.
+    required `Build (no model blobs)` job.
 
     THIS FILE IS THE AUTHORITY for the two derived rulesets beside it. They inline these rules
     rather than referencing this file — PMD's `rule ref` resolves against the CLASSPATH, and a ref

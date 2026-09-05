@@ -137,9 +137,11 @@ success**. `scripts/ci/check-pmd-ruleset-sync.mjs` therefore enforces that each 
 the authority minus its declared, description-justified subtraction, and that no ref is a file path.
 
 Run everything with `./gradlew.bat pmdAll` (root aggregate over all 93 PMD tasks); CI runs the same
-task in the required `Unit tests (platform-contracts)` lane, which already compiles test sources —
-`pmdAll` needs test classes, and `Build (no model blobs)` compiles none, which is why it measured
-188 s there and moved. `-PskipPmd=true` is the local fast-iteration escape hatch; CI never sets it.
+task in the required `Build (no model blobs)` job, measured at 188 s there. Running it instead on
+`Unit tests (platform-contracts)` was tried and measured worse (201 s, and that lane over its
+advisory budget) — `pmdAll` compiles every source set of every module either way, so the placement
+is decided by which job has wall-time headroom, not by which already compiles tests.
+`-PskipPmd=true` is the local fast-iteration escape hatch; CI never sets it.
 
 **Exception handling policy:**
 

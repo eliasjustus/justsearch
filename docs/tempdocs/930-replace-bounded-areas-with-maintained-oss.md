@@ -772,7 +772,7 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    **DONE 2026-09-05** — applied in place to the (still untracked, owner-lane) 919 file as a
    "Status amendment" scoped to §4.5 only; it publishes with 919.
 10. ~~Java TEST sources stay uncovered: `pmdTest` sits behind `-Ppmd.includeTests=true` (455 violations; zero `CommentContent`).~~
-    **DONE 2026-09-05.** Flag removed; `pmdAll` (all 93 PMD tasks) runs in `check`/`build` and as CI's `Static analysis (PMD, all source sets)` step — in the `Unit tests (platform-contracts)` lane, not `Build (no model blobs)`, where it measured 188s (run 33967299967) because `assemble` compiles no test source; PMD itself is ~22s once classes exist.
+    **DONE 2026-09-05.** Flag removed; `pmdAll` (all 93 PMD tasks) runs in `check`/`build` and as CI's `Static analysis (PMD, all source sets)` step in `Build (no model blobs)`: 188s of a 469s job (600s budget). Moving it to `Unit tests (platform-contracts)` was tried and measured WORSE (201s; that lane 488s over its 360s budget) — `pmdAll` compiles every source set either way, so placement follows wall-time headroom, not "which job already compiles tests".
     Real count 569 — `modules/system-tests` carried a blanket `isIgnoreFailures` hiding 84, the hole `benchmarks` had. All cleared at the cause
     (344 UFQN, 23 `EmptyCatchBlock`, 46 `Unused*`, 2 `CommentContent` — real parked markers, so the "zero" above was an artifact of the flag);
     127 `SystemPrintln` + 17 `NonThreadSafeSingleton` excluded by the new `config/pmd/ruleset-tests.xml` (premise false in a test); 9 reasoned
