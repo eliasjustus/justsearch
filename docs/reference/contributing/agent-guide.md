@@ -520,7 +520,7 @@ review record. Landed-message comparison is semantic rather than byte-exact:
 GitHub may hard-wrap long lines and append its own attribution. Public bodies
 therefore avoid tables or nested formatting whose meaning depends on wrapping.
 
-Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
+Four `gh` CLI quirks (tempdoc 695, 930) worth knowing at merge/wait time:
 
 - **A push does not guarantee a CI run.** GitHub's `synchronize` event
   intermittently does not fire, leaving a PR whose newest green check belongs
@@ -549,6 +549,21 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   mitigation; see the registration-race bullet in Batch-publishing below and
   the `/publish` skill's CI-wait pattern for the never-chain-with-merge half
   of this sequence.
+- **`checks-wait --required-only` can report green with nothing verified**
+  (tempdoc 930 publication, 2026-09-05, three occurrences). While a PR is
+  `CONFLICTING` GitHub builds no merge commit, so no CI registers and "all
+  required checks green" is vacuous; seconds after a push it can read the
+  superseded run's cached state; and a check you are in the middle of
+  *promoting* to required is not yet in the required set, so it is skipped.
+  Before enqueueing, confirm `mergeStateStatus` is `CLEAN`, that the checks
+  belong to the current `headRefOid`, and that `gh pr checks <N> --required`
+  lists every context you expect.
+- **`origin/main` moves under a long task.** Background re-fetches advance the
+  remote-tracking ref mid-task, so `git diff origin/main` drifts (a 100k-line
+  "leak" that is only base drift), and `git reset --soft origin/main` can
+  silently give a rebuilt commit a parent that already contains a later PR —
+  which reverts that PR on push. Re-fetch immediately before every comparison
+  and verify `git log -1 --format=%P` after any soft reset.
 **Publishing goes through the live GitHub merge queue (tempdoc 829 R4, executed
 2026-08-14).** The repo transferred to an organization, ruleset `main-merge-queue`
 gates `main` (SQUASH method, `merge_group` wired into `ci.yml`, validated end-to-end

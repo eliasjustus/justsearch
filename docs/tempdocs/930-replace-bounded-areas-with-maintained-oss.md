@@ -1,7 +1,7 @@
 ---
 title: "Replace bounded areas with maintained open source: whole-project analysis (product + agentic system + tooling) of where a polished, regularly-updated upstream can absorb bespoke code, ranked by maintainer effort saved"
 type: tempdocs
-status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (follow-up 1 done 2026-09-05: all 37 accepted advisory identities cleared by upgrade, dependency-review-action not adopted; remaining — PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
+status: "PUBLISHED + FOLLOW-UPS DONE (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661, #663 (§22 table, each with a green exact-SHA main run); the nine §22.2 owner actions incl. row 11 closed by seven more PRs (§22.3) plus the branch-protection change; one founder flag in §22.3. Deviations per chunk in §21 and per PR in §22.1; every §22.2 follow-up closed (all 37 accepted advisory identities cleared, dependency-review-action not adopted; PMD in the build; jseval suite required; measured axe hosted; updater lane real). VDU skipped by founder decision."
 created: 2026-09-05
 updated: 2026-09-05
 lane: maintainer-effort / dependency strategy
@@ -729,7 +729,10 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    `UnnecessaryFullyQualifiedName`, 62 `SystemPrintln`, 19 `UnusedLocalVariable`, 17
    `UnusedAssignment`, 16 `EmptyCatchBlock`, 10 `UnusedFormalParameter`, 6 `UnusedPrivateMethod`,
    1 `UnusedPrivateField`) — but zero `CommentContent`, so no marker is parked there today either.
-4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
+4. ~~Promote `jseval-suite` to a required check (branch protection + the two inventories).~~
+   **DONE 2026-09-05** — PR #665 (inventories, walltime lane, ADR-0044 amendment; 15/15 hosted
+   passes, median 384 s) and the owner PATCH to classic branch protection (the ruleset holds no
+   required checks): `main` now requires 11 contexts, `check-branch-protection` OK.
 5. ~~`ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on
    PRs.~~ **DONE 2026-09-05** — it does now, as the advisory `Measured axe` job in `ci.yml`.
    Feasibility: the gate needs no backend at all (`--fixtures` route-mocks `/api/*` inside
@@ -743,7 +746,11 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the
    ADR-0026 amendment 2026-09-05. `ui-proportion-gate` deliberately stays local-only — its
    baseline is pixel geometry, far more runner-dependent than an axe rule id.
-6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
+6. ~~Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.~~
+   **DONE 2026-09-05** — PR #671 `update-preserves-models.yml` (`workflow_dispatch`, windows-latest,
+   two published installers N→N+1, seeded model blobs hashed before/after upgrade and uninstall).
+   First dispatch from `main`, run 33959367954: VERDICT PASS 0.1.0 → 0.2.0, 27/27 gating steps.
+   Not covered: the app is never launched (runtime re-download), the in-app updater path.
 7. ~~`docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.~~
    **DONE 2026-09-05** (PR `docs(930): docs-validate exits 0 and runs on PRs`): `tags`/`aliases`
    retired (1,626 warnings, no consumer reads either key and no doc carries one); the H1 counter
@@ -766,4 +773,26 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    drift test owns, so the generated tree is exempted from unused-directive reporting in
    `eslint.config.js` instead of edited. `lint` is now `eslint . --max-warnings=0`, and the
    `ui-web-gates` recipe names it.
-9. Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.
+9. ~~Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.~~
+   **DONE 2026-09-05** — applied in place to the (still untracked, owner-lane) 919 file as a
+   "Status amendment" scoped to §4.5 only; it publishes with 919.
+
+### 22.3 Follow-up publication (2026-09-05; founder: "proceed with the owner actions as well as the remaining work")
+
+| PR | Item | Main CI |
+|---|---|---|
+| #665 `ci(930): jseval suite becomes a required check` | 4 | green (`c85c0b31`) |
+| #667 `docs(930): docs-validate exits 0 and runs on PRs` | 7 | green (`6f4206dd`) |
+| #671 `ci(930): real update-preserves-models lane` | 6 / row 11 | superseded; green at `8a919ad1` |
+| #668 `lint(930): scripts+ps1 TODO coverage; ui-web zero warnings` | 3, 8 | superseded; green at `8a919ad1` |
+| #666 `deps(930): clear npm advisories, gate lockfile completeness` | 1 | superseded; green at `8a919ad1` |
+| #672 `ci(930): measured axe runs hosted` | 5 | green (`8a919ad1`) |
+| #670 `build(930): PMD runs in the build; violations cleared` | 2 | landed `90a9d5fd`; main run pending at closeout |
+
+Founder flag: PR #667 changed `check-tempdoc-size` from "fails on any touch of an over-cap tempdoc" (the design
+the founder agreed in §18.1 row 8) to a no-growth ratchet: an over-cap tempdoc may be edited if
+it does not grow; growing it or crossing the cap still fails. Reason: 195 of 627 tempdocs are
+over cap, so a mechanical frontmatter repair was unlandable under touch semantics. The orchestrator
+accepted this as consistent with append-only history and the cap's rationale (unbounded growth),
+but it is a deviation from the agreed design — revert to touch semantics if the intent was to
+force a shrink on every edit.
