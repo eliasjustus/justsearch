@@ -672,7 +672,10 @@ jobs:
     # required check is a separate decision that wants stability evidence from this lane
     # first — the path `jseval-suite` walked between §18.1 row 7 and §22.2 follow-up 4.
     # Recorded as the 2026-09-05 amendment to ADR-0026, which is why the gate's own
-    # docstrings no longer say "not CI-wired".
+    # docstrings no longer say "not CI-wired". Also absent from
+    # scripts/ci/ci-walltime-policy.v1.json: every lane there carries a `requiredCheck`
+    # and the reporter's one loud finding is `missing-required-lane`, so a non-required
+    # job has no honest row to occupy until it is promoted.
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

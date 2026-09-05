@@ -691,7 +691,8 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    Playwright, `ui_fixtures.py::install_fixtures`; `ui-shot` starts its own Vite,
    `ui_shot.py::_start_vite_server`), so it is Node + Python + headless Chromium on
    `ubuntu-latest`. Measured 350s / 20 surfaces locally, exit 0, identical `axe_new` across
-   two consecutive runs. Advisory (absent from `requiredStatusChecks` and from
+   two consecutive runs; first hosted run (#672, run 33958715012) exit 0 in 168s with rows
+   identical to Windows. Advisory (absent from `requiredStatusChecks` and from
    `public-ci-local-repro.v1.json`) because a hosted Linux Chromium renders differently from
    the Windows machine the register's `knownRules` were captured on; promotion needs
    stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the

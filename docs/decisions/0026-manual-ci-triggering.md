@@ -222,6 +222,12 @@ source of NEW-violation noise). That is the path `jseval-suite` walked: added
 as an unrequired hosted job by §18.1 row 7, promoted to a required check only
 after it had run.
 
+The first hosted run (PR #672, run 33958715012, job 101286643288) came back
+`exit_code: 0` with per-surface rows **identical to both local Windows runs**,
+`health`'s one accepted `color-contrast` included, in 168s wall for the whole
+job. That is encouraging but it is one run — the promotion question is whether
+it stays that way, which only a series of runs can answer.
+
 `ui-proportion-gate` keeps its local-only status and its ADR-0026 citation for
 now: its baseline is pixel geometry, which is far more runner-dependent than
 an axe rule id. That is a separate judgement, not an oversight.
