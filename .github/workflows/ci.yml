@@ -642,6 +642,100 @@ jobs:
         # would only write .pytest_cache into the checkout.
         run: python -m pytest scripts/jseval/tests -q -p no:cacheprovider
 
+  measured-axe:
+    name: Measured axe (advisory)
+    # Tempdoc 930 §22.2 follow-up 5. Chunk H retired twelve static a11y/token oracles in
+    # favour of measurement, but only half the replacement ran on PRs: the four-palette
+    # contrast sweep (`check-contrast-matrix`, inside the required `Public claims` lane via
+    # run-ui-web-gates.mjs). The other half — `jseval ui-a11y-gate`, real axe-core against
+    # the rendered page — was local-only, so a PR that regressed a rendered-page a11y rule
+    # had no automated catch at all.
+    #
+    # Nothing about that gate needs the backend, which is why it can run here: `--fixtures`
+    # intercepts every `/api/*` request in Playwright and serves committed schema-valid
+    # bodies (scripts/jseval/jseval/ui_fixtures.py `install_fixtures`), and `ui-shot` starts
+    # its own Vite dev server out of `modules/ui-web` (ui_shot.py `_start_vite_server`). So
+    # the whole sweep is Node + Python + headless Chromium: no Java, no Gradle, no GPU, no
+    # dev stack. Measured locally at 350s wall for the register's 20 surfaces including a
+    # cold Vite start, exit 0.
+    #
+    # ADVISORY, following `integration-tests` and `jseval-suite`: deliberately absent from
+    # scripts/ci/workflow-signal-policy.v1.json's requiredStatusChecks and from
+    # scripts/ci/public-ci-local-repro.v1.json (adding an entry to the latter while the job
+    # is not a required check FAILS validatePublicCiLocalRepro by design). Promotion to a
+    # required check is a separate decision that wants stability evidence from this lane
+    # first — the same path `jseval-suite` is on (§22.2 follow-up 4). Recorded as the
+    # 2026-09-05 amendment to ADR-0026, which is why the gate's own docstrings no longer
+    # say "not CI-wired".
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: modules/ui-web/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval with the ui extra
+        # The `ui` extra is Playwright. It is an optional-dependency, so it is absent from
+        # requirements.lock.txt and `-c` leaves it unpinned — same shape as the pytest
+        # install in the two lanes above. The lock-drift guard only compares pyproject's
+        # base `dependencies` against the lock, so naming an extra here cannot trip it.
+        run: python -m pip install -e "scripts/jseval[ui]" -c scripts/jseval/requirements.lock.txt
+
+      - name: Install frontend dependencies
+        # axe.min.js (the bundle ui_measure injects) and Vite both come from here.
+        run: npm ci --prefix modules/ui-web --audit=false
+
+      - name: Resolve the installed Playwright version
+        id: playwright
+        run: |
+          echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install headless Chromium
+        # `--with-deps` installs the shared libraries Chromium needs; those are apt packages,
+        # not part of the cached browser directory, so this step runs on a cache hit too.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Measured axe over the a11y baseline register
+        # Exit 0 clean · 1 a NEW axe rule not in the surface's `knownRules` · 2 a capture
+        # error. The per-surface verdict JSON goes to stderr; `pipefail` keeps the gate's
+        # exit code rather than tee's (agent-lessons `piped-exit-masked`).
+        run: |
+          set -o pipefail
+          mkdir -p build/ci/ui-a11y
+          python -m jseval ui-a11y-gate --output-dir build/ci/ui-a11y 2>&1 \
+            | tee build/ci/ui-a11y/gate-report.log
+
+      - name: Upload measured-axe captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: measured-axe-captures
+          path: |
+            build/ci/ui-a11y/*.measure.json
+            build/ci/ui-a11y/*.png
+            build/ci/ui-a11y/gate-report.log
+          if-no-files-found: warn
+
   license-and-notices:
     name: License and notices
     runs-on: windows-latest
