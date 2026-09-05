@@ -14,7 +14,7 @@
  * component does not own state, the consumer re-renders with the new `checked`.
  *
  * The click/keydown handlers sit on the SAME element that carries `role="switch"` + `tabindex`
- * (the controls-a11y gate's standalone-affordance triad).
+ * (the 559 standalone-affordance triad, formerly scanned by the retired controls-a11y gate).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
