@@ -254,9 +254,9 @@ Codex-specific behavior:
 ### Hook Interaction
 
 Hooks fire in registration order. For Bash tool calls, the public chain is
-`agent-spawn-build-hint.mjs` → conditional `build-counter.mjs` →
-`repeat-guard.mjs`. A maintainer's full local projection prepends asynchronous
-`dispatch.mjs` to that chain.
+`publication-merge-guard.mjs` → `agent-spawn-build-hint.mjs` → conditional
+`build-counter.mjs` → `repeat-guard.mjs`. A maintainer's full local projection
+prepends asynchronous `dispatch.mjs` to that chain.
 If a sync hook exits 2 (block), subsequent hooks likely do not fire (short-circuit).
 
 For `SessionStart`, the public chain is `compact-restore.mjs` followed by the
@@ -281,11 +281,11 @@ Known interaction design decisions:
 ### Process Overhead
 
 The public projection starts one synchronous `repeat-guard.mjs` process for every
-PreToolUse event, plus matcher-specific processes such as the Bash build hint and
-conditional Gradle build counter. The full local projection adds one asynchronous
-`dispatch.mjs` process to every PreToolUse event. Hook count therefore depends on
-the projection and tool matcher; startup cost should be measured on the active
-host rather than inferred from a fixed per-call estimate.
+PreToolUse event, plus matcher-specific processes such as the Bash publication
+guard, build hint, and conditional Gradle build counter. The full local projection
+adds one asynchronous `dispatch.mjs` process to every PreToolUse event. Hook count
+therefore depends on the projection and tool matcher; startup cost should be
+measured on the active host rather than inferred from a fixed per-call estimate.
 
 ### Error Isolation
 
