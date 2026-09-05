@@ -10,9 +10,9 @@ description: "Step-by-step recipes for recurring JustSearch contribution tasks â
 On-demand recipes for recurring contribution tasks. This file is **not** loaded
 every session (tempdoc 620 residence relocation) â€” load it when you start one of
 these tasks. The four path-triggerable recipes (gRPC, REST, config key, agent
-tool) are *also* pushed just-in-time by `consult-doc-hint` when you edit the
-relevant region (see `governance/consult-register.v1.json`); this file is the
-full reference behind those nudges.
+tool) are *also* registered for just-in-time consultation in
+`governance/consult-register.v1.json` when you edit the relevant region; this
+file is the full reference behind those recipes.
 
 ## Add a gRPC method
 1. Define in `modules/ipc-common/src/main/proto/indexing.proto`

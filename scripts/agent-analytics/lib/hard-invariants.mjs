@@ -9,7 +9,7 @@
  * were added, so subagents doing frontend work were never told "Lit, not React"
  * (tempdoc 620 Part V — the doc-as-projection principle applied to a hook).
  *
- * Live read at call time, mirroring `governed-regions.mjs` reading its register.
+ * Live read at call time, straight from the register — no build-time snapshot.
  * Fail-open: returns [] on any parse/IO failure (a hook must never crash).
  */
 

@@ -8,8 +8,8 @@
  * `<base>.<timestamp>[_NN].ndjson` files and only prunes per a per-stream
  * RETENTION policy (metrics/traces = never). `loadOtlpStream` is the sole
  * read chokepoint every downstream consumer (loadEventsFromOtlp,
- * loadCostsFromOtlp, and transitively analyze-session.mjs / cost-session.mjs
- * / outcome-session.mjs) goes through, so this asserts it actually finds and
+ * loadCostsFromOtlp, and transitively cost-session.mjs and
+ * context-attribution.mjs) goes through, so this asserts it actually finds and
  * concatenates the new archive files, oldest first, plus the legacy
  * `.prev.ndjson` this repo may still have on disk from before the fix.
  *

@@ -2,6 +2,12 @@
   "worktree": {
     "baseRef": "head"
   },
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)"
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [],
   "enabledPlugins": {
@@ -45,40 +51,6 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/intervene.mjs"
-            ],
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/consult-doc-hint.mjs"
-            ],
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/bash-guard.mjs"
-            ],
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/governance-precommit-hint.mjs"
             ],
             "timeout": 5
           }
@@ -150,52 +122,9 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/ui-shot-hint.mjs"
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/intervene.mjs"
             ],
-            "if": "Edit(modules/ui-web/src/**)"
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/test-edit-hint.mjs"
-            ]
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/stress-test-hint.mjs"
-            ],
-            "if": "Edit(modules/ort-common/**)"
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/seam-hint.mjs"
-            ],
-            "if": "Write(modules/**/src/main/java/**/*.java)"
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/search-engine-hint.mjs"
-            ],
-            "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
-          }
-        ]
-      },
-      {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/tempdoc-age-hint.mjs"
-            ]
+            "if": "Edit(docs/tempdocs/**)|Write(docs/tempdocs/**)"
           }
         ]
       },
@@ -209,14 +138,6 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/lockfile-hint.mjs"
             ],
             "if": "Edit(**/build.gradle.kts)"
-          },
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/governance-hint.mjs"
-            ],
-            "if": "Edit(scripts/ci/github-advisory-baseline.v1.json)|Edit(docs/reference/contributing/tier-register.md)|Edit(gates/**)"
           }
         ]
       }
@@ -243,20 +164,6 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/subagent-guide.mjs"
-            ],
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/maintain-doc-hint.mjs"
             ],
             "timeout": 5
           }
