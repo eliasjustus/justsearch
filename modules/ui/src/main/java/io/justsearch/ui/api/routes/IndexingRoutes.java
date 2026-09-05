@@ -23,6 +23,9 @@ public final class IndexingRoutes {
     app.post("/api/indexing/migration/pause", indexingController::handleMigrationPause);
     app.post("/api/indexing/migration/resume", indexingController::handleMigrationResume);
     app.post("/api/indexing/gc", indexingController::handleIndexGc);
+    // Tempdoc 931 §E item 10 — purge deleted-but-unmerged documents so paired evaluation arms
+    // query indexes with equal merge state.
+    app.post("/api/indexing/settle", indexingController::handleSettleIndex);
     app.get("/api/indexing/failed-jobs", indexingController::handleListFailedJobs);
     app.delete("/api/indexing/failed-jobs", indexingController::handleClearFailedJobs);
     // Slice 3a.1.9 §B.B.D Stream A — substrate-shaped failed-jobs endpoint
