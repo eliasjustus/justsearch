@@ -1,7 +1,7 @@
 ---
 title: "Replace bounded areas with maintained open source: whole-project analysis (product + agentic system + tooling) of where a polished, regularly-updated upstream can absorb bespoke code, ranked by maintainer effort saved"
 type: tempdocs
-status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (npm-audit → dependency-review-action, PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
+status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (follow-up 1 done 2026-09-05: all 37 accepted advisory identities cleared by upgrade, dependency-review-action not adopted; remaining — PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
 created: 2026-09-05
 updated: 2026-09-05
 lane: maintainer-effort / dependency strategy
@@ -679,8 +679,19 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 
 ### 22.2 Tracked follow-ups (owner actions; not scheduled here)
 
-1. `npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
-   retire the kernel gate.
+1. ~~`npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
+   retire the kernel gate.~~ **DONE (2026-09-05)** — the upgrade half landed and the review half
+   resolved to "do not adopt". All 37 accepted high identities (22 root, 15 `ui-web` as measured
+   by the gate's own producer; the "17 / 11 root, 6 ui-web" figures above came from
+   `npm audit --audit-level=high`, which counts vulnerable *package nodes* — dependents such as
+   `markdownlint-cli` included — not advisory identities, re-run on `origin/main`'s lockfiles to
+   confirm) had a
+   published fix, so every one was cleared by upgrade and the baseline is now empty for all five
+   targets. `actions/dependency-review-action` was rejected as both a replacement and an
+   additional lane: it scores a revision diff via the dependency graph, not the checked-out
+   lockfile, and its `allow-ghsas` would be a second, un-gated acceptance authority. Evidence and
+   the two conditions that *do* hold (fails closed on 404/403; no GHAS needed) are in ADR-0044's
+   2026-09-05 amendment.
 2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
    wire `pmdMain`, or accept dormancy explicitly.
 3. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.
