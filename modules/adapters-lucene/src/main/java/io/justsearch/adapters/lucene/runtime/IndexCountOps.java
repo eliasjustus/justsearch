@@ -88,6 +88,36 @@ public final class IndexCountOps {
   }
 
   /**
+   * Returns the index's {@code maxDoc} — live documents PLUS deleted-but-unmerged tombstones.
+   *
+   * <p>The gap against {@link #docCount()} is the merge debt a settle purges (tempdoc 931 §E item
+   * 10): tombstones still contribute to BM25 collection statistics, so two indexes of the same
+   * corpus with different tombstone counts score the same query differently.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public long maxDoc() {
+    try {
+      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
+   * Returns the number of leaf segments the current searcher reads.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int segmentCount() {
+    try {
+      return bridge.withSearcher(searcher -> searcher.getIndexReader().leaves().size());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
    * {@link #docCount()} without the swallow: propagates the reader {@link IOException} instead of
    * reporting 0.
    *

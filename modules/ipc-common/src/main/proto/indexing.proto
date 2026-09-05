@@ -1198,6 +1198,30 @@ message IndexGcResponse {
   int32 pruned_count = 4;
 }
 
+// Tempdoc 931 §E item 10 — purge deleted-but-unmerged documents from the ACTIVE index so two
+// arms of a paired evaluation compare with equal merge state. Deleted documents that survive as
+// tombstones still contribute to BM25 collection statistics, which moved observed hit counts 3-4%
+// between two indexes of the same corpus with no code cause.
+message SettleIndexRequest {
+  // Default behaviour: forceMergeDeletes only (purge tombstones, leave segment layout alone).
+  // When false the worker ALSO force-merges down to max_segments segments.
+  bool expunge_deletes_only = 1;
+  // Target segment count for the force-merge branch. Ignored when expunge_deletes_only is true;
+  // 0 means "use the default of 1".
+  int32 max_segments = 2;
+}
+
+message SettleIndexResponse {
+  bool accepted = 1;
+  string error = 2;
+  int64 max_doc_before = 3;
+  int64 num_docs_before = 4;
+  int64 max_doc_after = 5;
+  int64 num_docs_after = 6;
+  int32 segments_after = 7;
+  int64 elapsed_ms = 8;
+}
+
 message MigrationRollbackRequest {
   // When true, the worker will restart itself after updating the active generation pointer.
   bool restart_worker = 1;
@@ -1285,6 +1309,13 @@ service IngestService {
   rpc PauseMigration(MigrationPauseRequest) returns (MigrationPauseResponse);
   rpc ResumeMigration(MigrationResumeRequest) returns (MigrationResumeResponse);
   rpc RunIndexGc(IndexGcRequest) returns (IndexGcResponse);
+
+  // Tempdoc 931 §E item 10: purge deleted-but-unmerged documents from the ACTIVE index.
+  // Idempotent: a second call on an already-settled index finds nothing to expunge and reports
+  // equal before/after counts — safe to retry on UNAVAILABLE. Refused (accepted=false) when the
+  // index runtime is unavailable, a blue/green migration is in flight, or an upgrade quiescence
+  // preparation owns the Worker barrier.
+  rpc SettleIndex(SettleIndexRequest) returns (SettleIndexResponse);
   rpc RollbackMigration(MigrationRollbackRequest) returns (MigrationRollbackResponse);
   rpc PrepareUpgrade(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
   rpc UpgradeStatus(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);

@@ -18,6 +18,7 @@ public enum CommitReason {
   TIMER("timer"),
   PRUNE("prune"),
   RESET("reset"),
+  SETTLE("settle"),
   SYNC_PRUNE("sync/prune"),
   GRPC_DELETE_BY_PATH("grpc/deleteByPath"),
   GRPC_DELETE_BY_ID("grpc/deleteById"),

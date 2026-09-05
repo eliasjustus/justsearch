@@ -199,6 +199,29 @@ public final class IndexingCoordinator {
     }
   }
 
+  /**
+   * Tempdoc 931 §E item 10 — purges deleted-but-unmerged documents from the active index.
+   * Serialized against every other mutation like the rest of the write path, because a force-merge
+   * concurrent with an in-flight RMW is exactly what the single-writer invariant exists to prevent.
+   *
+   * <p>Does NOT commit; the caller commits with {@link CommitReason#SETTLE}.
+   *
+   * @see WritePathOps#settle(boolean, int)
+   */
+  public void settle(boolean expungeDeletesOnly, int maxSegments) {
+    acquireReadLockTimed();
+    try {
+      dispatchLock.lock();
+      try {
+        writeOps.get().settle(expungeDeletesOnly, maxSegments);
+      } finally {
+        dispatchLock.unlock();
+      }
+    } finally {
+      session.writeBarrier.readLock().unlock();
+    }
+  }
+
   /** Pass-through convenience. Wipes the index; used by reset. */
   public void deleteAll() {
     var op = IndexWriteOperation.DeleteAll.of();
