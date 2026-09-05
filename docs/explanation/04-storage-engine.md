@@ -69,6 +69,7 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `chunk_content` | text (indexed, not stored) | Searchable chunk text used for BM25 retrieval; read paths reconstruct it from the stored parent `content` and chunk offsets. |
 | `chunk_start_char` | int | Start character offset (0-based) into the parent document’s extracted text. |
 | `chunk_end_char` | int | End character offset (exclusive, 0-based) into the parent document’s extracted text. |
+| `chunk_parent_content_sha256` | keyword (stored only) | SHA-256 of the parent `content` revision the offsets above address. Not indexed, not DocValues. |
 | `chunk_start_line` | int | Optional start line number (1-based) for citation/navigation UX. |
 | `chunk_end_line` | int | Optional end line number (1-based) for citation/navigation UX. |
 | `chunk_heading_text` | keyword | Optional nearest preceding Markdown heading text (empty when N/A). |
@@ -136,6 +137,20 @@ invalid or out-of-range offsets fail closed without fabricated text (batch/gener
 the value; the chunk-search envelope retains its existing empty-string fallback). Read-modify-write
 operations apply the catalog policy `rederive-parent-slice` so unrelated updates do not erase the
 chunk's indexed postings.
+
+Offsets alone do not say *which* parent revision they address, so every chunk also carries
+`chunk_parent_content_sha256` — the SHA-256 of the exact parent `content` string it was cut from.
+The parent write and the chunk regeneration that follows it are two separate coordinator calls, so
+an NRT refresh in between exposes the new parent content beside the not-yet-regenerated chunks; an
+equal-or-longer rewrite fits the old offsets and would silently re-slice the wrong text. Before
+re-deriving, the read-modify-write path hashes the parent it read and compares: a missing or
+differing hash refuses the rewrite with an `IOException`, the same fail-closed path as a missing
+parent. Refusing loses nothing — such a chunk is stale by definition and regeneration deletes it.
+Because it is a stored field, adding it moved `index_fingerprint`, so it lands with the reindex
+that bundle already required. One degenerate embedding no longer costs a batch either: a zero-
+magnitude or non-finite dense vector is dropped from that one document (its `embedding_status`
+becomes `FAILED` and `index.runtime.vector_dropped_total` counts it) instead of aborting every
+document written alongside it.
 
 Chunk-level vector retrieval uses **field separation**:
 - Full documents embed into `vector`

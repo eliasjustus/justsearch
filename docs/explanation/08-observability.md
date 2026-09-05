@@ -396,6 +396,7 @@ Not an exhaustive list, but the metrics below are intentionally low-cardinality 
   | `index.runtime.soft_delete_total` | Counter | none | Per soft-delete (count > 0) |
   | `index.runtime.backpressure_total` | Counter | none | When the IndexingLoop applies backpressure |
   | `index.runtime.validation_failure_total` | Counter | `reason` (bounded enum, ~6 values) | Per document validation failure |
+  | `index.runtime.vector_dropped_total` | Counter | none | Per dense-vector FIELD dropped because the value could not be normalized (zero-magnitude or non-finite embedding, tempdoc 931 §C.3). The document is still written, minus that field, with its embedding status set to `FAILED` — so this is an encoder-health signal, not an indexing-failure one |
   | `index.runtime.swap_started_total` | Counter | `reason` (same enum as `swap_duration_ms`) | At the start of every `drainAndClose` — pairs with `swap_duration_ms` |
   | `index.runtime.drain_timeout_total` | Counter | none | When `drainAndClose` writeLock acquire times out before in-flight writes complete (rare; signals the drain timeout was too tight or the queue too deep) |
 

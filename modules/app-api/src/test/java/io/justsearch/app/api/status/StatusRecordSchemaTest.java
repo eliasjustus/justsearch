@@ -642,6 +642,7 @@ final class StatusRecordSchemaTest {
         "chunk_heading_level",           // chunk geometry
         "chunk_heading_text",            // chunk geometry
         "chunk_index",                   // chunk geometry
+        "chunk_parent_content_sha256",   // tempdoc 931 §C.1 — write-path RMW guard, never projected
         "chunk_start_char",              // chunk geometry
         "chunk_start_line",              // chunk geometry
         "chunk_total",                   // chunk geometry

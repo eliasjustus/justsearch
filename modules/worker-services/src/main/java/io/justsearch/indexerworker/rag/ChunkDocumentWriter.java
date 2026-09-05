@@ -7,6 +7,7 @@ import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkIds;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.indexing.chunking.ChunkSplitter;
 import java.util.HashMap;
 import java.util.List;
@@ -124,6 +125,10 @@ public final class ChunkDocumentWriter {
     deleteExistingChunks(indexingCoordinator, parentDocId);
 
     // ChunkSplitter offsets are now relative to the original content (including leading whitespace).
+    // Tempdoc 931 §C.1: every chunk carries the identity of the parent revision it was cut from, so
+    // an RMW that re-slices chunk_content out of a LATER parent revision is detectable instead of
+    // silently producing wrong text. Hashed once per parent, not once per chunk.
+    String parentContentRevision = ChunkParentRevision.sha256Hex(content);
     int indexed = 0;
     for (ChunkSplitter.Chunk chunk : chunks) {
       String chunkContent = chunk.content();
@@ -144,6 +149,7 @@ public final class ChunkDocumentWriter {
       int absoluteEndChar = chunk.endChar();
       fields.put(SchemaFields.CHUNK_START_CHAR, String.valueOf(absoluteStartChar));
       fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(absoluteEndChar));
+      fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, parentContentRevision);
       fields.put(SchemaFields.PATH, parentDocId);
 
       // F8 Tier 2: Line numbers (1-based)

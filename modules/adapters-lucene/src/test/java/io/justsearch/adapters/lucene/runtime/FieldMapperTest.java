@@ -2,6 +2,7 @@ package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -107,6 +108,54 @@ class FieldMapperTest {
     Document doc = fm.toDocument(in);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
+  }
+
+  /**
+   * Tempdoc 931 §C.3: a non-finite vector used to reach Lucene's {@code KnnFloatVectorField},
+   * which throws — and the throw aborted the caller's whole batch ({@code
+   * IndexingCoordinator.indexBatch} builds every document before it writes any), so one degenerate
+   * embedding cost every other document in it. The vector is still refused; the document is not.
+   */
+  @Test
+  void dropsNonFiniteVectorsWithoutLosingTheDocument() {
+    FieldMapper fm = new FieldMapper(createTestCatalog(4));
+
+    for (float[] degenerate :
+        List.of(
+            new float[] {Float.NaN, 0.0f, 0.0f, 0.0f},
+            new float[] {0.0f, Float.POSITIVE_INFINITY, 0.0f, 0.0f})) {
+      FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
+      Map<String, Object> in = new HashMap<>();
+      in.put("doc_id", "doc-0");
+      in.put("title", "kept");
+      in.put("vector", degenerate);
+
+      Document doc = fm.toDocument(in, report);
+
+      assertNull(doc.getField("vector"), "the unusable vector must not reach Lucene");
+      assertNotNull(doc.getField("doc_id"), "every other field of the document survives");
+      assertNotNull(doc.getField("title"), "every other field of the document survives");
+      assertEquals(1, report.count(), "the drop is counted for the caller's batch WARN + metric");
+      assertEquals(List.of("doc-0/vector"), report.sampleDocIds());
+      assertNotNull(report.lastReason(), "the rejection reason is carried for the WARN");
+    }
+  }
+
+  /**
+   * A healthy vector is untouched by the drop path — the report stays empty. A zero vector is
+   * healthy under the catalog's Euclidean similarity (Lucene accepts it), so it is written, not
+   * dropped; that changes only if a normalizing similarity is adopted.
+   */
+  @Test
+  void aUsableVectorIsNotReportedAsDropped() {
+    FieldMapper fm = new FieldMapper(createTestCatalog(4));
+
+    for (float[] usable : List.of(new float[] {3f, 4f, 0f, 0f}, new float[4])) {
+      FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
+      Document doc = fm.toDocument(Map.of("doc_id", "doc-0", "vector", usable), report);
+      assertNotNull(doc.getField("vector"));
+      assertEquals(0, report.count());
+    }
   }
 
   @Test

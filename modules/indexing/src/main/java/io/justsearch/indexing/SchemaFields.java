@@ -120,6 +120,14 @@ public final class SchemaFields {
   public static final String CHUNK_START_CHAR = "chunk_start_char";
   /** End character offset (exclusive) of this chunk within the parent document's extracted content (0-based). */
   public static final String CHUNK_END_CHAR = "chunk_end_char";
+  /**
+   * SHA-256 (lowercase hex) of the parent {@link #CONTENT} revision this chunk was cut from
+   * (tempdoc 931 §C.1). {@code chunk_content} is not stored, so a read-modify-write on a chunk
+   * re-slices it out of whatever parent content the current searcher shows; parent write and chunk
+   * regeneration are separate calls, so a same-length rewrite in between would silently produce
+   * wrong chunk text. This is the revision identity that makes the mismatch detectable.
+   */
+  public static final String CHUNK_PARENT_CONTENT_SHA256 = "chunk_parent_content_sha256";
 
   // Chunk navigation fields (F8 Tier 2: Citation UX - In-Document Navigation)
   /** Start line number of this chunk within the parent document (1-based). */
@@ -320,6 +328,7 @@ public final class SchemaFields {
       CHUNK_CONTENT,
       CHUNK_START_CHAR,
       CHUNK_END_CHAR,
+      CHUNK_PARENT_CONTENT_SHA256,
 
       // Chunk navigation (F8 Tier 2)
       CHUNK_START_LINE,
