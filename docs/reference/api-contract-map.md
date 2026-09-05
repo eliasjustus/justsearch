@@ -364,7 +364,7 @@ Resume contract notes:
 
 ### Settings API
 
-**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/SettingsV2Controller.java`
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/SettingsController.java`
 
 `GET /api/settings/v2`:
 
@@ -373,6 +373,11 @@ Resume contract notes:
 `POST /api/settings/v2`:
 
 - Persists updated settings. Returns 409 `SETTINGS_READ_ONLY` when `settingsMode` is `in_memory` (eval mode) — saves are silently discarded in this mode without the 409.
+- Shell mode writes include `X-JustSearch-UI-Mode-Intent: <client-id>:<sequence>`. The client ID and
+  Web-Lock-allocated sequence are durable in origin storage, putting reloads and concurrent shell
+  windows in one monotonic ordering domain. The server ignores only the `ui.mode` field of an older
+  intent while still applying unrelated fields in that partial patch. The header is optional for
+  compatibility.
 - Contract test: `SettingsV2ContractTest` validates round-trip (save → load → read) with no field loss.
 
 Source: tempdoc 368 (RC6).
@@ -729,6 +734,34 @@ Coverage invariant: `HealthEventEmitCoverageTest` (in `modules/app-services` tes
 
 **Response fields:**
 - `suggestions`: `[{label: string, path: string}]` â€” folders that exist and are not already watched
+
+### Index Settle API
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java` (`handleSettleIndex`)
+
+`POST /api/indexing/settle` purges deleted-but-unmerged documents from the ACTIVE index (Worker RPC
+`IngestService.SettleIndex`). Tempdoc 931 section E item 10: a tombstone still counts in the BM25
+collection statistics, so two indexes of the same corpus carrying different tombstone counts answer
+the same query differently. A paired evaluation calls this between the indexing phase and the query
+phase so both arms compare with equal merge state.
+
+**Request body (all optional):**
+- `expungeDeletesOnly`: boolean, default `true` -- purge tombstones only. When `false` the Worker
+  ALSO force-merges the segment layout.
+- `maxSegments`: integer, default `0` -- target segment count for the force-merge branch
+  (`0` means the Worker default of 1). Only read when `expungeDeletesOnly` is `false`.
+
+**Response (202):** `{status: "settle completed", expungeDeletesOnly, maxDocBefore, numDocsBefore,
+maxDocAfter, numDocsAfter, segmentsAfter, elapsedMs}`.
+
+**Response (409):** `{status: "settle rejected by worker", error}` -- the Worker refuses when the
+index runtime is unavailable, a blue/green migration is in flight (`MIGRATING`/`SWITCHING`/`UNKNOWN`),
+or an upgrade quiescence preparation owns the Worker barrier.
+
+**Substrate equivalent:** the `core.settle-index` Operation (`SettleIndexHandler`), same arguments and
+the same structured output.
+
+**Contract test:** `IndexingControllerSettleTest` (202 counts, defaults, force-merge args, 409 refusal)
 
 ### OpenAI-compatible API (`/v1/*`)
 

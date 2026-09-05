@@ -1,7 +1,7 @@
 ---
 title: "Wave 3: lane D hardening, lane E landing, and record repair after the Codex continuation"
 type: tempdocs
-status: "MERGING (2026-09-05 pm): #643, #645 merged; #646 queued; #647 next; #648 split (C2 PR without C1); flag/jseval/1f follow-ups in review. Earlier: IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
+status: "LANDED (2026-09-05 eve): #643, #645, #646, #647, #657 (C2 split), #659 (flag), #658 (jseval) merged; #660 (1f) in the queue; settle call PR open; C1 draft #662 awaits its campaign. Earlier: MERGING (2026-09-05 pm): #643, #645 merged; #646 queued; #647 next; #648 split (C2 PR without C1); flag/jseval/1f follow-ups in review. Earlier: IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
 created: 2026-09-05
 updated: 2026-09-05
 lane: D/E/F (decision re-examination programme, wave 3)
@@ -614,6 +614,26 @@ to either a projection fix (if the population differs) or an F-057 caveat.
   in flight: identity store V13 `deleted_at` + 30-day grace (`index.identity.deletion_grace_ms`),
   parent `content_sha256` on hits, `HitFeatures.contentRevision`, stale-label down-weighting.
 
+- 2026-09-05 (eve) **Owner handed over the open work** ("you have my authorisation"). Landed in
+  order through the queue, each re-merged with `origin/main` as the previous squash landed:
+  #657 (C2 split), #659 (flag), #658 (jseval), #660 (1f, queued at writing). Two full local
+  suites on the merged tips (9,100 and 8,190 tests, 0 failures) plus merge-group CI. One CI-only
+  red on #660: errorprone `ComparisonOutOfRange` on a constant `long > Integer.MAX_VALUE`
+  assertion (CI runs `-Werror`; local builds only warn) — replaced by `Math.toIntExact`
+  throwing. #648 closed as superseded; C1 alone is draft #662 on top of the split (its merge
+  with `main` has 17 conflicts against other agents' 930 deletions — delegated as a single
+  merge once #660 lands).
+- 2026-09-05 **§E item 10 closed — Worker settle call** (`worktree-wave3-settle`):
+  `IngestService.SettleIndex` (`forceMergeDeletes`, optional `forceMerge`; commit through
+  `CommitOps` with the new `SETTLE` reason; refused during MIGRATING/SWITCHING/UNKNOWN or under an
+  upgrade-quiescence barrier), `POST /api/indexing/settle` behind the ADR-0046 filters via the
+  `core.settle-index` Operation, and `jseval run --settle-index`, which settles after readiness
+  passes and records `index_state_at_query.settled` + before/after counts. Test-design lesson:
+  `TieredMergePolicy` reclaims deletes above 20 % on its own, so the fixtures delete 15 %
+  (above the 10 % `forceMergeDeletes` floor) or the test is green with the settle disabled. Not
+  done: the FE route manifest needs a live-backend regen (`gen-api-client.mjs --from-live`), and
+  the dev-MCP `api_call` allowlist does not carry the route yet.
+
 ## §E Open items
 
 1. C1 campaign (3-4 h) — deferred; C2 now lands without C1 (§D split entry); C1 re-drafted on top, campaign only after the jseval readiness/merge-state fixes (items 9/10) land.
@@ -673,7 +693,6 @@ to either a projection fix (if the population differs) or an F-057 caveat.
     the flag) — the query-side leg still runs regardless of the flag; owner decision remains
     (tempdoc 712).
 12. Status after the follow-ups (§D): **8 closed on both sides** (flag PR); **9 closed** (jseval PR;
-    the Worker now publishes chunk-SPLADE coverage); **10 half closed** — merge state is recorded
-    and paired-arm divergence warns, but nothing forces a merge before the query phase yet; the
-    Worker-side "settle" call (mutation-token endpoint per ADR-0046) stays open, owner: jseval +
-    Worker. **5** and **7** unchanged.
+    the Worker now publishes chunk-SPLADE coverage); **10 closed** (settle PR, §D): merge state is recorded,
+    paired-arm divergence warns, and `--settle-index` forces equal merge state before the query
+    phase. **5** and **7** unchanged. **1** (C1 campaign) is the only lane-D item still open.

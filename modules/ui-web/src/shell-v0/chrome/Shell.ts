@@ -50,7 +50,14 @@ import { unavailableBecause } from '../state/availability.js';
 import '../components/Control.js';
 // 569 §14 — host authorities the global presentation-intent Effect listeners drive.
 import { applyAppearance } from '../state/themeState.js';
-import { setUiMode, getUiMode, subscribeUiMode, type UiMode } from '../state/uiModeState.js';
+import {
+  enqueueUiModePersistence,
+  UI_MODE_INTENT_HEADER,
+  setUiMode,
+  getUiMode,
+  subscribeUiMode,
+  type UiMode,
+} from '../state/uiModeState.js';
 import { applyPresentation, listPresentations } from '../state/presentationState.js';
 import './OverlayHost.js';
 import '../components/DragOverlay.js';
@@ -336,6 +343,26 @@ const SETTINGS_SURFACE_ID = 'core.settings-surface';
 // derived from altitude (see Rail.render). Mirrors the Java interaction-surface gate's canonicalSurface.
 const INTERACTION_SURFACE_ID = 'core.unified-chat-surface';
 
+// Tempdoc 923 / F-22 — these remain valid compatibility addresses that preselect one interaction
+// shape, but they are not independent places. Split-pane discovery must offer the canonical Search
+// window once, not re-expose its Ask/Chat/Extract modes as parallel windows.
+const LEGACY_INTERACTION_MODE_SURFACE_IDS = new Set([
+  'core.ask-surface',
+  'core.free-chat-surface',
+  'core.extract-surface',
+]);
+
+function canonicalSplitSurfaceId(surfaceId: string): string {
+  return LEGACY_INTERACTION_MODE_SURFACE_IDS.has(surfaceId)
+    ? INTERACTION_SURFACE_ID
+    : surfaceId;
+}
+
+function isSplitPaneCandidate(surface: SurfaceCatalogEntry, primaryId: string): boolean {
+  return canonicalSplitSurfaceId(surface.id) !== canonicalSplitSurfaceId(primaryId)
+    && !LEGACY_INTERACTION_MODE_SURFACE_IDS.has(surface.id);
+}
+
 // Tempdoc 571 §4b — altitude-band rank for the cross-altitude move-ban. PRODUCT + TRUST share the
 // product region (TRUST's finer "adjacent to chat" placement is the Rail render's job); DIAGNOSTIC
 // sinks to the diagnostics region; TOOL (headless) last. A user reorder is clamped to keep each
@@ -403,7 +430,7 @@ export class Shell extends JfElement {
   private dragUnsubscribe: (() => void) | null = null;
   private userConfigUnsubscribe: (() => void) | null = null;
   private catalogUnsubscribe: (() => void) | null = null;
-  // Tempdoc 586 F-2 — Simple/Advanced mode re-filters the rail (see refreshSurfaces).
+  // Tempdoc 586 F-2 — Simple/Detailed mode re-filters the rail (see refreshSurfaces).
   private uiModeUnsubscribe: (() => void) | null = null;
   /**
    * Slice 490 Group B4 — Shell-owned AdvisoryStore. Passed to the three advisory
@@ -541,7 +568,6 @@ export class Shell extends JfElement {
   private activateUserStateActiveProfile(): void {
     const profileId = getActiveProfileId();
     void activateWorkspaceProfile(profileId).catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn(
         `[Shell] activateWorkspaceProfile('${profileId}') failed`,
         err,
@@ -1031,14 +1057,12 @@ export class Shell extends JfElement {
     // listInstalledManifests / getAction). Fire-and-forget; errors
     // surface as console warnings rather than blocking chrome boot.
     installCoreDemoManifest().catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn('[Shell] installCoreDemoManifest failed', err);
     });
     // 548 §4.3(d) — the welcome walkthrough now ships as a ContributionManifest
     // (migrated out of CorePlugin.register), proving the manifest is the
     // canonical declaration root for a real first-party feature.
     installCoreWalkthroughManifest().catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn('[Shell] installCoreWalkthroughManifest failed', err);
     });
 
@@ -1400,7 +1424,7 @@ export class Shell extends JfElement {
       this.refreshSurfaces();
     });
     this.syncRailExpandedAttr();
-    // Tempdoc 586 F-2 — re-filter the rail live when the Simple/Advanced mode changes (mirrors the
+    // Tempdoc 586 F-2 — re-filter the rail live when the Simple/Detailed mode changes (mirrors the
     // surfaceVisibility re-filter above). subscribeUiMode fires immediately, so this also seeds the
     // initial filtered rail consistently with the persisted mode.
     this.uiModeUnsubscribe = subscribeUiMode((m) => {
@@ -1608,7 +1632,11 @@ export class Shell extends JfElement {
       if (intent.address.kind === 'navigate' && (outcome.status === 'dispatched' || outcome.status === 'auto-corrected')) {
         if (!isNavigatingHistoryNow()) {
           const url = canonicalize(intent.address);
-          const label = deriveRichLabel(intent.address.target, url);
+          const label = deriveRichLabel(
+            intent.address.target,
+            url,
+            present({ kind: 'surface', id: intent.address.target }).label,
+          );
           recordNavigation(intent.address.target, url, label, intent.transport);
         }
         // Update bookmark star after URL projection writes (async — next microtask).
@@ -1660,7 +1688,6 @@ export class Shell extends JfElement {
             this.sourceTeardowns.push(teardown);
           }
         } catch (err) {
-          // eslint-disable-next-line no-console
           console.warn(`[Shell] source ${source.ref} failed to start:`, err);
         }
       }
@@ -1943,12 +1970,19 @@ export class Shell extends JfElement {
     // Persist best-effort so the choice survives restart, independent of whether SettingsSurface (which
     // owns the jf-save-settings listener) is mounted — the topbar must not depend on it. Same endpoint +
     // `{ ui: {...} }` body shape SettingsSurface uses (SettingsSurface.saveSettingsListener).
-    void this.hostApi_?.data
-      .fetch('/api/settings/v2', {
+    const data = this.hostApi_?.data;
+    if (!data) return;
+    void enqueueUiModePersistence((signal, intent) =>
+      data.fetch('/api/settings/v2', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          [UI_MODE_INTENT_HEADER]: intent,
+        },
         body: JSON.stringify({ ui: { mode } }),
-      })
+        signal,
+      }),
+    )
       .catch(() => {
         /* best-effort persist; the in-session store update already applied */
       });
@@ -1989,7 +2023,12 @@ export class Shell extends JfElement {
       const existing = views.find((v) => v.url === url);
       if (existing) removeView(existing.id);
     } else {
-      const label = deriveRichLabel(this.activeId ?? '', url);
+      const surfaceId = this.activeId ?? '';
+      const label = deriveRichLabel(
+        surfaceId,
+        url,
+        present({ kind: 'surface', id: surfaceId }).label,
+      );
       saveView(label || 'Untitled', url, this.activeId ?? '');
     }
     this.updateBookmarkState();
@@ -2114,10 +2153,10 @@ export class Shell extends JfElement {
       railSurfaces = railSurfaces.filter((s) => visibility[s.id] !== false);
     }
 
-    // Tempdoc 586 F-2 — Simple-mode rail trim. The Simple/Advanced toggle (uiModeState) now
+    // Tempdoc 586 F-2 — Simple-mode rail trim. The Simple/Detailed toggle (uiModeState) now
     // actually shapes the rail: in Simple mode the advanced/diagnostic surface (the System
     // dashboard) drops off so a non-technical user sees a cleaner set; AI Brain stays
-    // (local-model management is user-facing). Advanced restores it. Applied after the
+    // (local-model management is user-facing). Detailed restores it. Applied after the
     // visibility filter and before ordering, so altitude-band clamping below still holds.
     // (Tempdoc 855 §5 item 2 — the Theme Editor used to be listed here too, but it is now
     // DEEPLINK-placement, not RAIL, so it never reaches `railSurfaces` in the first place;
@@ -2262,10 +2301,11 @@ export class Shell extends JfElement {
    * panes even before the user has explicitly picked a right pane.
    */
   private resolveSecondarySurface(primaryId: string): SurfaceCatalogEntry | null {
-    const wanted = this.userConfig?.secondaryActiveSurface;
+    const configured = this.userConfig?.secondaryActiveSurface;
+    const wanted = configured ? canonicalSplitSurfaceId(configured) : undefined;
     if (wanted && wanted !== primaryId) {
       const target = getSurface(wanted);
-      if (target) return target;
+      if (target && isSplitPaneCandidate(target, primaryId)) return target;
     }
     // Tempdoc 521 §22 Phase D — read the curated default off the
     // primary surface's `splitPairing.secondary` declaration. The
@@ -2275,13 +2315,14 @@ export class Shell extends JfElement {
     // user-pick override above still wins; this is the next-best
     // default before falling back to "first non-primary rail surface."
     const primarySurface = getSurface(primaryId);
-    const pairedId = primarySurface?.splitPairing?.secondary;
+    const declaredPair = primarySurface?.splitPairing?.secondary;
+    const pairedId = declaredPair ? canonicalSplitSurfaceId(declaredPair) : undefined;
     if (pairedId && pairedId !== primaryId) {
       const paired = getSurface(pairedId);
-      if (paired) return paired;
+      if (paired && isSplitPaneCandidate(paired, primaryId)) return paired;
     }
     // Fallback: first rail surface that isn't the primary.
-    const fallback = this.surfaces.find((s) => s.id !== primaryId);
+    const fallback = this.surfaces.find((s) => isSplitPaneCandidate(s, primaryId));
     return fallback ?? null;
   }
 
@@ -2984,14 +3025,15 @@ export class Stage extends JfElement {
     // behave identically to before).
     if (primary && this.secondarySurface && this.splitAxis) {
       // Tempdoc 521 §16.7 deeper (Phase B) — right-pane picker. The
-      // candidate list is every catalog surface that ISN'T the primary;
-      // plugins contributing rail surfaces appear automatically.
+      // candidate list is every independent catalog surface that ISN'T the primary. Legacy
+      // Ask/Chat/Extract mode addresses normalize to the one Search window and therefore never
+      // appear as competing panes; plugin-contributed surfaces still participate automatically.
       // Tempdoc 521 §22 Phase A.1 — derived titles, not raw surface ids.
       // deriveTitleFromSurfaceId turns 'core.library-surface' into
       // 'Library', matching what the rest of the chrome (document title,
       // navigation toast) shows.
       const candidates = listSurfaces()
-        .filter((s) => s.id !== primary.id)
+        .filter((s) => isSplitPaneCandidate(s, primary.id))
         .map((s) => ({
           id: s.id,
           label: present({ kind: 'surface', id: s.id }).label,

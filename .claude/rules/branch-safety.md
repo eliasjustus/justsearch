@@ -58,9 +58,9 @@ the session continues (e.g., merging from main).
 2. **Never share a worktree** between two agent sessions. <!-- rule:never-share-worktree -->
 3. **One branch per worktree.** Git enforces this, but don't work around it. <!-- rule:one-branch-per-worktree -->
 4. **After compaction**, verify your worktree and branch. <!-- rule:after-compaction-verify -->
-   The `compact-restore` hook now writes a **Current worktree** block (dir + branch) into the
-   restored state (tempdoc 620) — confirm it matches; on a non-compaction session start, check
-   directly:
+   The `compact-restore` hook emits a one-shot **Current worktree** block (dir + branch) only
+   when it verifies the saved session, worktree, and branch — confirm it matches; on a
+   non-compaction session start or omitted snapshot, check directly:
    ```bash
    pwd
    git branch --show-current
@@ -150,8 +150,10 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
-3. `gh pr merge <N>` (no flag) enqueues once checks pass; the queue runs
-   `merge-group` CI and squash-merges. A rejection means CI failed —
+3. `node scripts/dev/run-gh.mjs enqueue <N>` revalidates the live squash and
+   managed review records, then enqueues once checks pass; the queue runs
+   `merge-group` CI and squash-merges. Direct `gh pr merge` bypasses that proof
+   and is blocked by the shared agent hook. A rejection means CI failed —
    investigate before retrying. Keep checkpoint/retry commits off `main`;
    use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.

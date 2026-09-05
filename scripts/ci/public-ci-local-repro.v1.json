@@ -7,11 +7,13 @@
       "check": "Public claims",
       "mode": "local-subset",
       "commands": [
+        "node scripts/ci/check-lockfile-completeness.mjs",
         "npm ci --audit=false",
         "node scripts/agent-analytics/run-all-tests.mjs",
         "node scripts/ci/check-workflow-triggers.mjs",
         "node scripts/ci/test-check-workflow-npm-audit-policy.mjs",
         "node scripts/ci/check-workflow-npm-audit-policy.mjs",
+        "node scripts/ci/test-check-lockfile-completeness.mjs",
         "node scripts/ci/verify-test-evidence-policy.mjs",
         "node scripts/ci/check-root-readme.mjs",
         "node scripts/ci/check-codex-agent-parity.mjs",
@@ -25,6 +27,7 @@
         "node scripts/docs/verify-canonical-doc-links.mjs",
         "node scripts/architecture/module-deps.mjs --check-canonical",
         "npx markdownlint \"docs/explanation/**/*.md\" \"docs/reference/**/*.md\" \"docs/how-to/**/*.md\" \"docs/decisions/**/*.md\"",
+        "node scripts/docs/docs-validate.mjs",
         "node scripts/docs/llmstxt-generate.mjs --check",
         "node scripts/docs/skills-sync.mjs --check"
       ]
@@ -43,7 +46,7 @@
     {
       "check": "Build (no model blobs)",
       "mode": "local-subset",
-      "commands": ["./gradlew.bat assemble -PskipWebBuild=false"]
+      "commands": ["./gradlew.bat assemble -PskipWebBuild=false", "./gradlew.bat pmdMain --console=plain"]
     },
     {
       "check": "Unit tests (app-ui)",
@@ -74,6 +77,16 @@
       "check": "Secret scan",
       "mode": "local-subset",
       "commands": ["gitleaks dir . --config .gitleaks.toml --redact"]
+    },
+    {
+      "check": "jseval Python suite",
+      "mode": "local-subset",
+      "commands": [
+        "node scripts/ci/check-jseval-lock.mjs",
+        "python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt",
+        "python -m pip install \"pytest>=7.0\" \"pyyaml>=6.0\" \"hypothesis>=6.0\" \"jsonschema>=4.0\"",
+        "python -m pytest scripts/jseval/tests -q -p no:cacheprovider"
+      ]
     },
     {
       "check": "cla-assistant",

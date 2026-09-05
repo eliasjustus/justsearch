@@ -749,7 +749,7 @@ def _inference_body(variant: str) -> str:
 def _settings_body(variant: str) -> str:
     """The `/api/settings` response for a variant (tempdoc 697 activation). The captured
     `_BODY_SETTINGS` fixture carries `ui.mode: "advanced"` (whatever the live capture's
-    disclosure was set to at capture time). LIVE-VERIFIED (headless probe): Advanced mode
+    disclosure was set to at capture time). LIVE-VERIFIED (headless probe): Detailed mode
     force-expands the chat window's degradation banner regardless of severity
     (UnifiedChatView.ts:2123 `forcedExpanded = isAdvancedMode() || verdict.severity ===
     'error'`), so `.degradation-banner-collapsed` never renders under the captured default —
@@ -758,8 +758,9 @@ def _settings_body(variant: str) -> str:
     variant keeps the captured `advanced` default unchanged.
 
     DELIBERATELY not extended to `degraded-detailed` (tempdoc 814 closure): that variant exists
-    precisely to KEEP the captured "advanced" disclosure, which is how the `chat-bands-detailed`
-    step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
+    precisely to KEEP the captured `advanced` wire value (Detailed disclosure). That is how the
+    `chat-bands-detailed` step gets the EXPANDED banner
+    (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
     Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
     separating the two degraded variants."""
     if variant in ("degraded", "degraded-thread", "agent-run"):

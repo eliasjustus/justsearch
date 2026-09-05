@@ -1226,6 +1226,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * <p>Package-private so a test can drive exactly this — sample, let the clock run past the stall
    * window, read the status — without staging a real multi-GB transfer.
    */
+  // PMD sees only this method: the publication looks overwritten by the `finally`. It is read from
+  // another thread — `getStatus` dereferences `liveRateSource` for the length of the transfer.
+  @SuppressWarnings("PMD.UnusedAssignment")
   AcquisitionScheduler.Summary acquireStage(AcquisitionScheduler scheduler) {
     liveRateSource = scheduler::estimate;
     try {
@@ -1654,7 +1657,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * package (tempdoc 772 Q3 / §Design "Design 1").
    */
   static boolean planSuppliesRuntime(InstallPlan plan, ModelRegistry registry) {
-    java.util.Set<String> runtimePackIds = new java.util.HashSet<>();
+    Set<String> runtimePackIds = new HashSet<>();
     for (ModelPackage pkg : registry.packages()) {
       if (pkg.tier() == CapabilityTier.RUNTIME && !pkg.requiresCuda()) {
         runtimePackIds.add(pkg.id());

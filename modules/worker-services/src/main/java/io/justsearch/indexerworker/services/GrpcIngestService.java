@@ -47,6 +47,8 @@ import io.justsearch.ipc.ClearFailedJobsRequest;
 import io.justsearch.ipc.ClearFailedJobsResponse;
 import io.justsearch.ipc.ResetIndexRequest;
 import io.justsearch.ipc.ResetIndexResponse;
+import io.justsearch.ipc.SettleIndexRequest;
+import io.justsearch.ipc.SettleIndexResponse;
 import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.UpdatePathsRequest;
@@ -100,7 +102,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private static final Logger log = LoggerFactory.getLogger(GrpcIngestService.class);
   /** Maximum chars stored in `content_preview` (result list snippet field). */
   private static final int CONTENT_PREVIEW_MAX_CHARS =
-      io.justsearch.indexerworker.rag.ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
+      ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
 
   /** Maximum files allowed in a single batch request. */
   private static final int MAX_BATCH_SIZE = 10_000;
@@ -121,7 +123,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private final JobQueue jobQueue;
   private final IndexingLoop indexingLoop;
-  private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: foreground-contention duty cycle for the prune / sync walks. */
   private final IndexingPacing indexingPacing;
   private final io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle;
@@ -132,6 +133,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final IngestSwitchBufferOps switchBufferOps;
   private final MigrationControlOps migrationOps;
   private final WorkerUpgradeQuiescence upgradeQuiescence;
+  private final IndexSettleOps settleOps;
   private RootWatcherRegistry rootWatcherRegistry = new RootWatcherRegistry();
 
   // Tempdoc 419 / T5.3 (ADR-0028): scoped reverse-lookup store. Defaults to NOOP so any
@@ -172,7 +174,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       Runnable restartWorkerCallback) {
     this.jobQueue = jobQueue;
     this.indexingLoop = indexingLoop;
-    this.signalBus = signalBus;
     this.indexingPacing =
         java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.ingestLifecycle = ingestLifecycle;
@@ -180,6 +181,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
     this.upgradeQuiescence =
         new WorkerUpgradeQuiescence(jobQueue, indexingLoop, this.indexGenerationManager);
+    this.settleOps =
+        new IndexSettleOps(ingestLifecycle, this.indexGenerationManager, this.upgradeQuiescence);
     io.justsearch.adapters.lucene.runtime.IndexCountOps ingestCountOps =
         ingestLifecycle != null ? ingestLifecycle.indexCountOps() : null;
     io.justsearch.adapters.lucene.runtime.IndexCountOps searchCountOps =
@@ -251,7 +254,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private static void respondUpgrade(
       StreamObserver<UpgradeQuiescenceResponse> responseObserver,
-      java.util.function.Supplier<UpgradeQuiescenceResponse> action) {
+      Supplier<UpgradeQuiescenceResponse> action) {
     try {
       responseObserver.onNext(action.get());
       responseObserver.onCompleted();
@@ -489,6 +492,14 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void runIndexGc(IndexGcRequest request, StreamObserver<IndexGcResponse> responseObserver) {
     try (var ignored = openRequestMdc()) {
       migrationOps.runIndexGc(request, responseObserver);
+    }
+  }
+
+  @Override
+  public void settleIndex(
+      SettleIndexRequest request, StreamObserver<SettleIndexResponse> responseObserver) {
+    try (var ignored = openRequestMdc()) {
+      settleOps.settleIndex(request, responseObserver);
     }
   }
 

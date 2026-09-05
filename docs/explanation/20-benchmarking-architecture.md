@@ -5,7 +5,7 @@ status: stable
 description: "Claims vs lanes, bench harness schemas, competitor suite logic."
 ---
 
-# 20. Benchmarking Architecture (Claims + Competitor Suite)
+# Benchmarking Architecture (Claims + Competitor Suite)
 
 JustSearch treats performance numbers as **reviewable artifacts** (JSON + markdown), not console output. This doc explains the *code and logic* behind the benchmarking system so results stay repeatable, diffable, and interpretable.
 

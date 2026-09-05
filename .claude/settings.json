@@ -27,6 +27,19 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/agent-spawn-sweep-hint.mjs"
+            ],
+            "timeout": 5,
+            "async": true
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -63,6 +76,32 @@
             "type": "command",
             "command": "node",
             "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/publication-merge-guard.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/agent-spawn-build-hint.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/build-counter.mjs"
             ],
             "if": "Bash(./gradlew*)",
@@ -78,6 +117,19 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/repeat-guard.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/subagent-model-guard.mjs"
             ],
             "timeout": 5
           }
@@ -122,6 +174,14 @@
             "type": "command",
             "command": "node",
             "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/mcpb-repack-hint.mjs"
+            ],
+            "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/intervene.mjs"
             ],
             "if": "Edit(docs/tempdocs/**)|Write(docs/tempdocs/**)"
@@ -138,6 +198,19 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/lockfile-hint.mjs"
             ],
             "if": "Edit(**/build.gradle.kts)"
+          }
+        ]
+      },
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/worktree-base-hint.mjs"
+            ],
+            "timeout": 5
           }
         ]
       }
@@ -158,6 +231,7 @@
     ],
     "SubagentStart": [
       {
+        "matcher": "Explore|Plan",
         "hooks": [
           {
             "type": "command",
@@ -177,9 +251,9 @@
             "type": "command",
             "command": "node",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/compact-restore.mjs"
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/agent-spawn-session-end-reap.mjs"
             ],
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }

@@ -220,7 +220,7 @@ public final class WorkerSnapshotTap {
    * HealthEventEmitCoverageTest} to assert every catalog ID in §A.2 has an emit site.
    */
   public static Set<String> emittableIds() {
-    java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+    LinkedHashSet<String> ids = new LinkedHashSet<>();
     for (ConditionMapping m : SCHEMA_COMPAT_TABLE.values()) {
       ids.add(m.conditionId());
     }

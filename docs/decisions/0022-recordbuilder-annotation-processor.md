@@ -1,5 +1,5 @@
 ---
-title: "RecordBuilder Annotation Processor for API Records"
+title: "ADR-0022: RecordBuilder Annotation Processor for API Records"
 type: decision
 status: stable
 description: "Use io.soabase record-builder v52 to generate fluent builders for Java records in app-api, enabling additive field evolution."

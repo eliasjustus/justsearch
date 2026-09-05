@@ -320,7 +320,8 @@ The public repository has two CI postures:
   remains the historical basis for that manual-specialty posture.
 
 The public hosted `CI` workflow is split into stable fact lanes: public claims,
-license and notices, no-model build, unit tests, and secret scan. A red
+license and notices, no-model build, unit tests, secret scan, and the
+`jseval Python suite` (required since 2026-09-05, ADR-0044 amendment). A red
 check should name the fact that failed rather than one generic build bucket.
 
 The public unit-test signal is sharded into `Unit tests (app-ui)`, `Unit tests
@@ -370,6 +371,15 @@ gate:
 - `codeql.yml` when you need semantic code scanning outside GitHub's managed
   security surfaces.
 - `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
+- `update-preserves-models.yml` after editing NSIS hooks, `tauri.conf.json`
+  bundle resources, or sidecar staging — it installs a published release, seeds
+  model files, upgrades to the next release and asserts they survive
+  (`docs/how-to/verify-update-preserves-models.md`). The
+  `check-update-preserves-models` script is only the static half.
+- `prepare-winget-manifests.yml` and `sign-vendored-mirrors.yml` are release-cut
+  steps documented in `docs/how-to/cut-a-release.md`.
+- `onramp-smoke.yml` for the model-less Tier 0 first-success proof;
+  `ci-walltime-trend.yml` for CI wall-time trend reporting.
 
 After changes to query orchestration, fusion weights, reranking, or anything
 that could shift nDCG@10, re-run the arm and compare (no workflow wraps it):
@@ -396,6 +406,7 @@ gh workflow run ci.yml                              # re-run public hosted fact 
 gh workflow run docs-lint.yml                       # manual docs verification
 gh workflow run codeql.yml                          # semantic code scanning
 gh workflow run build-installer.yml --ref <vX.Y.Z>  # installer/release attach
+gh workflow run update-preserves-models.yml         # N->N+1 model survival
 gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```
@@ -497,10 +508,11 @@ changes visible at its final preflight or exact read-back. GitHub comment
 updates have no compare-and-swap precondition, so the authenticated comment
 owner must be the sole writer from dry-run through read-back; do not manually
 edit the managed comment concurrently. Run `pr-review-record.mjs check --pr <N>` and
-`preview-squash-message.mjs --pr <N>` after the final push and review edit.
-Fix every finding before enqueue. The first command verifies the rich record;
-the second rejects review structure, template residue, provider prose, task
-boxes, and operational state from the public commit.
+`preview-squash-message.mjs --pr <N>` after the final push and review edit so
+findings can be corrected. The validated enqueue gateway repeats both live checks
+immediately before its queue request. The first command verifies the rich record;
+the second rejects review structure, template residue, provider prose, task boxes,
+and operational state from the public commit.
 
 Check summaries and artifacts may hold reproducible detail, but the managed
 comment is the stable index. Do not use a check summary as the only durable
@@ -508,7 +520,7 @@ review record. Landed-message comparison is semantic rather than byte-exact:
 GitHub may hard-wrap long lines and append its own attribution. Public bodies
 therefore avoid tables or nested formatting whose meaning depends on wrapping.
 
-Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
+Four `gh` CLI quirks (tempdoc 695, 930) worth knowing at merge/wait time:
 
 - **A push does not guarantee a CI run.** GitHub's `synchronize` event
   intermittently does not fire, leaving a PR whose newest green check belongs
@@ -537,13 +549,21 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   mitigation; see the registration-race bullet in Batch-publishing below and
   the `/publish` skill's CI-wait pattern for the never-chain-with-merge half
   of this sequence.
-- **`gh pr merge <N> --squash --delete-branch` can report `failed to run
-  git: fatal: 'main' is already used by worktree` even when the remote merge
-  succeeded.** That's `gh`'s local post-merge branch-sync step failing
-  because `main` is checked out in another worktree of this repo — not a
-  failed merge. Confirm with `gh pr view <N> --json
-  state,mergedAt,mergeCommit` instead of retrying the merge.
-
+- **`checks-wait --required-only` can report green with nothing verified**
+  (tempdoc 930 publication, 2026-09-05, three occurrences). While a PR is
+  `CONFLICTING` GitHub builds no merge commit, so no CI registers and "all
+  required checks green" is vacuous; seconds after a push it can read the
+  superseded run's cached state; and a check you are in the middle of
+  *promoting* to required is not yet in the required set, so it is skipped.
+  Before enqueueing, confirm `mergeStateStatus` is `CLEAN`, that the checks
+  belong to the current `headRefOid`, and that `gh pr checks <N> --required`
+  lists every context you expect.
+- **`origin/main` moves under a long task.** Background re-fetches advance the
+  remote-tracking ref mid-task, so `git diff origin/main` drifts (a 100k-line
+  "leak" that is only base drift), and `git reset --soft origin/main` can
+  silently give a rebuilt commit a parent that already contains a later PR —
+  which reverts that PR on push. Re-fetch immediately before every comparison
+  and verify `git log -1 --format=%P` after any soft reset.
 **Publishing goes through the live GitHub merge queue (tempdoc 829 R4, executed
 2026-08-14).** The repo transferred to an organization, ruleset `main-merge-queue`
 gates `main` (SQUASH method, `merge_group` wired into `ci.yml`, validated end-to-end
@@ -564,8 +584,12 @@ longer applies once a PR is enqueued). Practical sequence:
   `--list` shows which contexts have a deterministic local subset and which are
   honestly hosted-only; `--run` executes the local subsets. Hosted-only never
   waives the corresponding GitHub check.
-- **Enqueue with `gh pr merge <N>` — no strategy flag.** Under the queue this does
-  not merge directly; it adds the PR to the queue. The queue runs its own
+- **Enqueue with `node scripts/dev/run-gh.mjs enqueue <N>`.** The repository-owned
+  gateway checks the live `PR_TITLE` / `PR_BODY` squash projection and exact managed
+  review record, then issues the ordinary strategy-free queue request. Direct
+  `gh pr merge` and the generic `run-gh.mjs pr merge` passthrough bypass that proof
+  and are blocked by the shared agent hook. Under the queue the accepted request
+  does not merge directly; it adds the PR to the queue. The queue runs its own
   `merge-group` CI pass against the PR merged with the latest `main` and merges
   (squash) autonomously on success.
 - **A queue rejection is a real signal, not a flake to blind-retry.** If the entry
@@ -574,8 +598,9 @@ longer applies once a PR is enqueued). Practical sequence:
   investigate before re-enqueuing.
 - **The review-record check and squash preview are the pre-publication
   checkpoints.** The queue merges unattended, so there is no second human look
-  at the comment freshness or title/body before publication. Run both and fix
-  every finding before enqueuing — not after.
+  at the comment freshness or title/body before publication. The enqueue gateway
+  runs both and refuses the queue request on any finding. Its checks and queue
+  request remain a short sole-writer window rather than an atomic GitHub transaction.
 - **Confirm the merge landed before any cleanup** — use `node
   scripts/dev/run-gh.mjs merge-wait <N>`. It performs the bounded queue poll,
   emits only state transitions, and returns the landed SHA on `MERGED`.

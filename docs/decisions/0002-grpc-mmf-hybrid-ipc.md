@@ -1,5 +1,5 @@
 ---
-title: Use gRPC + MMF Hybrid for IPC
+title: "ADR-0002: Use gRPC + MMF Hybrid for IPC"
 type: decision
 status: stable
 description: "gRPC for structured data transfer, MMF for sub-millisecond signaling."

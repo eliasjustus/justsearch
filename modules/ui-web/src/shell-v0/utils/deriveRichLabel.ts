@@ -35,8 +35,10 @@ export function deriveTitleFromSurfaceId(surfaceId: string): string {
     .join(' ');
 }
 
-export function deriveRichLabel(surfaceId: string, url: string): string {
-  const title = deriveTitleFromSurfaceId(surfaceId);
+export function deriveRichLabel(surfaceId: string, url: string, surfaceTitle: string): string {
+  // The caller supplies the title from the presentation authority. Deriving it again here created
+  // a user-visible shadow label ("Unified Chat") after the catalog renamed the place to "Search".
+  const title = surfaceTitle;
   if (!url) return title || surfaceId;
 
   const stateKey = STATE_KEY_BY_SURFACE[surfaceId];

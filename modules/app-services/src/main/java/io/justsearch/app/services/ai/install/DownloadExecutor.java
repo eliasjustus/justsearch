@@ -38,9 +38,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class DownloadExecutor implements ResumableFetch.Transfer {
   private static final Logger log = LoggerFactory.getLogger(DownloadExecutor.class);
 
-  /** curl's CURLE_RANGE_ERROR — the server would not honour the resume Range request. */
-  private static final int CURL_RANGE_ERROR = 33;
-
   /** Poll result sentinels for {@link #runCurl}. */
   private static final int CURL_CANCELLED = -1;
 
@@ -541,7 +538,7 @@ public final class DownloadExecutor implements ResumableFetch.Transfer {
   /**
    * Runs curl.exe, returning its exit code — 0 on success, {@link #CURL_CANCELLED} when stopped by
    * cancellation, {@link #CURL_LAUNCH_FAILED} when it could not be run, otherwise curl's own code
-   * ({@link #CURL_RANGE_ERROR} means the server refused the resume Range request).
+   * (33, CURLE_RANGE_ERROR, means the server refused the resume Range request).
    */
   private int runCurl(
       String url, Path destPartial, ProgressCallback callback, boolean forceHttp11, TailBuffer tail) {

@@ -1,42 +1,53 @@
 #!/usr/bin/env node
 
 /**
- * Synchronous SessionStart hook — restores state after compaction.
+ * Synchronous SessionStart hook — emits one-shot orientation context after
+ * compaction.
  *
  * On SessionStart with source === 'compact':
  *   1. Reads tmp/agent-telemetry/compact-state-{sessionId}.json (written by compact-save.mjs)
- *   2. Writes a temporary .claude/rules/compaction-state.md file
- *      (rules files are loaded into the system prompt and persist across turns)
- *   3. Also outputs hookSpecificOutput with additionalContext as a fallback
- *   4. Deletes the compact-state file (one-time use)
+ *   2. Deletes the compact-state file (one-time use)
+ *   3. Verifies the saved session/worktree against the SessionStart event
+ *   4. Outputs hookSpecificOutput.additionalContext when provenance matches
  *
- * On SessionStart with source !== 'compact':
- *   1. Deletes .claude/rules/compaction-state.md if it exists (stale from previous session)
- *   2. Exits silently
+ * Every SessionStart also deletes the legacy
+ * .claude/rules/compaction-state.md file. It is a migration tombstone only:
+ * this hook never writes or reads that rule file.
  *
- * Why rules file over additionalContext alone:
- *   - additionalContext is injected as a system-reminder (conversation message)
- *   - It gets summarized away on next compaction and may not even inject reliably (#15174)
- *   - .claude/rules/ files are loaded into the system prompt and survive across turns
- *
- * - Synchronous (async: false) — injects context before agent's first turn
+ * - Synchronous (async: false) — injects context before the continuation
  * - Timeout: 5s
  * - Always exits 0 — never blocks session start
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readJsonStdin, runHook, repoRoot, telemetryDir as TELEMETRY_DIR } from '../lib/hook-base.mjs';
 
-const RULES_FILE = path.join(repoRoot, '.claude', 'rules', 'compaction-state.md');
+const LEGACY_RULE_PARTS = ['.claude', 'rules', 'compaction-state.md'];
 
-function compactStatePath(sessionId) {
-  return path.join(TELEMETRY_DIR, `compact-state-${sessionId}.json`);
+function compactStatePath(sessionId, telemetryDir = TELEMETRY_DIR) {
+  return path.join(telemetryDir, `compact-state-${sessionId}.json`);
 }
 
-function cleanupRulesFile() {
-  try { fs.unlinkSync(RULES_FILE); } catch {}
+function cleanupLegacyRulesFile(worktree) {
+  try { fs.unlinkSync(path.join(worktree, ...LEGACY_RULE_PARTS)); } catch {}
+}
+
+function consumeCompactState(statePath) {
+  const claimedPath = `${statePath}.${process.pid}.consumed`;
+  try {
+    fs.renameSync(statePath, claimedPath);
+  } catch {
+    return null;
+  }
+  try {
+    return fs.readFileSync(claimedPath, 'utf8');
+  } catch {
+    return null;
+  } finally {
+    try { fs.unlinkSync(claimedPath); } catch {}
+  }
 }
 
 function formatReadFiles(readFiles) {
@@ -61,49 +72,80 @@ function formatEditedFiles(editedFiles) {
   return `\nFiles edited this session (check for incomplete changes):\n${lines.join('\n')}`;
 }
 
-function formatModifiedFiles(modifiedFiles) {
-  if (!modifiedFiles || modifiedFiles.length === 0) return '';
-  const lines = modifiedFiles.map(f => `- ${f}`);
-  return `\nFiles modified in this session (git diff):\n${lines.join('\n')}`;
+function formatWorkspaceSnapshot(snapshot) {
+  const parts = [
+    '',
+    `Workspace snapshot observed at ${snapshot.observed_at} (Git status observation only):`,
+    `- worktree: ${snapshot.worktree}`,
+    `- branch: ${snapshot.branch}`,
+  ];
+  if (snapshot.modified_files.length > 0) {
+    parts.push('Modified files observed in that workspace:');
+    parts.push(...snapshot.modified_files.map(file => `- ${file}`));
+  }
+  return parts.join('\n');
 }
 
 /**
- * Worktree + branch, so the agent SEES its location after compaction instead of
- * being asked to run `pwd`/`git branch` (mechanizes the `after-compaction-verify`
- * rule — tempdoc 620 Part V). Fail-open: omitted if git/cwd isn't resolvable.
+ * Resolve worktree + branch from the event cwd. There is deliberately no
+ * repository-root fallback: an unproven current worktree must not be joined to
+ * a saved snapshot from somewhere else.
  */
-function formatWorktree() {
+export function resolveGitWorkspace(eventCwd) {
   try {
-    const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 };
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim();
-    const top = execSync('git rev-parse --show-toplevel', opts).trim();
-    if (!branch || !top) return '';
-    return `\nCurrent worktree (verify this matches the work you expect — after-compaction-verify):\n- dir: ${top}\n- branch: ${branch}`;
+    if (typeof eventCwd !== 'string' || !eventCwd.trim() || !fs.statSync(eventCwd).isDirectory()) {
+      return null;
+    }
+    const opts = {
+      cwd: eventCwd,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 3000,
+    };
+    const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], opts).trim();
+    const worktree = execFileSync('git', ['rev-parse', '--show-toplevel'], opts).trim();
+    if (!branch || !worktree) return null;
+    return { worktree, branch };
   } catch {
-    return '';
+    return null;
   }
 }
 
-/** Read the `session=<id>` stamp from a rules-file body, or null if absent. */
-export function parseSessionStamp(content) {
-  const m = /<!--\s*compaction-state\s+session=(\S+)/.exec(content || '');
-  return m ? m[1] : null;
+function normalizedWorktree(worktree) {
+  let resolved = path.resolve(worktree);
+  try { resolved = fs.realpathSync.native(resolved); } catch {}
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-export function buildContext(state, sessionId) {
+export function stateMatchesCurrentWorkspace(state, sessionId, currentWorkspace) {
+  const snapshot = state?.workspace_snapshot;
+  return state?.session_id === sessionId
+    && typeof snapshot?.observed_at === 'string' && snapshot.observed_at.length > 0
+    && typeof snapshot?.worktree === 'string' && snapshot.worktree.length > 0
+    && typeof snapshot?.branch === 'string' && snapshot.branch.length > 0
+    && Array.isArray(snapshot?.modified_files)
+    && snapshot.modified_files.every(file => typeof file === 'string')
+    && !!currentWorkspace
+    && normalizedWorktree(snapshot.worktree) === normalizedWorktree(currentWorkspace.worktree)
+    && snapshot.branch === currentWorkspace.branch;
+}
+
+export function buildContext(state, currentWorkspace) {
   const parts = [
-    `<!-- compaction-state session=${sessionId ?? 'unknown'} generated=${new Date().toISOString()} -->`,
-    '# Compaction State (auto-generated; deleted automatically at session end — safe to ignore if it does not match your current work)',
+    `<!-- compaction-context session=${state.session_id} -->`,
+    '# Compaction Recovery Context (one-shot)',
   ];
   parts.push('');
-  parts.push('This file was written by compact-restore.mjs after a context compaction.');
-  parts.push('It contains session state from before compaction to help with orientation.');
+  parts.push('This context was captured immediately before compaction to help with orientation.');
 
-  const worktree = formatWorktree();
-  if (worktree) parts.push(worktree);
-
-  const modified = formatModifiedFiles(state.modified_files);
-  if (modified) parts.push(modified);
+  if (currentWorkspace) {
+    parts.push(
+      `\nCurrent worktree (verified against the saved snapshot):\n- dir: ${currentWorkspace.worktree}\n- branch: ${currentWorkspace.branch}`
+    );
+    parts.push(formatWorkspaceSnapshot(state.workspace_snapshot));
+  } else {
+    parts.push('\nWorkspace snapshot omitted because its session/worktree/branch provenance could not be verified.');
+  }
 
   const reads = formatReadFiles(state.read_files || {});
   if (reads) parts.push(reads);
@@ -117,76 +159,63 @@ export function buildContext(state, sessionId) {
 /**
  * Pure decision: given a hook payload, what should the hook do?
  *
- * Closes the ghost-file window (tempdoc 520 P0d): Claude Code loads
- * `.claude/rules/*.md` into the system prompt *before* SessionStart hooks
- * fire, so deleting the stale file at the next SessionStart is one session
- * too late. The fix is to delete it at SessionEnd of the session that wrote
- * it — then it never survives into the next session. SessionStart cleanup
- * remains as a crash fallback (if SessionEnd never fired), with one residual
- * stale session only in that crash case.
- *
  * @returns {{ action: 'cleanup' | 'restore' | 'noop', sessionId?: string }}
  */
 export function decideAction(input) {
-  // SessionEnd of the writing session: delete the rules file so it never
-  // bleeds into the next session's pre-hook rules load.
-  if (input.hook_event_name === 'SessionEnd') return { action: 'cleanup' };
+  if (input.hook_event_name !== 'SessionStart') return { action: 'noop' };
 
-  // SessionStart, non-compact: stale file from a prior session — crash fallback.
   if (input.source !== 'compact') return { action: 'cleanup' };
 
-  if (!input.session_id) return { action: 'noop' };
+  if (!input.session_id) return { action: 'cleanup' };
   return { action: 'restore', sessionId: input.session_id };
+}
+
+export function handleSessionStart(input, options = {}) {
+  const telemetryDir = options.telemetryDir ?? TELEMETRY_DIR;
+  const fallbackRepoRoot = options.repoRoot ?? repoRoot;
+  const writeOutput = options.writeOutput ?? (text => process.stdout.write(text));
+  const decision = decideAction(input);
+  if (decision.action === 'noop') return { action: 'noop' };
+
+  const currentWorkspace = resolveGitWorkspace(input.cwd);
+  // Older versions wrote the ignored rule beside the hook script, while a
+  // current event may belong to another worktree. Clean both proven locations
+  // so the cross-worktree incident cannot leave the old instruction behind.
+  cleanupLegacyRulesFile(fallbackRepoRoot);
+  if (currentWorkspace
+      && normalizedWorktree(currentWorkspace.worktree) !== normalizedWorktree(fallbackRepoRoot)) {
+    cleanupLegacyRulesFile(currentWorkspace.worktree);
+  }
+  if (decision.action === 'cleanup') return { action: 'cleanup' };
+
+  const statePath = compactStatePath(decision.sessionId, telemetryDir);
+  const rawState = consumeCompactState(statePath);
+  if (rawState == null) return { action: 'missing' };
+
+  let state;
+  try { state = JSON.parse(rawState); } catch { return { action: 'discarded' }; }
+  if (state?.session_id !== decision.sessionId) {
+    return { action: 'discarded' };
+  }
+
+  const verifiedWorkspace = stateMatchesCurrentWorkspace(state, decision.sessionId, currentWorkspace)
+    ? currentWorkspace
+    : null;
+  const context = buildContext(state, verifiedWorkspace);
+  writeOutput(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: context,
+    },
+  }));
+  return { action: 'restored', context };
 }
 
 async function main() {
   try {
     const input = await readJsonStdin();
     if (!input) return;
-    const decision = decideAction(input);
-
-    if (decision.action === 'cleanup') {
-      cleanupRulesFile();
-      return;
-    }
-    if (decision.action === 'noop') return;
-
-    // decision.action === 'restore'
-    const sessionId = decision.sessionId;
-    const statePath = compactStatePath(sessionId);
-
-    let state;
-    try {
-      state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    } catch {
-      // No saved state — this is fine (first compaction, or file was cleaned up)
-      return;
-    }
-
-    const context = buildContext(state, sessionId);
-
-    // Claude reloads .claude/rules; Codex does not. For Codex, avoid creating a
-    // misleading dirty file and rely on SessionStart additionalContext, which
-    // Codex delivers immediately after both manual and automatic compaction.
-    if (process.env.JUSTSEARCH_AGENT_HARNESS !== 'codex-cli') {
-      try {
-        fs.mkdirSync(path.dirname(RULES_FILE), { recursive: true });
-        fs.writeFileSync(RULES_FILE, context, 'utf8');
-      } catch {
-        // If rules file write fails, fall back to additionalContext only
-      }
-    }
-
-    // Fallback: also emit additionalContext (one-shot, may not persist, but immediate)
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'SessionStart',
-        additionalContext: context,
-      },
-    }));
-
-    // Clean up compact-state — one-time use
-    try { fs.unlinkSync(statePath); } catch {}
+    handleSessionStart(input);
   } catch {
     // Never block session start
   }

@@ -412,8 +412,8 @@ public final class FieldMapper {
   }
 
   /** Catalog fields that declare an {@code rmwPolicy} (drives the RMW preservation engine). */
-  java.util.List<FieldDef> rmwPolicyFields() {
-    java.util.List<FieldDef> out = new ArrayList<>();
+  List<FieldDef> rmwPolicyFields() {
+    List<FieldDef> out = new ArrayList<>();
     for (FieldDef def : byId.values()) {
       if (def.rmwPolicy != null && !def.rmwPolicy.isBlank()) out.add(def);
     }

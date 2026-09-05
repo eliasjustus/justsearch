@@ -144,8 +144,7 @@ Use these commands after editing their authorities:
 ```powershell
 node scripts/docs/agent-instructions-sync.mjs
 node scripts/docs/skills-sync.mjs # refreshes canonical-doc sections in Claude skills only
-node scripts/codegen/gen-agent-hooks.mjs
-node scripts/codegen/gen-codex-hooks.mjs
+node scripts/ci/regen-all.mjs --only agent-hooks-wiring,codex-hooks
 node scripts/docs/llmstxt-generate.mjs
 ```
 

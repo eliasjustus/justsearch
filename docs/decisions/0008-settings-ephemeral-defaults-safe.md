@@ -1,5 +1,5 @@
 ---
-title: "Settings Are Ephemeral, Defaults Are Safe"
+title: "ADR-0008: Settings Are Ephemeral, Defaults Are Safe"
 type: decision
 status: stable
 description: "User settings (settings.json) are not migration-protected. An incompatible settings file is preserved as a timestamped .corrupt- sibling, replaced with defaults, and the reset is surfaced as a lifecycle condition."

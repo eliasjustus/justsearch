@@ -84,7 +84,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
       conversationProtectionTap;
 
   /** Tempdoc 629 (#2): supplier of the conversation-encryption state string (late-bound; null in tests). */
-  private volatile java.util.function.Supplier<String> conversationProtectionStateSupplier;
+  private volatile Supplier<String> conversationProtectionStateSupplier;
 
   private final OnlineAiService onlineAi;
   private final AgentService agentService;
@@ -162,7 +162,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * energy-intent ("Paused — saving energy") + post-resume ("Catching up after sleep") status
    * fields. Null/absent before the worker connects ⇒ both default to neutral.
    */
-  private volatile Supplier<io.justsearch.app.services.worker.KnowledgeServerBootstrap>
+  private volatile Supplier<KnowledgeServerBootstrap>
       knowledgeServerLifecycleSupplier;
 
   /**
@@ -315,7 +315,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * (not_configured|locked|unlocked) read from {@code HeadAssembly.dataKeyManager().state()}. Null on
    * the test-only Builder path → the View reports "unknown".
    */
-  void setConversationProtectionSupplier(java.util.function.Supplier<String> supplier) {
+  void setConversationProtectionSupplier(Supplier<String> supplier) {
     this.conversationProtectionStateSupplier = supplier;
   }
 
@@ -343,7 +343,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
 
   /** Tempdoc 630: late-bind the connected knowledge-server bootstrap (energy + resume signals). */
   void setKnowledgeServerLifecycleSupplier(
-      Supplier<io.justsearch.app.services.worker.KnowledgeServerBootstrap> supplier) {
+      Supplier<KnowledgeServerBootstrap> supplier) {
     this.knowledgeServerLifecycleSupplier = supplier;
   }
 
@@ -929,7 +929,7 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
    * Health card + the locked-chat gate project one always-current authority off the /api/status poll.
    */
   private io.justsearch.app.api.status.ConversationProtectionView buildConversationProtection() {
-    java.util.function.Supplier<String> supplier = conversationProtectionStateSupplier;
+    Supplier<String> supplier = conversationProtectionStateSupplier;
     if (supplier == null) {
       return io.justsearch.app.api.status.ConversationProtectionView.unknown();
     }

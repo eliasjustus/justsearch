@@ -5,7 +5,7 @@ status: stable
 description: "End-to-end search pipeline: ingestion stages, query-time retrieval legs, fusion, correction, reranking, and response assembly."
 ---
 
-# 23. Search Pipeline Overview
+# Search Pipeline Overview
 
 JustSearch's search pipeline spans two processes (Head and Body) and is
 split into ingestion-time (offline, index-building) and query-time (online,

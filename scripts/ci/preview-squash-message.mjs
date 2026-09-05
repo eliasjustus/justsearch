@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { resolveGhBin } from '../dev/run-gh.mjs';
 import { buildPublicSquashRecord } from './lib/squash-message-projection.mjs';
 
 const KIND = 'justsearch-squash-message-preview.v2';
@@ -43,18 +44,14 @@ function loadJson(filePath) {
 }
 
 function execGh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return execFileSync(resolveGhBin(), args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
 
 function detectRepoSlug() {
-  try {
-    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
-    const match = url.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/i);
-    if (match) return `${match[1]}/${match[2]}`;
-  } catch {
-    // Fall through to the public repository default.
-  }
-  return 'justsearch-app/justsearch';
+  const url = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+  const match = url.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/i);
+  if (!match) throw new Error('Cannot resolve the GitHub repository from origin; pass --repo owner/repo explicitly.');
+  return `${match[1]}/${match[2]}`;
 }
 
 function loadRepo(opts) {

@@ -1,5 +1,5 @@
 ---
-title: "Two-Pronged Citation Strategy"
+title: "ADR-0006: Two-Pronged Citation Strategy"
 type: decision
 status: stable
 description: "LLM-generated citations backed by RAG metadata, supplemented by CPU cross-encoder post-hoc matching."

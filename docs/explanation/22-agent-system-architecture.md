@@ -5,7 +5,7 @@ status: stable
 description: "Agent loop, operation-substrate tool dispatch, token budget, durability, and MCP tool surface."
 ---
 
-# 22. Agent System Architecture
+# Agent System Architecture
 
 JustSearch includes an agentic assistant that can search the knowledge base, browse indexed folders, request ingestion, and perform approved file operations. The agent runs in the Head process, delegates online inference to the app inference runtime, and delegates Lucene index I/O through service/Worker abstractions.
 

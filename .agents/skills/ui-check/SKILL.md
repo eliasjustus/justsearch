@@ -74,7 +74,8 @@ the rot they were built to avoid is being forgotten (§26 discoverability). Pick
 | "Trace the interaction trajectory into a step" | `jseval ui-shot <step> --trace` | served FE | per-step trace of the chain leading to `<step>` (limited to existing harness chain steps) |
 
 Rules of thumb: judge correctness from `ui-shot`'s `.measure.json` facts (cheap, reliable), not the PNG;
-gate a11y regressions with `ui-a11y-gate` (local-first, ADR-0026 — not CI-wired, so run it); use `ui-diff`
+gate a11y regressions with `ui-a11y-gate` (also runs on PRs as the ADVISORY `Measured axe` job in
+`ci.yml` — advisory means non-blocking, so still run it locally); use `ui-diff`
 when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. After
 editing a `shell-v0` file, run `jseval ui-shot --affected <file>` to find the contextually-relevant step(s).
 

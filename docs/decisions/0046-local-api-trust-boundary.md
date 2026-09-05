@@ -1,5 +1,5 @@
 ---
-title: "Local API trust boundary"
+title: "ADR-0046: Local API trust boundary"
 type: decision
 status: stable
 description: "The local HTTP API's trust boundary is the same-user native process: loopback bind, Host allowlist, MCP Origin validation, CORS pinned to the shell origin, and a per-boot session token on mutating routes. Same-user native processes are inside the boundary by construction."

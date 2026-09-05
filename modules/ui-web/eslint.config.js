@@ -54,6 +54,16 @@ const FETCH_MEMBER_ACCESS_SELECTOR = {
 
 export default defineConfig([
   globalIgnores(['dist']),
+  // Tempdoc 930 §22.2 follow-up 8 — `lint` now runs with `--max-warnings=0`, which makes an
+  // unused `eslint-disable` a hard failure. `src/api/generated/**` is written by a Java
+  // generator (RegistryEnumsTsGenerationTest and friends) whose drift check owns those files
+  // byte-for-byte, so their blanket `/* eslint-disable */` header cannot be edited here —
+  // stripping it would red the Java drift test on the next Gradle run. Silence the
+  // unused-directive report for the generated tree instead of forcing a cross-language edit.
+  {
+    files: ['src/api/generated/**'],
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+  },
   // JavaScript/JSX files
   {
     files: ['**/*.{js,jsx}'],

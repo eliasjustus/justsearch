@@ -1,5 +1,5 @@
 ---
-title: Use Three Separate OS Processes
+title: "ADR-0001: Use Three Separate OS Processes"
 type: decision
 status: stable
 description: "Split into Head (UI), Body (indexing), and Brain (inference) processes."

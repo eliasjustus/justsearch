@@ -11,7 +11,7 @@
 - **For Java files: run `./gradlew.bat spotlessApply` after edits**, then check compilation with `./gradlew.bat build -x test` before further changes.
 
 ## Worktree Awareness
-- **After compaction or session start**, verify you're in the expected worktree — `compact-restore` surfaces the dir + branch in the restored state block (tempdoc 620); see `branch-safety.md` `after-compaction-verify` for the fallback check.
+- **After compaction or session start**, verify the expected worktree — `compact-restore` emits a verified dir + branch when provenance matches; see `branch-safety.md` `after-compaction-verify` for fallback.
 - **Build artifacts are per-worktree.** Each worktree needs its own `./gradlew.bat assemble` and `npm install` (in `modules/ui-web`).
 - **Don't `cd` to another worktree's directory.** Stay in your assigned worktree.
 - **Cite full worktree-qualified paths when reasoning about a file that exists in several trees** (tempdoc 618 §1b). The same `ConversationEngine.java` / `UnifiedChatView.ts` lives in `main` and in every worktree; referring to it by bare name invites mentally merging two different copies (and can mask a base-ref mismatch). Use the full `.claude/worktrees/<name>/…` (or main-checkout) path.

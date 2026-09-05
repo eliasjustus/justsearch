@@ -1,5 +1,5 @@
 ---
-title: Manual FFM Bindings for llama.cpp
+title: "ADR-0005: Manual FFM Bindings for llama.cpp"
 type: decision
 status: superseded
 description: "Hand-written Panama FFM bindings instead of jextract codegen or JNI."

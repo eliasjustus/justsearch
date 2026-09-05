@@ -55,6 +55,15 @@ final class WorkerUpgradeQuiescence {
         queueCheckpointed ? List.of() : List.of("jobs.db WAL checkpoint is still busy"));
   }
 
+  /**
+   * True while a preparation owns the Worker barrier. Tempdoc 931 §E item 10: writer-level
+   * maintenance ({@link IndexSettleOps}) must refuse rather than run a force-merge underneath an
+   * upgrade that has already been told the Worker is quiesced.
+   */
+  synchronized boolean hasActivePreparation() {
+    return preparationId != null;
+  }
+
   synchronized UpgradeQuiescenceResponse status(String requestedId) {
     requireOwner(requestedId);
     // Status also advances an already-owned preparation. This lets a migration finish or a busy

@@ -341,7 +341,7 @@ public final class OperationsController {
       Operation op,
       io.justsearch.agent.api.registry.ConfirmationRequiredException e,
       String argumentsJson,
-      io.justsearch.agent.api.registry.TransportTag transport) {
+      TransportTag transport) {
     java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
     body.put("success", false);
     body.put("errorClass", io.justsearch.app.api.ApiErrorCode.CONFIRMATION_REQUIRED.name());

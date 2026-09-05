@@ -1,0 +1,149 @@
+name: Update Preserves Models
+
+# Empirical N->N+1 update lane for tempdoc 617 D2 ("an app update never touches the user's
+# models") and tempdoc 930 section 18.1 row 11.
+#
+# Why this exists: the only enforcement of D2 was the STATIC gate
+# scripts/ci/check-update-preserves-models.mjs, whose own header says it "cannot prove a built
+# installer is clean". Tempdoc 617 section 9 items 3-5 reserved that proof for a manual Windows
+# Sandbox round which, as of 617:798-800, had never been executed. This lane executes the
+# installer-over-release half of it unattended.
+#
+# Why two PUBLISHED installers rather than a freshly built candidate by default: the
+# build-installer.yml job runs in the `release-signing` GitHub environment, which carries a
+# `required_reviewers` protection rule. Any workflow_call into it parks awaiting a human
+# approval, so a reusable-workflow design could never run unattended. Downloading two already
+# published release assets is both autonomous AND literally what 617 section 9 item 3 asks for
+# ("the exact published installer-over-release lane"). `candidate_run_id` covers the other case:
+# gating an unpublished candidate before a release cut.
+#
+# ADR-0026: specialty workflows are manual. workflow_dispatch only, registered in
+# scripts/ci/workflow-signal-policy.v1.json.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_release_tag:
+        description: >-
+          Release tag whose published installer plays version N (the already-installed app).
+        type: string
+        default: 'v0.1.0'
+      candidate_source:
+        description: >-
+          Where the N+1 installer comes from: a published release, or the `windows-installer`
+          artifact of a build-installer.yml run (use this to gate a candidate before publishing).
+        type: choice
+        options:
+          - release
+          - run-artifact
+        default: 'release'
+      candidate_release_tag:
+        description: >-
+          Release tag whose published installer plays version N+1. Used when
+          candidate_source = release.
+        type: string
+        default: 'v0.2.0'
+      candidate_run_id:
+        description: >-
+          build-installer.yml run id whose `windows-installer` artifact supplies the N+1
+          installer. Used when candidate_source = run-artifact. Artifacts expire after 7 days.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  update-preserves-models:
+    name: Published installer N -> N+1 preserves models
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download base (N) installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path base -Force | Out-Null
+          gh release download '${{ inputs.base_release_tag }}' --repo $env:GITHUB_REPOSITORY `
+            --pattern '*_x64-setup.exe' --dir base
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download the base installer from ${{ inputs.base_release_tag }}." }
+          Get-ChildItem base | Format-Table Name, Length
+
+      - name: Download candidate (N+1) installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path candidate -Force | Out-Null
+          if ('${{ inputs.candidate_source }}' -eq 'run-artifact') {
+            $runId = '${{ inputs.candidate_run_id }}'.Trim()
+            if (-not $runId) { throw "candidate_source=run-artifact requires candidate_run_id." }
+            gh run download $runId --repo $env:GITHUB_REPOSITORY --name windows-installer --dir candidate
+            if ($LASTEXITCODE -ne 0) { throw "Failed to download the windows-installer artifact from run $runId (artifacts expire after 7 days)." }
+          } else {
+            gh release download '${{ inputs.candidate_release_tag }}' --repo $env:GITHUB_REPOSITORY `
+              --pattern '*_x64-setup.exe' --dir candidate
+            if ($LASTEXITCODE -ne 0) { throw "Failed to download the candidate installer from ${{ inputs.candidate_release_tag }}." }
+          }
+          Get-ChildItem candidate -Recurse -File | Format-Table FullName, Length
+
+      # Resolve both installers and their versions from the Tauri asset naming pattern
+      # (JustSearch_<version>_x64-setup.exe, docs/how-to/cut-a-release.md). Fails closed if the
+      # pair could not form a genuine upgrade -- `allowDowngrades: false` in tauri.conf.json means
+      # an equal-or-lower candidate would be REFUSED by NSIS, and a lane that silently measured a
+      # refused install would report a meaningless PASS.
+      - name: Resolve installers and assert a real version increase
+        id: resolve
+        shell: pwsh
+        run: |
+          function Resolve-Setup {
+            param([string]$Dir, [string]$Label)
+            $exe = Get-ChildItem -Path $Dir -Recurse -File -Filter '*_x64-setup.exe' |
+              Sort-Object Length -Descending | Select-Object -First 1
+            if (-not $exe) { throw "No *_x64-setup.exe found for $Label under $Dir." }
+            if ($exe.Name -notmatch '_(?<v>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.\-]+)?)_x64-setup\.exe$') {
+              throw "Cannot parse a version out of the $Label installer name '$($exe.Name)'."
+            }
+            return [pscustomobject]@{ Path = $exe.FullName; Version = $Matches['v'] }
+          }
+          $base = Resolve-Setup -Dir 'base' -Label 'base (N)'
+          $cand = Resolve-Setup -Dir 'candidate' -Label 'candidate (N+1)'
+          Write-Host "Base      : $($base.Version)  $($base.Path)"
+          Write-Host "Candidate : $($cand.Version)  $($cand.Path)"
+          if ($base.Version -eq $cand.Version) {
+            throw "Base and candidate are both version $($base.Version). That is a reinstall, not an N->N+1 upgrade; pick two different versions."
+          }
+          $baseCore = [version](($base.Version -split '-')[0])
+          $candCore = [version](($cand.Version -split '-')[0])
+          if ($candCore -lt $baseCore) {
+            throw "Candidate $($cand.Version) is older than base $($base.Version). tauri.conf.json sets allowDowngrades=false, so NSIS would refuse this install and the lane would measure nothing."
+          }
+          "basePath=$($base.Path)"       >> $env:GITHUB_OUTPUT
+          "baseVersion=$($base.Version)" >> $env:GITHUB_OUTPUT
+          "candPath=$($cand.Path)"       >> $env:GITHUB_OUTPUT
+          "candVersion=$($cand.Version)" >> $env:GITHUB_OUTPUT
+
+      - name: Install N, seed models, upgrade to N+1, uninstall, assert survival
+        shell: pwsh
+        run: |
+          ./scripts/release/update-preserves-models-test.ps1 `
+            -BaseInstaller '${{ steps.resolve.outputs.basePath }}' `
+            -CandidateInstaller '${{ steps.resolve.outputs.candPath }}' `
+            -BaseVersion '${{ steps.resolve.outputs.baseVersion }}' `
+            -CandidateVersion '${{ steps.resolve.outputs.candVersion }}' `
+            -OutFile "$env:GITHUB_WORKSPACE/evidence/update-preserves-models.v1.json"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-preserves-models-evidence
+          path: evidence/update-preserves-models.v1.json
+          if-no-files-found: warn
+          retention-days: 90

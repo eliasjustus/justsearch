@@ -5,6 +5,30 @@ import { execFileSync } from 'node:child_process';
 
 const files = await fg(['docs/**/*.md', '!docs/_**/*']);
 
+/**
+ * Markdown body with fenced code blocks removed, so heading rules see prose only.
+ * Opening and closing fences are ``` or ~~~ (3+), optionally indented up to 3 spaces; a fence
+ * closes only on the same character at the same or greater length, so a ``` block containing
+ * ~~~ stays open.
+ */
+function stripFencedCode(md) {
+  const out = [];
+  let fence = null;
+  for (const line of md.split(/\r?\n/)) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (m) {
+      fence = m[1];
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 let issues = [];
 
 for (const f of files) {
@@ -46,29 +70,46 @@ for (const f of files) {
   // Skip generated/lint files already excluded
   const content = fm.content || '';
   const lines = content.split(/\r?\n/);
+  // Headings are counted over PROSE only. A `# comment` on the first column of a fenced code
+  // block is not a heading; counting it as one reported 31 phantom "Multiple H1" headings for
+  // docs/how-to/use-ui.md and 31 for docs/reference/jseval-pipeline-reference.md
+  // (2026-09-05, tempdoc 930 §22.2 follow-up 7).
+  const prose = stripFencedCode(content);
+  const proseLines = prose.split('\n');
   let idx = 0;
-  while (idx < lines.length && /^\s*$/.test(lines[idx])) idx++;
-  const first = lines[idx] || '';
-  // Enforce: exactly one H1 and it must match front matter title
-  const h1Matches = content.match(/^#\s+(.+?)\s*$/gm) || [];
-  if (h1Matches.length === 0) {
-    issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Missing top-level H1' });
-  }
-  if (h1Matches.length > 1) {
-    issues.push({ file: f, kind: 'heading', severity: 'error', msg: `Multiple H1 headings (${h1Matches.length})` });
-  }
-  if (h1Matches.length === 1) {
-    const h1Text = h1Matches[0].replace(/^#\s+/, '').trim();
-    if (data.title && String(data.title).trim() !== h1Text) {
-      issues.push({ file: f, kind: 'heading', severity: 'error', msg: `H1 does not match front matter title ('${data.title}' vs '${h1Text}')` });
+  while (idx < proseLines.length && /^\s*$/.test(proseLines[idx])) idx++;
+  const first = proseLines[idx] || '';
+  // Enforce: exactly one H1 and it must match front matter title.
+  //
+  // Scoped to DURABLE docs. `docs/tempdocs/**` is append-only dated working history whose H1
+  // and `title` are read by no consumer: docs/llms.txt indexes only the canonical dirs
+  // (scripts/docs/llmstxt-generate.mjs `canonicalDirs`), scripts/ci/lib/tempdoc-scan.mjs keys
+  // on filenames and changeset frontmatter, and scripts/docs/tempdoc-staleness-triage.mjs
+  // regexes `^title:` for classification keywords only. Enforcing an H1 shape there means
+  // rewriting history to satisfy a rule nobody reads — 406 findings, zero consumers
+  // (2026-09-05, tempdoc 930 §22.2 follow-up 7). Do not widen this without a consumer.
+  const isWorkingHistory = f.startsWith('docs/tempdocs/');
+  const h1Matches = isWorkingHistory ? [] : prose.match(/^#\s+(.+?)\s*$/gm) || [];
+  if (!isWorkingHistory) {
+    if (h1Matches.length === 0) {
+      issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Missing top-level H1' });
     }
-  }
-  // The `heading-case` rule (Title Case for H1/H2) was DELETED in tempdoc 930. It produced
-  // 6,751 findings repo-wide and was never honoured at any enforcement point — many headings
-  // are intentionally lowercase. A rule nobody enforces is not a standard, it is noise that
-  // hides this script's real findings. Do not reinstate it without an enforcement point.
-  if (/^#\s+Untitled\s*$/.test(first)) {
-    issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Top-level H1 is "Untitled"' });
+    if (h1Matches.length > 1) {
+      issues.push({ file: f, kind: 'heading', severity: 'error', msg: `Multiple H1 headings (${h1Matches.length})` });
+    }
+    if (h1Matches.length === 1) {
+      const h1Text = h1Matches[0].replace(/^#\s+/, '').trim();
+      if (data.title && String(data.title).trim() !== h1Text) {
+        issues.push({ file: f, kind: 'heading', severity: 'error', msg: `H1 does not match front matter title ('${data.title}' vs '${h1Text}')` });
+      }
+    }
+    // The `heading-case` rule (Title Case for H1/H2) was DELETED in tempdoc 930. It produced
+    // 6,751 findings repo-wide and was never honoured at any enforcement point — many headings
+    // are intentionally lowercase. A rule nobody enforces is not a standard, it is noise that
+    // hides this script's real findings. Do not reinstate it without an enforcement point.
+    if (/^#\s+Untitled\s*$/.test(first)) {
+      issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Top-level H1 is "Untitled"' });
+    }
   }
 
   // Conditional requirements for normative docs
@@ -108,18 +149,13 @@ for (const f of files) {
     }
   }
 
-  // Soft requirements: min tags and aliases (warn only)
-  const tags = Array.isArray(data.tags) ? data.tags : [];
-  const aliases = Array.isArray(data.aliases) ? data.aliases : [];
-  const isLegacy = String(data.status || '').toLowerCase() === 'legacy';
-  if (!isLegacy) {
-    if (tags.length < 3) {
-      issues.push({ file: f, kind: 'tags', severity: 'warn', msg: `Few tags (${tags.length}); expected at least 3` });
-    }
-    if (aliases.length < 2) {
-      issues.push({ file: f, kind: 'aliases', severity: 'warn', msg: `Few aliases (${aliases.length}); expected at least 2` });
-    }
-  }
+  // The `tags` and `aliases` soft rules ("expected at least 3 / at least 2") were DELETED on
+  // 2026-09-05 (tempdoc 930 §22.2 follow-up 7). They asked every doc for frontmatter keys that
+  // NOTHING in the repo reads: the llms.txt generator consumes `title`/`status`/`description`,
+  // the adr-coverage enforcer `covers`/`status`/`last_reviewed`, world-state `last_reviewed`,
+  // skills-sync the body only — and not one file under docs/ carried a `tags:` or `aliases:`
+  // key, so the rules fired on all 813 docs, forever. 1,626 warnings nobody could act on is
+  // noise that hides this script's real findings. Do not reinstate without a consumer.
 }
 
 if (issues.length > 0) {

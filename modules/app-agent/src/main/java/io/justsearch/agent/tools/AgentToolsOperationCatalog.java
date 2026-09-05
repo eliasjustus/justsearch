@@ -433,7 +433,7 @@ public final class AgentToolsOperationCatalog implements OperationCatalog {
             RetryPolicy.noRetry(),
             Set.of(),
                 true,
-                Optional.of(new io.justsearch.agent.api.registry.ResourceRef(
+                Optional.of(new ResourceRef(
                     "core.advisory-operation-completed")))
             // Tempdoc 560 §28 (4d): same "file-operations" family as ingest (a HIGH-risk member) —
             // the family axis is real, the membership stands. Tempdoc 875 C.2: but NO durable grant

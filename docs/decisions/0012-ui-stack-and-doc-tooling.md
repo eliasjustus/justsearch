@@ -1,5 +1,5 @@
 ---
-title: UI Stack and Documentation Tooling
+title: "ADR-0012: UI Stack and Documentation Tooling"
 type: decision
 status: Superseded
 description: "JavaFX theming via design tokens, TestFX + Monocle for testing, Vale/markdownlint/Lychee for docs CI."

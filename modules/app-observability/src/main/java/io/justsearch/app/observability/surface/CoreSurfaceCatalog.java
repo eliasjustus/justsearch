@@ -175,12 +175,9 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   public static final String API_EXPLORER_MOUNT_TAG = "jf-api-explorer-view";
 
   /**
-   * Slice 491 §9.D Phase E C3 — Ask surface (RAG-grounded Q&A via the
-   * {@code core.rag-ask} ConversationShape). New rail entry ratified
-   * 2026-05-14 per §9.F: every USER-audience shape projects to a
-   * discoverable surface; Ask is conceptually a top-level user action
-   * (talk to the local AI about your docs), distinct from Brain (which
-   * configures the AI runtime).
+   * Slice 491 §9.D Phase E C3 — compatibility address for grounded Ask
+   * ({@code core.rag-ask}). The unified Search surface is the canonical
+   * rail destination; this DEEPLINK surface preserves mode-specific links.
    */
   public static final SurfaceRef ASK_SURFACE_ID = new SurfaceRef("core.ask-surface");
 
@@ -194,7 +191,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
    */
   public static final String CHAT_SHAPE_MOUNT_TAG = "jf-chat-shape-mount";
 
-  /** ConversationShape consumed by the Ask surface. */
+  /** ConversationShape selected by the Ask compatibility surface. */
   private static final ConversationShapeRef SHAPE_RAG_ASK =
       new ConversationShapeRef("core.rag-ask");
 
@@ -514,7 +511,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                               "/docIds", "unified-chat", "docIds"),
                           new io.justsearch.agent.api.registry.StateBinding(
                               "/affordance", "unified-chat", "affordance"))))),
-          // Slice 491 §9.D Phase E C3 — Ask surface. New rail entry for the
+          // Slice 491 §9.D Phase E C3 — Ask compatibility surface for the
           // RAG-grounded Q&A shape. Audience composition rule (slice 449 §0
           // D2): provenance CORE → no floor lift; consumes no DiagnosticChannels
           // → no channel-floor lift; effective audience = USER. The mount
@@ -536,7 +533,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                   /* conversationShapes */ Set.of(SHAPE_RAG_ASK)),
               CHAT_SHAPE_MOUNT_TAG,
               Provenance.core("1.0"),
-              // Slice 496 §3.A: state schema so the Ask surface accepts
+              // Slice 496 §3.A: state schema so the Ask compatibility surface accepts
               // pre-filled context from other surfaces via the existing
               // store/snapshot/NavigationHandler system. The FE 'ask' store
               // (askChatState.ts) receives {query, docIds} from the snapshot.

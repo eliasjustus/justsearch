@@ -1,7 +1,7 @@
 ---
 title: "Replace bounded areas with maintained open source: whole-project analysis (product + agentic system + tooling) of where a polished, regularly-updated upstream can absorb bespoke code, ranked by maintainer effort saved"
 type: tempdocs
-status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (npm-audit → dependency-review-action, PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
+status: "PUBLISHED + FOLLOW-UPS DONE (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661, #663 (§22 table, each with a green exact-SHA main run); the nine §22.2 owner actions incl. row 11 closed by seven more PRs (§22.3) plus the branch-protection change; one founder flag in §22.3. Deviations per chunk in §21 and per PR in §22.1; every §22.2 follow-up closed (all 37 accepted advisory identities cleared, dependency-review-action not adopted; PMD in the build; jseval suite required; measured axe hosted; updater lane real). VDU skipped by founder decision."
 created: 2026-09-05
 updated: 2026-09-05
 lane: maintainer-effort / dependency strategy
@@ -576,8 +576,9 @@ codex-parity, tempdoc-size, tempdoc-numbers all pass.
 1. `npm-audit`: keep the kernel gate (current), or adopt `actions/dependency-review-action` per
    ADR-0044's replacement clause and retire the gate then.
 2. Trace backlog: archive any of the 17 GB before the OTLP sink restarts (chunk B).
-3. PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
-   `pmdMain` violations. Wire `pmdMain` or accept dormancy.
+3. ~~PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
+   `pmdMain` violations. Wire `pmdMain` or accept dormancy.~~ Resolved by §22.2 follow-up 2:
+   wired, and the (actually 130) violations cleared.
 4. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage with the gate (5 markers were
    baselined); ESLint has no root config.
 5. The four DROP-CANDIDATE invariants in the decision list.
@@ -679,15 +680,119 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 
 ### 22.2 Tracked follow-ups (owner actions; not scheduled here)
 
-1. `npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
-   retire the kernel gate.
-2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
-   wire `pmdMain`, or accept dormancy explicitly.
-3. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.
-4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
-5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
-6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
-7. `docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.
-8. `modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
-   lint` has 24 pre-existing errors on `main`.
-9. Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.
+1. ~~`npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
+   retire the kernel gate.~~ **DONE (2026-09-05)** — the upgrade half landed and the review half
+   resolved to "do not adopt". All 37 accepted high identities (22 root, 15 `ui-web` as measured
+   by the gate's own producer; the "17 / 11 root, 6 ui-web" figures above came from
+   `npm audit --audit-level=high`, which counts vulnerable *package nodes* — dependents such as
+   `markdownlint-cli` included — not advisory identities, re-run on `origin/main`'s lockfiles to
+   confirm) had a
+   published fix, so every one was cleared by upgrade and the baseline is now empty for all five
+   targets. `actions/dependency-review-action` was rejected as both a replacement and an
+   additional lane: it scores a revision diff via the dependency graph, not the checked-out
+   lockfile, and its `allow-ghsas` would be a second, un-gated acceptance authority. Evidence and
+   the two conditions that *do* hold (fails closed on 404/403; no GHAS needed) are in ADR-0044's
+   2026-09-05 amendment. Surfaced en route and fixed in the same PR: `npm install --package-lock-only`
+   under npm 11.6.2/win32-x64 prunes the transitive edges of optional `cpu: ["wasm32"]` packages,
+   producing a lockfile the runner's npm refuses (`Missing: @emnapi/core@… from lock file`) while a
+   local `npm ci` passes — three required jobs red on a condition nothing local reported. New gate
+   `scripts/ci/check-lockfile-completeness.mjs` (+ test, `ci.yml`, pre-merge table, local-repro
+   inventory) walks every declared edge offline and fails on a missing entry; the only reliable
+   repair is regenerating that lockfile from scratch, since incremental re-runs re-prune.
+2. ~~PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
+   wire `pmdMain`, or accept dormancy explicitly.~~ **Done (follow-up 2, 2026-09-05.)** The real
+   count was 130 across 9 modules (109 `UnnecessaryFullyQualifiedName`, 6 `UnusedAssignment`,
+   5 `UnusedPrivateField`, 2 each `HardCodedCryptoKey` / `UnusedFormalParameter` /
+   `EmptyCatchBlock` / `SystemPrintln`, 1 each `UnusedLocalVariable` / `DoNotTerminateVM`) —
+   the earlier ~78 undercounted because `modules/benchmarks` carried `isIgnoreFailures = true`
+   (now removed) and only `modules/ui` had been measured. All cleared at the cause; four
+   `@SuppressWarnings("PMD.*")` with stated reasons remain (`StoreCipher`, `AiInstallService`,
+   `OpenApiSnapshotExporter`, `ExtractionSandboxChild`). `skipPmd` now defaults false, so
+   `pmdMain` runs in `check`/`build`, and CI's required `Build (no model blobs)` job gained a
+   `Static analysis (PMD)` step: 49s of a 352s job on the hosted run, on top of the completed
+   assemble (predicted ~23-30s locally with classes already compiled). `CommentContent`
+   was added to `ruleset-cli-tools.xml`, which had silently exempted `ssot-tools` and
+   `core-contracts`; both rulesets were probe-verified to fail on a planted marker.
+3. ~~`scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.~~
+   **CLOSED 2026-09-05** (PR `lint(930): scripts and ps1 TODO coverage; ui-web zero warnings`).
+   Root `eslint.config.mjs` covers `scripts/**` + `packaging/**` JS with `no-warning-comments`
+   (terms `todo`/`fixme`/`xxx`/`hack`, `location: anywhere`) plus 30 already-clean correctness
+   rules from `@eslint/js` recommended; full recommended was measured at 156 errors (`no-unused-vars`
+   62, `no-useless-assignment` 38, `no-empty` 24, `preserve-caught-error` 16, `no-useless-escape` 10,
+   `no-control-regex` 2, `no-regex-spaces` 1) and is a separate cleanup. `*.ps1` is covered by
+   `scripts/ci/check-ps1-warning-comments.mjs` (+ 8 tests), since ESLint cannot parse PowerShell.
+   Both wired in CI's "Script lint" step. Markers found: 3 JS + 1 ps1 — 2 fixed at the cause
+   (`scripts/docs/tempdoc-staleness-triage.mjs`, where the marker word was the subject matter, not
+   debt), 2 pinned in suppression lists.
+   Java TEST sources are the same shape and remain uncovered: `pmdTest` stays behind
+   `-Ppmd.includeTests=true`, and measured 2026-09-05 it holds 455 violations (324
+   `UnnecessaryFullyQualifiedName`, 62 `SystemPrintln`, 19 `UnusedLocalVariable`, 17
+   `UnusedAssignment`, 16 `EmptyCatchBlock`, 10 `UnusedFormalParameter`, 6 `UnusedPrivateMethod`,
+   1 `UnusedPrivateField`) — but zero `CommentContent`, so no marker is parked there today either.
+4. ~~Promote `jseval-suite` to a required check (branch protection + the two inventories).~~
+   **DONE 2026-09-05** — PR #665 (inventories, walltime lane, ADR-0044 amendment; 15/15 hosted
+   passes, median 384 s) and the owner PATCH to classic branch protection (the ruleset holds no
+   required checks): `main` now requires 11 contexts, `check-branch-protection` OK.
+5. ~~`ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on
+   PRs.~~ **DONE 2026-09-05** — it does now, as the advisory `Measured axe` job in `ci.yml`.
+   Feasibility: the gate needs no backend at all (`--fixtures` route-mocks `/api/*` inside
+   Playwright, `ui_fixtures.py::install_fixtures`; `ui-shot` starts its own Vite,
+   `ui_shot.py::_start_vite_server`), so it is Node + Python + headless Chromium on
+   `ubuntu-latest`. Measured 350s / 20 surfaces locally, exit 0, identical `axe_new` across
+   two consecutive runs; first hosted run (#672, run 33958715012) exit 0 in 168s with rows
+   identical to Windows. Advisory (absent from `requiredStatusChecks` and from
+   `public-ci-local-repro.v1.json`) because a hosted Linux Chromium renders differently from
+   the Windows machine the register's `knownRules` were captured on; promotion needs
+   stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the
+   ADR-0026 amendment 2026-09-05. `ui-proportion-gate` deliberately stays local-only — its
+   baseline is pixel geometry, far more runner-dependent than an axe rule id.
+6. ~~Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.~~
+   **DONE 2026-09-05** — PR #671 `update-preserves-models.yml` (`workflow_dispatch`, windows-latest,
+   two published installers N→N+1, seeded model blobs hashed before/after upgrade and uninstall).
+   First dispatch from `main`, run 33959367954: VERDICT PASS 0.1.0 → 0.2.0, 27/27 gating steps.
+   Not covered: the app is never launched (runtime re-download), the in-app updater path.
+7. ~~`docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.~~
+   **DONE 2026-09-05** (PR `docs(930): docs-validate exits 0 and runs on PRs`): `tags`/`aliases`
+   retired (1,626 warnings, no consumer reads either key and no doc carries one); the H1 counter
+   now skips fenced code blocks (the 92 "Multiple H1" hits were `#` comments in shell blocks);
+   the H1 rules are scoped to durable docs (`docs/tempdocs/**` H1s are read by nothing — 406
+   findings, zero consumers); 96 canonical/runbook docs repaired at the cause; 33 tempdoc
+   frontmatter blocks re-quoted so they parse; 743's U+FFFD restored to `ä`. Exit 0, and the
+   script now runs in the `Public claims` job, `public-ci-local-repro.v1.json`, `npm run
+   lint:docs` and the CLAUDE.md pre-merge table. One knock-on: chunk G's `check-tempdoc-size`
+   failed any PR that *touched* one of the 195 already-over-cap tempdocs, so a mechanical
+   frontmatter repair was unlandable without an unrelated content move. It now compares against
+   the base ref and fails only when an over-cap tempdoc GREW (crossing the cap still fails);
+   the cap's own rationale is unbounded growth, not any edit. Covered by 5 new tests.
+8. ~~`modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
+   lint` has 24 pre-existing errors on `main`.~~ **CLOSED 2026-09-05** (same PR). Re-measured on
+   `origin/main` after #661: 0 errors, 37 warnings — the 24 errors were already gone, so only the
+   directives remained. 36 were deleted (every one named a rule this config does not enable —
+   `no-console` x29, `require-yield` x4, `no-alert`, `no-useless-escape`, `no-explicit-any`); the
+   37th is the blanket header of `src/api/generated/registry-enums.generated.ts`, whose bytes a Java
+   drift test owns, so the generated tree is exempted from unused-directive reporting in
+   `eslint.config.js` instead of edited. `lint` is now `eslint . --max-warnings=0`, and the
+   `ui-web-gates` recipe names it.
+9. ~~Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.~~
+   **DONE 2026-09-05** — applied in place to the (still untracked, owner-lane) 919 file as a
+   "Status amendment" scoped to §4.5 only; it publishes with 919.
+
+### 22.3 Follow-up publication (2026-09-05; founder: "proceed with the owner actions as well as the remaining work")
+
+| PR | Item | Main CI |
+|---|---|---|
+| #665 `ci(930): jseval suite becomes a required check` | 4 | green (`c85c0b31`) |
+| #667 `docs(930): docs-validate exits 0 and runs on PRs` | 7 | green (`6f4206dd`) |
+| #671 `ci(930): real update-preserves-models lane` | 6 / row 11 | superseded; green at `8a919ad1` |
+| #668 `lint(930): scripts+ps1 TODO coverage; ui-web zero warnings` | 3, 8 | superseded; green at `8a919ad1` |
+| #666 `deps(930): clear npm advisories, gate lockfile completeness` | 1 | superseded; green at `8a919ad1` |
+| #672 `ci(930): measured axe runs hosted` | 5 | green (`8a919ad1`) |
+| #670 `build(930): PMD runs in the build; violations cleared` | 2 | landed `90a9d5fd`; main run pending at closeout |
+
+Founder flag: PR #667 changed `check-tempdoc-size` from "fails on any touch of an over-cap tempdoc" (the design
+the founder agreed in §18.1 row 8) to a no-growth ratchet: an over-cap tempdoc may be edited if
+it does not grow; growing it or crossing the cap still fails. Reason: 195 of 627 tempdocs are
+over cap, so a mechanical frontmatter repair was unlandable under touch semantics. The orchestrator
+accepted this as consistent with append-only history and the cap's rationale (unbounded growth),
+but it is a deviation from the agreed design — revert to touch semantics if the intent was to
+force a shrink on every edit.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Tempdoc 592 (rung 1) — generate the `hooks` block of .claude/settings.local.json
- * FROM the single-authority manifest governance/agent-hooks.v1.json.
+ * Generate Claude's tracked public/local-example hook projections from the
+ * single-authority manifest governance/agent-hooks.v1.json.
  *
  * The manifest is the ONE source of hook wiring. This script projects its `bindings`
  * into the settings file, emitting every command in the cwd-invariant exec-form
@@ -15,19 +15,14 @@
  * whose file exists) is validated HERE, at generation — not re-derived downstream.
  *
  * Usage:
- *   node scripts/codegen/gen-agent-hooks-wiring.mjs                         # write settings.local.json hooks
- *   node scripts/codegen/gen-agent-hooks-wiring.mjs --check                 # exit non-zero on drift
- *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-public-template  # compose the public settings.json
- *       template (guards-only — drops the founder-analytics hooks; no permissions/env) into the cutover-package.
- *       The go-public flip swaps that template in as .claude/settings.json (tempdoc 631 #2 / F3).
- *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example    # write .claude/settings.local.json.example
- *       (the maintainer re-wire seed promised by 631 #2: FULL hooks — incl. the founder-analytics set the
- *       public template drops — plus documented permissions/env stubs. A maintainer copies it to
- *       settings.local.json (gitignored) to restore session attribution/telemetry in the public checkout.)
+ *   node scripts/codegen/gen-agent-hooks-wiring.mjs          # regenerate tracked public + local-example projections
+ *   node scripts/codegen/gen-agent-hooks-wiring.mjs --check  # fail when either tracked projection drifts
+ *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-local-example
+ *   node scripts/codegen/gen-agent-hooks-wiring.mjs --emit-public-template
  *
- * Bootstrap: when .claude/settings.local.json is ABSENT (the post-cutover public checkout), the default
- * write and --check seed from settings.local.json.example (else the public settings.json base) instead of
- * crashing with ENOENT — so a maintainer with no local file yet can still generate one.
+ * The last two flags remain compatibility aliases for focused regeneration.
+ * An existing ignored settings.local.json is also regenerated/checked without
+ * creating one in a public checkout.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -39,14 +34,14 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = join(__dirname, '..', '..');
 
 const MANIFEST = join(REPO_ROOT, 'governance', 'agent-hooks.v1.json');
-const SETTINGS = join(REPO_ROOT, '.claude', 'settings.local.json');
+const LOCAL_SETTINGS = join(REPO_ROOT, '.claude', 'settings.local.json');
 
-// Go-public item 2 / F3: the public template composes the safe public base (no
-// permissions/env) + the manifest hooks block, written to the cutover-package prep area
-// (NOT live .claude/, to avoid double-loading the hooks during continued private dev).
-const PUBLIC_BASE = join(REPO_ROOT, '.claude', 'settings.json');
-const PUBLIC_TEMPLATE_OUT = join(
-  REPO_ROOT, 'docs', 'business', 'go-to-market', 'cutover-package', 'public-settings.json');
+// The tracked public projection contains universal hooks and a deny-only
+// permission posture. Founder-local analytics remain in the local example.
+const PUBLIC_SETTINGS = join(REPO_ROOT, '.claude', 'settings.json');
+// Compatibility names consumed by the focused tracked-projection wrapper.
+const PUBLIC_BASE = PUBLIC_SETTINGS;
+const SETTINGS = LOCAL_SETTINGS;
 
 // The committable maintainer re-wire seed (631 #2): FULL hooks + documented permissions/env stubs.
 // Committed (not gitignored) so a fresh maintainer clone has a seed; copying it to settings.local.json
@@ -139,14 +134,12 @@ function renderSettings(manifest, currentSettings) {
 }
 
 /**
- * Compose the PUBLIC settings.json template (go-public item 2 / F3): the safe public base
- * (.claude/settings.json — worktree/MCP/plugins; never permissions or local env) + the hooks
- * block from the manifest. The cutover swaps this in AS .claude/settings.json once
- * settings.local.json (bypassPermissions/Bash(*) + local env) is removed — that swap keeps the
- * published discipline guards LIVE rather than shipping them unwired (the whole point of item 2).
+ * Compose the tracked public settings.json: preserve public worktree/MCP/plugin
+ * configuration and native deny rules, remove local env/allow/ask posture, and
+ * project only universally safe hooks.
  */
-function renderPublicTemplate(manifest) {
-  const safeBase = { ...JSON.parse(readFileSync(PUBLIC_BASE, 'utf8')) };
+function renderPublicSettings(manifest, currentSettings = JSON.parse(readFileSync(PUBLIC_SETTINGS, 'utf8'))) {
+  const safeBase = { ...currentSettings };
   // Publish the `deny` rules (tempdoc 930 row 4 moved force-push protection off a PreToolUse
   // guard onto native permissions — dropping them at cutover would leave the retirement with a
   // hole), but never an allow/ask posture inherited from local config.
@@ -158,6 +151,8 @@ function renderPublicTemplate(manifest) {
     { ...safeBase, hooks: renderHooksBlock(manifest, PUBLIC_EXCLUDED_HOOKS) }, null, 2) + '\n';
 }
 
+const renderPublicTemplate = renderPublicSettings;
+
 /**
  * Compose the maintainer re-wire SEED (.claude/settings.local.json.example, 631 #2): the public base
  * (worktree/mcp/plugins) + the FULL hooks block (no exclusions — the founder-analytics hooks the public
@@ -166,7 +161,7 @@ function renderPublicTemplate(manifest) {
  * step is documented in MAINTAINING.md; the stubs just mark where the per-machine posture goes.
  */
 function renderLocalExample(manifest) {
-  const base = { ...JSON.parse(readFileSync(PUBLIC_BASE, 'utf8')) };
+  const base = { ...JSON.parse(readFileSync(PUBLIC_SETTINGS, 'utf8')) };
   delete base.hooks; // regenerated below as the full set
   base.permissions = { allow: [], deny: [], ask: [], ...(base.permissions ?? {}) };
   base.env = base.env ?? {};
@@ -174,62 +169,68 @@ function renderLocalExample(manifest) {
 }
 
 /**
- * Resolve the base settings object the default write / --check regenerates the `hooks` block into.
- * Precedence: a maintainer's existing settings.local.json (never clobber their permissions/env) →
- * the committed example seed → the public settings.json base. The last two paths are the ENOENT
- * hardening: a public checkout with no local file yet can still generate one instead of crashing.
+ * Resolve the base for an existing maintainer-local projection. Precedence:
+ * local settings → committed example → public settings. The generator never
+ * creates the ignored local file implicitly.
  */
-function loadBaseSettings() {
-  if (existsSync(SETTINGS)) return JSON.parse(readFileSync(SETTINGS, 'utf8'));
+function loadLocalSettings() {
+  if (existsSync(LOCAL_SETTINGS)) return JSON.parse(readFileSync(LOCAL_SETTINGS, 'utf8'));
   if (existsSync(LOCAL_EXAMPLE_OUT)) {
     console.error('[gen-agent-hooks-wiring] settings.local.json absent — seeding from settings.local.json.example');
     return JSON.parse(readFileSync(LOCAL_EXAMPLE_OUT, 'utf8'));
   }
   console.error('[gen-agent-hooks-wiring] settings.local.json + .example absent — seeding from public settings.json base');
-  return JSON.parse(readFileSync(PUBLIC_BASE, 'utf8'));
+  return JSON.parse(readFileSync(PUBLIC_SETTINGS, 'utf8'));
+}
+
+function checkProjection(file, expected) {
+  return existsSync(file) && readFileSync(file, 'utf8').replace(/\r\n/g, '\n') === expected;
 }
 
 function main() {
   const check = process.argv.includes('--check');
   const manifest = readManifest();
+  const publicContent = renderPublicSettings(manifest);
+  const exampleContent = renderLocalExample(manifest);
 
   if (process.argv.includes('--emit-public-template')) {
-    writeFileSync(PUBLIC_TEMPLATE_OUT, renderPublicTemplate(manifest));
-    console.log('[gen-agent-hooks-wiring] wrote public template ' + relative(REPO_ROOT, PUBLIC_TEMPLATE_OUT));
+    writeFileSync(PUBLIC_SETTINGS, publicContent, 'utf8');
+    console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, PUBLIC_SETTINGS));
     return;
   }
 
   if (process.argv.includes('--emit-local-example')) {
-    writeFileSync(LOCAL_EXAMPLE_OUT, renderLocalExample(manifest));
+    writeFileSync(LOCAL_EXAMPLE_OUT, exampleContent, 'utf8');
     console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, LOCAL_EXAMPLE_OUT));
     return;
   }
 
-  // The regen drift-guard is a maintainer-local check: a public checkout legitimately has no
-  // settings.local.json (it is gitignored + analytics-only), so there is nothing to drift. Skip
-  // cleanly rather than fail/crash — keeps `--check` honest where the file is intentionally absent.
-  if (check && !existsSync(SETTINGS)) {
-    console.log('[gen-agent-hooks-wiring] no .claude/settings.local.json (public checkout) — nothing to check; skipping');
-    return;
-  }
-
-  const currentSettings = loadBaseSettings();
-  const content = renderSettings(manifest, currentSettings);
-
   if (check) {
-    const before = existsSync(SETTINGS) ? readFileSync(SETTINGS, 'utf8') : null;
-    if (before !== content) {
-      console.error('[gen-agent-hooks-wiring] CHECK FAILED: .claude/settings.local.json hooks block');
-      console.error('  drifted from governance/agent-hooks.v1.json.');
-      console.error('  Re-run `node scripts/codegen/gen-agent-hooks-wiring.mjs`, inspect, commit the regen.');
+    const drifted = [];
+    if (!checkProjection(PUBLIC_SETTINGS, publicContent)) drifted.push(relative(REPO_ROOT, PUBLIC_SETTINGS));
+    if (!checkProjection(LOCAL_EXAMPLE_OUT, exampleContent)) drifted.push(relative(REPO_ROOT, LOCAL_EXAMPLE_OUT));
+    if (existsSync(LOCAL_SETTINGS)) {
+      const localContent = renderSettings(manifest, loadLocalSettings());
+      if (!checkProjection(LOCAL_SETTINGS, localContent)) drifted.push(relative(REPO_ROOT, LOCAL_SETTINGS));
+    }
+    if (drifted.length > 0) {
+      console.error('[gen-agent-hooks-wiring] CHECK FAILED: hook projections drifted from governance/agent-hooks.v1.json:');
+      for (const file of drifted) console.error(`  - ${file}`);
+      console.error('  Re-run `node scripts/codegen/gen-agent-hooks-wiring.mjs`, inspect, and commit tracked changes.');
       process.exit(1);
     }
-    console.log('[gen-agent-hooks-wiring] check passed — settings hooks block matches the manifest');
+    console.log('[gen-agent-hooks-wiring] check passed — Claude hook projections match the manifest');
     return;
   }
 
-  writeFileSync(SETTINGS, content, 'utf8');
-  console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, SETTINGS) + ' (hooks block from manifest)');
+  writeFileSync(PUBLIC_SETTINGS, publicContent, 'utf8');
+  writeFileSync(LOCAL_EXAMPLE_OUT, exampleContent, 'utf8');
+  console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, PUBLIC_SETTINGS));
+  console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, LOCAL_EXAMPLE_OUT));
+  if (existsSync(LOCAL_SETTINGS)) {
+    writeFileSync(LOCAL_SETTINGS, renderSettings(manifest, loadLocalSettings()), 'utf8');
+    console.log('[gen-agent-hooks-wiring] wrote ' + relative(REPO_ROOT, LOCAL_SETTINGS));
+  }
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -242,4 +243,17 @@ if (isMain) {
   }
 }
 
-export { MANIFEST, SETTINGS, readManifest, renderHooksBlock, renderSettings };
+export {
+  MANIFEST,
+  PUBLIC_SETTINGS,
+  LOCAL_SETTINGS,
+  LOCAL_EXAMPLE_OUT,
+  PUBLIC_BASE,
+  SETTINGS,
+  readManifest,
+  renderHooksBlock,
+  renderSettings,
+  renderPublicSettings,
+  renderLocalExample,
+  renderPublicTemplate,
+};

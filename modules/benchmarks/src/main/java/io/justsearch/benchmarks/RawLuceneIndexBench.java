@@ -219,7 +219,12 @@ public final class RawLuceneIndexBench {
     // Cleanup temp index
     try (var stream = Files.walk(indexPath)) {
       stream.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
-        try { Files.deleteIfExists(p); } catch (IOException ignored) {}
+        try {
+          Files.deleteIfExists(p);
+        } catch (IOException ignored) {
+          // Best-effort teardown of a temp index the OS will reclaim anyway; the measurement is
+          // already written, so a locked file must not fail the run.
+        }
       });
     }
   }

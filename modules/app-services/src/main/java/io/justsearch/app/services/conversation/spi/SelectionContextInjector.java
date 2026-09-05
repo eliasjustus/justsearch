@@ -339,7 +339,7 @@ public final class SelectionContextInjector implements ContextInjector {
       if (taken >= MAX_RESULT_SET_DOCS) break;
       String content = fetchDocContent(ref.id());
       if (content == null || content.isBlank()) continue;
-      String truncated = truncateToBudget(ctx, content, "result-set document", ref.id(), perDocChars);
+      String truncated = truncateToBudget(content, "result-set document", ref.id(), perDocChars);
       if (concat.length() > 0) concat.append(DocumentService.SECTION_SEPARATOR);
       concat.append("Document: ").append(ref.id()).append("\n\n").append(truncated);
       Map<String, Object> citation = new LinkedHashMap<>();
@@ -455,7 +455,7 @@ public final class SelectionContextInjector implements ContextInjector {
 
   /** Cuts to the turn's whole input budget, saying so when the cut actually removed something. */
   private String truncateToBudget(ConversationContext ctx, String s, String what, String docId) {
-    return truncateToBudget(ctx, s, what, docId, selectionCapChars(ctx));
+    return truncateToBudget(s, what, docId, selectionCapChars(ctx));
   }
 
   /**
@@ -465,8 +465,7 @@ public final class SelectionContextInjector implements ContextInjector {
    * cut at the SERVER instead — as a 400, with nothing in our logs saying which selection was too
    * big. A drop that changes what the model was shown is a fact about the answer, so it is stated.
    */
-  private String truncateToBudget(
-      ConversationContext ctx, String s, String what, String docId, int capChars) {
+  private String truncateToBudget(String s, String what, String docId, int capChars) {
     String cut = truncate(s, capChars);
     if (s != null && cut.length() < s.length()) {
       LOG.info(

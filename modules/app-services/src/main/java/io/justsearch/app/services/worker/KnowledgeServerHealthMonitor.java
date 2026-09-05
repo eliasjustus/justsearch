@@ -250,7 +250,7 @@ public final class KnowledgeServerHealthMonitor implements Closeable, WorkerReco
         // "never started". The exception text is the detail behind the code.
         cap.transition(
             CapabilityHealth.DEGRADED,
-            io.justsearch.app.api.lifecycle.LifecycleReasonCode.WORKER_LOST.code(),
+            LifecycleReasonCode.WORKER_LOST.code(),
             "Health monitor tick exception: " + e.getMessage());
       }
     }

@@ -106,7 +106,6 @@ function parseHash(win: Window): Intent | null {
     // symmetrically with TauriDeepLinkSource — operators / developers
     // need to see malformed input so a typo'd bookmark or stale
     // shareable URL doesn't fail silently.
-    // eslint-disable-next-line no-console
     console.warn(`[URLSource] received un-parseable justsearch:// URL: ${url}`);
     return null;
   }

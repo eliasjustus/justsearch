@@ -1,5 +1,5 @@
 ---
-status: IN REVIEW — PR 1 landed (#594: premise probes + 45-ADR frontmatter sweep); PR 2 implemented and open for independent review (ADR amendments, ADR-0046, risk register, fail-closed token, 0038 generation, review cadence). The store-recoverability register residue and the governance-kernel dead-code/module-deps/test-efficacy gate residue are settled by tempdocs 909 (#613) and 910 (#611) — see "Residue routed".
+status: "IN REVIEW — PR 1 landed (#594: premise probes + 45-ADR frontmatter sweep); PR 2 implemented and open for independent review (ADR amendments, ADR-0046, risk register, fail-closed token, 0038 generation, review cadence). The store-recoverability register residue and the governance-kernel dead-code/module-deps/test-efficacy gate residue are settled by tempdocs 909 (#613) and 910 (#611) — see \"Residue routed\"."
 created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; no dev stack needed)

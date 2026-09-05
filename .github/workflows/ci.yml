@@ -110,6 +110,13 @@ jobs:
           python -m pip install --quiet pillow
           python -m unittest discover -s scripts/sandbox -p "test_*.py" -v
 
+      # A lockfile can install fine under the npm that wrote it and still be REFUSED by the
+      # runner's npm ("Missing: X@V from lock file"), because writing prunes edges the reader
+      # demands. Nothing local caught that; three jobs went red on it. This reads all five
+      # lockfiles offline and fails on the same condition, before any install runs.
+      - name: Lockfiles name every declared dependency edge
+        run: node scripts/ci/check-lockfile-completeness.mjs
+
       - name: Install root dependencies
         # The identity gate below is the authoritative audit for this lockfile. npm's install-time
         # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
@@ -149,6 +156,9 @@ jobs:
 
       - name: Workflow npm install audit policy guard
         run: node scripts/ci/check-workflow-npm-audit-policy.mjs
+
+      - name: Test lockfile completeness guard
+        run: node scripts/ci/test-check-lockfile-completeness.mjs
 
       - name: Test publish preflight contract
         run: node scripts/ci/test-run-publish-preflight.mjs
@@ -261,6 +271,12 @@ jobs:
       - name: Test managed PR review record
         run: node scripts/ci/test-pr-review-record.mjs
 
+      - name: Test validated publication enqueue
+        run: node scripts/dev/run-gh.test.mjs
+
+      - name: Test direct publication-merge guard
+        run: node scripts/agent-analytics/hooks/publication-merge-guard.test.mjs
+
       - name: Test bounded advisory reporting
         run: node scripts/ci/test-report-github-advisories.mjs
 
@@ -335,12 +351,15 @@ jobs:
 
       # `npm-audit` is NOT one of the six gates tempdoc 930 chunk F retired -- it stays registered,
       # baselined and wired here. Chunk F first swapped it for plain `npm audit --audit-level=high`
-      # over both lockfiles; that step was red on the base for 17 pre-existing high advisories
-      # (11 root, 6 ui-web) that no PR introduced, which is the same objection the comment above
-      # raises against wiring a known red. The commodity command has no accepted-advisory baseline,
-      # so it cannot distinguish "new advisory" from "advisory we already carry" -- which is the
-      # one thing this ratchet exists to do. Swapping it is a real option, but it has to land with
-      # the upgrades that clear the existing advisories, not before them.
+      # over both lockfiles; that step was red on the base for pre-existing high advisories that
+      # no PR introduced, which is the same objection the comment above raises against wiring a
+      # known red. The commodity command has no accepted-advisory baseline, so it cannot
+      # distinguish "new advisory" from "advisory we already carry" -- which is the one thing this
+      # ratchet exists to do. The upgrades that clear those advisories have since landed and the
+      # accepted set is empty (ADR-0044 amendment 2026-09-05), so the gate now fails on the first
+      # high/critical identity in any of the five lockfiles. `actions/dependency-review-action`
+      # was evaluated as a replacement in the same pass and rejected: it scores a revision diff,
+      # not the checked-out lockfile.
       - name: Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
         run: |
           node scripts/governance/run.mjs \
@@ -352,6 +371,18 @@ jobs:
       # `eslint-suppressions.json` carries the pre-existing violations; a NEW one fails here.
       - name: Frontend lint (ts-any + todo-fixme successors)
         run: npm --prefix modules/ui-web run lint
+
+      # Tempdoc 930 section 22.2 follow-up 3 closes the other half of the same hole. The retired
+      # `todo-fixme` gate scanned `scripts/**` and `*.ps1` too, and neither successor above
+      # covered them: ESLint ran only in modules/ui-web, PMD only sees Java. `lint:scripts` is the
+      # root ESLint config (eslint.config.mjs, ~575 .mjs/.cjs files plus the packaging JS);
+      # `lint:ps1` is the PowerShell equivalent, which ESLint cannot parse. Both carry their
+      # pre-existing markers in a suppression list, so a NEW marker fails here.
+      - name: Script lint (todo-fixme successor for scripts/** and *.ps1)
+        run: |
+          npm run lint:scripts
+          npm run test:lint-ps1
+          npm run lint:ps1
 
       # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
       # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
@@ -568,6 +599,12 @@ jobs:
       - name: Markdownlint canonical docs
         run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
 
+      - name: Validate docs frontmatter, headings and encoding
+        # Complements markdownlint (style) with the semantic rules: frontmatter parses, the H1
+        # equals the frontmatter title llms.txt indexes, no U+FFFD. Unwired until tempdoc 930
+        # §22.2 follow-up 7 cleared its last 2,219 findings; wiring it is what keeps it at zero.
+        run: node scripts/docs/docs-validate.mjs
+
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 
@@ -641,6 +678,103 @@ jobs:
         # `-p no:cacheprovider`: a fresh runner has no cache to reuse and the plugin
         # would only write .pytest_cache into the checkout.
         run: python -m pytest scripts/jseval/tests -q -p no:cacheprovider
+
+  measured-axe:
+    name: Measured axe (advisory)
+    # Tempdoc 930 §22.2 follow-up 5. Chunk H retired twelve static a11y/token oracles in
+    # favour of measurement, but only half the replacement ran on PRs: the four-palette
+    # contrast sweep (`check-contrast-matrix`, inside the required `Public claims` lane via
+    # run-ui-web-gates.mjs). The other half — `jseval ui-a11y-gate`, real axe-core against
+    # the rendered page — was local-only, so a PR that regressed a rendered-page a11y rule
+    # had no automated catch at all.
+    #
+    # Nothing about that gate needs the backend, which is why it can run here: `--fixtures`
+    # intercepts every `/api/*` request in Playwright and serves committed schema-valid
+    # bodies (scripts/jseval/jseval/ui_fixtures.py `install_fixtures`), and `ui-shot` starts
+    # its own Vite dev server out of `modules/ui-web` (ui_shot.py `_start_vite_server`). So
+    # the whole sweep is Node + Python + headless Chromium: no Java, no Gradle, no GPU, no
+    # dev stack. Measured locally at 350s wall for the register's 20 surfaces including a
+    # cold Vite start, exit 0.
+    #
+    # ADVISORY, following `integration-tests`: deliberately absent from
+    # scripts/ci/workflow-signal-policy.v1.json's requiredStatusChecks and from
+    # scripts/ci/public-ci-local-repro.v1.json (adding an entry to the latter while the job
+    # is not a required check FAILS validatePublicCiLocalRepro by design). Promotion to a
+    # required check is a separate decision that wants stability evidence from this lane
+    # first — the path `jseval-suite` walked between §18.1 row 7 and §22.2 follow-up 4.
+    # Recorded as the 2026-09-05 amendment to ADR-0026, which is why the gate's own
+    # docstrings no longer say "not CI-wired". Also absent from
+    # scripts/ci/ci-walltime-policy.v1.json: every lane there carries a `requiredCheck`
+    # and the reporter's one loud finding is `missing-required-lane`, so a non-required
+    # job has no honest row to occupy until it is promoted.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: modules/ui-web/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval with the ui extra
+        # The `ui` extra is Playwright. It is an optional-dependency, so it is absent from
+        # requirements.lock.txt and `-c` leaves it unpinned — same shape as the pytest
+        # install in the two lanes above. The lock-drift guard only compares pyproject's
+        # base `dependencies` against the lock, so naming an extra here cannot trip it.
+        run: python -m pip install -e "scripts/jseval[ui]" -c scripts/jseval/requirements.lock.txt
+
+      - name: Install frontend dependencies
+        # axe.min.js (the bundle ui_measure injects) and Vite both come from here.
+        run: npm ci --prefix modules/ui-web --audit=false
+
+      - name: Resolve the installed Playwright version
+        id: playwright
+        run: |
+          echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install headless Chromium
+        # `--with-deps` installs the shared libraries Chromium needs; those are apt packages,
+        # not part of the cached browser directory, so this step runs on a cache hit too.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Measured axe over the a11y baseline register
+        # Exit 0 clean · 1 a NEW axe rule not in the surface's `knownRules` · 2 a capture
+        # error. The per-surface verdict JSON goes to stderr; `pipefail` keeps the gate's
+        # exit code rather than tee's (agent-lessons `piped-exit-masked`).
+        run: |
+          set -o pipefail
+          mkdir -p build/ci/ui-a11y
+          python -m jseval ui-a11y-gate --output-dir build/ci/ui-a11y 2>&1 \
+            | tee build/ci/ui-a11y/gate-report.log
+
+      - name: Upload measured-axe captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: measured-axe-captures
+          path: |
+            build/ci/ui-a11y/*.measure.json
+            build/ci/ui-a11y/*.png
+            build/ci/ui-a11y/gate-report.log
+          if-no-files-found: warn
 
   license-and-notices:
     name: License and notices
@@ -740,6 +874,16 @@ jobs:
         run: |
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
+
+      # PMD rides this job because it needs exactly what `assemble` just produced (compiled main
+      # classes) and nothing else: measured at ~23s wall for all 30 `pmdMain` tasks on top of a
+      # completed compile, well inside the budget for an existing job, versus a new job that would
+      # pay a fresh checkout + JDK + compile. Tempdoc 930 §22.2 follow-up 2 — before this step no
+      # workflow put `pmdMain` in its task graph, so the ruleset (incl. the `CommentContent`
+      # parked-marker ban) never ran in CI. It is a separate step, not an `assemble` dependency:
+      # `assemble` produces artifacts, `check` verifies them, and PMD is verification.
+      - name: Static analysis (PMD)
+        run: ./gradlew pmdMain --console=plain
 
       # `gen-api-client --check` is an entry of the regen set (run in `Public claims`); the
       # classified OpenAPI snapshot's check shells out to Gradle, so it stays its own step and
@@ -1139,7 +1283,11 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan]
+    # `jseval-suite` is in this list because it is a required lane with a wall-clock
+    # budget: `report-ci-walltime-attribution.mjs` drops any job with no end time, so an
+    # attribution taken while the ~6.5-minute suite still runs would omit it entirely and
+    # `report-ci-walltime-budget.mjs` would warn `missing-required-lane` on every run.
+    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan, jseval-suite]
     if: always()
     steps:
       - name: Checkout

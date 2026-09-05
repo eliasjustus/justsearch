@@ -42,7 +42,8 @@ path your build is about to write), `agent-spawn-session-end-reap` (SessionEnd).
 
 ## Transparent (no action needed)
 
-compact-save / compact-restore (restores post-compaction state, leading with current worktree +
-branch), subagent-guide (injects the Hard-Invariants baseline brief into Explore/Plan subagents),
+compact-save / compact-restore (emits one-shot post-compaction orientation; labels Git files as a
+workspace observation only after session/worktree/branch provenance matches), subagent-guide
+(injects the Hard-Invariants baseline brief into Explore/Plan subagents),
 worktree-base-hint, mcp-session-inject, export-session-env, otlp-sink-ensure, dispatch,
 codex-hook-adapter (the Codex projection of the same manifest).

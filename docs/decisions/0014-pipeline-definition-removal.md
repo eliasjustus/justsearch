@@ -1,5 +1,5 @@
 ---
-title: Pipeline Definition and Schema Removal
+title: "ADR-0014: Pipeline Definition and Schema Removal"
 type: decision
 status: stable
 description: "Remove pipeline DAG definitions, budget profiles, and pipeline-schema module."

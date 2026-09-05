@@ -286,7 +286,7 @@ public final class CombinedEnrichmentBackfillOps {
     boolean aborted = false;
     int docsSkipped = 0;
     int unitsDone = 0;
-    long epochAtSelection = 0;
+    long epochAtSelection;
     // Round-15 post-round finding: stamped as soon as this batch's selection + routing is final, so
     // the catch path below reports the same work-set the success path does.
     long workSetSignature = 0;

@@ -149,7 +149,7 @@ public final class DiagnosticsServiceImpl implements DiagnosticsService {
       if (feTelemetryJson != null && !feTelemetryJson.isBlank()) {
         addBytesRedacted(
             zos,
-            feTelemetryJson.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            feTelemetryJson.getBytes(StandardCharsets.UTF_8),
             "frontend/fe-telemetry.json");
       }
     }

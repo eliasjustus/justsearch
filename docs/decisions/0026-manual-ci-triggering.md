@@ -1,12 +1,12 @@
 ---
-title: "Manual-Only CI Triggering"
+title: "ADR-0026: Manual-Only CI Triggering"
 type: decision
 status: accepted - narrowed by ADR-0044
 description: "Manual-only workflow policy for the former self-hosted/local-runner model; ADR-0044 now narrows this for the public hosted CI lane."
 date: 2026-04-22
 probes:
   - adr-0026-workflow-triggers-checked
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-05
 ---
 
 # ADR-0026: Manual-Only CI Triggering
@@ -177,3 +177,57 @@ capability is unaffected and remains available for manual use.
 > was unresolvable. `jseval gate` survives as a projection-presence check and
 > `jseval run` is unchanged. This ADR's actual decision — manual triggering for
 > self-hosted workflows — stands; only the named artefacts are stale.
+
+## Amendment 2026-09-05: measured axe runs on PRs as an advisory lane
+
+Two of this ADR's descendants — `jseval ui-a11y-gate` and `jseval
+ui-proportion-gate` — carried "Local-first (ADR-0026): a runnable gate, not a
+CI-wired kernel gate" in their own docstrings. That citation was load-bearing
+for the a11y gate in a way this ADR never intended. ADR-0026 is about *runner
+availability*: a self-hosted workstation runner cannot be relied on to be
+online, so nothing may auto-trigger against it. It says nothing about a check
+that needs no self-hosted runner at all.
+
+`ui-a11y-gate` is exactly that check. Its deterministic `--fixtures` capture
+state intercepts every `/api/*` request inside Playwright and answers from
+committed schema-valid fixtures (`scripts/jseval/jseval/ui_fixtures.py`), and
+`ui-shot` starts its own Vite dev server out of `modules/ui-web`
+(`ui_shot.py::_start_vite_server`). No backend, no Gradle, no GPU, no dev
+stack — Node, Python and headless Chromium. Measured at 350s wall for the 20
+surfaces in `governance/ui-a11y-baseline.v1.json`, including a cold Vite
+start, exit 0.
+
+Tempdoc 930 chunk H retired twelve static a11y/token oracles in favour of
+measurement, but only the four-palette contrast sweep
+(`check-contrast-matrix`) actually ran on PRs; the measured-axe half stayed
+local. That was a real reduction in automated accessibility coverage, tracked
+as §22.2 follow-up 5.
+
+**Decision.** `.github/workflows/ci.yml` gains a `measured-axe` job
+(`Measured axe (advisory)`, `ubuntu-latest`) running `jseval ui-a11y-gate` on
+`pull_request`, `push` to `main`, `merge_group` and `workflow_dispatch` — the
+triggers ADR-0044 already grants that workflow. This adds no trigger and
+touches no self-hosted runner, so the manual-only policy for self-hosted and
+specialty workflows is unchanged.
+
+**The lane is ADVISORY, not required.** Like `integration-tests`, it is
+deliberately absent from `scripts/ci/workflow-signal-policy.v1.json`'s
+`requiredStatusChecks` and from `scripts/ci/public-ci-local-repro.v1.json` —
+adding a non-required context to the latter fails
+`validatePublicCiLocalRepro` by design. Promotion to a required check is a
+separate decision that wants stability evidence from this lane first (a hosted
+Linux Chromium renders differently from the Windows machine the register's
+`knownRules` were captured on, and only real runs can show whether that is a
+source of NEW-violation noise). That is the path `jseval-suite` walked: added
+as an unrequired hosted job by §18.1 row 7, promoted to a required check only
+after it had run.
+
+The first hosted run (PR #672, run 33958715012, job 101286643288) came back
+`exit_code: 0` with per-surface rows **identical to both local Windows runs**,
+`health`'s one accepted `color-contrast` included, in 168s wall for the whole
+job. That is encouraging but it is one run — the promotion question is whether
+it stays that way, which only a series of runs can answer.
+
+`ui-proportion-gate` keeps its local-only status and its ADR-0026 citation for
+now: its baseline is pixel geometry, which is far more runner-dependent than
+an axe rule id. That is a separate judgement, not an oversight.

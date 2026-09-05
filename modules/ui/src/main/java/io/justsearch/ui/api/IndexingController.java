@@ -561,6 +561,56 @@ public class IndexingController {
     }
   }
 
+  /**
+   * Tempdoc 931 §E item 10 — {@code POST /api/indexing/settle}. Purges deleted-but-unmerged
+   * documents from the active index and answers 202 with the before/after document counts, so a
+   * paired evaluation can show both arms queried an index with the same merge state. 409 when the
+   * worker refuses (no index runtime, migration in flight, upgrade barrier held).
+   */
+  public void handleSettleIndex(Context ctx) {
+    try {
+      Map<String, Object> body = ctx.bodyAsClass(Map.class);
+      boolean expungeDeletesOnly = true;
+      int maxSegments = 0;
+      if (body != null) {
+        Object edo = body.get("expungeDeletesOnly");
+        if (edo != null) {
+          expungeDeletesOnly = Boolean.parseBoolean(String.valueOf(edo));
+        }
+        Object seg = body.get("maxSegments");
+        if (seg instanceof Number n) {
+          maxSegments = n.intValue();
+        } else if (seg != null) {
+          try {
+            maxSegments = Integer.parseInt(String.valueOf(seg));
+          } catch (NumberFormatException expected) { /* invalid input, keep default */ }
+        }
+      }
+      var outcome = indexingService().settleIndex(expungeDeletesOnly, Math.max(0, maxSegments));
+      if (outcome.accepted()) {
+        Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("status", "settle completed");
+        response.put("expungeDeletesOnly", expungeDeletesOnly);
+        response.put("maxDocBefore", outcome.maxDocBefore());
+        response.put("numDocsBefore", outcome.numDocsBefore());
+        response.put("maxDocAfter", outcome.maxDocAfter());
+        response.put("numDocsAfter", outcome.numDocsAfter());
+        response.put("segmentsAfter", outcome.segmentsAfter());
+        response.put("elapsedMs", outcome.elapsedMs());
+        ctx.status(202).json(response);
+      } else {
+        ctx.status(409)
+            .json(Map.of("status", "settle rejected by worker", "error", outcome.error()));
+      }
+    } catch (StatusRuntimeException e) {
+      int http = ApiErrorHandler.mapGrpcToHttp(e.getStatus().getCode());
+      ctx.status(http).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (Exception e) {
+      log.error("Failed to settle index", e);
+      ctx.status(500).json(ApiErrorHandler.toResponse(e, telemetry, ApiErrorHandler.routeOf(ctx)));
+    }
+  }
+
   public void handleSuggestedRoots(Context ctx) {
     try {
       if (userHome == null) {
