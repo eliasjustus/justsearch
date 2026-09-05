@@ -24,6 +24,13 @@ public final class ParityDiagnostics {
    * (tempdoc 804); {@code analyzer_fp} and the vector dimension are now inputs to
    * {@code index_fingerprint} rather than separate keys; {@code similarity_fp} (BM25 k1/b) is
    * query-time and was demoted to plain observability.
+   *
+   * <p>{@code index_fingerprint_inputs} is deliberately NOT a member. It is the canonical rendering
+   * the digest hashes — the same statement, not a second one — so comparing it as a key of its own
+   * would report a single shape change twice, once as a digest mismatch and once as a text
+   * mismatch. It is read on exactly one path: {@link #diff} falls back to it when the EXPECTED
+   * digest is uncomputable, and then compares only the inputs the unresolved model does not touch
+   * (tempdoc 931 §C.5).
    */
   public static final Set<String> PARITY_KEYS =
       Set.of(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY, "boosts_fp");
@@ -107,6 +114,7 @@ public final class ParityDiagnostics {
   public static List<Diff> diff(
       Map<String, String> stored, Map<String, Object> expected, long docCount) {
     List<Diff> diffs = new ArrayList<>();
+    diffs.addAll(determinateInputDiff(stored, expected, docCount));
     for (String key : PARITY_KEYS) {
       String storedRaw = asString(stored == null ? null : stored.get(key));
       String expectedRaw = asString(expected == null ? null : expected.get(key));
@@ -147,6 +155,96 @@ public final class ParityDiagnostics {
       }
     }
     return List.copyOf(diffs);
+  }
+
+  /**
+   * True when the digest comparison is unavailable but the fallback one is: this runtime could not
+   * compute an {@code index_fingerprint}, and BOTH sides recorded the canonical inputs.
+   *
+   * <p>Exposed so the guard's once-per-boot WARN can tell the operator which of the two things
+   * happened. "Parity is not being checked" and "parity is being checked on everything except the
+   * model digest I could not read" are different facts, and logging the first when the second is
+   * true is the same class of untruth as declining silently.
+   */
+  public static boolean determinateInputComparisonAvailable(
+      Map<String, String> stored, Map<String, Object> expected) {
+    String expectedFingerprint =
+        asString(
+            expected == null
+                ? null
+                : expected.get(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY));
+    if (!isBlank(expectedFingerprint)) {
+      return false;
+    }
+    String key = io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY;
+    return !isBlank(asString(stored == null ? null : stored.get(key)))
+        && !isBlank(asString(expected == null ? null : expected.get(key)));
+  }
+
+  /**
+   * The fallback comparison for an uncomputable expected fingerprint (tempdoc 931 §C.5).
+   *
+   * <p>An {@code INDETERMINATE} model digest means one input is unknown, not that every input is.
+   * Before this, an unreadable NER model file switched off the vector-dimension, chunking and
+   * analyzer comparison it has nothing to do with — an index built under a genuinely different
+   * physical shape opened silently for as long as that file stayed unreadable. Here the unresolved
+   * model keys are dropped from BOTH renderings and the remainder is compared; any difference is
+   * routed as an {@code index_fingerprint} diff, so it takes the same exception, the same policy
+   * branch and the same rebuild brake as a digest mismatch. No new reason code: it is the same
+   * fact, established a different way.
+   *
+   * <p>Empty when the digest was computable (the digest is then the better answer and is compared
+   * above), when either side recorded no inputs (a legacy commit keeps today's decline), or when
+   * the index holds nothing whose shape could be wrong.
+   */
+  private static List<Diff> determinateInputDiff(
+      Map<String, String> stored, Map<String, Object> expected, long docCount) {
+    if (holdsNothingToMigrate(docCount)
+        || !determinateInputComparisonAvailable(stored, expected)) {
+      return List.of();
+    }
+    String key = io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY;
+    List<io.justsearch.adapters.lucene.commit.IndexFingerprint.InputDifference> differences =
+        io.justsearch.adapters.lucene.commit.IndexFingerprint.differingInputs(
+            asString(stored.get(key)),
+            asString(expected.get(key)),
+            io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs());
+    if (differences.isEmpty()) {
+      return List.of();
+    }
+    List<String> paths = differences.stream().map(d -> d.path()).toList();
+    return List.of(
+        new Diff(
+            io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY,
+            summarize(differences, d -> d.stored()),
+            summarize(differences, d -> d.expected()),
+            "The effective index shape changed on an input this runtime CAN resolve, compared via"
+                + " index_fingerprint_inputs because no index_fingerprint could be computed"
+                + " (unresolved model inputs: "
+                + io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs()
+                + "). Differing inputs: "
+                + paths
+                + ". Reindex or run schema migration."));
+  }
+
+  /** At most three {@code path=value} pairs, so a log line stays a log line. */
+  private static String summarize(
+      List<io.justsearch.adapters.lucene.commit.IndexFingerprint.InputDifference> differences,
+      java.util.function.Function<
+              io.justsearch.adapters.lucene.commit.IndexFingerprint.InputDifference, String>
+          side) {
+    StringBuilder sb = new StringBuilder();
+    int shown = Math.min(3, differences.size());
+    for (int i = 0; i < shown; i++) {
+      if (i > 0) {
+        sb.append(", ");
+      }
+      sb.append(differences.get(i).path()).append('=').append(side.apply(differences.get(i)));
+    }
+    if (differences.size() > shown) {
+      sb.append(" (+").append(differences.size() - shown).append(" more)");
+    }
+    return sb.toString();
   }
 
   private static boolean isBlank(String value) {

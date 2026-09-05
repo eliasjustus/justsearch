@@ -91,13 +91,29 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   answer. `INDETERMINATE` (a model file is configured but its digest could not be read) is *not* an
   answer: `IndexFingerprint.compute()` returns empty rather than inventing one, and
   `SsotCommitMetadataSource` then stamps **no** `index_fingerprint` key at all into commit
-  user-data. `ParityDiagnostics.diff()` skips the comparison when the **expected** side is blank,
-  and `IndexMetadataParityGuard` logs a WARN once per boot naming the input that went unresolved, so
-  a check that is not running never looks like a check that passed. **A transiently unreadable model
-  file must never look like a swapped one** — the consequence of the latter is a full rebuild.
-  A *missing* model file is a different thing and is read as `NOT_CONFIGURED`, a determinate answer:
-  most installs have no SPLADE or NER model, and reading their absence as "no answer" would switch
-  the parity check off on every one of them.
+  user-data. The digest stays all-or-nothing — a digest over a partial input set would mean a
+  different thing depending on which inputs happened to be readable. **A transiently unreadable
+  model file must never look like a swapped one** — the consequence of the latter is a full
+  rebuild. A *missing* model file is a different thing and is read as `NOT_CONFIGURED`, a
+  determinate answer: most installs have no SPLADE or NER model, and reading their absence as "no
+  answer" would switch the parity check off on every one of them.
+- **An uncomputable digest is not an uncomputable comparison** (`index_fingerprint_inputs`, 2026-09-05).
+  The canonical inputs the digest hashes are stamped beside it, under `index_fingerprint_inputs`, on
+  every commit — including the ones where no digest could be computed. When the **expected** digest
+  is blank and both commits carry that rendering, `ParityDiagnostics.diff()` drops the unresolved
+  model keys (named by `IndexFingerprint.indeterminateModelInputs()`, because `INDETERMINATE` and
+  `NOT_CONFIGURED` both render as `null` and the JSON alone cannot tell them apart) from **both**
+  sides and compares the rest. A difference in any remaining input — vector dimension or similarity,
+  field shape, analyzer fingerprint, vector format, HNSW build params, chunking, `preview.max_chars`,
+  the analysis library versions — is reported as an `index_fingerprint` diff, so it takes the same
+  `SCHEMA_MISMATCH`, the same policy branch and the same rebuild brake as a digest mismatch. There is
+  no separate reason code: it is the same fact, established a different way. Before this, an
+  unreadable NER model file switched off the vector-dimension check it has nothing to do with.
+  Two cases keep the older behaviour of declining outright: a commit written before the inputs key
+  existed (nothing to compare against), and an index holding no documents. `IndexMetadataParityGuard`
+  logs a WARN once per boot either way, and the two WARNs differ — "checked WITHOUT the model
+  digests" vs "NOT being checked" — so a check that is not running never looks like a check that
+  passed, and a check that IS running does not look like one that was skipped.
 - **Legacy indexes migrate once, by design.** Every index built before this key existed has a blank
   *stored* fingerprint, and it always will. Skipping that case would leave the guard permanently
   inert on exactly the installs it exists to protect, so a blank stored value on a rebuild-requiring
@@ -111,7 +127,9 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   the default write format unless explicitly disabled. Both values are physical fingerprint inputs,
   so a pre-wave-2 Float32/EUCLIDEAN index is rebuilt instead of being opened under the new shape.
 - **Stamping:** on commit, the Worker writes `index_fingerprint` into Lucene commit user-data via
-  `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`).
+  `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`), plus
+  `index_fingerprint_inputs` — the canonical JSON the digest is the SHA-256 of, stamped verbatim and
+  unconditionally. Both keys are declared in `SSOT/schemas/indexing/commit-metadata.schema.json`.
 - **Validation:** on startup/open, `IndexMetadataParityGuard.checkOnOpen()` compares the stored
   value vs the current value. See [Enforcement status](#enforcement-status-2026-09) below — the
   guard now enforces.
@@ -277,6 +295,11 @@ anything for its whole prior life (tempdoc 804 §D1).
     `IndexRuntimeIOException(SCHEMA_MISMATCH)`, which `index.schema_mismatch.policy` acts on;
   - else (a `boosts_fp`-only diff — query-time config) throws `IllegalStateException`, marking the
     shard read-only until the config is realigned; this is never a reindex trigger.
+- When the expected `index_fingerprint` cannot be computed at all, the guard does **not** simply
+  stand down: it falls back to comparing `index_fingerprint_inputs` minus the unresolved model keys
+  and routes any difference as an `index_fingerprint` diff (see the tri-state bullets above).
+  `index_fingerprint_inputs` is deliberately not itself a `PARITY_KEYS` member — it is the same
+  statement as the digest, so comparing both would report one shape change twice.
 - `justsearch.index.parity.allow_mismatch` / `JUSTSEARCH_INDEX_PARITY_ALLOW_MISMATCH` now survives
   **only** as an explicit operator escape hatch — nothing sets it by default any more. An operator can
   still set it to open a known-divergent index read-only for diagnosis, and nothing else.
