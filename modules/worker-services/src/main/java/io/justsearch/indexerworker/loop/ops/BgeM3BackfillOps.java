@@ -47,6 +47,9 @@ public final class BgeM3BackfillOps {
       BooleanSupplier runningSupplier,
       int batchSize,
       boolean commitAfterBatch,
+      // Tempdoc 712/931: see SpladeBackfillOps.BackfillContext — same flag, same reason. This lane
+      // writes the sparse and dense pair together, so a chunk it selects gets sparse data too.
+      boolean chunkSpladeEnabled,
       Logger log) {}
 
   /**
@@ -61,12 +64,19 @@ public final class BgeM3BackfillOps {
     long t0 = System.nanoTime();
     try {
       List<String> pendingIds =
-          context
-              .documentFieldOps()
-              .queryDocIdsByField(
-                  SchemaFields.SPLADE_STATUS,
-                  SchemaFields.SPLADE_STATUS_PENDING,
-                  context.batchSize());
+          context.chunkSpladeEnabled()
+              ? context
+                  .documentFieldOps()
+                  .queryDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize())
+              : context
+                  .documentFieldOps()
+                  .queryNonChunkDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize());
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {

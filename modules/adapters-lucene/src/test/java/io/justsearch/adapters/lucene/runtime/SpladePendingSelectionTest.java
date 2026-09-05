@@ -111,6 +111,23 @@ class SpladePendingSelectionTest {
         "excluding chunks must not widen or narrow the status predicate");
   }
 
+  @Test
+  @DisplayName("countNonChunkByField matches the selection it gates, so parked chunks read as 0")
+  void nonChunkCountMatchesTheSelection() {
+    assertEquals(
+        2,
+        runtime
+            .indexCountOps()
+            .countByField(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING),
+        "the plain count sees the parked chunk");
+    assertEquals(
+        1,
+        runtime
+            .indexCountOps()
+            .countNonChunkByField(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING),
+        "a permanently-parked chunk population must not read as outstanding work");
+  }
+
   private void indexParent(String docId, String content, String spladeStatus) {
     Map<String, Object> fields = new HashMap<>();
     fields.put(SchemaFields.DOC_ID, docId);

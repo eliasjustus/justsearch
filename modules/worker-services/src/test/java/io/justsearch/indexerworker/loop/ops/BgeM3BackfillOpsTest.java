@@ -44,6 +44,10 @@ class BgeM3BackfillOpsTest {
   @Mock BgeM3Encoder encoder;
 
   private BgeM3BackfillOps.BackfillContext context() {
+    return context(true);
+  }
+
+  private BgeM3BackfillOps.BackfillContext context(boolean chunkSpladeEnabled) {
     return new BgeM3BackfillOps.BackfillContext(
         documentFieldOps,
         indexingCoordinator,
@@ -53,7 +57,34 @@ class BgeM3BackfillOpsTest {
         () -> true,
         100,
         false,
+        chunkSpladeEnabled,
         LoggerFactory.getLogger(BgeM3BackfillOpsTest.class));
+  }
+
+  @Test
+  @DisplayName(
+      "chunk-SPLADE flag OFF: the lane selects whole documents only — it writes sparse and dense"
+          + " together, so selecting a chunk would produce sparse data the flag forbids (931)")
+  void chunkSpladeOff_selectsWholeDocumentsOnly() throws Exception {
+    when(documentFieldOps.queryNonChunkDocIdsByField(
+            eq(SchemaFields.SPLADE_STATUS), eq(SchemaFields.SPLADE_STATUS_PENDING), anyInt()))
+        .thenReturn(List.of("parent-1"));
+    when(documentFieldOps.getDocumentContentBatch(List.of("parent-1")))
+        .thenReturn(Map.of("parent-1", "parent text"));
+    when(documentFieldOps.getDocumentFieldsBatch(
+            List.of("parent-1"), Set.of(SchemaFields.IS_CHUNK)))
+        .thenReturn(Map.of("parent-1", Map.of()));
+    when(encoder.encodeBatch(List.of("parent text")))
+        .thenReturn(List.of(new BgeM3Output(new float[] {1f, 2f}, Map.of("tok", 1.0f))));
+    when(indexingCoordinator.updateDocumentsBatch(anyList()))
+        .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
+
+    StageOutcome outcome = BgeM3BackfillOps.processBgeM3Backfill(context(false));
+
+    assertEquals(1, outcome.docsProcessed());
+    verify(documentFieldOps, never())
+        .queryDocIdsByField(
+            eq(SchemaFields.SPLADE_STATUS), eq(SchemaFields.SPLADE_STATUS_PENDING), anyInt());
   }
 
   private void stubPending(String... docIds) {
