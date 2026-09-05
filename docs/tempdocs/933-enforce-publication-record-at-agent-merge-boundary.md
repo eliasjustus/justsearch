@@ -1,7 +1,7 @@
 ---
 title: "Enforce publication-record hygiene at the agent merge boundary"
 type: tempdocs
-status: "IMPLEMENTED AND LOCALLY VERIFIED — NOT PUBLISHED"
+status: "PUBLISHED — PR #675 MERGED; POST-MERGE CI PASSED"
 created: 2026-09-05
 updated: 2026-09-05
 charter: "close the gap between the publication-record contract and the paths autonomous agents actually use, while fixing provider-residue detection"
@@ -304,16 +304,31 @@ publication or repository-setting mutation was performed.
   wording overclaim; after correction, the implementation matches the intended design.
   The no-edit `capability-realization` pass traced the detector to live PR controls, the
   gateway to every maintained agent publication instruction, and the refusal through
-  both harness projections. It found no material gap; a real enqueue, harness restart,
-  and hosted CI remain publication-phase observations rather than locally provable facts.
+  both harness projections. It found no material gap; at that stage a real enqueue,
+  harness restart, and hosted CI remained publication-phase observations rather than
+  locally provable facts. The enqueue and hosted-CI observations are recorded below.
 
-### 5.3 Deliberate limits and remaining work
+### 5.3 Deliberate design limits
 
 - The validator-to-queue request remains a short sole-writer critical section rather
   than an atomic GitHub compare-and-swap transaction.
 - UI merges, direct REST/GraphQL mutations, and deliberately obfuscated or exotic shell
   constructions are outside this repository hook's scope. The merge queue and host
   permissions remain the final authority.
-- A real `enqueue` was intentionally not exercised because this session explicitly
-  excludes publishing. Publication-time verification and queue observation therefore
-  remain for a separately authorized publish session.
+- The validated `enqueue` path was exercised on PR #675. Both live publication-record
+  checks passed before the gateway requested the merge queue, and the queued squash
+  merge completed successfully.
+
+### 5.4 Publication outcome
+
+- PR [#675](https://github.com/justsearch-app/justsearch/pull/675) merged on
+  2026-09-05 as `bc631dc253d0f40a8aa2eaebdacb39150eb06864`. The landed tree is
+  byte-equivalent to the reviewed branch candidate, and the durable squash message
+  contains the concise public rationale plus the session identifier without review
+  residue.
+- The first hosted PR run exposed an honest diff-gate failure: adding a supersession
+  note grew already-oversized tempdoc 921. The fix left that historical tempdoc
+  untouched, recorded supersession here and in ADR-0045, and passed the actual
+  `check-tempdoc-size.mjs --base origin/main` gate before republishing.
+- All required PR lanes passed. Merge-group CI run `33960726253` and post-merge `main`
+  push CI run `33960990293` both succeeded against the landed commit.
