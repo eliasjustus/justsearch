@@ -380,6 +380,7 @@ mode. The structural check is satisfied by two legs, so an omitted
 | `--search-load-qpm N` | Drive N queries/minute (evenly spaced) against `POST /api/knowledge/search` on a background thread **during** ingest + the readiness/pipeline wait, and record a `search_load` block in `summary.json` (mode, queries issued, errors, latency p50/p95/max, start/end). Queries come from the dataset's own query file, in `hybrid` mode. Off by default; nothing changes when it is absent (885) |
 | `--search-load continuous` | As above but back-to-back with one request in flight (the continuous MCP-style agent loop). Mutually exclusive with `--search-load-qpm` |
 | `--first-search-probe` | After every batch of `--first-search-probe-files` (default 50) newly indexed documents, issue ONE search and record its latency separately from `--search-load*`. Reopen-on-demand moves the segment-open cost onto exactly that query, so averaging it into steady-state traffic hides it. Off by default (885 item 19) |
+| `--settle-index` | Purge deleted-but-unmerged documents from the active index (`POST /api/indexing/settle`) after the pre-query readiness gate and before the query phase, so two arms of a paired comparison query indexes with **equal merge state**. Readiness is re-checked once afterwards (the settle commits and reopens the searcher). Records `index_state_at_query.settled` plus the before/after counts under `index_state_at_query.settle`. Degrades to `settled: false` with a WARN on a 404 (pre-931 backend), a worker refusal, or a transport failure -- the run continues. Off by default: it holds the writer for the duration of a force-merge (931 SS-E item 10) |
 
 That endpoint is the one that writes the Worker's MMF activity slot, so these two flags are how a
 throughput measurement is taken *with foreground search traffic present* — see tempdoc 885's
@@ -424,7 +425,10 @@ with missing columns cannot be read.
 **Additive schema key, always present (tempdoc 931 §E item 10).** Every `run` with modes (a
 query phase) emits an `index_state_at_query` block, snapshotted right after the pre-query
 readiness gate passes: `{"max_doc", "num_docs", "deleted_docs", "chunk_splade_coverage_percent",
-"splade_coverage_percent", "chunk_vector_coverage_percent", "readiness_passed_at"}`. `deleted_docs`
+"splade_coverage_percent", "chunk_vector_coverage_percent", "settled", "readiness_passed_at"}`,
+plus a nested `settle` sub-block (`max_doc_before` / `num_docs_before` / `max_doc_after` /
+`num_docs_after` / `segments_after` / `elapsed_ms`) when `--settle-index` ran and succeeded.
+`settled` distinguishes "equal merge state by construction" from "equal by accident". `deleted_docs`
 is `max_doc - num_docs` — the tombstone count that inflates BM25 collection statistics when it
 differs between two otherwise-identical fresh indexes of the same corpus (a measured case moved
 2,629 vs 222, shifting hit counts 3-4% with no code cause). Every field is `null` when the backend
@@ -465,6 +469,8 @@ nothing rather than reporting a partial pass.
 - `env_overrides` — env vars applied by jseval config that differed from defaults (343)
 - `index_state_at_query.deleted_docs` — tombstone count at query-phase start, for paired-arm
   merge-state comparability (931 §E item 10)
+- `index_state_at_query.settled` — whether `--settle-index` equalized this arm's merge state
+  before the query phase (931 §E item 10)
 - `git_sha` — for reproducibility
 
 ## YAML Run Config

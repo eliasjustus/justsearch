@@ -211,6 +211,12 @@ final class ValidatorRunnerTest {
         new io.justsearch.app.services.registry.operations.handlers.IndexGcHandler(
             io.justsearch.app.api.IndexingService::unavailable,
             io.justsearch.app.api.OperationLeaseService.noOp()));
+    // Tempdoc 931 §E item 10: core.settle-index. Same fixture role as index-gc above.
+    handlers.register(
+        CoreOperationCatalog.SETTLE_INDEX,
+        new io.justsearch.app.services.registry.operations.handlers.SettleIndexHandler(
+            io.justsearch.app.api.IndexingService::unavailable,
+            io.justsearch.app.api.OperationLeaseService.noOp()));
     // Slice 491 §9.D Phase E (C4 / E3): agent navigation tool. Validator only checks
     // structural shape — pass a no-op supplier returning null; the handler's
     // Slice 491 E17: navigate-to-surface moved from CoreOperationCatalog-only

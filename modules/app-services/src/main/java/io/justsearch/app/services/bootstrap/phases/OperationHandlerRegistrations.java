@@ -40,6 +40,7 @@ import io.justsearch.app.services.registry.operations.handlers.ResolvePathHashHa
 import io.justsearch.app.services.registry.operations.handlers.RestartWorkerHandler;
 import io.justsearch.app.services.registry.operations.handlers.RetryIndexingJobHandler;
 import io.justsearch.app.services.registry.operations.handlers.SetChatEnabledHandler;
+import io.justsearch.app.services.registry.operations.handlers.SettleIndexHandler;
 import io.justsearch.app.services.registry.operations.handlers.StartAiInstallHandler;
 import io.justsearch.app.services.registry.operations.handlers.SwitchInferenceModeHandler;
 import io.justsearch.app.services.registry.operations.handlers.TriggerOfflineProcessingHandler;
@@ -98,6 +99,9 @@ public final class OperationHandlerRegistrations {
     handlers.register(
         CoreOperationCatalog.INDEX_GC,
         new IndexGcHandler(indexingServiceSupplier, operationLeaseService));
+    handlers.register(
+        CoreOperationCatalog.SETTLE_INDEX,
+        new SettleIndexHandler(indexingServiceSupplier, operationLeaseService));
     handlers.register(
         CoreOperationCatalog.CANCEL_INDEXING_JOB,
         new CancelIndexingJobHandler(indexingServiceSupplier));
