@@ -2,12 +2,14 @@
 package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -61,19 +63,36 @@ final class DocumentIdentityScanTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      var identities = runtime.documentFieldOps().listParentDocumentIdentities();
+      List<DocumentFieldOps.StoredDocumentIdentity> identities = new ArrayList<>();
+      var summary =
+          runtime.documentFieldOps().scanParentDocumentIdentities(1000, identities::addAll);
 
       assertEquals(1, identities.size());
       assertEquals(parentId, identities.getFirst().docId());
       assertEquals(parentUid, identities.getFirst().docUid());
+      assertEquals(1, summary.parentsSeen());
+      assertEquals(1, summary.parentsEmitted());
+      assertEquals(0, summary.parentsSkipped());
     }
   }
 
   @Test
-  @DisplayName("a live parent missing doc_uid fails recovery instead of being silently omitted")
-  void missingParentUidFailsClosed(@TempDir Path tempDir) throws Exception {
+  @DisplayName("a live parent missing doc_uid is counted and skipped, not fatal")
+  void missingParentUidIsSkippedAndCountedInsteadOfFailingTheScan(@TempDir Path tempDir)
+      throws Exception {
     try (RunningRuntime runtime =
         IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(0)).atPath(tempDir).open()) {
+      runtime
+          .indexingCoordinator()
+          .indexSingle(
+              new IndexDocument(
+                  Map.of(
+                      SchemaFields.DOC_ID,
+                      "healthy.txt",
+                      SchemaFields.DOC_UID,
+                      "00000000-0000-4000-8000-000000000221",
+                      SchemaFields.CONTENT,
+                      "healthy")));
       Document malformed = new Document();
       malformed.add(new StringField(SchemaFields.DOC_ID, "malformed-parent", Field.Store.YES));
       malformed.add(
@@ -82,11 +101,55 @@ final class DocumentIdentityScanTest {
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
 
-      IndexRuntimeIOException error =
-          assertThrows(
-              IndexRuntimeIOException.class,
-              () -> runtime.documentFieldOps().listParentDocumentIdentities());
-      assertEquals(IndexRuntimeIOException.Reason.CORRUPT_INDEX, error.reason());
+      List<DocumentFieldOps.StoredDocumentIdentity> identities = new ArrayList<>();
+      var summary =
+          runtime.documentFieldOps().scanParentDocumentIdentities(1000, identities::addAll);
+
+      // A legacy parent without doc_uid re-mints at its next admission; taking the Worker down
+      // instead loses the whole index it could still have imported (tempdoc 931 §C.2).
+      assertEquals(2, summary.parentsSeen());
+      assertEquals(1, summary.parentsEmitted());
+      assertEquals(1, summary.parentsSkipped());
+      assertEquals(1, identities.size());
+      assertEquals("healthy.txt", identities.getFirst().docId());
+    }
+  }
+
+  @Test
+  @DisplayName("1001 parents stream as two batches, never one whole-index list")
+  void parentsAreStreamedInBoundedBatches(@TempDir Path tempDir) throws Exception {
+    try (RunningRuntime runtime =
+        IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(0)).atPath(tempDir).open()) {
+      for (int i = 0; i < 1001; i++) {
+        runtime
+            .indexingCoordinator()
+            .indexSingle(
+                new IndexDocument(
+                    Map.of(
+                        SchemaFields.DOC_ID,
+                        "batched-" + i,
+                        SchemaFields.DOC_UID,
+                        "uid-" + i,
+                        SchemaFields.CONTENT,
+                        "batched document " + i)));
+      }
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      List<Integer> batchSizes = new ArrayList<>();
+      var summary =
+          runtime
+              .documentFieldOps()
+              .scanParentDocumentIdentities(
+                  1000,
+                  batch -> {
+                    batchSizes.add(batch.size());
+                    assertTrue(batch.size() <= 1000, "no batch may exceed the requested size");
+                  });
+
+      assertEquals(List.of(1000, 1), batchSizes);
+      assertEquals(1001, summary.parentsSeen());
+      assertEquals(1001, summary.parentsEmitted());
     }
   }
 }

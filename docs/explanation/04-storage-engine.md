@@ -93,10 +93,16 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 
 The Worker keeps the parent mapping `path_hash → doc_uid` in the path-free
 `document_identity` table inside `jobs.db`. Admission resolves that mapping before extraction, so a
-normal rewrite, delete-and-reindex, or Blue/Green rebuild writes the same UID. On the first V11 boot,
-the serving index seeds the empty table from its stored parent `doc_id` and `doc_uid` fields before
-indexing starts. SQLite identity failures are fail-closed: the queue retries the document rather than
-minting from a second authority.
+normal rewrite, delete-and-reindex, or Blue/Green rebuild writes the same UID. The serving index
+seeds the table from its stored parent `doc_id` and `doc_uid` fields before indexing starts. That
+scan is a seeding step, not a per-boot pass: it runs only when the table is empty or when
+`document_identity_import` holds no row for the serving generation — after the first import every
+parent resolves its uid through the store, so the only states left to repair are an index older than
+the store and a wiped or restored `jobs.db`. It streams parents into SQLite in transactions of 1,000
+rather than materialising the corpus, and a live parent whose `doc_id`/`doc_uid` docvalues are
+missing or blank is counted in `parents_skipped` (one WARN) and re-mints at its next admission
+instead of failing the boot. SQLite identity failures are fail-closed: the queue retries the
+document rather than minting from a second authority.
 
 Chunk documents use `parentDocUid + "#" + chunkIndex`, making chunk regeneration deterministic
 without adding a second schema field. API-driven moves re-key the parent mapping before Lucene path

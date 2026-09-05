@@ -75,7 +75,7 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
     requireUid(docUid);
     lock.lock();
     try {
-      return importExistingLocked(pathHash, docUid, nowMs);
+      return importExistingLocked(pathHash, docUid, nowMs).identity();
     } catch (SQLException e) {
       throw failure("importExisting", pathHash, e);
     } finally {
@@ -84,20 +84,24 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
   }
 
   @Override
-  public void importExisting(Collection<ImportedIdentity> identities, long nowMs) {
+  public int importExisting(Collection<ImportedIdentity> identities, long nowMs) {
     Objects.requireNonNull(identities, "identities");
     lock.lock();
     try {
       boolean wasAutoCommit = connection.getAutoCommit();
       connection.setAutoCommit(false);
       try {
+        int inserted = 0;
         for (ImportedIdentity identity : identities) {
           Objects.requireNonNull(identity, "identity");
           requireHash(identity.pathHash());
           requireUid(identity.docUid());
-          importExistingLocked(identity.pathHash(), identity.docUid(), nowMs);
+          if (importExistingLocked(identity.pathHash(), identity.docUid(), nowMs).inserted()) {
+            inserted++;
+          }
         }
         connection.commit();
+        return inserted;
       } catch (SQLException | RuntimeException e) {
         connection.rollback();
         throw e;
@@ -111,16 +115,81 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
     }
   }
 
-  private Identity importExistingLocked(String pathHash, String docUid, long nowMs)
+  @Override
+  public long identityCount() {
+    lock.lock();
+    try (PreparedStatement stmt =
+            connection.prepareStatement("SELECT COUNT(*) FROM document_identity");
+        ResultSet rs = stmt.executeQuery()) {
+      return rs.next() ? rs.getLong(1) : 0L;
+    } catch (SQLException e) {
+      throw failure("identityCount", "<all>", e);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  @Override
+  public boolean hasImportRecord(String generationId) {
+    requireGenerationId(generationId);
+    lock.lock();
+    try (PreparedStatement stmt =
+        connection.prepareStatement(
+            "SELECT 1 FROM document_identity_import WHERE generation_id = ?")) {
+      stmt.setString(1, generationId);
+      try (ResultSet rs = stmt.executeQuery()) {
+        return rs.next();
+      }
+    } catch (SQLException e) {
+      throw failure("hasImportRecord", generationId, e);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  @Override
+  public void recordImport(ImportRecord record) {
+    Objects.requireNonNull(record, "record");
+    requireGenerationId(record.generationId());
+    lock.lock();
+    try (PreparedStatement stmt =
+        connection.prepareStatement(
+            """
+            INSERT INTO document_identity_import
+              (generation_id, imported_at, parents_seen, parents_imported, parents_skipped)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(generation_id) DO UPDATE SET
+              imported_at = excluded.imported_at,
+              parents_seen = excluded.parents_seen,
+              parents_imported = excluded.parents_imported,
+              parents_skipped = excluded.parents_skipped
+            """)) {
+      stmt.setString(1, record.generationId());
+      stmt.setLong(2, record.importedAtMs());
+      stmt.setLong(3, record.parentsSeen());
+      stmt.setLong(4, record.parentsImported());
+      stmt.setLong(5, record.parentsSkipped());
+      stmt.executeUpdate();
+    } catch (SQLException e) {
+      throw failure("recordImport", record.generationId(), e);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  /** One row's outcome: the authoritative identity, and whether this call created it. */
+  private record ImportOutcome(Identity identity, boolean inserted) {}
+
+  private ImportOutcome importExistingLocked(String pathHash, String docUid, long nowMs)
       throws SQLException {
     Optional<Identity> byPath = select(pathHash);
     if (byPath.isPresent()) {
       touch(pathHash, nowMs);
-      return selectRequired(pathHash);
+      return new ImportOutcome(selectRequired(pathHash), false);
     }
     Optional<Identity> byUid = selectByUid(docUid);
     if (byUid.isPresent()) {
-      return byUid.get();
+      return new ImportOutcome(byUid.get(), false);
     }
     try (PreparedStatement stmt =
         connection.prepareStatement(
@@ -134,7 +203,7 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
       stmt.setLong(4, nowMs);
       stmt.executeUpdate();
     }
-    return selectRequired(pathHash);
+    return new ImportOutcome(selectRequired(pathHash), true);
   }
 
   @Override
@@ -268,6 +337,12 @@ public final class SqliteDocumentIdentityStore implements DocumentIdentityStore,
   private static void requireHash(String pathHash) {
     if (pathHash == null || pathHash.isBlank()) {
       throw new IllegalArgumentException("pathHash is required");
+    }
+  }
+
+  private static void requireGenerationId(String generationId) {
+    if (generationId == null || generationId.isBlank()) {
+      throw new IllegalArgumentException("generationId is required");
     }
   }
 

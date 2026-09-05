@@ -263,6 +263,14 @@ final class SqliteQueueMigrationOps {
           log.info("V10 to V11: Ensured document_identity table and uid index (tempdoc 915)");
         }
       }
+      case 12 -> {
+        try (Statement stmt = conn.createStatement()) {
+          for (String sql : SqliteSchema.MIGRATE_V11_TO_V12_ADD_DOCUMENT_IDENTITY_IMPORT) {
+            stmt.execute(sql);
+          }
+          log.info("V11 to V12: Ensured document_identity_import table (tempdoc 931)");
+        }
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }

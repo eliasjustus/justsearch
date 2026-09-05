@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedDocValues;
@@ -424,20 +425,38 @@ public final class DocumentFieldOps {
     }
   }
 
+  /** Accounting for one identity recovery scan. */
+  public record ParentIdentityScanSummary(
+      long parentsSeen, long parentsEmitted, long parentsSkipped) {}
+
   /**
-   * Reads every live parent document's stored identity from one searcher snapshot.
+   * Streams every live parent document's stored identity from one searcher snapshot.
    *
    * <p>This deliberately has no corpus-size cap: omitting a tail of the active index during an
-   * identity-store import would cause those documents to be re-minted on their next write. I/O
-   * failure is surfaced rather than converted to an empty result because this is recovery data,
-   * not a best-effort UI query.
+   * identity-store import would cause those documents to be re-minted on their next write. The
+   * result is handed to {@code batchConsumer} in slices of {@code batchSize} instead of returned as
+   * one list, so the caller's peak heap is a batch rather than the corpus (tempdoc 931 §C.2).
+   *
+   * <p>A live parent whose {@code doc_id}/{@code doc_uid} docvalues are missing or blank is counted
+   * in {@code parentsSkipped} and omitted. That shape predates the identity store or comes from a
+   * partially-written legacy index; it mints a fresh identity at its next admission, which is a
+   * recoverable outcome, whereas failing the scan takes the whole Worker down. Genuine I/O failure
+   * is still surfaced — that is not a legacy shape, it is an unreadable index.
    */
-  public List<StoredDocumentIdentity> listParentDocumentIdentities() {
+  public ParentIdentityScanSummary scanParentDocumentIdentities(
+      int batchSize, Consumer<List<StoredDocumentIdentity>> batchConsumer) {
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
+    }
+    java.util.Objects.requireNonNull(batchConsumer, "batchConsumer");
     try {
       maybeRefreshBlockingIfCommittedSinceRefresh();
       return bridge.withSearcher(
           searcher -> {
-            List<StoredDocumentIdentity> identities = new ArrayList<>();
+            long seen = 0;
+            long emitted = 0;
+            long skipped = 0;
+            List<StoredDocumentIdentity> batch = new ArrayList<>(batchSize);
             for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
               SortedDocValues docIds = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_ID);
               SortedDocValues docUids = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_UID);
@@ -451,26 +470,29 @@ public final class DocumentFieldOps {
                     && "true".equals(isChunks.lookupOrd(isChunks.ordValue()).utf8ToString())) {
                   continue;
                 }
+                seen++;
                 if (!docIds.advanceExact(doc) || !docUids.advanceExact(doc)) {
-                  throw new IndexRuntimeIOException(
-                      IndexRuntimeIOException.Reason.CORRUPT_INDEX,
-                      "Live parent document is missing doc_id or doc_uid at Lucene doc "
-                          + (leaf.docBase + doc),
-                      null);
+                  skipped++;
+                  continue;
                 }
                 String docId = docIds.lookupOrd(docIds.ordValue()).utf8ToString();
                 String docUid = docUids.lookupOrd(docUids.ordValue()).utf8ToString();
                 if (docId.isBlank() || docUid.isBlank()) {
-                  throw new IndexRuntimeIOException(
-                      IndexRuntimeIOException.Reason.CORRUPT_INDEX,
-                      "Live parent document has a blank doc_id or doc_uid at Lucene doc "
-                          + (leaf.docBase + doc),
-                      null);
+                  skipped++;
+                  continue;
                 }
-                identities.add(new StoredDocumentIdentity(docId, docUid));
+                batch.add(new StoredDocumentIdentity(docId, docUid));
+                emitted++;
+                if (batch.size() == batchSize) {
+                  batchConsumer.accept(Collections.unmodifiableList(batch));
+                  batch = new ArrayList<>(batchSize);
+                }
               }
             }
-            return Collections.unmodifiableList(identities);
+            if (!batch.isEmpty()) {
+              batchConsumer.accept(Collections.unmodifiableList(batch));
+            }
+            return new ParentIdentityScanSummary(seen, emitted, skipped);
           });
     } catch (IOException e) {
       throw new IndexRuntimeIOException(

@@ -33,7 +33,22 @@ public interface DocumentIdentityStore {
     }
 
     @Override
-    public void importExisting(Collection<ImportedIdentity> identities, long nowMs) {
+    public int importExisting(Collection<ImportedIdentity> identities, long nowMs) {
+      throw unavailable();
+    }
+
+    @Override
+    public long identityCount() {
+      throw unavailable();
+    }
+
+    @Override
+    public boolean hasImportRecord(String generationId) {
+      throw unavailable();
+    }
+
+    @Override
+    public void recordImport(ImportRecord record) {
       throw unavailable();
     }
 
@@ -57,8 +72,22 @@ public interface DocumentIdentityStore {
    */
   Identity importExisting(String pathHash, String docUid, long nowMs);
 
-  /** Imports one active-index snapshot atomically. */
-  void importExisting(Collection<ImportedIdentity> identities, long nowMs);
+  /**
+   * Imports one batch of the active-index snapshot atomically.
+   *
+   * @return how many of them inserted a NEW identity row; rows already mapped by path hash or uid
+   *     stay authoritative and are not counted
+   */
+  int importExisting(Collection<ImportedIdentity> identities, long nowMs);
+
+  /** Number of persisted identity rows. Zero means the store carries no authority yet. */
+  long identityCount();
+
+  /** Whether the boot scan of {@code generationId} has already been recorded. */
+  boolean hasImportRecord(String generationId);
+
+  /** Records that one generation's parent identities have been scanned into the store. */
+  void recordImport(ImportRecord record);
 
   /**
    * Moves an existing identity to a renamed path hash without changing its uid or first-seen time.
@@ -80,6 +109,14 @@ public interface DocumentIdentityStore {
 
   /** Path-free row supplied by the serving-index bootstrap scan. */
   record ImportedIdentity(String pathHash, String docUid) {}
+
+  /** One completed bootstrap scan of an index generation. */
+  record ImportRecord(
+      String generationId,
+      long importedAtMs,
+      long parentsSeen,
+      long parentsImported,
+      long parentsSkipped) {}
 
   /** Durable outcome of an idempotent path rekey. */
   enum RekeyResult {

@@ -392,6 +392,12 @@ admission path and resolves the same UID from that table; identities are not pre
 stored fields from Blue. The boot import also reconstructs the table after an older pre-V11
 `jobs.db.bak` is restored.
 
+The verification/import pass is guarded by generation: `document_identity_import` records one row per
+generation already scanned (schema V12), and the scan is skipped when that row exists and the
+identity table is non-empty. A promoted Green is a new generation, so its first boot scans once and
+then records its own row; Green's parents are already in the store by then, so that pass imports
+nothing new and simply confirms the identity authority survived the cutover.
+
 Cutover is performed as a **`state.json` pointer swap + Worker restart** (restart-based cutover), which avoids in-process hot-swapping complexity and is easier to make crash-safe.
 
 ## Embedding readiness gate (`embeddingReadyLatch`)

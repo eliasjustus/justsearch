@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -118,6 +119,39 @@ final class SqliteDocumentIdentityStoreTest {
 
     assertThrows(IllegalArgumentException.class, () -> store.importExisting(rows, 100L));
     assertTrue(store.lookup("valid-hash").isEmpty());
+  }
+
+  @Test
+  void bulkImportCountsOnlyNewlyInsertedRows() {
+    assertEquals(
+        2,
+        store.importExisting(
+            List.of(
+                new DocumentIdentityStore.ImportedIdentity("hash-a", "uid-a"),
+                new DocumentIdentityStore.ImportedIdentity("hash-b", "uid-b")),
+            100L));
+    assertEquals(
+        1,
+        store.importExisting(
+            List.of(
+                new DocumentIdentityStore.ImportedIdentity("hash-a", "uid-a"),
+                new DocumentIdentityStore.ImportedIdentity("hash-c", "uid-c")),
+            200L));
+    assertEquals(3L, store.identityCount());
+  }
+
+  @Test
+  void importRecordIsScopedToItsGenerationAndRestatable() throws IOException {
+    assertFalse(store.hasImportRecord("g-1"));
+
+    store.recordImport(new DocumentIdentityStore.ImportRecord("g-1", 100L, 5, 4, 1));
+    assertTrue(store.hasImportRecord("g-1"));
+    assertFalse(store.hasImportRecord("g-2"));
+
+    store.recordImport(new DocumentIdentityStore.ImportRecord("g-1", 300L, 9, 4, 0));
+    store.close();
+    store = new SqliteDocumentIdentityStore(dbPath);
+    assertTrue(store.hasImportRecord("g-1"));
   }
 
   @Test

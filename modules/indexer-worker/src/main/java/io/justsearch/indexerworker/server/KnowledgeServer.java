@@ -297,29 +297,25 @@ public final class KnowledgeServer implements Closeable {
 
   /**
    * Seeds the jobs.db identity table from the serving index before indexing starts.
-   * The same pass handles first adoption and reconstruction after restoring an older SQLite
-   * backup; existing store rows remain authoritative during a normal or mid-migration restart.
+   *
+   * <p>The scan runs only when the store carries no identity at all, or when
+   * {@code document_identity_import} has no row for the serving generation. After the first import
+   * every parent written through admission resolves its uid through the store, and a Green built by
+   * migration re-ingests through the store rather than copying Blue's stored fields — so the scan
+   * only ever seeds an index predating the store or a wiped/restored {@code jobs.db}. Existing
+   * store rows stay authoritative in every case. Full rationale and streaming/skip semantics:
+   * {@link DocumentIdentityBootImport}.
    */
-  private void importDocumentIdentitiesFromActiveIndex() {
+  private void importDocumentIdentitiesFromActiveIndex(String activeGenerationId) {
     LuceneRuntime authority = searchLifecycle;
-    if (authority == null || documentIdentityStore == null) {
+    if (authority == null || documentIdentityStore == null || activeGenerationId == null) {
       return;
     }
-    long nowMs = System.currentTimeMillis();
-    java.util.List<io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity>
-        imported = new java.util.ArrayList<>();
-    for (var identity : authority.documentFieldOps().listParentDocumentIdentities()) {
-      String normalizedKey =
-          io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(
-              java.nio.file.Path.of(identity.docId()));
-      String pathHash =
-          io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(normalizedKey);
-      imported.add(
-          new io.justsearch.indexerworker.identity.DocumentIdentityStore.ImportedIdentity(
-              pathHash, identity.docUid()));
-    }
-    documentIdentityStore.importExisting(imported, nowMs);
-    log.info("Document identity import verified {} serving parent documents", imported.size());
+    DocumentIdentityBootImport.run(
+        authority.documentFieldOps()::scanParentDocumentIdentities,
+        documentIdentityStore,
+        activeGenerationId,
+        System.currentTimeMillis());
   }
 
   /**
@@ -880,7 +876,7 @@ public final class KnowledgeServer implements Closeable {
       // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
       this.documentIdentityStore =
           new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(dbPath);
-      importDocumentIdentitiesFromActiveIndex();
+      importDocumentIdentitiesFromActiveIndex(layout.activeGenerationId());
 
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
       // to the background task (after IndexWriter opens). In migration mode, run synchronously.

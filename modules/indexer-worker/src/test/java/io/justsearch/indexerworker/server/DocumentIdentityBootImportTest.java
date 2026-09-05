@@ -72,6 +72,58 @@ final class DocumentIdentityBootImportTest {
   }
 
   @Test
+  @DisplayName("the recorded generation import stops the next boot from re-scanning the index")
+  void secondBootOverTheSameGenerationDoesNotRescan(@TempDir Path tempDir) throws Exception {
+    WorkerBootFixture.Layout layout = WorkerBootFixture.layout(tempDir);
+    WorkerBootFixture.seed(layout.activePath(), null, 3);
+    WorkerBootFixture.publishConfig(layout.dataDir(), layout.indexBase(), "FAIL_CLOSED");
+    Path dbPath = layout.dataDir().resolve("jobs.db");
+    String generationId =
+        layout.genManager().readStateBestEffort().active_generation();
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+    server.close();
+    server = null;
+
+    assertEquals(List.of(3L, 3L, 0L), importRow(dbPath, generationId));
+
+    // A parent that appears in the serving index AFTER the recorded import is exactly what the
+    // guard must not go looking for: admission is the only path that mints identity from here on.
+    WorkerBootFixture.seedDocument(
+        layout.activePath(), null, "after-import.txt", "after-import-uid", "added post-import");
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+
+    assertEquals(List.of(3L, 3L, 0L), importRow(dbPath, generationId));
+    try (SqliteDocumentIdentityStore probe = new SqliteDocumentIdentityStore(dbPath)) {
+      String normalized = PathNormalizer.normalizeKey(Path.of("after-import.txt"));
+      assertTrue(
+          probe.lookup(DocumentIdentityStore.pathHash(normalized)).isEmpty(),
+          "the second boot must not have walked the index again");
+      assertEquals(3L, probe.identityCount());
+    }
+  }
+
+  /** Reads (parents_seen, parents_imported, parents_skipped) for one generation. */
+  private static List<Long> importRow(Path dbPath, String generationId) throws Exception {
+    try (var conn =
+            java.sql.DriverManager.getConnection(
+                "jdbc:sqlite:" + dbPath.toString().replace('\\', '/'));
+        var stmt =
+            conn.prepareStatement(
+                "SELECT parents_seen, parents_imported, parents_skipped"
+                    + " FROM document_identity_import WHERE generation_id = ?")) {
+      stmt.setString(1, generationId);
+      try (var rs = stmt.executeQuery()) {
+        assertTrue(rs.next(), "no import row recorded for generation " + generationId);
+        return List.of(rs.getLong(1), rs.getLong(2), rs.getLong(3));
+      }
+    }
+  }
+
+  @Test
   @DisplayName("a stale serving path cannot reverse an already persisted rename")
   void staleServingIndexDoesNotUndoStoreAuthoritativeRename(@TempDir Path tempDir)
       throws Exception {
