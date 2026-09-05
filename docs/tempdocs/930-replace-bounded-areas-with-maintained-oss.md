@@ -712,7 +712,19 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    (`scripts/docs/tempdoc-staleness-triage.mjs`, where the marker word was the subject matter, not
    debt), 2 pinned in suppression lists.
 4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
-5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
+5. ~~`ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on
+   PRs.~~ **DONE 2026-09-05** — it does now, as the advisory `Measured axe` job in `ci.yml`.
+   Feasibility: the gate needs no backend at all (`--fixtures` route-mocks `/api/*` inside
+   Playwright, `ui_fixtures.py::install_fixtures`; `ui-shot` starts its own Vite,
+   `ui_shot.py::_start_vite_server`), so it is Node + Python + headless Chromium on
+   `ubuntu-latest`. Measured 350s / 20 surfaces locally, exit 0, identical `axe_new` across
+   two consecutive runs; first hosted run (#672, run 33958715012) exit 0 in 168s with rows
+   identical to Windows. Advisory (absent from `requiredStatusChecks` and from
+   `public-ci-local-repro.v1.json`) because a hosted Linux Chromium renders differently from
+   the Windows machine the register's `knownRules` were captured on; promotion needs
+   stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the
+   ADR-0026 amendment 2026-09-05. `ui-proportion-gate` deliberately stays local-only — its
+   baseline is pixel geometry, far more runner-dependent than an axe rule id.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
 7. ~~`docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.~~
    **DONE 2026-09-05** (PR `docs(930): docs-validate exits 0 and runs on PRs`): `tags`/`aliases`

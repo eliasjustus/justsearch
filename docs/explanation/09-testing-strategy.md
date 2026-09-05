@@ -105,7 +105,9 @@ retired TS e2e tier described below:
   below. It drives the real Lit `shell-v0` UI (not a mock/demo tree) and produces a screenshot plus
   a structured `.measure.json` fact-sheet — accessibility tree, axe violations, geometry, console
   errors — so correctness is judged from facts, not eyeballing a PNG. `jseval ui-shot <step>`
-  captures one surface; `jseval ui-a11y-gate` / `ui-proportion-gate` gate regressions;
+  captures one surface; `jseval ui-a11y-gate` / `ui-proportion-gate` gate regressions
+  (`ui-a11y-gate` also runs on PRs as the advisory `Measured axe` job — ADR-0026 amendment
+  2026-09-05; `ui-proportion-gate` stays local-only);
   `jseval ui-diff` / `ui-critic` / `ui-fuzz` are deeper situational passes. Load the `/ui-check`
   skill for the full reference.
 
