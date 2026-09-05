@@ -515,3 +515,25 @@ Recommended changes are straightforward: keep documentation-as-skills as the def
 catalog descriptions before bodies; pilot guarded core-plus-reference structure for the two
 dominant skills; add native-selection telemetry if the product exposes it; make future evidence
 windows event-time based; and repair the world-state wall-clock test independently.
+
+## Session closeout
+
+- Implementation commit: `9254cecd` on local branch
+  `codex/928-skill-delivery-eval`. No push, pull request, merge, or publish action was authorized
+  or performed.
+- `node scripts/agent-analytics/world-state.mjs` exited zero at
+  `2026-09-05T10:03:08.128Z`. The worktree row was clean, `ACTIVE`, unpushed, 299 commits ahead
+  and 22 behind its configured comparison ref. This is not a `DIRTY-IDLE` or
+  `STRANDED-FINISHED` verdict; the divergence is recorded rather than modified during closeout.
+- `node scripts/dev/agent-spawn-sweep.cjs --occasion session-closeout --session-id
+  01a06b47-958f-7c11-b1ac-669d9feabddb` deleted nothing: it left one other-session `ui-shot`
+  process as live-lease contention and reported the ownerless `otlp-sink` singleton, as designed.
+- The first commit attempt encountered a zero-byte worktree `index.lock`. No Git process was
+  running; the exact lock was removed after its absolute path and age were inspected, and the
+  subsequent explicit-path commit passed the gitleaks hook.
+
+There are no unverified implementation assumptions hidden behind the completed checklist. The
+known suite-level world-state timeout, native-loader telemetry gap, historical-revision ambiguity,
+source-retention limitation, and deferred paired pilot are all recorded above. A successor can
+reproduce the current result with the documented npm command and fixed event-time window without
+access to this private conversation or the downloaded research artifact.
