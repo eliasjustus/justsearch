@@ -683,6 +683,92 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-057: the chunk target/overlap re-derivation RETAINS 500/50/100 — 32 admissible runs reduce the matrix to four legal-capable challengers, and none clears the Enron +2σ line needed for a two-of-three win; the unchanged 2000-character prefilter is analytically characterized, not quality-optimized (2026-09-03/04)
+
+- **Question and answer.** Re-derive the document chunk target and overlap instead of inheriting the
+  original 500/50 choice. The 4×3 matrix tested targets `{128,256,384,500}` and overlaps
+  `{0,25,50}` with sentence-aligned boundaries, per-target minimum `max(1,target/5)`, and the writer
+  threshold held at 2000 characters. **No challenger satisfies the pre-registered adoption rule.**
+  Keep `(target, overlap, minimum) = (500, 50, 100)`. The fixed threshold is outside this result.
+- **Evidence admitted.** 32 completed arms: 15 `mixed/legal-clerc-200` (12-cell matrix, two extra
+  incumbent reindexes, one shipped-deadline control), 12 `mixed/ohr-bench-clean`, and five
+  `mixed/enron-qa`. Every cited arm has `ce_coverage.verdict == "ok"`, comparable hybrid output,
+  complete decision-bearing fields, and a clean machine signature. The matrix used one invariant
+  2000 ms CE pre-check deadline so small chunks did not become inadmissible merely by creating more
+  rerank candidates. That deadline is campaign instrumentation; the shipped default remains 200 ms.
+- **Calibration.** Three independently rebuilt legal incumbents scored nDCG@10
+  `0.581629 / 0.592372 / 0.580665` and R@10 `0.810 / 0.835 / 0.815`, at run ids
+  `20260903T085832`, `20260903T090447`, and `20260903T091138_mixed_legal-clerc-200`.
+  Mean/sample-σ are `0.584888 / 0.006499` for nDCG and `0.820 / 0.013229` for R@10. The committed
+  `max(observed σ, 0.0068)` rule therefore puts legal's strict nDCG win line at **0.598488**. OHR
+  and Enron have one incumbent replicate, so their marked floor gives ±2σ = **0.0136**.
+- **Complete cheap-matrix reduction.** The full OHR matrix has no winner: its maximum is the
+  incumbent's **0.957099** (`20260903T125636_mixed_ohr-bench-clean`), so every challenger misses
+  OHR's +2σ line of 0.970699. On legal, only four challengers both clear 0.598488 and avoid a
+  leg-union recall fall below 0.925:
+
+  | target / overlap | legal nDCG@10 | legal R@10 | legal union | run id |
+  | :--- | ---: | ---: | ---: | :--- |
+  | 128 / 25 | 0.634915 | 0.840 | 0.925 | `20260903T093157_mixed_legal-clerc-200` |
+  | 256 / 0 | 0.629296 | 0.835 | 0.930 | `20260903T095341_mixed_legal-clerc-200` |
+  | 384 / 0 | 0.621148 | 0.845 | 0.925 | `20260903T102630_mixed_legal-clerc-200` |
+  | 384 / 25 | 0.609067 | 0.835 | 0.925 | `20260903T103256_mixed_legal-clerc-200` |
+
+- **Decisive Enron result.** Because no arm wins OHR, adoption requires winning both legal and
+  Enron. The incumbent scores 0.792402 nDCG@10 on Enron (`20260903T133806_mixed_enron-qa`), putting
+  the strict +2σ line at **0.806002**. The four legal-capable arms score, respectively,
+  `0.760281`, `0.787604`, `0.793542`, and `0.798495` (run ids `20260903T171519`, `T155614`,
+  `T150903`, `T142710_mixed_enron-qa`). The best delta is only **+0.006093**, below the required
+  >0.0136. Thus no result from a remaining cell can satisfy the necessary two-of-three condition.
+- **Early-stop deviation.** The execution plan originally called for all 12 Enron arms, followed by
+  winner/incumbent multilingual, scifact and RAG checks. It did not pre-register pruning. Seven
+  Enron challengers already incapable of winning legal were stopped, and the downstream controls
+  were not run, only after the necessary-condition proof above was independently reconstructed.
+  This is disclosed as an **unplanned, decision-preserving early stop**, not reported as a full
+  matrix: controls and the secondary/veto-only RAG fixture cannot promote an arm after the primary
+  adoption condition is false. One earlier Enron 256/50 smoke was inadmissible; an attempted 128/0
+  resume produced no metrics or completion marker. Neither is evidence.
+- **Deadline control and threshold disposition.** A clean incumbent at the shipped 200 ms deadline scored
+  0.581146 nDCG@10, 0.810 R@10 and 0.925 union
+  (`20260903T091800_mixed_legal-clerc-200`), inside the incumbent calibration band; campaign scores
+  do not repin a release baseline. The 2000-character writer threshold was **held fixed**, not
+  optimized. Its closed analytic rationale is
+  `TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS) == 2000`: one 500-token window
+  under the canonical optimistic typical-prose estimate of four characters per token. It is only a
+  cheap prefilter; the content-aware splitter and the writer's zero/one-chunk guard decide actual
+  emission. CJK can map 500 tokens to a different character span inside the splitter, without
+  introducing a per-language threshold. The formerly stated ≥1536 “corpus-profile floor” is only
+  the arithmetic point where `IndexingDocumentOps`'s `/3` fallback estimate reaches 512; it is not a
+  measured corpus property or a quality criterion. Classification: **analytically derived,
+  operationally exercised, not quality-optimized**. No threshold sweep or quality-optimum claim is
+  made.
+- **Shipping consequence.** No production chunking constant or configuration surface changes.
+  `ChunkSplitter` remains the static owner; the temporary four-key experiment channel is removed.
+  Index identity already includes target, overlap, minimum, threshold and
+  `ChunkSplitter.ALGORITHM_VERSION`. Since both values and boundary algorithm are unchanged, the
+  correct version remains **`v1`**; bumping it would force an unnecessary reindex.
+- **Historical analysis and runner safety.** `scripts/jseval/916_chunk_sweep.py` records per-arm run ids,
+  admissibility, retrieval/recall, truncation, index bytes, throughput and machine state. The four
+  temporary `JUSTSEARCH_CHUNKING_SWEEP_*` consumers are intentionally absent from the shipping
+  tree, so `run` now refuses to start there; `analyze` remains available for the archived evidence.
+  A resume on the original throwaway experiment shape
+  exposed that non-zero arm exits and decision-bearing nulls could still allow outer completion
+  markers, while the generated PowerShell chain did not enforce child exit status. A reusable arm
+  now needs a structured identity binding target, overlap, minimum, threshold, deadline, run id and
+  source SHA, plus clean-machine and known chunk-branch evidence. The driver retracts invalid or
+  mismatched completion; `tests/test_916_chunk_sweep.py` pins failure and stale-resume shapes plus
+  chain exit propagation. Selection was recomputed from each arm's own metrics and completion
+  evidence, never from the defective outer marker.
+- **Rider (2026-09-05) — OHR `leg_union_recall`/`final_recall` above are biased LOW by 0.1091; the
+  verdict is unchanged.** The staged-recall projection's TREC reader was left-anchored
+  (`parts[2]`), so the 109 `mixed/ohr-bench-clean` golds whose doc ids contain a space were
+  truncated at parse time — the sole cause of the campaign's 105/962 OHR reconciliation mismatches.
+  Corrected for the incumbent arm: `leg_union_recall` 0.8794 → **0.9886**, `final_recall` 0.8784 →
+  **0.9875**, `LEG_MISS` 115 → 10, mismatches → **0** (fix: `scripts/jseval/jseval/trec.py`). The
+  offset is identical on all 12 OHR arms, so every OHR delta and the adoption rule's clause-2
+  comparison hold; `nDCG@10`/`R@10` never read the TREC file, and the legal figures quoted above
+  are unaffected (0 mismatches — CLERC ids contain no whitespace). Detail: tempdoc 916 §L.8.
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
@@ -1120,6 +1206,19 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+- **Instrument rider (2026-09-05) — the projection under-reported `leg_union_recall` (and
+  `final_recall`) on any corpus whose doc ids contain whitespace, until fixed.** `_load_trec` read
+  the doc id left-anchored as `parts[2]` of a whitespace-split line, while the writer emitted
+  `qid Q0 <docid> rank score tag` space-delimited, so a doc id containing a space was truncated and
+  then missed every membership check — inflating `LEG_MISS`, deflating `leg_union_recall` and
+  `final_recall`, and showing up as "projection says absent, harness says present" reconciliation
+  mismatches. **Observed on `mixed/ohr-bench-clean` only** (109/962 golds affected; bias −0.1091;
+  105 mismatches). The four corpora profiled above, plus `mixed/legal-clerc-200` and
+  `mixed/enron-qa`, have whitespace-free ids and reported 0 mismatches — their numbers stand. Fixed
+  2026-09-05: `scripts/jseval/jseval/trec.py` is now the single right-anchored reader + tab-delimiting
+  writer used by all three in-repo TREC readers. **A non-zero mismatch count that is entirely
+  "absent/present"-shaped is a parser symptom first, a retrieval finding second.** Detail: tempdoc
+  916 §L.8.
 
 ### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
 
@@ -2393,6 +2492,15 @@ above)*
   `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
   release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
   parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+- **Instrument rider (2026-09-05) — the gated quantity itself was under-reported on
+  whitespace-bearing doc ids until fixed.** `leg_union_recall` comes from
+  `staged_recall_accounting`, whose TREC reader truncated any doc id containing a space (see the
+  F-025 rider), so the floor was measured too low on such corpora. **Observed on
+  `mixed/ohr-bench-clean`** (bias −0.1091). The three pinned floor corpora
+  (`mixed/legal-clerc-200`, `beir/scifact`, `golden/needle-burial-v1`) all have whitespace-free doc
+  ids and are **unaffected — the pins stand and were not re-derived**. Fixed in
+  `scripts/jseval/jseval/trec.py`; a future `union-recall-gate-derive` that adds a corpus with
+  spaces in its ids would previously have pinned a floor ~0.11 too low.
 
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 

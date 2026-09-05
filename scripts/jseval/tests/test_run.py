@@ -1005,6 +1005,8 @@ def test_execute_run_always_emits_a_cadence_block(
         "reopen_total": None,
         "commit_total": None,
         "segments_since_reopen": None,
+        "commit_by_reason": None,
+        "commit_by_reason_total": None,
         "first_search_after_indexing": None,
     }
 
