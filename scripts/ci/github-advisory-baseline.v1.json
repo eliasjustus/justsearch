@@ -1,0 +1,61 @@
+{
+  "schema": "github-advisory-baseline.v1",
+  "generated_at": "2026-09-04T11:05:50.854Z",
+  "source_report": "tmp/github-advisory-report.json",
+  "targets": {
+    "root": {
+      "advisories": [
+        { "ghsa_id": "GHSA-28WG-GHJ8-5HJV", "severity": "high" },
+        { "ghsa_id": "GHSA-2V37-7H3G-55P8", "severity": "high" },
+        { "ghsa_id": "GHSA-3JXR-9VMJ-R5CP", "severity": "high" },
+        { "ghsa_id": "GHSA-4C8G-83QW-93J6", "severity": "high" },
+        { "ghsa_id": "GHSA-52CP-R559-CP3M", "severity": "high" },
+        { "ghsa_id": "GHSA-5P4M-2WFM-XMQJ", "severity": "high" },
+        { "ghsa_id": "GHSA-6G55-P6WH-862Q", "severity": "high" },
+        { "ghsa_id": "GHSA-7P8R-X3MC-P8W7", "severity": "high" },
+        { "ghsa_id": "GHSA-88FW-HQM2-52QC", "severity": "high" },
+        { "ghsa_id": "GHSA-C2C7-RCM5-VVQJ", "severity": "high" },
+        { "ghsa_id": "GHSA-F65P-4M7J-42XC", "severity": "high" },
+        { "ghsa_id": "GHSA-J3Q9-MXJG-W52F", "severity": "high" },
+        { "ghsa_id": "GHSA-JQFF-G426-HQXP", "severity": "high" },
+        { "ghsa_id": "GHSA-MH99-V99M-4GVG", "severity": "high" },
+        { "ghsa_id": "GHSA-MWP4-54F8-5FHR", "severity": "high" },
+        { "ghsa_id": "GHSA-Q3J6-QGPJ-74H6", "severity": "high" },
+        { "ghsa_id": "GHSA-R28C-9Q8G-F849", "severity": "high" },
+        { "ghsa_id": "GHSA-RGW5-RVV9-X895", "severity": "high" },
+        { "ghsa_id": "GHSA-V245-V573-V5VM", "severity": "high" },
+        { "ghsa_id": "GHSA-V2HH-GCRM-F6HX", "severity": "high" },
+        { "ghsa_id": "GHSA-V39H-62P7-JPJC", "severity": "high" },
+        { "ghsa_id": "GHSA-XWG4-73V4-XW9W", "severity": "high" }
+      ]
+    },
+    "ui-web": {
+      "advisories": [
+        { "ghsa_id": "GHSA-28WG-GHJ8-5HJV", "severity": "high" },
+        { "ghsa_id": "GHSA-2V37-7H3G-55P8", "severity": "high" },
+        { "ghsa_id": "GHSA-3JXR-9VMJ-R5CP", "severity": "high" },
+        { "ghsa_id": "GHSA-4C8G-83QW-93J6", "severity": "high" },
+        { "ghsa_id": "GHSA-73WF-GQ98-2V4G", "severity": "high" },
+        { "ghsa_id": "GHSA-7P8R-X3MC-P8W7", "severity": "high" },
+        { "ghsa_id": "GHSA-C2C7-RCM5-VVQJ", "severity": "high" },
+        { "ghsa_id": "GHSA-C83G-RGW3-J3CX", "severity": "high" },
+        { "ghsa_id": "GHSA-F65P-4M7J-42XC", "severity": "high" },
+        { "ghsa_id": "GHSA-FPH4-WMHF-6FWF", "severity": "high" },
+        { "ghsa_id": "GHSA-JQFF-G426-HQXP", "severity": "high" },
+        { "ghsa_id": "GHSA-MH99-V99M-4GVG", "severity": "high" },
+        { "ghsa_id": "GHSA-R28C-9Q8G-F849", "severity": "high" },
+        { "ghsa_id": "GHSA-RGW5-RVV9-X895", "severity": "high" },
+        { "ghsa_id": "GHSA-V2HH-GCRM-F6HX", "severity": "high" }
+      ]
+    },
+    "shell": {
+      "advisories": []
+    },
+    "runtime-client": {
+      "advisories": []
+    },
+    "wire-contract": {
+      "advisories": []
+    }
+  }
+}

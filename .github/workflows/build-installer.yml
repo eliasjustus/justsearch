@@ -23,15 +23,27 @@ on:
       sign:
         description: >-
           Authenticode-sign this build using the configured JUSTSEARCH_CODESIGN_* secrets.
-          OFF by default: eSigner signings are metered (~101 per build until the signed
-          mirrors of tempdoc 760/772 §K are populated), so only candidate/release builds
-          should spend them. A dispatch against a v* tag ref signs regardless of this
+          OFF by default: eSigner signings are metered (currently ~8 per build with the
+          signed mirrors; mirror refreshes have their own workflow), so only candidate/release
+          builds should spend them. A dispatch against a v* tag ref signs regardless of this
           input — a release cut is never unsigned by accident.
         type: boolean
         default: false
+      providerRemainingSignatures:
+        description: >-
+          Provider-portal remaining signing allocation immediately before a production-signed run.
+          Required for a v* tag or sign=true unless the visible self-signed rehearsal variable is on.
+        type: string
+        default: ''
 
 permissions:
   contents: read
+
+# Every job is signing-capable because Authenticode happens inside the Tauri build. Serialize it
+# with the mirror producer so two approved dispatches cannot spend the same provider budget.
+concurrency:
+  group: release-signing-spend
+  cancel-in-progress: false
 
 env:
   NODE_VERSION: "24.14.0"
@@ -42,6 +54,7 @@ jobs:
     name: Windows NSIS Installer
     runs-on: windows-latest
     timeout-minutes: 45
+    environment: release-signing
     # The release-attach step can create/update a GitHub Release when this
     # manual workflow is dispatched against a v* tag ref.
     permissions:
@@ -157,6 +170,16 @@ jobs:
             modules/shell/package-lock.json
             modules/ui-web/package-lock.json
 
+      - name: Validate release changelog before building
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF.Substring('refs/tags/v'.Length)
+          node scripts/release/release-changelog.mjs check
+          if ($LASTEXITCODE -ne 0) { throw "CHANGELOG structure is invalid." }
+          node scripts/release/release-changelog.mjs extract --version $version --out (Join-Path $env:RUNNER_TEMP "release-changelog-section.md")
+          if ($LASTEXITCODE -ne 0) { throw "CHANGELOG has no unique non-empty section for $version." }
+
       # Pre-Gradle diagnostic: verify the llama-server prebuilt zip was actually
       # restored to disk after the dedicated cache hit. If this logs 0 files, the
       # cache restore is broken even though actions/cache reports success.
@@ -194,8 +217,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --prefix modules/shell
-          npm ci --prefix modules/ui-web
+          npm ci --prefix modules/shell --audit=false
+          npm ci --prefix modules/ui-web --audit=false
+
+      # The command template is step-scoped here only to decide whether the pinned vendor tool is
+      # needed. The archive is digest-verified before extraction; no downloaded code runs in this
+      # step, and unrelated updater/metadata secrets have not been materialized yet.
+      - name: Install verified eSigner CodeSignTool (command mode only)
+        shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+        run: |
+          if (-not ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND -match 'CodeSignTool')) {
+            Write-Host "CodeSignTool not referenced by the signing command template - skipping."
+            exit 0
+          }
+          ./scripts/ci/install-codesign-tool.ps1 -Destination (Join-Path $env:RUNNER_TEMP "CodeSignTool")
 
       - name: Stage authenticated-updater metadata keys
         if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
@@ -225,6 +262,10 @@ jobs:
           if (-not $env:RELEASE_DESCRIPTOR_URL.EndsWith("release.v1.json")) {
             throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must end with release.v1.json (updater.rs derives latest.json from that suffix)."
           }
+          $expectedDescriptorUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/release.v1.json"
+          if ($env:RELEASE_DESCRIPTOR_URL -ne $expectedDescriptorUrl) {
+            throw "JUSTSEARCH_RELEASE_DESCRIPTOR_URL must match the current repository identity. Expected '$expectedDescriptorUrl', got '$env:RELEASE_DESCRIPTOR_URL'."
+          }
           $utf8 = New-Object System.Text.UTF8Encoding($false)
           $privatePath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-private.pem"
           $publicPath = Join-Path $env:RUNNER_TEMP "justsearch-release-metadata-public.pem"
@@ -232,37 +273,6 @@ jobs:
           [System.IO.File]::WriteAllText($publicPath, $env:METADATA_PUBLIC_KEY_PEM, $utf8)
           "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH=$privatePath" >> $env:GITHUB_ENV
           "JUSTSEARCH_RELEASE_METADATA_PUBLIC_KEY_PATH=$publicPath" >> $env:GITHUB_ENV
-
-      # eSigner CodeSignTool bootstrap (tempdoc 760 command-mode signing). Only when the
-      # command-mode secret is set AND its template references CodeSignTool: download SSL.com's
-      # CodeSignTool (ships its own JRE and PRODUCTION endpoint config — no properties edit
-      # needed; sandbox-validated 2026-07-22, tool v1.3.3) into $RUNNER_TEMP\CodeSignTool so the
-      # JUSTSEARCH_CODESIGN_COMMAND template can invoke it as
-      #   %RUNNER_TEMP%\CodeSignTool\CodeSignTool.bat sign ... -input_file_path="{file}" -override="true"
-      # (the template runs through a .cmd, so %RUNNER_TEMP% expands at execution). The zip's
-      # sha256 is logged for supply-chain traceability (no stable versioned URL exists to pin).
-      # Secrets-absent or non-CodeSignTool templates skip this entirely.
-      - name: Install eSigner CodeSignTool (command mode only)
-        shell: pwsh
-        env:
-          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
-        run: |
-          if (-not ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND -match 'CodeSignTool')) {
-            Write-Host "CodeSignTool not referenced by the signing command template - skipping."
-            exit 0
-          }
-          $dest = Join-Path $env:RUNNER_TEMP "CodeSignTool"
-          $zip = Join-Path $env:RUNNER_TEMP "CodeSignTool.zip"
-          Invoke-WebRequest -Uri "https://www.ssl.com/download/codesigntool-for-windows/" -OutFile $zip
-          Write-Host ("CodeSignTool.zip sha256: " + (Get-FileHash -Algorithm SHA256 $zip).Hash)
-          Expand-Archive -Path $zip -DestinationPath $dest -Force
-          # The zip may nest a single top-level folder; normalize so CodeSignTool.bat sits at $dest.
-          $bat = Get-ChildItem -Path $dest -Recurse -Filter "CodeSignTool.bat" | Select-Object -First 1
-          if (-not $bat) { throw "CodeSignTool.bat not found after extraction" }
-          if ($bat.DirectoryName -ne $dest) {
-            Get-ChildItem -Path $bat.DirectoryName | Move-Item -Destination $dest -Force
-          }
-          Write-Host ("CodeSignTool ready at " + (Join-Path $dest "CodeSignTool.bat"))
 
       - name: Build installer
         shell: pwsh
@@ -284,10 +294,10 @@ jobs:
           ORG_GRADLE_PROJECT_includeCuda: "false"
           ORG_GRADLE_PROJECT_skipOnnxModels: "true"
           # Code-signing secrets (tempdoc 760 Phase 2 item 4). Absent secrets expand to empty
-          # strings, so the build takes the unsigned path EXACTLY as before. sign-windows.ps1
-          # reads these per JUSTSEARCH_CODESIGN_MODE; -Sign is added below only when a credential
-          # is present. (GitHub Actions forbids secrets.* in step `if:`, so the deciding secret is
-          # hoisted into env here and the boolean is computed in the run script.)
+          # strings. sign-windows.ps1 reads these per JUSTSEARCH_CODESIGN_MODE; an unsigned branch
+          # rehearsal remains allowed, while an explicit sign request or any v* tag fails before
+          # packaging when its credential is absent. (GitHub Actions forbids secrets.* in step
+          # `if:`, so the deciding secret is hoisted into env here.)
           JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
           JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
           JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
@@ -318,6 +328,9 @@ jobs:
           # accept a present-but-chain-untrusted signature instead of hard-failing after all the
           # per-file signings already ran. Unset in production. (Tempdoc 760 rehearsal path.)
           JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
+          JUSTSEARCH_CODESIGN_LEDGER_PATH: ${{ runner.temp }}\justsearch-signing-ledger.jsonl
+          JUSTSEARCH_CODESIGN_MAX_SIGNATURES: "12"
+          PROVIDER_REMAINING_SIGNATURES: ${{ inputs.providerRemainingSignatures }}
           # Read-only releases API access for derive-release-sequence.mjs (tag lane only).
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -329,9 +342,9 @@ jobs:
           # array-splatted -VerifyReleaseVersion had the same latent bug, never exercised because
           # no tag dispatch has run since it was added).
           $extra = @{}
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+          $isReleaseTag = $env:GITHUB_REF -like 'refs/tags/v*'
+          if ($isReleaseTag) {
             $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
-            $extra['VerifyReleaseVersion'] = $true
             if ($tag -match '^v\d+\.\d+\.\d+$') {
               $extra['AssembleUpdaterAssets'] = $true
               # Rollback protection for release metadata. This was GITHUB_RUN_NUMBER, which GitHub
@@ -360,22 +373,43 @@ jobs:
           # Engage signing only when BOTH hold: a credential for the configured mode is present
           # (pfx b64 / store thumbprint / command template), AND signing was requested — via the
           # `sign` dispatch input or a v* tag ref (a release cut always signs). Requested-but-
-          # unconfigured stays a no-op (secrets-absent forks build unsigned, as before).
+          # unconfigured fails here, before any packaging work.
           # Opt-in default per owner decision 2026-08-12: eSigner signings are metered, so
           # ordinary dispatches must not spend them (supersedes 760 item 4's auto-engage).
-          $signConfigured = `
-            ($env:JUSTSEARCH_CODESIGN_PFX_B64 -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) -or `
-            ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
-            ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
-          $signRequested = ($env:SIGN_REQUESTED -eq '1') -or ($env:GITHUB_REF -like 'refs/tags/v*')
-          if ($signConfigured -and $signRequested) { $extra['Sign'] = $true }
-          elseif ($signConfigured) { Write-Host "Signing credentials present but not requested (sign input false, non-tag ref) - building UNSIGNED." }
+          $projectVersionLine = Get-Content -LiteralPath gradle.properties | Where-Object { $_ -match '^version=' }
+          if (@($projectVersionLine).Count -ne 1) { throw "gradle.properties must contain exactly one version= line." }
+          $projectVersion = ($projectVersionLine -split '=', 2)[1].Trim()
+          $allowUntrustedRaw = if ($env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED) { $env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED.Trim().ToLowerInvariant() } else { '' }
+          $decisionJson = & ./scripts/ci/resolve-release-signing.ps1 `
+            -GitRef $env:GITHUB_REF `
+            -ProjectVersion $projectVersion `
+            -Mode $env:JUSTSEARCH_CODESIGN_MODE `
+            -SignInput:($env:SIGN_REQUESTED -eq '1') `
+            -PfxBase64 $env:JUSTSEARCH_CODESIGN_PFX_B64 `
+            -PfxPassword $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD `
+            -TimestampUrl $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL `
+            -Thumbprint $env:JUSTSEARCH_CODESIGN_THUMBPRINT `
+            -CommandTemplate $env:JUSTSEARCH_CODESIGN_COMMAND `
+            -AllowUntrusted:($allowUntrustedRaw -in @('1', 'true', 'yes')) `
+            -ProviderRemainingSignatures $env:PROVIDER_REMAINING_SIGNATURES `
+            -SignatureMaximum 12
+          $signingDecision = $decisionJson | ConvertFrom-Json
+          if ($signingDecision.packageSwitch -eq 'Release') { $extra['Release'] = $true }
+          elseif ($signingDecision.packageSwitch -eq 'Sign') { $extra['Sign'] = $true }
+          else { Write-Host "Signing not requested for this non-tag dispatch; building unsigned." }
+          $signRequested = [bool]$signingDecision.signingRequested
+          if (Test-Path -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH) {
+            Remove-Item -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH -Force
+          }
+          if (Test-Path -LiteralPath ($env:JUSTSEARCH_CODESIGN_LEDGER_PATH + '.attempts.jsonl')) {
+            Remove-Item -LiteralPath ($env:JUSTSEARCH_CODESIGN_LEDGER_PATH + '.attempts.jsonl') -Force
+          }
           # Signed-mirror pins (packaging/signed-mirrors.v1.json; tempdoc 760/772 §K sign-once). When a
           # vendored payload has a committed, COMPLETE signed-mirror entry, point the matching gradle
           # download-override property pair at the once-signed re-hosted copy so the build fetches it
           # instead of the default upstream pin. Pins live in the committed file (not repo variables) so
-          # each bump is PR-reviewed supply-chain history. The file ships EMPTY: an absent/empty entry
-          # sets nothing => default pins => byte-identical build. A half-complete entry (url XOR sha256)
+          # each bump is PR-reviewed supply-chain history. An absent/empty entry sets nothing =>
+          # default pins => byte-identical build. A half-complete entry (url XOR sha256)
           # fails loudly HERE, before the build, mirroring the all-or-nothing pin in build.gradle.kts.
           $mirrorsPath = "packaging/signed-mirrors.v1.json"
           if (Test-Path $mirrorsPath) {
@@ -401,6 +435,17 @@ jobs:
             }
           }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
+
+          if ($signRequested -and (Test-Path -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH)) {
+            $ledger = @(Get-Content -LiteralPath $env:JUSTSEARCH_CODESIGN_LEDGER_PATH | Where-Object { $_ -and $_.Trim() })
+            $attempts = @(
+              Get-Content -LiteralPath ($env:JUSTSEARCH_CODESIGN_LEDGER_PATH + '.attempts.jsonl') -ErrorAction Stop |
+                Where-Object { $_ -and $_.Trim() } |
+                ForEach-Object { $_ | ConvertFrom-Json } |
+                Where-Object { $_.event -eq 'attempt-start' }
+            )
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Authenticode signing`n`nProvider attempts reserved: $($attempts.Count) / 12 reviewed maximum. Verified signatures: $($ledger.Count).`n"
+          }
 
       # The bundler swallows the signCommand child's output on failure, so sign-windows.ps1 tees
       # its messages to a log; print it when the build fails (tempdoc 760 rehearsal lesson).
@@ -466,23 +511,37 @@ jobs:
           JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID: ${{ vars.JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID }}
         run: |
           $tag = $env:GITHUB_REF.Substring('refs/tags/'.Length)
+          $version = $tag.Substring(1)
+          $trustNotice = Join-Path $env:RUNNER_TEMP "release-trust-notice.md"
+          $generatedNotes = Join-Path $env:RUNNER_TEMP "release-generated-notes.md"
           $notes = Join-Path $env:RUNNER_TEMP "release-notes.md"
           @"
           ### Verify your download
           Before running the installer, verify its integrity with the accompanying ``SHA256SUMS``.
           Full instructions are in
           [verify-your-download](https://github.com/justsearch-app/justsearch/blob/main/docs/how-to/verify-your-download.md).
-          "@ | Set-Content -LiteralPath $notes -Encoding UTF8
+          "@ | Set-Content -LiteralPath $trustNotice -Encoding UTF8
+
+          $generatedJson = gh api --method POST "/repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f tag_name=$tag
+          if ($LASTEXITCODE -ne 0) { throw "GitHub could not generate release notes for $tag." }
+          $generated = $generatedJson | ConvertFrom-Json
+          if (-not $generated.body) { throw "GitHub returned empty generated notes for $tag." }
+          [System.IO.File]::WriteAllText($generatedNotes, ([string]$generated.body), (New-Object System.Text.UTF8Encoding($false)))
+          node scripts/release/release-changelog.mjs compose --version $version `
+            --trust-notice-file $trustNotice --generated-notes-file $generatedNotes --out $notes
+          if ($LASTEXITCODE -ne 0) { throw "Release-note composition failed for $tag." }
 
           $existingJson = gh release view $tag --json isDraft 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --verify-tag --draft --title $tag --generate-notes --notes-file $notes
+            gh release create $tag --verify-tag --draft --title $tag --notes-file $notes
             if ($LASTEXITCODE -ne 0) { throw "Failed to create draft release $tag." }
           } else {
             $existing = $existingJson | ConvertFrom-Json
             if (-not $existing.isDraft) {
               throw "Release $tag is already published; refusing to mutate it during a transactional retry."
             }
+            gh release edit $tag --title $tag --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { throw "Failed to refresh draft release body for $tag." }
           }
 
           $releaseAssets = @(Get-ChildItem -LiteralPath "dist/installer" -File | ForEach-Object FullName)
@@ -550,7 +609,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --audit=false
 
       - name: Download installer artifact
         uses: actions/download-artifact@v7

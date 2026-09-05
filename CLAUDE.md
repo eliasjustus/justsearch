@@ -147,7 +147,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 | Hot-reload after edit | `reload` (requires `hotReload: true` on dev-stack start) |
 | Pre-merge gate | `./gradlew.bat build -x test` from main before merge |
 
-Build fails on PMD + Spotless whitespace/newline checks — run `spotlessApply` first. Java is deliberately **not** auto-formatted (tempdoc 729).
+`spotlessCheck` checks whitespace; PMD is opt-in. `spotlessApply` fixes it but does **not** format Java.
 
 Public hosted `CI` runs on PRs, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted/specialty workflows remain manual. Local-first verification stays primary. For CI triage load `/ci-triage`; for profiling/live stack load `/jseval` and `/dev-stack`.
 
@@ -158,7 +158,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `.github/workflows/*.yml` · root README | `check-workflow-triggers` · `check-root-readme` |
 | root `CLAUDE.md` Pre-merge table | `check-premerge-table` |
 | repo history publication settings (ADR-0045) | `check-repo-history-policy` |
-| PR title/body as public squash message | `preview-squash-message` |
+| PR title/body plus managed review record | `preview-squash-message` · `pr-review-record check` |
 | `contracts/**` | `--gate wire` |
 | `docs/decisions/**` | `--gate adr-coverage` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |

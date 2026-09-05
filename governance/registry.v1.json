@@ -82,27 +82,27 @@
     },
     {
       "id": "npm-audit",
-      "title": "npm audit severity-count ratchet (high/critical)",
+      "title": "NPM lockfile advisory-identity ratchet (GitHub high/critical advisories)",
       "enforcer": "scripts/governance/gates/npm-audit/enforcer.mjs",
       "ruleDescriptions": "scripts/governance/gates/npm-audit/rule-descriptions.mjs",
       "changesetsDir": "gates/npm-audit/.changesets",
       "classifications": "scripts/governance/gates/npm-audit/classifications.mjs",
       "baseline": {
         "kind": "ratchet-file",
-        "path": "scripts/ci/npm-audit-ratchet-baseline.v1.json",
+        "path": "scripts/ci/github-advisory-baseline.v1.json",
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/npm-audit-report.json",
+        "reportPath": "tmp/github-advisory-report.json",
         "trackedSeverities": [
           "high",
           "critical"
         ],
         "inputs": [
           {
-            "path": "tmp/npm-audit-report.json",
-            "producer": "node scripts/ci/report-npm-audit.mjs",
+            "path": "tmp/github-advisory-report.json",
+            "producer": "node scripts/ci/report-github-advisories.mjs",
             "class": "required"
           }
         ]
@@ -129,7 +129,7 @@
     },
     {
       "id": "todo-fixme",
-      "title": "TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
+      "title": "Source-comment TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
       "enforcer": "scripts/governance/gates/todo-fixme/enforcer.mjs",
       "ruleDescriptions": "scripts/governance/gates/todo-fixme/rule-descriptions.mjs",
       "changesetsDir": "gates/todo-fixme/.changesets",
@@ -142,13 +142,18 @@
       },
       "config": {
         "sourceGlobs": [
-          "modules/**/src/main/**/*.java",
-          "modules/ui-web/src/**/*.{ts,tsx}"
+          "modules/**/src/{main,test,testFixtures,integrationTest,systemTest,soakTest}/**/*.java",
+          "modules/ui-web/src/**/*.{ts,tsx}",
+          "scripts/**/*.{js,mjs,cjs,py,ps1}",
+          "modules/shell/src-tauri/**/*.rs"
         ],
         "excludeGlobs": [
           "**/build/**",
           "**/generated/**",
-          "**/node_modules/**"
+          "**/node_modules/**",
+          "**/target/**",
+          "scripts/governance/_fixtures/**",
+          "scripts/governance/gates/todo-fixme/**"
         ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/todo-fixme"
@@ -636,17 +641,18 @@
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },
-      "config": {
-        "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
-        "applicationYaml": "config/application.yaml",
-        "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
-        "inputs": [
-          {
-            "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
-            "producer": "node scripts/docs/generate-runtime-config-matrix.mjs",
-            "class": "required"
-          }
-        ]
+    "config": {
+      "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+      "applicationYaml": "config/application.yaml",
+      "sysaccessAllowlist": "gates/config-surface/sysaccess-allowlist.txt",
+      "configLifecycle": "governance/config-lifecycle.v1.json",
+      "inputs": [
+        {
+          "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+          "producer": "node scripts/docs/generate-runtime-config-matrix.mjs",
+          "class": "required"
+        }
+      ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/config-surface"
     }

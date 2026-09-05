@@ -3,17 +3,20 @@
  * Tempdoc 696 — unit test for the dev JDK resolver (scripts/dev/lib/resolve-jdk.cjs).
  *
  * Pins the pure logic that must not silently regress: `java -version` major-version
- * parsing (legacy 1.8 and modern 25 formats) and the "pick the first candidate whose
- * java is >= MIN_MAJOR" selection. No real JDK is launched — the probe is injected.
+ * parsing (legacy 1.8 and modern 25 formats), PATH candidate discovery, and the
+ * "pick the first candidate whose java is >= MIN_MAJOR" selection. The unit cases
+ * do not launch a real JDK — filesystem and version probes are injected.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { parseJavaMajor, selectFromCandidates, MIN_MAJOR } = require(
+const { parseJavaMajor, selectFromCandidates, javaHomesFromPath, MIN_MAJOR } = require(
   path.join(__dirname, 'lib', 'resolve-jdk.cjs'),
 ).__test;
 
@@ -43,7 +46,7 @@ check('parseJavaMajor: garbage/empty → null', () => {
   assert.equal(parseJavaMajor(null), null);
 });
 
-// --- selectFromCandidates (inject a probe keyed on the home name) ---
+// --- selectFromCandidates (real existence gate, injected version probe) ---
 const majorByHome = {
   jdk8: 8,
   jdk17: 17,
@@ -52,42 +55,87 @@ const majorByHome = {
   jdk25: 25,
   broken: null, // exists on disk but java won't run
 };
-// The candidates below use names that also exist as real dirs? No — selectFromCandidates
-// checks fs.existsSync(javaExeIn(home)) BEFORE probing, so to unit-test selection purely we
-// bypass existence by using a probe that also asserts existence-independence. Instead we test
-// the probe-driven ranking via a wrapper that treats every candidate as existing.
-function selectAssumingExist(candidates, probe) {
-  // mirror selectFromCandidates' semantics but skip the fs.existsSync gate (pure ranking test)
-  for (const home of candidates) {
-    if (!home) continue;
-    const major = probe(home);
-    if (major != null && major >= MIN_MAJOR) return home;
+function withFakeHomes(names, run) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'justsearch-jdk-selection-'));
+  const homes = Object.fromEntries(names.map((name) => {
+    const home = path.join(root, name);
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, process.platform === 'win32' ? 'java.exe' : 'java'), 'fixture');
+    return [name, home];
+  }));
+  try {
+    return run(homes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
-  return null;
 }
-const probe = (home) => majorByHome[path.basename(home)] ?? null;
+const probe = (javaExe) => majorByHome[path.basename(path.dirname(path.dirname(javaExe)))] ?? null;
 
 check(`MIN_MAJOR is ${MIN_MAJOR} (>= 24)`, () => {
   assert.ok(MIN_MAJOR >= 24, `MIN_MAJOR should be >= 24, got ${MIN_MAJOR}`);
 });
 check('selection: first >= 24 wins, older/lower skipped', () => {
-  assert.equal(selectAssumingExist(['jdk8', 'jdk17', 'jdk23', 'jdk25'], probe), 'jdk25');
-  assert.equal(selectAssumingExist(['jdk24', 'jdk25'], probe), 'jdk24'); // first acceptable wins
+  withFakeHomes(['jdk8', 'jdk17', 'jdk23', 'jdk24', 'jdk25'], (homes) => {
+    assert.equal(selectFromCandidates(
+      [homes.jdk8, homes.jdk17, homes.jdk23, homes.jdk25], probe), homes.jdk25);
+    assert.equal(selectFromCandidates([homes.jdk24, homes.jdk25], probe), homes.jdk24);
+  });
 });
 check('selection: all < 24 → null', () => {
-  assert.equal(selectAssumingExist(['jdk8', 'jdk17', 'jdk23'], probe), null);
+  withFakeHomes(['jdk8', 'jdk17', 'jdk23'], (homes) => {
+    assert.equal(selectFromCandidates([homes.jdk8, homes.jdk17, homes.jdk23], probe), null);
+  });
 });
 check('selection: unprobeable (null) candidates skipped', () => {
-  assert.equal(selectAssumingExist(['broken', 'jdk8', 'jdk25'], probe), 'jdk25');
+  withFakeHomes(['broken', 'jdk8', 'jdk25'], (homes) => {
+    assert.equal(selectFromCandidates([homes.broken, homes.jdk8, homes.jdk25], probe), homes.jdk25);
+  });
 });
 check('selection: empty/falsey candidates skipped, empty list → null', () => {
-  assert.equal(selectAssumingExist([null, '', 'jdk25'], probe), 'jdk25');
-  assert.equal(selectAssumingExist([], probe), null);
+  withFakeHomes(['jdk25'], (homes) => {
+    assert.equal(selectFromCandidates([null, '', homes.jdk25], probe), homes.jdk25);
+  });
+  assert.equal(selectFromCandidates([], probe), null);
 });
 
 // Sanity: the real selectFromCandidates rejects a non-existent home without throwing.
 check('selectFromCandidates: non-existent home → null (no throw)', () => {
   assert.equal(selectFromCandidates([path.join(__dirname, 'no-such-jdk-xyz')]), null);
+});
+
+// --- javaHomesFromPath ---
+check('javaHomesFromPath: scans past an obsolete Windows shim to a JDK bin', () => {
+  const pathValue = 'C:\\Oracle\\java8path;"D:\\tools\\jdk-25\\bin"';
+  const existing = new Set([
+    'C:\\Oracle\\java8path\\java.exe',
+    'D:\\tools\\jdk-25\\bin\\java.exe',
+  ]);
+  assert.deepEqual(
+    javaHomesFromPath(
+      pathValue,
+      'win32',
+      (candidate) => existing.has(candidate),
+      (candidate) => candidate,
+    ),
+    ['C:\\Oracle', 'D:\\tools\\jdk-25'],
+  );
+});
+
+check('javaHomesFromPath: resolves a launcher symlink to its real JDK home', () => {
+  assert.deepEqual(
+    javaHomesFromPath(
+      '/usr/bin:/missing',
+      'linux',
+      (candidate) => candidate === '/usr/bin/java',
+      () => '/opt/jdk-25/bin/java',
+    ),
+    ['/opt/jdk-25'],
+  );
+});
+
+check('javaHomesFromPath: empty PATH → no candidates', () => {
+  assert.deepEqual(javaHomesFromPath('', 'win32'), []);
 });
 
 console.log(`\nresolve-jdk: ${passed} checks passed`);

@@ -1,8 +1,8 @@
 /**
- * Sync canonical documentation into skill files.
+ * Sync canonical documentation into Claude Code skill files.
  *
  * Usage:
- *   node scripts/docs/skills-sync.mjs          # regenerate generated sections in all skill files
+ *   node scripts/docs/skills-sync.mjs          # regenerate configured Claude skill sections
  *   node scripts/docs/skills-sync.mjs --check   # verify committed files match generated (CI)
  *
  * Only the section between <!-- generated:start --> and <!-- generated:end --> markers is touched.
@@ -15,7 +15,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
-import { syncCodexSkills } from "./codex-skills-projection.mjs";
 
 const MARKER_START =
   "<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->";
@@ -160,20 +159,6 @@ function main() {
     } else {
       fs.writeFileSync(skillPath, output, "utf8");
     }
-  }
-
-  // Every Claude skill, including hand-authored skills not listed in SKILLS,
-  // has a checked-in Codex projection. Run this after canonical-doc expansion
-  // so both harnesses receive the same generated body in one command.
-  try {
-    const codex = syncCodexSkills({ root, check: isCheck });
-    console.log(
-      `codex skill projection ${isCheck ? "check" : "write"}: ` +
-      `${codex.skillCount} skills, ${codex.fileCount} files`,
-    );
-  } catch (error) {
-    console.error(error.message);
-    allOk = false;
   }
 
   if (isCheck) {

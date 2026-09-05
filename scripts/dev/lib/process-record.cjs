@@ -213,6 +213,10 @@ function deriveLivenessState({ portAnswered, pidAlive: pidIsAlive }) {
   };
 }
 
+function isHttpResponseCode(code) {
+  return Number.isInteger(code) && code >= 100 && code <= 599;
+}
+
 /* ── FOREIGN SCOPE — a consumer of the generic layer above, not part of its contract ───────────*/
 
 /**
@@ -306,7 +310,8 @@ const DEFAULT_INFERENCE_PORT = parseInt(process.env.JUSTSEARCH_SERVER_PORT, 10) 
  * The tri-state is the whole point and must not be collapsed:
  *   `null` = probing was off or the probe itself failed — I did not look.
  *   `[]`   = I looked and found nothing.
- *   `[..]` = I looked and found these, and none of them is the run I own.
+ *   `[..]` = I looked and found these listener/record candidates; each carries an explicit
+ *            `unowned` or `unknown` attribution relative to the owned run.
  *
  * Tempdoc 844 D3 extends this with the *register* (`readForeignRegister`), which turns "something
  * is listening on 33221" into "jseval's eval backend, from tree X, pid N". The two sources are
@@ -332,7 +337,9 @@ const DEFAULT_INFERENCE_PORT = parseInt(process.env.JUSTSEARCH_SERVER_PORT, 10) 
  */
 async function probeForeignRuns({
   enabled,
+  // Compatibility input for older direct consumers. The MCP passes the typed state below.
   hasActiveRun,
+  ownedRunState = hasActiveRun === false ? 'ABSENT' : hasActiveRun === true ? 'ACTIVE' : 'UNKNOWN',
   ownedApiPort = null,
   aiActive = null,
   ports = FOREIGN_BACKEND_PORTS,
@@ -344,6 +351,7 @@ async function probeForeignRuns({
   isPidAlive = pidAlive,
 } = {}) {
   if (!enabled) return null;
+  if (!['ACTIVE', 'ABSENT', 'UNKNOWN'].includes(ownedRunState)) return null;
   try {
     // The register is consulted only when probing is on. Without a probe a record's liveness
     // cannot be verified, and listing an unverified record as a run would be the confident
@@ -365,7 +373,11 @@ async function probeForeignRuns({
         .then((code) => ({ port: inferencePort, kind: 'inference', probePath: '/health', code })),
     );
     const results = await Promise.all(checks);
-    const answered = new Map(results.filter((r) => r.kind === 'backend').map((r) => [r.port, r.code === 200]));
+    // Any HTTP response proves that a process owns the port. Readiness is irrelevant here: a
+    // booting or unhealthy 503 backend is still a live, contending foreign listener.
+    const answered = new Map(
+      results.filter((r) => r.kind === 'backend').map((r) => [r.port, isHttpResponseCode(r.code)]),
+    );
 
     const found = [];
 
@@ -396,7 +408,10 @@ async function probeForeignRuns({
         probePath: '/api/status',
         // A record claiming the port the dev-runner's own run holds cannot be attributed by this
         // probe — whichever process answered, the listener is ambiguous. Unknown, not unowned.
-        attribution: port === ownedApiPort ? 'unknown' : 'unowned',
+        attribution: ownedRunState === 'ABSENT'
+          || (ownedRunState === 'ACTIVE' && ownedApiPort != null && port !== ownedApiPort)
+          ? 'unowned'
+          : 'unknown',
         source: 'registered',
         state,
         liveness: { portAnswered, pidAlive: pidIsAlive },
@@ -423,23 +438,30 @@ async function probeForeignRuns({
 
     // 2. Then anything listening that nothing declared — today's P5 behaviour, unchanged.
     for (const r of results) {
-      if (r.code !== 200) continue;
+      if (!isHttpResponseCode(r.code)) continue;
       if (r.kind === 'inference') {
         // The owned run's OWN llama-server answers here too. Only the run's realized AI state can
         // tell them apart, and that state is itself a tri-state — so an unknown stays unknown
         // rather than being reported as somebody else's process.
-        if (hasActiveRun && aiActive === true) continue;
+        if (ownedRunState === 'ACTIVE' && aiActive === true) continue;
         found.push({
           port: r.port,
           kind: 'inference',
           probePath: r.probePath,
-          attribution: !hasActiveRun || aiActive === false ? 'unowned' : 'unknown',
+          attribution: ownedRunState === 'ABSENT'
+            || (ownedRunState === 'ACTIVE' && aiActive === false)
+            ? 'unowned'
+            : 'unknown',
           source: 'observed',
         });
       } else {
         if (registeredPorts.has(r.port)) continue; // already reported, with identity
-        if (r.port === ownedApiPort) continue;     // the run this dev-runner owns
-        found.push({ port: r.port, kind: 'backend', probePath: r.probePath, attribution: 'unowned', source: 'observed' });
+        if (ownedRunState === 'ACTIVE' && r.port === ownedApiPort) continue; // owned listener
+        const attribution = ownedRunState === 'ABSENT'
+          || (ownedRunState === 'ACTIVE' && ownedApiPort != null && r.port !== ownedApiPort)
+          ? 'unowned'
+          : 'unknown';
+        found.push({ port: r.port, kind: 'backend', probePath: r.probePath, attribution, source: 'observed' });
       }
     }
     return found;

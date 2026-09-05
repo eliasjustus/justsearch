@@ -65,7 +65,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Triage PSI Drift on Encoder Distributions (LR4-g)](how-to/triage-psi-drift.md): Investigation checklist when encoder_drift flags PSI > 0.2 on an encoder.ort_run duration distribution.
 - [Use Codex for JustSearch Development](how-to/use-codex-for-development.md): Install, authenticate, launch, and verify Codex CLI, the Codex IDE extension, or the ChatGPT desktop app against JustSearch's shared instructions, skills, hooks, MCP server, and agent roles.
 - [Using the UI](how-to/use-ui.md): Running dev modes and accessing debug dashboards.
-- [Verify your JustSearch download](how-to/verify-your-download.md): Checking the installer's SHA-256 against SHA256SUMS, why Windows SmartScreen and Smart App Control react to an unsigned installer, and the build-from-source alternative if you'd rather not run it at all.
+- [Verify your JustSearch download](how-to/verify-your-download.md): Checking the installer's SHA-256 and Authenticode identity, understanding Windows reputation warnings, and using the build-from-source alternative.
 - [Wire Codex CLI into the OTLP Sink](how-to/wire-codex-cli-into-the-otlp-sink.md): Point OpenAI Codex CLI's native OTel exporter at the repo's local otlp-sink.py so its token usage lands in the same gen_ai.usage-normalised metrics stream as Claude Code, for cross-harness cost/context analysis.
 - [Writing a JustSearch plugin](how-to/write-a-plugin.md): Author a V1.5 plugin that runs in a SES Compartment, contributes a Surface, and integrates with the host's trust + capability model.
 
@@ -75,6 +75,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Module Dependencies (Gradle)](reference/architecture/module-deps.md): Generated Gradle dependency graph across all modules.
 - [Benchmark Methodology](reference/benchmarks/methodology.md): How JustSearch measures retrieval quality: the reproducible single-config release, honest comparison classes, and how to reproduce it.
 - [Engine-quality scorecard](reference/benchmarks/scorecard.md): Generated delta-vs-guard scorecard co-locating all engine-quality axes (quality + perf + leak) for the canonical release.
+- [Runtime Configuration Lifecycle Policy](reference/configuration/config-lifecycle-policy.md): Source-declared lifecycle stages and review metadata for permanent, experimental, and deprecated runtime configuration.
 - [Environment Variables & System Properties](reference/configuration/environment-variables.md): Canonical runtime knobs (ports, paths, AI toggles).
 - [Runtime Config Ownership Matrix](reference/configuration/runtime-config-ownership-matrix.md): Canonical YAML/env/sysprop ownership and precedence map.
 - [API Evolution Strategy](reference/contracts/api-evolution.md): Backward-compatible evolution policy for HTTP and gRPC APIs.
@@ -85,12 +86,12 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Search Pipeline Invariants](reference/contracts/search-pipeline-invariants.md): Invariants and blocked feature combinations enforced by the search pipeline, with contract test references.
 - [Workflow Telemetry Contract v1](reference/contracts/workflow-telemetry-contract.v1.md): Run-centric workflow evidence, join rules, derived metrics, and comparison constraints.
 - [Agent Postmortems — Named Reference Cases](reference/contributing/agent-postmortems.md): Indexed reference cases (handle → paragraph) that lessons in CLAUDE.md and .claude/rules/agent-lessons.md cite. Principles live in those files; narratives live here so they don't bloat session context.
-- [Agent Prompt Surface Governance](reference/contributing/agent-prompt-surface-governance.md): Ownership rules for repo-agent instructions, generated skills, runtime prompts, hooks, and sandbox prompt surfaces.
+- [Agent Prompt Surface Governance](reference/contributing/agent-prompt-surface-governance.md): Ownership rules for repo-agent instructions, harness-specific skills, runtime prompts, hooks, and sandbox prompt surfaces.
 - [Common Workflows](reference/contributing/common-workflows.md): Step-by-step recipes for recurring JustSearch contribution tasks — add a gRPC method / REST endpoint / configuration key / frontend component / agent tool; modify SSOT catalogs; add a field to an API record or registry declaration; run test suites; regenerate after doc edits. Relocated out of the always-loaded layer (tempdoc 620 Phase 2); the path-triggerable recipes are also delivered just-in-time via governance/consult-register.v1.json.
 - [Conflict Ledger](reference/contributing/conflict-ledger.md): The going-forward register for design conflicts, intentional reframes, and unresolved authority questions — plus the implementer≠resolver closure protocol that governs how they are resolved.
 - [Cross-Component Checklist](reference/contributing/cross-component-checklist.md): Checklist for features spanning build, shell, backend, and frontend.
 - [Development Philosophy](reference/contributing/development-philosophy.md): Issue tracking tiers, observation workflow, and documentation update rules.
-- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-audit, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634.
+- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-advisory identities, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634.
 - [Logging Conventions](reference/contributing/logging-conventions.md): Conventions for log statements, exception handling, MDC usage, and query redaction.
 - [MCP Dev Tools Reference](reference/contributing/mcp-dev-tools.md): Dev orchestration tools for starting, monitoring, and verifying the JustSearch dev stack.
 - [Reliability Budget](reference/contributing/reliability-budget.md): Warn-only reliability hotspot report generated from local gate summaries.
@@ -99,6 +100,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Test Quality Guidelines](reference/contributing/testing-quality.md): Anti-patterns to avoid and high-value test patterns to prefer.
 - [Prose-rule Enforcement Tier Register](reference/contributing/tier-register.md): Which tier enforces each load-bearing prose rule in CLAUDE.md and .claude/rules/*.md. Read by the prose-tier-register and hook-integrity gates. Relocated out of always-loaded context (tempdoc 799 K.2): agents need the rules, which live in the rule files; the enforcement-tier table is a maintainer artifact.
 - [Writing Docs for AI](reference/contributing/writing-docs-for-ai.md): How to keep docs agent-friendly.
+- [Project Glossary](reference/glossary.md): Authority index for overloaded JustSearch architecture, search, runtime, and interface terms.
 - [Troubleshooting: Reindex doesn't run (schema mismatch)](reference/index-schema-mismatch-reindex-noop.md): Diagnosing "reindex doesn't run" due to schema mismatch.
 - [Inference Runtime Register](reference/inference-runtime-register.md): Shared decision register for GPU, ORT, VRAM, and inference runtime. Read before starting inference work. Update before finishing.
 - [jseval Pipeline Reference](reference/jseval-pipeline-reference.md): CLI reference for the jseval evaluation, pipeline profiling, and throughput benchmarking toolkit.
@@ -107,6 +109,7 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Model Inventory](reference/model-inventory.md): Canonical reference for all models used in JustSearch.
 - [Observability Scoped-Fix Playbook](reference/observability-scoped-fix-playbook.md): Engineering discipline for handling silent-failure-class defects in the observability stack.
 - [Indexing Throughput Reference](reference/performance/indexing-throughput.md): Throughput-governing parameters, measured rates, and bottleneck analysis for the indexing pipeline
+- [Platform Lifecycle Evidence Policy](reference/platform-lifecycle-policy.md): Typed lifecycle evidence, live-pin extraction, and advisory review policy for pinned build and runtime platforms.
 - [runtime-contract](reference/runtime-contract.md): JustSearch Runtime Contract — versions, compatibility matrix, stability policy, and the public-contract / reference-client / internal surface classification. Reference companion to docs/explanation/28-runtime-contract.md. v1 is deliberately under-promised — only the runtime manifest, the health/status lifecycle subset, and the MCP endpoint + curated tools are promised.
 - [Search Quality Register](reference/search-quality-register.md): Shared decision register for search quality. Read before starting search work. Update before finishing.
 - [Search UI Behavioral Reference](reference/search-ui-behavior.md): Search UI behavioral specification (zones, filters, selection, status deck).

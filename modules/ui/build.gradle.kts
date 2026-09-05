@@ -156,6 +156,16 @@ tasks.withType<Test>().configureEach {
   }
 }
 
+tasks.register<JavaExec>("generateRuntimeClientOpenApi") {
+  group = "code generation"
+  description = "Regenerate the self-contained @justsearch/runtime-client OpenAPI snapshot."
+  dependsOn(tasks.named("testClasses"))
+  mainClass.set("io.justsearch.ui.api.SdkOpenApiSnapshotMain")
+  classpath = sourceSets["test"].runtimeClasspath
+  args(rootProject.file("packages/runtime-client/openapi/runtime-client.openapi.json").absolutePath)
+  jvmArgs("-Dnet.bytebuddy.experimental=true")
+}
+
 // Integration tests must be hermetic and must not read/write real machine policy locations.
 // The production code resolves machine policy from %PROGRAMDATA%\\JustSearch\\policy.v1.json on Windows.
 // We sandbox PROGRAMDATA for the integrationTest JVM process so tests can create/delete policy files safely.
@@ -2348,5 +2358,26 @@ tasks.register<JavaExec>("runHeadlessWithProfiling") {
   doFirst {
     logger.lifecycle("JFR profiling enabled: output=$jfrOutput, duration=${jfrDuration}s")
     logger.lifecycle("See docs/tempdocs/59-profiling-guide.md for analysis instructions")
+  }
+}
+
+// Tempdoc 893 §D.2 — offline projection from the committed live-route capture. This proves only
+// snapshot-to-derivative coherence; the live capture command owns router fidelity.
+tasks.register<JavaExec>("generateReferenceClientOpenApiSnapshot") {
+  group = "build"
+  description = "Generate/check the classified reference-client OpenAPI snapshot"
+  dependsOn(tasks.named("classes"))
+  mainClass.set("io.justsearch.ui.api.OpenApiSnapshotExporter")
+  classpath = sourceSets["main"].runtimeClasspath
+  args(
+    rootProject.layout.projectDirectory.file(
+      "modules/ui-web/src/api/generated/route-manifest.snapshot.json"
+    ).asFile.absolutePath,
+    rootProject.layout.projectDirectory.file(
+      "modules/ui-web/src/api/generated/reference-client-openapi.snapshot.json"
+    ).asFile.absolutePath
+  )
+  if (providers.gradleProperty("referenceClientOpenApiCheck").orNull == "true") {
+    args("--check")
   }
 }

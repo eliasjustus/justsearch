@@ -160,9 +160,9 @@
     {
       "id": "adr-0015-six-mcp-tools",
       "adr": "0015",
-      "premise": "The MCP surface is a small curated tool list, because small models pick badly from long lists. The count IS the decision: 6 tools (answer, search, browse, ingest, status, runtime_manifest).",
+      "premise": "The MCP surface is a small curated tool list, because small models pick badly from long lists. The count IS the decision: the canonical production ToolDefinition registry has 6 tools (answer, search, browse, ingest, status, runtime_manifest).",
       "kind": "grep-present",
-      "pattern": "tool\\(\\s*\"justsearch_[a-z_]+\"",
+      "pattern": "new\\s+ToolDefinition\\(\\s*\"justsearch_[a-z_]+\"",
       "paths": [
         "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java"
       ],
@@ -408,11 +408,32 @@
       "script": "scripts/ci/check-workflow-triggers.mjs"
     },
     {
+      "id": "adr-0044-advisory-fact-lane-bounded",
+      "adr": "0044",
+      "premise": "The required npm lockfile advisory fact uses bounded GitHub Global Advisory requests and identity-based regression tests rather than npm's bulk POST or aggregate counts.",
+      "kind": "gate",
+      "script": "scripts/ci/test-report-github-advisories.mjs"
+    },
+    {
       "id": "adr-0045-history-policy-checked",
       "adr": "0045",
       "premise": "Public main receives curated squash commits only; the repository's history-publication settings are machine-checked.",
       "kind": "gate",
       "script": "scripts/ci/check-repo-history-policy.mjs"
+    },
+    {
+      "id": "adr-0045-review-record-separated",
+      "adr": "0045",
+      "premise": "The PR title/body remain commit-safe public input while one separately managed PR comment carries head/body-bound mutable review evidence; the publication command remains present.",
+      "kind": "gate",
+      "script": "scripts/ci/pr-review-record.mjs"
+    },
+    {
+      "id": "adr-0045-review-record-regression-invoked",
+      "adr": "0045",
+      "premise": "The managed review-record regression stays invoked by hosted CI.",
+      "kind": "gate",
+      "script": "scripts/ci/test-pr-review-record.mjs"
     },
     {
       "id": "adr-0046-loopback-bind-literal",
@@ -583,12 +604,12 @@
       "adr": "0048",
       "premise": "on_demand was REJECTED by its own measurement and ships opt-in. If the default flips to on_demand without a clean re-measure, the ADR's cadence decision has been reversed silently.",
       "kind": "grep-present",
-      "pattern": "INDEX_NRT_MODE\\(\"index\\.nrt\\.mode\", \"JUSTSEARCH_INDEX_NRT_MODE\", \"continuous\"\\)",
+      "pattern": "INDEX_NRT_MODE\\(\"index\\.nrt\\.mode\", \"JUSTSEARCH_INDEX_NRT_MODE\", \"continuous\"",
       "paths": [
         "modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java"
       ],
       "expect": 1,
-      "note": "expect 1 is the population: one enum declaration. The literal default is part of the pattern precisely so a flip fails the probe."
+      "note": "expect 1 is the population: one enum declaration. The pattern pins the three policy-bearing leading arguments, including the literal default, while allowing orthogonal declaration metadata after them; a default flip still fails the probe."
     }
   ]
 }

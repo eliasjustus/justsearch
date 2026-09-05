@@ -2,10 +2,11 @@
 /**
  * Fail-closed parity gate for the repository's Codex CLI/Desktop projection.
  *
- * AGENTS.md, the Claude skill sources, and governance/agent-hooks.v1.json are
- * the human-edited authorities. This check proves that Codex's generated and
- * native surfaces still expose the intended instructions, skills, hooks, MCP
- * server, and bounded subagent roles without embedding credentials.
+ * AGENTS.md, the manually maintained Codex skills, and
+ * governance/agent-hooks.v1.json are human-edited authorities. This check
+ * proves that Codex's generated and native surfaces remain committed and that
+ * hooks, MCP configuration, and bounded subagent roles preserve their
+ * contracts without embedding credentials.
  */
 
 import assert from 'node:assert/strict';
@@ -36,8 +37,6 @@ function run(rel, args = []) {
 const checks = [
   ['AGENTS → CLAUDE invariant projection is current', () =>
     run('scripts/docs/agent-instructions-sync.mjs', ['--check'])],
-  ['Claude skills → Codex skills projection is current', () =>
-    run('scripts/docs/skills-sync.mjs', ['--check'])],
   ['shared hook manifest → Codex hooks projection is current', () =>
     run('scripts/codegen/gen-codex-hooks.mjs', ['--check'])],
   ['Codex hook adapter contract tests pass', () =>
@@ -82,13 +81,13 @@ const checks = [
       assert.equal(hookConfig.hooks?.[unsupported], undefined, `${unsupported} must not be projected`);
     }
   }],
-  ['generated Codex skills are committed rather than ignored', () => {
+  ['manually maintained Codex skills are committed rather than ignored', () => {
     const ignore = read('.gitignore');
     assert.doesNotMatch(ignore, /^\s*\.agents\/?\s*$/m);
     const probe = spawnSync('git', ['check-ignore', '.agents/skills/dev-stack/SKILL.md'], {
       cwd: ROOT, encoding: 'utf8', windowsHide: true,
     });
-    assert.equal(probe.status, 1, `.agents projection is ignored by: ${(probe.stdout ?? '').trim()}`);
+    assert.equal(probe.status, 1, `.agents skills are ignored by: ${(probe.stdout ?? '').trim()}`);
   }],
 ];
 

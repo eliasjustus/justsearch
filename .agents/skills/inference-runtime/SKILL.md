@@ -4,13 +4,9 @@ description: >-
   TRIGGER only for deep inference-runtime work: GPU detection, ORT sessions,
   VRAM limits, Worker encoder model loading, BFCArena config, or
   NER/SPLADE/reranker/citation inference code. Do not load for ordinary AI
-  module ownership questions; use /module-arch or canonical architecture docs
+  module ownership questions; use $module-arch or canonical architecture docs
   instead.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # Inference Runtime Context
 
 Read this before starting any inference runtime work. Do not re-run
@@ -20,7 +16,7 @@ This is intentionally a heavy skill. Use it when runtime baselines or settled
 experiments matter; avoid loading it for general agent, prompt, or module
 ownership questions.
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/reference/inference-runtime-register.md -->
 
@@ -227,7 +223,7 @@ Design choices in the current inference runtime, with rationale.
 
 ### D-003: gte-multilingual-base as default embedding model — SHIPPED (supersedes EmbeddingGemma-300M)
 
-- **Choice:** Replace EmbeddingGemma-300M with `Alibaba-NLP/gte-multilingual-base` as the production ONNX embedding model. `EmbeddingOnnxModelDiscovery` hardcodes `MODEL_NAME = "gte-multilingual-base"`, falls back to `embeddinggemma-300m/` then `embedding/` (nomic).
+- **Choice:** Replace EmbeddingGemma-300M with `Alibaba-NLP/gte-multilingual-base` as the production ONNX embedding model. `EmbeddingOnnxModelDiscovery` hardcodes `MODEL_NAME = "gte-multilingual-base"` and delegates to resolved model roots; it has no automatic EmbeddingGemma or nomic fallback.
 - **Rationale:** Equivalent quality (nDCG@10 0.7132 vs 0.7128 on SciFact). 39s faster pipeline (181s vs 220s). 70+ languages (vs English-only). Apache 2.0 license. Lazy CPU session design avoids 20+ GB RAM spike on GPU failure.
 - **Evidence:** tempdoc 358 (exhaustive model search, only 2 models pass all hard requirements H1–H9); tempdoc 312 items 23-24 (original EmbeddingGemma selection, now superseded)
 - **Previous default:** EmbeddingGemma-300M (Q4 GPU / INT8 CPU, tempdoc 312) — retained as legacy backup at `models/onnx/embeddinggemma-300m/`
@@ -249,12 +245,12 @@ Design choices in the current inference runtime, with rationale.
 - **Key class:** `ModelManifest` in `modules/worker-core/.../ort/ModelManifest.java`
 - **Revisit when:** settled.
 
-### D-006: Model build provenance (`build.json`) — SHIPPED
+### D-006: Model build provenance (`build.json`) — CONTRACT SHIPPED, PUBLIC COVERAGE PARTIAL
 
-- **Choice:** Each model directory contains a `build.json` recording source HF model ID + commit hash, transformations applied, output SHA-256, tool versions, and exact build command. Build scripts in `scripts/models/` auto-capture provenance.
+- **Choice:** Package-specific build scripts emit `build.json` with source identity/revision, transformations, output SHA-256, tool versions, and an exact build command. The public tree currently tracks this record only for SPLADE; the absence of `build.json` for another package is missing provenance, not a successful integrity check. GGUF candidates use an equivalent per-file immutable source/digest and quantization manifest rather than the ONNX build shape.
 - **Rationale:** Model files were opaque blobs with no recorded origin. Updating or debugging a model required reverse-engineering from commit messages and memory.
 - **Evidence:** tempdoc 348
-- **Integrity check:** `python scripts/models/check-integrity.py`
+- **Integrity check:** `python scripts/models/check-integrity.py` verifies only directories where `build.json` already exists. `python scripts/models/model_promotion_planner.py --registry <registry.json> --package <id> --candidate <candidate.json>` is the write-free, package-scoped readiness check. Its deterministic review bundle preserves canonical provenance, remote-verification facts, evidence references, projection results/diffs, and explicit approval tied to the proposed license while reporting missing publication/runtime/quality/migration evidence without changing assets or registry state.
 - **Revisit when:** settled.
 
 ### D-007: Single-entry session construction via `OrtSessionAssembler` — SHIPPED (tempdoc 397)
@@ -529,7 +525,7 @@ picking up items here over inventing new experiments.
 - **Also open here:** whether `GPU_TOP_RUNG` (32768) needs a UMA/iGPU rung (prefill on an
   8060S-class iGPU is ~5-10x slower than a 4070); WebGPU session lifecycle under the
   `main_gpu_active` lease and co-residency with llama-server (F-010 budgets are CUDA-arena
-  numbers). Owner: 903 §6's opus chunk records what it could and could not measure; the vendor
+  numbers). Historical evidence: tempdoc 903 §6's Opus-run chunk records what it could and could not measure; the vendor
   rows stay open until hardware exists.
 
 ## Future Work
@@ -621,9 +617,7 @@ When the user closes Chat or minimizes the app:
 ### 1. `llama-server` (The Engine)
 We use the compiled binary from `llama.cpp` as a separate process (`llama-server.exe`) for maximum performance and isolation.
 
-**v1 note (current shipping posture):** v1 Simple Mode bundles a **CPU-only** `llama-server` runtime by default (pinned upstream build).
-GPU-accelerated runtimes (NVIDIA CUDA) are **deferred to v3 hardware-awareness** and are expected to be distributed via an offline **GPU Booster Pack** (runtime variant) rather than downloaded as arbitrary executables.
-The control plane and flags (e.g., `-ngl`) exist today, but GPU acceleration only applies when a GPU-capable runtime is used.
+**Current shipping posture:** the baseline bundle remains a **CPU-only** `llama-server` runtime (pinned upstream build). JustSearch also stages and installs the NVIDIA CUDA 12.4 runtime as a versioned `cuda12` variant through the offline GPU Booster Pack path; it is no longer deferred architecture. GPU acceleration applies only when that GPU-capable variant is installed and active, and the existing control plane supplies flags such as `-ngl`.
 *   **Protocol:** OpenAI-compatible API (`/v1/chat/completions`).
 *   **Diagnostics:** `GET /health` and `GET /props` (includes `n_ctx` + `model_alias`).
 *   **Binary discovery:** `InferenceConfig.findServerExecutable()` searches canonical paths and `variants/` subdirectories. When GPU is configured (`gpuLayers > 0`), prefers `variants/cuda12/` for CUDA-optimized binary. Falls back to baseline binary. **Dev-layout path** (active only when `justsearch.repo.root` system property is set): searches `{repoRoot}/modules/shell/src-tauri/resources/headless/` (Tauri resource bundle). Added in tempdoc 369 for eval backend LLM support. (The former `{repoRoot}/third_party/llama.cpp/build/` local source-build path was removed with the vendored llama.cpp tree — tempdoc 632; the runtime is the pinned upstream prebuilt download.)
@@ -1220,4 +1214,4 @@ The removed deep-dive material described these obsolete implementation concepts:
 
 This breadcrumb section exists so older tempdocs, ADRs, and commit messages remain intelligible without making the deprecated architecture look current.
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

@@ -10,17 +10,16 @@ description: >-
   manually. Use jseval instead of ad-hoc scripts. If jseval is missing a feature
   you need, propose an improvement to jseval rather than building a workaround.
 ---
-<!-- generated from .claude/skills by scripts/docs/codex-skills-projection.mjs; do not edit -->
-
-> Codex projection: `$skill-name` is the equivalent of a Claude `/skill-name` invocation. When this workflow names a Claude-only tool, use the available Codex capability that preserves the same policy and acceptance criteria.
-
 # jseval — Search Evaluation & Pipeline Profiling
 
 Use `python -m jseval` for ALL evaluation, profiling, and benchmarking.
 Do NOT write ad-hoc bash/node scripts. If jseval can't do what you need,
 **improve jseval** (`scripts/jseval/`) rather than building a workaround.
 
-## Benchmark model-cost policy (current — 2026-06-23)
+## Benchmark target-model cost policy (current — 2026-06-23)
+
+The model names in this section are target models exercised by the evaluation
+harness. They do not select or recommend the Codex model executing this skill.
 
 **Run agentic / utility benchmarks on cheap models only (haiku-class) for now, to save money.** Haiku is the
 cheapest agent tier by a wide margin — ≈3× cheaper per query than sonnet, ≈13× cheaper than opus (tempdoc 624
@@ -46,7 +45,7 @@ Note: an ambient `JUSTSEARCH_CHAT_PROFILE` in your shell reaches `runHeadlessEva
 backends through the env whitelist — leave it unset for quality campaigns (the
 served-model guard is the backstop, not the primary control).
 
-<!-- generated:start — do not edit between markers; run: node scripts/docs/skills-sync.mjs -->
+<!-- manually maintained Codex copy; source documentation listed below -->
 
 <!-- source: docs/reference/jseval-pipeline-reference.md -->
 
@@ -222,9 +221,10 @@ python -m jseval logs [--source worker|head] [--filter rerank] [--tail] [--level
 
 ### Long detached runs (Windows)
 
-A long pipeline run launched through the Bash tool's `run_in_background` gets
-**killed mid-run** (observed repeatedly, e.g. mid-enrichment). Launch it fully
-detached instead, and stamp a `.done` marker with the exit code on completion:
+A long pipeline tied to an interactive terminal session can be killed when that
+session ends (observed repeatedly, e.g. mid-enrichment). For a run that must
+outlive the active tool call, launch it fully detached and stamp a `.done`
+marker with the exit code on completion:
 
 ```powershell
 # Runs in a PowerShell that outlives the tool call; writes the exit code to a marker.
@@ -234,8 +234,9 @@ Start-Process powershell -WindowStyle Hidden -ArgumentList @(
 )
 ```
 
-Then wait on the `tmp/run1.done` marker with the `Monitor` tool, and read results
-from the run's `--output-dir` (`tmp/run1`) — do **not** parse the process's
+Then wait for `tmp/run1.done` using the available terminal/session wait
+mechanism, and read results from the run's `--output-dir` (`tmp/run1`) — do
+**not** parse the process's
 redirected stdout/stderr: PowerShell 5.1 writes those UTF-16 and wraps stderr
 lines, so the run's own JSON artifacts are the reliable source.
 
@@ -559,4 +560,4 @@ jseval lives at `scripts/jseval/`. Key files:
 
 When improving jseval, follow existing patterns in these files.
 
-<!-- generated:end -->
+<!-- end manually maintained Codex copy -->

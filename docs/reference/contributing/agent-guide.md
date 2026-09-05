@@ -481,19 +481,30 @@ reached 6,563 commits, 3,331 of them touching `docs/tempdocs`).
 
 **Axis 1 — how a branch lands (mechanized, you don't manage it).** ADR-0045 set
 the repo to squash-only: every PR collapses to one `main` commit whose title and
-body come from the *PR* title/body, not the branch commit list. So your branch
-commits can be as noisy as you like — checkpoint, retry, "wip" — they never reach
-`main`. The only thing that matters is a good PR title/body, because that *is* the
-public commit. Preview it before merge with
-`node scripts/ci/preview-squash-message.mjs --pr <N>`.
+complete body come from the *PR* title/body, not the branch commit list. Keep
+those two fields permanently commit-safe. Mutable authorship, scope/risk,
+verification evidence, and review state belong in exactly one managed PR comment
+created from `.github/pr-review-record-template.md`; they never move temporarily
+through the PR body.
 
-That checker looks for a section titled exactly `## Testing` — a `## Test
-plan` header (or similar) triggers its `missing-testing-signal` warning even
-if a testing section is present under a different name (tempdoc 695). It
-also flags literal GFM `- [ ]`/`- [x]` checklist syntax in the body: that
-syntax renders as an interactive checkbox on the PR page, but publishes as
-inert plain-text `- [x]` once it becomes the squash commit message — prefer
-plain bullets or a prose list there instead.
+Use `scripts/ci/pr-review-record.mjs upsert --pr <N> --file <review-file>` to
+preview the exact comment create/update. The command prints a fingerprint; pass
+that value to the same command with `--execute --confirm <fingerprint>`. It
+refuses duplicate markers, foreign ownership, stale head/body metadata, and
+changes visible at its final preflight or exact read-back. GitHub comment
+updates have no compare-and-swap precondition, so the authenticated comment
+owner must be the sole writer from dry-run through read-back; do not manually
+edit the managed comment concurrently. Run `pr-review-record.mjs check --pr <N>` and
+`preview-squash-message.mjs --pr <N>` after the final push and review edit.
+Fix every finding before enqueue. The first command verifies the rich record;
+the second rejects review structure, template residue, provider prose, task
+boxes, and operational state from the public commit.
+
+Check summaries and artifacts may hold reproducible detail, but the managed
+comment is the stable index. Do not use a check summary as the only durable
+review record. Landed-message comparison is semantic rather than byte-exact:
+GitHub may hard-wrap long lines and append its own attribution. Public bodies
+therefore avoid tables or nested formatting whose meaning depends on wrapping.
 
 Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
 
@@ -515,8 +526,10 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
   until checks register on the branch, then decodes `gh pr checks`'s
   documented 0=pass/1=fail/8=pending bitwise exit contract instead of
-  guessing at it (tempdoc 743 P-K). `gh run watch <run-id> --exit-status` is
-  still the equivalent for a specific workflow run (no wrapper yet). Watching
+  guessing at it (tempdoc 743 P-K). For a specific landed commit, use
+  `node scripts/dev/run-gh.mjs run-wait-sha <sha> --workflow CI --branch main
+  --event push`; it owns registration polling, emits only transitions, and
+  has a bounded timeout. Watching
   immediately after *any* push (not just the batch case further below) can
   race check registration — `checks-wait`'s pre-poll is exactly that
   mitigation; see the registration-race bullet in Batch-publishing below and
@@ -543,6 +556,12 @@ longer applies once a PR is enqueued). Practical sequence:
   push's checks take a few seconds to appear; `gh pr checks <N> --watch` called
   immediately can return `"no checks reported"` (nonzero exit — **not** a CI
   failure; keep waiting), same as before the queue.
+- **Validate the candidate-side boundary before pushing** — `node
+  scripts/ci/run-publish-preflight.mjs --check` proves that every required
+  status context is classified in the versioned local-reproduction inventory.
+  `--list` shows which contexts have a deterministic local subset and which are
+  honestly hosted-only; `--run` executes the local subsets. Hosted-only never
+  waives the corresponding GitHub check.
 - **Enqueue with `gh pr merge <N>` — no strategy flag.** Under the queue this does
   not merge directly; it adds the PR to the queue. The queue runs its own
   `merge-group` CI pass against the PR merged with the latest `main` and merges
@@ -551,15 +570,18 @@ longer applies once a PR is enqueued). Practical sequence:
   drops out of the queue and the PR stays open/unmerged, the merge-group run
   failed — pull that run (merge_group event, or the PR's checks tab) and
   investigate before re-enqueuing.
-- **`preview-squash-message.mjs` is now the sole pre-publication checkpoint, and it
-  matters more than before it did:** the queue merges unattended, so there is no
-  second human look at the title/body before it becomes permanent public history.
-  Run it, and fix everything it flags, before enqueuing — not after.
-- **Confirm the merge landed before any cleanup** — `gh pr view <N> --json state`
-  must read `MERGED`; an unattended queue merge gives no other confirmation moment.
+- **The review-record check and squash preview are the pre-publication
+  checkpoints.** The queue merges unattended, so there is no second human look
+  at the comment freshness or title/body before publication. Run both and fix
+  every finding before enqueuing — not after.
+- **Confirm the merge landed before any cleanup** — use `node
+  scripts/dev/run-gh.mjs merge-wait <N>`. It performs the bounded queue poll,
+  emits only state transitions, and returns the landed SHA on `MERGED`.
 - **Check main's *final* HEAD is green** — after the queue merges, watch push-CI on
-  main's newest commit (`gh run watch`); superseded push runs show `cancelled`
-  (concurrency), only the newest matters.
+  the landed SHA with `run-wait-sha`. A completed non-success result, including
+  cancellation, is not green. If a later main push supersedes and cancels that
+  run, inspect it and explicitly wait on main's newest SHA. Keep this post-merge
+  check: merge-group success has not guaranteed same-SHA main success historically.
 
 **Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
 fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR

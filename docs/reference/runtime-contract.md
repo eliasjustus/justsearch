@@ -57,6 +57,44 @@ maintain — the manifest advertises the live versions, and a client reads them.
 > versioning; proposals point at per-tool SemVer). JustSearch versions its own
 > tool surface here, SemVer-shaped, so the promise is explicit.
 
+## Generated Node client
+
+`packages/runtime-client` contains the pack-ready `@justsearch/runtime-client` reference package.
+Version `0.1.0` is ESM-only, supports Node 20 and newer at runtime, and exposes six read-only JSON
+operations from the public-contract surface:
+
+- runtime manifest and its `/.well-known` mirror;
+- runtime readiness and liveness;
+- lifecycle health and status.
+
+The client is generated from `packages/runtime-client/openapi/runtime-client.openapi.json`. That
+document is a self-contained projection of the routes registered by the real Javalin route
+registrars, filtered by `RouteContractPolicy`; it is not a second hand-authored API inventory.
+The policy also derives each route's security declaration from `ApiSecurityFilters`, so the SDK
+metadata cannot silently relax the local API trust boundary.
+
+The package deliberately excludes mutations, MCP, token bootstrap, `HEAD` probe aliases, and the
+manifest SSE stream. MCP clients should use the official MCP TypeScript SDK. The async client
+factory fails closed before returning a client: it rejects non-loopback base URLs, disables HTTP
+redirects, reads the runtime manifest, and requires an advertised Runtime Contract version accepted
+by `assertRuntimeContractCompatible` (currently exactly `0.2.0`). A new runtime-contract version
+therefore requires an explicit client compatibility decision rather than an optimistic range.
+
+Regenerate and verify from the repository root:
+
+```text
+./gradlew :modules:ui:generateRuntimeClientOpenApi -PskipWebBuild=true
+npm ci --prefix packages/runtime-client --ignore-scripts
+npm --prefix packages/runtime-client run generate
+npm --prefix packages/runtime-client run check:regen
+npm --prefix packages/runtime-client test
+npm --prefix packages/runtime-client run check:pack
+```
+
+CI performs generation drift checks with the repository Node toolchain and executes the built
+client at the Node 20 runtime floor. npm publication remains a founder action; a green package gate
+does not imply that this repository has published the package.
+
 ## Stability policy
 
 - **Scope.** Only the surfaces classified *public-contract* below are promised.
@@ -92,15 +130,17 @@ not per release. Mirrors the internal `contracts/wire/CHANGELOG.md` convention.
 
 ## Surface classification
 
-The v1 boundary. This table is authored here (not yet mechanically projected
-per-route — the manifest's `audience` axis already classifies the contract's
-discovery transports, and a per-route classification gate is a possible future
-step, not required for a three-surface core).
+The v1 boundary. This table defines the promise, while `RouteContractPolicy`
+mechanically classifies the HTTP rows represented in the route manifest. Route-manifest schema
+`2.0` projects each covered route's `stability` (`public-contract`, `reference-client`, or
+`internal`) together with its schemas, SDK operation identity, and any lifecycle metadata. The
+policy is intentionally a covered subset of the live router, not a claim that every internal route
+is part of the Runtime Contract.
 
 | Tier | Surfaces | Promise |
 |---|---|---|
 | **Public-contract** | Runtime manifest + its standard transports (`GET /api/runtime/manifest`, the `/.well-known/justsearch/manifest.json` mirror, the manifest SSE stream, the `GET /api/runtime/ready`/`live` probes); the health/status **lifecycle subset** (`GET /api/health`, and the schema-v1 minimum fields of `GET /api/status`); the **MCP** endpoint (`POST /mcp`) + the curated tool set. | Versioned + deprecation-clocked (above). |
-| **Reference-client** | Surfaces the desktop shell (and the manifest's `full` audience) use but that are **not** promised to third parties: the *extended* `/api/status` fields, `/api/knowledge/*` (search/suggest/status/ingest), boot-phase traces, health-event streams, governance state, the operation/agent-action substrate, retrieve-context and chat/conversation APIs, folder-browse, and the OpenAI-compatible `/v1/*` shim. | May change; not promised. Demonstrated by the reference client, not defined by it. |
+| **Reference-client** | Surfaces the desktop shell (and the manifest's `full` audience) use but that are **not** promised to third parties: the *extended* `/api/status` fields, `/api/knowledge/*` (search/suggest/status/ingest), boot-phase traces, health-event streams, governance state, the operation/agent-action substrate, retrieve-context and chat/conversation APIs, folder-browse, the OpenAI-compatible `/v1/*` shim, and `GET /api/meta/openapi.json`. The committed `reference-client-openapi.snapshot.json` is a deterministic derivative of the captured route manifest, explicitly classified `runtimeContract: false`; only a paired live capture proves that snapshot matches the current router. | May change; not promised. Demonstrated by the reference client, not defined by it. |
 | **Internal** | Not for external callers: `/api/debug/*`, the Head↔Worker gRPC IPC and `contracts/wire` protos, the MMF signalling layer, filesystem-only manifest fields (`head.sessionToken`), and the `/infra/capabilities` FE↔Head capability handshake. | No stability, no external audience. |
 
 ## What the contract does not claim

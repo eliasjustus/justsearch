@@ -134,9 +134,11 @@ final class CoreSurfaceCatalogTest {
     assertSame(Placement.DEEPLINK, entry.placement());
     assertEquals("jf-help-surface", entry.mountTag());
     assertEquals(
-        java.util.Set.of(new OperationRef("core.export-diagnostics")),
+        java.util.Set.of(
+            new OperationRef("core.export-diagnostics"),
+            new OperationRef("core.copy-diagnostic-summary")),
         entry.consumes().operations(),
-        "Help consumes only export-diagnostics");
+        "Help consumes both diagnostics handoff operations");
     assertTrue(entry.consumes().resources().isEmpty());
     assertTrue(entry.consumes().prompts().isEmpty());
     assertTrue(entry.consumes().diagnosticChannels().isEmpty());

@@ -40,6 +40,12 @@ $script:signLogPath = Join-Path $env:TEMP "justsearch-sign-windows.log"
 # unassigned variable a terminating error.
 $script:originalBinary = $null
 $script:extensionShim = $null
+$script:ledgerMutex = $null
+$script:ledgerLockHeld = $false
+$script:ledgerPath = $null
+$script:ledgerMax = 0
+$script:attemptLedgerPath = $null
+$script:attemptOrdinal = 0
 
 # Uninstaller-signing receipt (round-16 F3 follow-up). makensis does NOT check the exit code of a
 # `!uninstfinalize` command, so this script failing -- or never being invoked -- on the uninstaller
@@ -62,6 +68,17 @@ function Remove-ExtensionShim {
   }
 }
 
+function Exit-SigningBudget {
+  if ($script:ledgerMutex) {
+    if ($script:ledgerLockHeld) {
+      try { $script:ledgerMutex.ReleaseMutex() } catch { }
+    }
+    try { $script:ledgerMutex.Dispose() } catch { }
+  }
+  $script:ledgerMutex = $null
+  $script:ledgerLockHeld = $false
+}
+
 # Last-resort diagnosability: ANY terminating error that escapes normal handling gets tee'd with
 # its position before the script dies — under the bundler, stderr is swallowed, so without this a
 # terminating error is invisible (the failure mode that cost CI runs 29911439832 + 29912444815).
@@ -69,6 +86,7 @@ trap {
   Write-SignLog ("TRAP terminating error: " + $_.Exception.GetType().Name + ": " + $_.Exception.Message +
     " at " + (([string]$_.InvocationInfo.PositionMessage) -replace "\r?\n", " "))
   Remove-ExtensionShim
+  Exit-SigningBudget
   Write-Error $_
   exit 1
 }
@@ -93,6 +111,7 @@ function Write-SigningReceipt {
 function Fail([string]$Message) {
   Write-SignLog ("FAIL: " + $Message)
   Remove-ExtensionShim
+  Exit-SigningBudget
   Write-Error $Message
   exit 1
 }
@@ -132,10 +151,14 @@ function Invoke-NativeWithRetry {
     [Parameter(Mandatory = $true)][string]$Exe,
     [string[]]$Arguments = @(),
     [int]$Attempts = 3,
-    [int]$DelaySec = 3
+    [int]$DelaySec = 3,
+    [Parameter(Mandatory = $true)][string]$SigningTarget,
+    [Parameter(Mandatory = $true)][string]$SignerMode
   )
   for ($i = 1; $i -le $Attempts; $i++) {
+    Enter-SigningBudget -Target $SigningTarget -SignerMode $SignerMode
     $res = Invoke-Native -Exe $Exe -Arguments $Arguments
+    Write-SigningAttemptOutcome -Outcome $(if ($res.ExitCode -eq 0) { "vendor-exit-zero" } else { "vendor-failed" }) -ExitCode $res.ExitCode
     if ($res.ExitCode -eq 0) { return $res }
     if ($i -lt $Attempts) {
       Write-SignLog ("attempt " + $i + "/" + $Attempts + " failed (exit=" + $res.ExitCode + "), retrying in " + $DelaySec + "s")
@@ -148,6 +171,161 @@ function Invoke-NativeWithRetry {
 function Info([string]$Message) {
   Write-SignLog $Message
   Write-Host $Message
+}
+
+# Command-mode signers are downloaded third-party executables. They must receive the credential
+# material embedded in their rendered command line, but they have no reason to inherit release,
+# updater, GitHub, or alternate-signer secrets from the packaging step. Keep the allowlisted
+# operational environment (PATH, TEMP, JAVA_HOME, CODE_SIGN_TOOL_PATH, and similar ordinary
+# variables) intact while removing the secrets JustSearch itself places in that step.
+function Invoke-CommandSignerRestricted {
+  param([Parameter(Mandatory = $true)][string]$BatchPath)
+
+  $sensitiveNames = @(
+    "JUSTSEARCH_CODESIGN_MODE",
+    "JUSTSEARCH_CODESIGN_PFX_PATH",
+    "JUSTSEARCH_CODESIGN_PFX_B64",
+    "JUSTSEARCH_CODESIGN_PFX_PASSWORD",
+    "JUSTSEARCH_CODESIGN_TIMESTAMP_URL",
+    "JUSTSEARCH_CODESIGN_THUMBPRINT",
+    "JUSTSEARCH_CODESIGN_STORE",
+    "JUSTSEARCH_CODESIGN_COMMAND",
+    "TAURI_SIGNING_PRIVATE_KEY",
+    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+    "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH",
+    "METADATA_PRIVATE_KEY_PEM",
+    "GITHUB_TOKEN",
+    "GH_TOKEN"
+  )
+  $saved = @{}
+  try {
+    foreach ($name in $sensitiveNames) {
+      $saved[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+      [Environment]::SetEnvironmentVariable($name, $null, "Process")
+    }
+    return Invoke-Native -Exe $BatchPath
+  } finally {
+    foreach ($name in $sensitiveNames) {
+      [Environment]::SetEnvironmentVariable($name, $saved[$name], "Process")
+    }
+  }
+}
+
+# Optional run-local spend guard. A named mutex is held from the first pre-invocation reservation
+# until the verified ledger append (or failure), so concurrent signer children cannot both consume
+# the final slot. The append-only attempt ledger is deliberately crash-conservative: every vendor
+# invocation is reserved before it starts, while the separate verified ledger is written only after
+# local signature verification. Neither ledger contains credential material.
+function Enter-SigningBudget([string]$Target, [string]$SignerMode) {
+  $configuredPath = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_LEDGER_PATH
+  if (-not $configuredPath -or -not $configuredPath.Trim()) {
+    if ($SignerMode -eq "command") {
+      Fail "Command signing requires JUSTSEARCH_CODESIGN_LEDGER_PATH and a positive JUSTSEARCH_CODESIGN_MAX_SIGNATURES value."
+    }
+    return
+  }
+
+  $maxText = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES
+  $max = 0
+  if (-not [int]::TryParse($maxText, [ref]$max) -or $max -lt 1) {
+    Fail "JUSTSEARCH_CODESIGN_LEDGER_PATH requires a positive JUSTSEARCH_CODESIGN_MAX_SIGNATURES value."
+  }
+
+  if (-not $script:ledgerPath) {
+    $path = [System.IO.Path]::GetFullPath($configuredPath)
+    $parent = Split-Path -Parent $path
+    if (-not (Test-Path -LiteralPath $parent)) {
+      New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $pathHash = ([BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($path)))).Replace("-", "").Substring(0, 32)
+    } finally {
+      $sha.Dispose()
+    }
+    $script:ledgerMutex = New-Object System.Threading.Mutex($false, ("Local\JustSearchCodeSignLedger-" + $pathHash))
+    try {
+      $script:ledgerLockHeld = $script:ledgerMutex.WaitOne([TimeSpan]::FromMinutes(2))
+    } catch [System.Threading.AbandonedMutexException] {
+      $script:ledgerLockHeld = $true
+    }
+    if (-not $script:ledgerLockHeld) {
+      Fail "Timed out acquiring the signing-ledger lock for $path"
+    }
+    $script:ledgerPath = $path
+    $script:attemptLedgerPath = $path + ".attempts.jsonl"
+    $script:ledgerMax = $max
+  }
+
+  $count = 0
+  if (Test-Path -LiteralPath $script:attemptLedgerPath) {
+    $count = @(Get-Content -LiteralPath $script:attemptLedgerPath | Where-Object {
+      if (-not $_ -or -not $_.Trim()) { return $false }
+      try { return (($_ | ConvertFrom-Json).event -eq "attempt-start") } catch { Fail "Signing attempt ledger contains invalid JSON." }
+    }).Count
+  }
+  if ($count -ge $max) {
+    Fail "Signing ceiling reached before vendor invocation: ledger has $count reserved attempt(s), maximum is $max."
+  }
+
+  $script:attemptOrdinal = $count + 1
+  $record = [ordered]@{
+    schemaVersion = 1
+    event = "attempt-start"
+    attemptOrdinal = $script:attemptOrdinal
+    target = [System.IO.Path]::GetFullPath($Target)
+    signerMode = $SignerMode
+    recordedAtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  }
+  [System.IO.File]::AppendAllText(
+    $script:attemptLedgerPath,
+    (($record | ConvertTo-Json -Compress) + "`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
+  Info ("Signing attempt reserved " + $script:attemptOrdinal + "/" + $max)
+}
+
+function Write-SigningAttemptOutcome([string]$Outcome, [int]$ExitCode) {
+  if (-not $script:attemptLedgerPath -or $script:attemptOrdinal -lt 1) { return }
+  if (-not $script:ledgerLockHeld) { Fail "Signing ledger lock was lost before attempt outcome append." }
+  $record = [ordered]@{
+    schemaVersion = 1
+    event = "attempt-finish"
+    attemptOrdinal = $script:attemptOrdinal
+    outcome = $Outcome
+    exitCode = $ExitCode
+    recordedAtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  }
+  [System.IO.File]::AppendAllText(
+    $script:attemptLedgerPath,
+    (($record | ConvertTo-Json -Compress) + "`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Write-SigningLedger([string]$Target, [string]$SignerMode) {
+  if (-not $script:ledgerPath) { return }
+  if (-not $script:ledgerLockHeld) { Fail "Signing ledger lock was lost before verified append." }
+
+  $existing = 0
+  if (Test-Path -LiteralPath $script:ledgerPath) {
+    $existing = @(Get-Content -LiteralPath $script:ledgerPath | Where-Object { $_ -and $_.Trim() }).Count
+  }
+  $record = [ordered]@{
+    schemaVersion = 1
+    ordinal = $existing + 1
+    target = [System.IO.Path]::GetFullPath($Target)
+    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $Target).Hash.ToUpperInvariant()
+    signerMode = $SignerMode
+    attemptOrdinal = $script:attemptOrdinal
+    signedAtUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    verified = $true
+  }
+  [System.IO.File]::AppendAllText(
+    $script:ledgerPath,
+    (($record | ConvertTo-Json -Compress) + "`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
+  Info ("Signing ledger appended: " + $record.ordinal + "/" + $script:ledgerMax + " " + $record.target)
+  Exit-SigningBudget
 }
 
 # Credential mode selects how the key is presented (all additive; no env renames):
@@ -188,6 +366,21 @@ if (-not $certStore -or -not $certStore.Trim()) { $certStore = "My" }
 
 # command-mode input.
 $commandTemplate = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_COMMAND
+
+# Command mode is the vendor-spend boundary. Enforce its trust and budget invariants here rather
+# than relying on a workflow-only resolver: Tauri and direct callers reach this script too.
+if ($mode -eq "command") {
+  if ($allowUntrusted) {
+    Fail "Command signing cannot use JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED; vendor signing requires trusted verification."
+  }
+  $commandLedgerPath = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_LEDGER_PATH
+  $commandMaximumText = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_MAX_SIGNATURES
+  $commandMaximum = 0
+  if (-not $commandLedgerPath -or -not $commandLedgerPath.Trim() -or
+      -not [int]::TryParse($commandMaximumText, [ref]$commandMaximum) -or $commandMaximum -lt 1) {
+    Fail "Command signing requires JUSTSEARCH_CODESIGN_LEDGER_PATH and a positive JUSTSEARCH_CODESIGN_MAX_SIGNATURES value."
+  }
+}
 
 if (-not $BinaryPath) {
   Fail "BinaryPath is required"
@@ -331,7 +524,8 @@ switch ($mode) {
       }
 
       Info "Signing (pfx): $resolvedBinary"
-      $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -Arguments @(
+      $signingTarget = if ($script:originalBinary) { $script:originalBinary } else { $resolvedBinary }
+      $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -SigningTarget $signingTarget -SignerMode $mode -Arguments @(
         "sign", "/fd", "SHA256", "/td", "SHA256", "/tr", $timestampUrl,
         "/f", $pfxToUse, "/p", $pfxPassword, $resolvedBinary)
       if ($signRes.ExitCode -ne 0) {
@@ -367,7 +561,8 @@ switch ($mode) {
     $signArgs += $resolvedBinary
 
     Info ("Signing (store '" + $certStore + "', thumbprint " + $thumb + "): " + $resolvedBinary)
-    $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -Arguments $signArgs
+    $signingTarget = if ($script:originalBinary) { $script:originalBinary } else { $resolvedBinary }
+    $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -SigningTarget $signingTarget -SignerMode $mode -Arguments $signArgs
     if ($signRes.ExitCode -ne 0) {
       Fail ("signtool sign failed (exit=" + $signRes.ExitCode + ") for " + $resolvedBinary + " :: " + (($signRes.Output | Select-Object -First 4) -join " | "))
     }
@@ -383,6 +578,9 @@ switch ($mode) {
       Fail "JUSTSEARCH_CODESIGN_COMMAND must contain a {file} placeholder."
     }
 
+    $signingTarget = if ($script:originalBinary) { $script:originalBinary } else { $resolvedBinary }
+    Enter-SigningBudget -Target $signingTarget -SignerMode $mode
+
     $rendered = $commandTemplate.Replace("{file}", $resolvedBinary)
     # Run the rendered command line via a temp .cmd to avoid PowerShell/cmd quoting hazards with
     # paths that contain spaces. `& $batch` propagates the vendor CLI's exit code to $LASTEXITCODE.
@@ -395,8 +593,9 @@ switch ($mode) {
       # run 31603929359). Log only the tool head and the target binary.
       $commandHead = ($commandTemplate.TrimStart() -split '\s+', 2)[0]
       Info ("Signing (command, tool '" + $commandHead + "'): " + $resolvedBinary)
-      $cmdRes = Invoke-Native -Exe $batch
+      $cmdRes = Invoke-CommandSignerRestricted -BatchPath $batch
       $cmdExit = $cmdRes.ExitCode
+      Write-SigningAttemptOutcome -Outcome $(if ($cmdExit -eq 0) { "vendor-exit-zero" } else { "vendor-failed" }) -ExitCode $cmdExit
     } finally {
       try { Remove-Item -LiteralPath $batch -Force -ErrorAction SilentlyContinue } catch { }
     }
@@ -423,3 +622,6 @@ if ($script:extensionShim) {
   Info ("Signed shim written back to " + $script:originalBinary)
   Write-SigningReceipt
 }
+
+$ledgerTarget = if ($script:originalBinary) { $script:originalBinary } else { $resolvedBinary }
+Write-SigningLedger -Target $ledgerTarget -SignerMode $mode

@@ -27,7 +27,15 @@ $signEnvNames = @(
   "JUSTSEARCH_CODESIGN_STORE",
   "JUSTSEARCH_CODESIGN_COMMAND",
   "JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED",
-  "JUSTSEARCH_REQUIRE_SIGNING"
+  "JUSTSEARCH_REQUIRE_SIGNING",
+  "JUSTSEARCH_CODESIGN_LEDGER_PATH",
+  "JUSTSEARCH_CODESIGN_MAX_SIGNATURES",
+  "TAURI_SIGNING_PRIVATE_KEY",
+  "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+  "JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH",
+  "METADATA_PRIVATE_KEY_PEM",
+  "GITHUB_TOKEN",
+  "GH_TOKEN"
 )
 
 function Clear-SignEnv {
@@ -188,20 +196,34 @@ try {
     Record "2. store + ALLOW_UNTRUSTED" $true "SKIPPED (no signtool)"
   }
 
-  # --- Case 3: command mode (template invokes signtool with the pfx) + ALLOW_UNTRUSTED => exit 0, signed ---
-  if ($signtool) {
-    $t = New-Target "command"
-    $template = '"' + $signtool + '" sign /fd SHA256 /f "' + $pfxPath + '" /p ' + $pass + ' "{file}"'
-    $r = Invoke-SignCase @{
-      JUSTSEARCH_CODESIGN_MODE = "command"
-      JUSTSEARCH_CODESIGN_COMMAND = $template
-      JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED = "1"
-    } $t
-    Write-Host $r.Output
-    Record "3. command + ALLOW_UNTRUSTED" (($r.ExitCode -eq 0) -and (Test-CaseSigned $t)) ("exit=" + $r.ExitCode + " " + (Signed-Detail $t))
-  } else {
-    Record "3. command + ALLOW_UNTRUSTED" $true "SKIPPED (no signtool)"
-  }
+  # --- Case 3: command/vendor mode rejects rehearsal trust and a missing spend ledger pre-invocation ---
+  $t = New-Target "command-admission"
+  $commandMarker = Join-Path $tmpDir "forbidden-command-invocations.txt"
+  $guard = Join-Path $tmpDir "forbidden-command-signer.cmd"
+  [System.IO.File]::WriteAllText($guard, @"
+@echo off
+echo invoked>>"%~1"
+exit /b 0
+"@, [System.Text.Encoding]::ASCII)
+  $template = '"' + $guard + '" "' + $commandMarker + '" "{file}"'
+  $untrustedCommand = Invoke-SignCase @{
+    JUSTSEARCH_CODESIGN_MODE = "command"
+    JUSTSEARCH_CODESIGN_COMMAND = $template
+    JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED = "1"
+  } $t
+  $unbudgetedCommand = Invoke-SignCase @{
+    JUSTSEARCH_CODESIGN_MODE = "command"
+    JUSTSEARCH_CODESIGN_COMMAND = $template
+  } $t
+  Write-Host $untrustedCommand.Output
+  Write-Host $unbudgetedCommand.Output
+  $commandAdmissionOk = ($untrustedCommand.ExitCode -eq 1) -and
+    ($untrustedCommand.Output -match "JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED") -and
+    ($unbudgetedCommand.ExitCode -eq 1) -and
+    ($unbudgetedCommand.Output -match "JUSTSEARCH_CODESIGN_LEDGER_PATH") -and
+    (-not (Test-Path -LiteralPath $commandMarker))
+  Record "3. command trust + budget admission" $commandAdmissionOk `
+    ("untrustedExit=" + $untrustedCommand.ExitCode + " unbudgetedExit=" + $unbudgetedCommand.ExitCode + " vendorInvoked=" + (Test-Path -LiteralPath $commandMarker))
 
   # --- Case 4: REQUIRE_SIGNING=true + no inputs => exit 1 (fail-closed) ---
   $t = New-Target "require"
@@ -315,6 +337,104 @@ try {
   $trapNoShim = ($shimsAfterTrap -le $shimsBeforeTrap)
   Record "8. trap path cleans shim" (($r.ExitCode -eq 1) -and $trapNoShim) `
     ("exit=" + $r.ExitCode + " (expected 1) shimsBefore=" + $shimsBeforeTrap + " shimsAfter=" + $shimsAfterTrap)
+
+  # --- Cases 9-10: a verified signature appends once; the next target is refused pre-invocation ---
+  if ($signtool) {
+    $ledgerPath = Join-Path $tmpDir "signing-ledger.jsonl"
+    $first = New-Target "ledger-first"
+    $r = Invoke-SignCase @{
+      JUSTSEARCH_CODESIGN_MODE = "store"
+      JUSTSEARCH_CODESIGN_THUMBPRINT = $thumb
+      JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED = "1"
+      JUSTSEARCH_CODESIGN_LEDGER_PATH = $ledgerPath
+      JUSTSEARCH_CODESIGN_MAX_SIGNATURES = "1"
+    } $first
+    Write-Host $r.Output
+    [string[]]$ledgerLines = if (Test-Path -LiteralPath $ledgerPath) { @(Get-Content -LiteralPath $ledgerPath | Where-Object { $_ -and $_.Trim() }) } else { @() }
+    [string[]]$attemptLines = if (Test-Path -LiteralPath ($ledgerPath + ".attempts.jsonl")) { @(Get-Content -LiteralPath ($ledgerPath + ".attempts.jsonl") | Where-Object { $_ -and $_.Trim() }) } else { @() }
+    $attemptEvents = @($attemptLines | ForEach-Object { $_ | ConvertFrom-Json })
+    $attemptStarts = @($attemptEvents | Where-Object { $_.event -eq "attempt-start" })
+    $attemptFinishes = @($attemptEvents | Where-Object { $_.event -eq "attempt-finish" })
+    $ledgerRecord = if ($ledgerLines.Count -eq 1) { $ledgerLines[0] | ConvertFrom-Json } else { $null }
+    $ledgerOk = ($r.ExitCode -eq 0) -and (Test-CaseSigned $first) -and ($ledgerLines.Count -eq 1) -and
+      $ledgerRecord -and ($ledgerRecord.verified -eq $true) -and ($ledgerRecord.ordinal -eq 1) -and
+      ($ledgerRecord.signerMode -eq "store") -and ($ledgerRecord.attemptOrdinal -eq 1) -and
+      ($ledgerRecord.sha256 -eq (Get-FileHash -Algorithm SHA256 -LiteralPath $first).Hash) -and
+      ($attemptStarts.Count -eq 1) -and ($attemptFinishes.Count -eq 1) -and ($attemptFinishes[0].outcome -eq "vendor-exit-zero")
+    Record "9. verified ledger append" $ledgerOk ("exit=" + $r.ExitCode + " verified=" + $ledgerLines.Count + " attempts=" + $attemptStarts.Count)
+
+    $second = New-Target "ledger-cap"
+    $r = Invoke-SignCase @{
+      JUSTSEARCH_CODESIGN_MODE = "store"
+      JUSTSEARCH_CODESIGN_THUMBPRINT = $thumb
+      JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED = "1"
+      JUSTSEARCH_CODESIGN_LEDGER_PATH = $ledgerPath
+      JUSTSEARCH_CODESIGN_MAX_SIGNATURES = "1"
+    } $second
+    Write-Host $r.Output
+    [string[]]$capLines = @(Get-Content -LiteralPath $ledgerPath | Where-Object { $_ -and $_.Trim() })
+    $capAttemptStarts = @((Get-Content -LiteralPath ($ledgerPath + ".attempts.jsonl") | ForEach-Object { $_ | ConvertFrom-Json }) | Where-Object { $_.event -eq "attempt-start" })
+    $capOk = ($r.ExitCode -eq 1) -and ($r.Output -match "Signing ceiling\s+reached before vendor") -and
+      ($capLines.Count -eq 1) -and ($capAttemptStarts.Count -eq 1) -and (-not (Test-SignedByOurCert $second))
+    Record "10. ledger ceiling pre-invocation" $capOk ("exit=" + $r.ExitCode + " verified=" + $capLines.Count + " attempts=" + $capAttemptStarts.Count + " unsigned=" + (-not (Test-SignedByOurCert $second)))
+  } else {
+    Record "9. verified ledger append" $true "SKIPPED (no signtool)"
+    Record "10. ledger ceiling pre-invocation" $true "SKIPPED (no signtool)"
+  }
+
+  # --- Cases 11-12: a failed vendor invocation consumes its durable slot; retry is refused. ---
+  $failedLedgerPath = Join-Path $tmpDir "failed-signing-ledger.jsonl"
+  $invocationMarker = Join-Path $tmpDir "failed-vendor-invocations.txt"
+  $failingSigner = Join-Path $tmpDir "always-fail-signer.cmd"
+  [System.IO.File]::WriteAllText($failingSigner, @"
+@echo off
+if defined TAURI_SIGNING_PRIVATE_KEY exit /b 90
+if defined TAURI_SIGNING_PRIVATE_KEY_PASSWORD exit /b 91
+if defined JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH exit /b 92
+if defined GITHUB_TOKEN exit /b 93
+echo invoked>>"%~1"
+exit /b 42
+"@, [System.Text.Encoding]::ASCII)
+  $failingTemplate = '"' + $failingSigner + '" "' + $invocationMarker + '" "{file}"'
+  $failedFirst = New-Target "failed-ledger-first"
+  $r = Invoke-SignCase @{
+    JUSTSEARCH_CODESIGN_MODE = "command"
+    JUSTSEARCH_CODESIGN_COMMAND = $failingTemplate
+    JUSTSEARCH_REQUIRE_SIGNING = "true"
+    JUSTSEARCH_CODESIGN_LEDGER_PATH = $failedLedgerPath
+    JUSTSEARCH_CODESIGN_MAX_SIGNATURES = "1"
+    TAURI_SIGNING_PRIVATE_KEY = "must-not-reach-vendor"
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "must-not-reach-vendor"
+    JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PATH = "must-not-reach-vendor"
+    GITHUB_TOKEN = "must-not-reach-vendor"
+  } $failedFirst
+  Write-Host $r.Output
+  $failedEvents = @((Get-Content -LiteralPath ($failedLedgerPath + ".attempts.jsonl") | ForEach-Object { $_ | ConvertFrom-Json }))
+  $failedStarts = @($failedEvents | Where-Object { $_.event -eq "attempt-start" })
+  $failedFinishes = @($failedEvents | Where-Object { $_.event -eq "attempt-finish" })
+  $vendorCalls = if (Test-Path -LiteralPath $invocationMarker) { @(Get-Content -LiteralPath $invocationMarker).Count } else { 0 }
+  $failedReservationOk = ($r.ExitCode -eq 1) -and ($failedStarts.Count -eq 1) -and
+    ($failedFinishes.Count -eq 1) -and ($failedFinishes[0].outcome -eq "vendor-failed") -and
+    ($failedFinishes[0].exitCode -eq 42) -and ($vendorCalls -eq 1) -and (-not (Test-Path -LiteralPath $failedLedgerPath))
+  Record "11. failed vendor consumes attempt" $failedReservationOk `
+    ("exit=" + $r.ExitCode + " attempts=" + $failedStarts.Count + " vendorCalls=" + $vendorCalls)
+
+  $failedSecond = New-Target "failed-ledger-cap"
+  $r = Invoke-SignCase @{
+    JUSTSEARCH_CODESIGN_MODE = "command"
+    JUSTSEARCH_CODESIGN_COMMAND = $failingTemplate
+    JUSTSEARCH_REQUIRE_SIGNING = "true"
+    JUSTSEARCH_CODESIGN_LEDGER_PATH = $failedLedgerPath
+    JUSTSEARCH_CODESIGN_MAX_SIGNATURES = "1"
+  } $failedSecond
+  Write-Host $r.Output
+  $retryEvents = @((Get-Content -LiteralPath ($failedLedgerPath + ".attempts.jsonl") | ForEach-Object { $_ | ConvertFrom-Json }))
+  $retryStarts = @($retryEvents | Where-Object { $_.event -eq "attempt-start" })
+  $vendorCallsAfterRetry = @(Get-Content -LiteralPath $invocationMarker).Count
+  $failedCapOk = ($r.ExitCode -eq 1) -and ($r.Output -match "Signing ceiling\s+reached before vendor") -and
+    ($retryStarts.Count -eq 1) -and ($vendorCallsAfterRetry -eq 1)
+  Record "12. failed-attempt ceiling pre-invocation" $failedCapOk `
+    ("exit=" + $r.ExitCode + " attempts=" + $retryStarts.Count + " vendorCalls=" + $vendorCallsAfterRetry)
 
 } finally {
   # ALWAYS clean up: remove the throwaway cert from the store + delete temp files.

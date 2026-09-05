@@ -378,6 +378,9 @@ try {
     Measure-Phase "signature_verify" {
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\verify-windows-signature.ps1 $SetupExePath
       if ($LASTEXITCODE -ne 0) { throw "verify-windows-signature.ps1 failed (exit=$LASTEXITCODE)" }
+      & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\verify-pe-signatures.ps1 `
+        -Path $SetupExePath -Extract -IncludeOuter
+      if ($LASTEXITCODE -ne 0) { throw "verify-pe-signatures.ps1 failed (exit=$LASTEXITCODE)" }
       if ($SkipBuild.IsPresent) {
         Write-Host "  uninstaller signing receipt: not asserted (-SkipBuild: the NSIS sign hook did not run in this invocation)" -ForegroundColor Yellow
       } else {

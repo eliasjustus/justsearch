@@ -229,7 +229,8 @@ public final class McpProtocolHandler {
         "capabilities", Map.of(
             "tools", Map.of("listChanged", false),
             "resources", Map.of("subscribe", true, "listChanged", false),
-            "prompts", Map.of("listChanged", false)),
+            "prompts", Map.of("listChanged", false),
+            "experimental", surface.experimentalCapabilities()),
         // Tempdoc 804 §B9 (F12): `version` is THIS BUILD (the claim MCP's serverInfo makes); the
         // curated tool-surface version rides `_meta` under a namespaced key, so both stay reachable
         // and neither is reported as the other.

@@ -3,11 +3,10 @@
  * HelpSurface — Lit-side Help surface (slice 451 phase 9).
  *
  * Self-mounting Surface. Mostly static content (FAQ, shortcuts,
- * privacy, network info). Single backend interaction:
- * `core.export-diagnostics`, mounted via the aggregate substrate's
- * `<jf-operation>` per tempdoc 511 §511-followup-B. Export-path
- * feedback is captured from the `op-success` event's
- * `structuredData.path`; errors from `op-error.detail.message`.
+ * privacy, network info). Diagnostics interactions are projected through
+ * the aggregate substrate's `<jf-operation>` component. Export-path feedback
+ * remains visible locally; the redacted diagnostic-summary payload is copied
+ * directly to the clipboard and is never stored or rendered.
  *
  * Side-effect registers `<jf-help-surface>` for the chrome dispatcher.
  * The shell-v0 barrel (loaded eagerly via main.jsx per slice 450 §2.5)
@@ -17,6 +16,8 @@
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
+import { ReceiptController } from '../primitives/receiptController.js';
+import { copyToClipboard } from '../utils/clipboardCopy.js';
 import { icon } from '../components/Icon.js';
 import '../aggregate-substrate/components/JfOperation.js';
 // 569 §15 — render the Help reference content through the projection engine (the 3rd real surface).
@@ -85,7 +86,7 @@ const SHORTCUTS: ShortcutRow[] = [
 const TROUBLESHOOTING: string[] = [
   'If search results look stale, use "Reindex" in Library (Advanced) or Health.',
   'If indexing seems stuck, try "Restart worker" in Health.',
-  'Use "Export diagnostics" above before reporting a bug.',
+  'Use "Copy diagnostic summary" above before reporting a bug; review it before posting.',
 ];
 
 const NETWORK: string[] = [
@@ -100,12 +101,17 @@ export class HelpSurface extends JfElement {
     expanded: { state: true },
     exportPath: { state: true },
     exportError: { state: true },
+    copyText: { attribute: false },
   };
 
   declare apiBase: string;
   declare expanded: number | null;
   declare exportPath: string | null;
   declare exportError: string | null;
+  /** Injectable clipboard seam; production uses the shared failure-safe utility. */
+  declare copyText: (text: string) => Promise<boolean>;
+
+  private readonly summaryReceipt = new ReceiptController(this);
 
   constructor() {
     super();
@@ -113,6 +119,7 @@ export class HelpSurface extends JfElement {
     this.expanded = null;
     this.exportPath = null;
     this.exportError = null;
+    this.copyText = (text: string) => copyToClipboard(text);
   }
 
   // 569 §15 — re-render when the active presentation changes (the declared reference region appears
@@ -194,26 +201,28 @@ export class HelpSurface extends JfElement {
       font-size: var(--font-size-xs);
       color: var(--text-secondary);
     }
-    button {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: var(--surface-primary);
-      color: var(--text-secondary);
-      border: 1px solid var(--border-subtle);
-      border-radius: 0.375rem;
-      padding: 0.5rem 0.75rem;
-      cursor: pointer;
-      font-size: var(--font-size-xs);
-      font-weight: 500;
-      transition: background var(--duration-fast) var(--ease-standard);
+    .diagnostic-actions {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 0.5rem;
     }
-    button:hover:not(:disabled) {
-      background: var(--surface-hover);
+    .diagnostic-action {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
     }
-    button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+    @media (max-width: 48rem) {
+      .header {
+        flex-direction: column;
+      }
+      .diagnostic-actions {
+        justify-content: flex-start;
+      }
+      .diagnostic-action {
+        align-items: flex-start;
+      }
     }
     .export-status {
       margin-top: 0.5rem;
@@ -225,6 +234,15 @@ export class HelpSurface extends JfElement {
     }
     .export-status .path {
       font-family: monospace;
+    }
+    .summary-receipt {
+      min-height: 1rem;
+      margin-top: 0.5rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .summary-receipt.error {
+      color: var(--text-danger);
     }
     .grid {
       display: grid;
@@ -356,6 +374,19 @@ export class HelpSurface extends JfElement {
     this.exportError = typeof msg === 'string' ? msg : 'Diagnostics export failed.';
   }
 
+  private async handleSummarySuccess(e: CustomEvent<OpSuccessEventDetail>): Promise<void> {
+    const summary = e.detail?.structuredData?.['summary'];
+    const copied = typeof summary === 'string' && await this.copyText(summary);
+    this.summaryReceipt.flash(
+      copied ? 'Diagnostic summary copied.' : 'Could not copy diagnostic summary.',
+      { key: copied ? 'summary-success' : 'summary-error' },
+    );
+  }
+
+  private handleSummaryError(_e: CustomEvent<OpErrorEventDetail>): void {
+    this.summaryReceipt.flash('Could not copy diagnostic summary.', { key: 'summary-error' });
+  }
+
   private renderFaq(): TemplateResult {
     return html`
       <section>
@@ -407,28 +438,45 @@ export class HelpSurface extends JfElement {
       <div class="header">
         <div>
           <h2>${icon({ name: 'help-circle', size: 18 })} Help &amp; Support</h2>
-          <p class="subtitle">Diagnostics export and local-first transparency.</p>
+          <p class="subtitle">Copy a redacted summary or export the full local diagnostics bundle.</p>
         </div>
-        <div
-          @op-success=${(e: CustomEvent<OpSuccessEventDetail>) =>
-            this.handleOpSuccess(e)}
-          @op-error=${(e: CustomEvent<OpErrorEventDetail>) =>
-            this.handleOpError(e)}
-        >
-          <jf-operation
-            operation-id="core.export-diagnostics"
-            context="button"
-            api-base=${this.apiBase}
-            .args=${{ feTelemetry: { wireDrift: summarizeWireDrift() } }}
-          ></jf-operation>
-          ${this.exportPath !== null
-            ? html`<div class="export-status">
-                Saved to: <span class="path">${this.exportPath}</span>
-              </div>`
-            : nothing}
-          ${this.exportError
-            ? html`<div class="export-status export-error">${this.exportError}</div>`
-            : nothing}
+        <div class="diagnostic-actions">
+          <div class="diagnostic-action">
+            <jf-operation
+              operation-id="core.copy-diagnostic-summary"
+              context="button"
+              api-base=${this.apiBase}
+              @op-success=${(e: CustomEvent<OpSuccessEventDetail>) =>
+                void this.handleSummarySuccess(e)}
+              @op-error=${(e: CustomEvent<OpErrorEventDetail>) =>
+                this.handleSummaryError(e)}
+            ></jf-operation>
+            <div
+              class="summary-receipt ${this.summaryReceipt.isFlashing('summary-error') ? 'error' : ''}"
+              role="status"
+              aria-live="polite"
+            >${this.summaryReceipt.active?.message ?? nothing}</div>
+          </div>
+          <div class="diagnostic-action">
+            <jf-operation
+              operation-id="core.export-diagnostics"
+              context="button"
+              api-base=${this.apiBase}
+              .args=${{ feTelemetry: { wireDrift: summarizeWireDrift() } }}
+              @op-success=${(e: CustomEvent<OpSuccessEventDetail>) =>
+                this.handleOpSuccess(e)}
+              @op-error=${(e: CustomEvent<OpErrorEventDetail>) =>
+                this.handleOpError(e)}
+            ></jf-operation>
+            ${this.exportPath !== null
+              ? html`<div class="export-status">
+                  Saved to: <span class="path">${this.exportPath}</span>
+                </div>`
+              : nothing}
+            ${this.exportError
+              ? html`<div class="export-status export-error">${this.exportError}</div>`
+              : nothing}
+          </div>
         </div>
       </div>
 

@@ -1,12 +1,59 @@
 ---
 title: "378 — Workaround Inventory & Target-State Analysis"
+status: closed
+updated: 2026-09-03
+closed_by: 893-hygiene-registers
 ---
 
 # 378 — Workaround Inventory & Target-State Analysis
 
-**Status:** In progress
+**Status:** Closed 2026-09-03 — all 29 historical entries dispositioned below; eight still-present
+items are routed to a current owner/tempdoc rather than being misreported as fixed.
 **Created:** 2026-04-08
 **Goal:** Identify all current workarounds in the codebase, describe ideal target states, and organize into parallelizable work streams.
+
+## 2026-09-03 closure audit
+
+This is a present-tense code audit, not a TODO-marker audit. A source-comment marker ratchet cannot
+prove whether behavioral workarounds remain. `absorbed` means a named shipped authority now owns the
+behavior (including deliberately retained compatibility behavior); `removed` means the old mechanism
+is absent; `still-present` means the cited current code retains the gap and names its current route.
+
+| Item | Disposition | Current evidence | Current owner / tempdoc route |
+|---|---|---|---|
+| W1 | absorbed | `modules/configuration/src/main/resources/ai/model-registry.v2.json:16-30` declares distinct FP32/CPU and FP16/CUDA embedding variants; `modules/configuration/src/main/java/io/justsearch/configuration/model/InstallPlanner.java:189-205` selects on hardware support. | Model registry + install planner authorities (`configuration/model`). |
+| W2 | absorbed | `modules/configuration/src/main/resources/ai/model-registry.v2.json:123-138` carries pinned CPU and CUDA reranker artifacts with hashes and release URLs. | Model registry v2 authority. |
+| W3 | absorbed | `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AcquisitionStage.java:88-127` converts per-item preparation/transfer failures into outcomes so the scheduler can continue; `modules/app-services/src/main/java/io/justsearch/app/services/ai/install/ResumableFetch.java:287-329` verifies and preserves retry state per item. | Staged Install AI pipeline (`AcquisitionStage`/`ResumableFetch`). |
+| W4 | absorbed | `modules/shell/src-tauri/src/lib.rs:356-363` retains the `\\?\` strip explicitly as the Windows/Java compatibility boundary. | Tauri launcher path-normalization boundary; retained intentionally, not open debt. |
+| W5 | absorbed | `modules/shell/src-tauri/src/lib.rs:763` launches the bundled JVM with `-Djustsearch.prod=true`; the distribution task does the same at `modules/ui/build.gradle.kts:1761`. | ADR-0046 production trust boundary. |
+| W6 | **still-present** | `scripts/ci/package-installer-win.ps1:216-217,352-359` still chooses the newest matching setup executable and does not first require a single fresh output. | Installer tooling; tempdoc 892 manual intake / owner decision. |
+| W7 | absorbed | `modules/ui/build.gradle.kts:698-704` defines the CUDA destination as a Gradle `Sync` output scoped to the variant directory; the parent CPU sync preserves that separately at `:851-854`. | Gradle distribution staging authority. |
+| W8 | absorbed | `.github/workflows/build-installer.yml:364-371` requests configured signing for tags/explicit runs; `scripts/ci/sign-windows.ps1:246-296` fails closed when signing is required and verifies Authenticode. | Tempdoc 905 release-unblock + release signing workflow. |
+| W9 | **still-present** | `modules/app-services/src/main/java/io/justsearch/app/services/worker/QueryUnderstandingService.java:108-112` still reads `QU_ENABLED` default-off; `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java:74-75` still labels it experimental. | Tempdoc 887 L8 (freshness/temporal intent) plus tempdoc 893 P.6 lifecycle decision. |
+| W10 | absorbed | `modules/ui-web/src/api/domains/search.ts:27-50,277` uses one camelCase `SearchHit` boundary and maps `excerptRegions` directly. | Tempdoc 380; generated search wire projection. |
+| W11 | **still-present** | `modules/app-services/src/main/java/io/justsearch/app/services/worker/FilterNormalizationService.java:97-100` still reads `FILTER_NORM_ENABLED` default-off; `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java:77-78` still labels it experimental. | Tempdoc 893 P.6 feature-lifecycle seed; promotion/removal remains a product/search decision. |
+| W12 | **still-present** | `scripts/jseval/jseval/backend.py:248-259` still launches Gradle without `--no-daemon` or a preceding daemon stop. | jseval backend lifecycle; tempdoc 892 manual intake / owner decision. |
+| W13 | **still-present** | `backend.py:110-190,248-289` accepts a fixed port and launches before any socket/health ownership preflight; failure still reaches the readiness timeout. | jseval backend lifecycle; tempdoc 892 manual intake / owner decision. |
+| W14 | absorbed | `modules/reranker/src/main/java/io/justsearch/reranker/CitationScorer.java:23-35,55-75` now declares CPU-only citation scoring as an intentional no-GPU-contention policy and receives a composed `SessionHandle`. | Tempdoc 397 inference composition authority; no accidental cache shortcut remains. |
+| W15 | absorbed | `modules/ui-web/src/api/generated/index.ts:18-20` documents generated status schema types replacing the hand third representation; `modules/ui-web/src/api/domains/settings.ts:42` is the single hand settings interface. | Tempdocs 380/564/683 generated API projection. |
+| W16 | absorbed | `modules/app-api/src/main/java/io/justsearch/app/api/status/StatusResponse.java:10-12,38-39` explicitly nests worker operational data and states there is no `@JsonUnwrapped`; generated fixture/schema tests own the wire shape. | Tempdocs 380/384/564 generated status projection. |
+| W17 | **still-present** | `modules/core/src/main/java/io/justsearch/core/search/SearchPort.java:12-13` still names the `Query` parameter `intent`; both UI `EffectiveConfigIntegrationTest.java` and `EffectiveConfigRuntimeIntegrationTest.java` remain one-byte files. | Core/UI cleanup; tempdoc 892 manual intake / owner decision. |
+| W18 | absorbed | `modules/app-config/src/main/java/io/justsearch/app/config/ConfigManagerBootstrap.java:39-57` wraps both immediate and later listener callbacks with `Faults.logAndContinue`. | Tempdoc 382 error-handling authority. |
+| W19 | absorbed | `modules/app-observability/src/main/java/io/justsearch/app/observability/InfraDiagnosticsService.java:70-82` wraps all four suppliers with `Faults.logAndFallback`. | Tempdoc 382 error-handling authority. |
+| W20 | absorbed | `modules/configuration/src/main/java/io/justsearch/configuration/JustSearchConfigurationLoader.java:242-261` returns `Optional.empty()` and logs missing/invalid YAML centrally. | Tempdoc 382 configuration-loading authority. |
+| W21 | absorbed | `modules/worker-core/src/main/java/io/justsearch/indexerworker/index/IndexGenerationManager.java:956` delegates deletion to `FileOps`; `modules/configuration/src/main/java/io/justsearch/configuration/FileOps.java:38-63` counts/logs failures instead of swallowing them. | Tempdoc 382 `FileOps` authority. |
+| W22 | absorbed | `modules/app-inference/src/main/java/io/justsearch/app/inference/OnlineModeOps.java:522-535` requires `[DONE]` for strict streams and emits `StreamTruncatedException`; the same contract covers tool streams at `:861-874`. | Tempdoc 383 streaming completeness contract. |
+| W23 | absorbed | `modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/InfraPhase.java` now passes the file-backed `app.api.fake_capabilities` / `APP_API_FAKE_CAPABILITIES` overrides to the handler factory only outside production mode; `HeadAssemblyTest.productionModeIgnoresFileBackedCapabilitiesOverride` pins the boundary. | Infra bootstrap production boundary; the development fixture path remains intentional test infrastructure. |
+| W24 | removed | The production tree contains no `justsearch.eval.disable_breath_holding` read. `modules/configuration/src/test/java/io/justsearch/configuration/resolved/ForegroundPacingConfigForwardingTest.java:16-29` records its replacement by the resolved foreground duty/cooldown contract. | Tempdoc 885 resolved-config pacing authority. |
+| W25 | **still-present** | `modules/system-tests/src/integrationTest/java/io/justsearch/systemtests/agent/AgentBatteryTest.java:464-486` still logs instead of enforcing the 85% aggregate threshold; `:628-647` still returns success after a placeholder path check. | Agent-system test quality; tempdoc 892 manual intake / owner decision. |
+| W26 | **still-present** | `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/BackfillScheduler.java:181-184` still documents a fixed commit every five combined batches; no measurement-derived dynamic combined-backfill commit policy replaced it. | Backfill pacing; tempdoc 892 manual intake / owner decision. |
+| W27 | absorbed | `modules/worker-core/src/main/java/io/justsearch/indexerworker/splade/SpladeEncoder.java:297-308` now caps both CPU and GPU batches at 4 based on later OOM evidence; `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java:1335` owns the 4096 MB arena default. | Current SPLADE/session policy, superseding the historical batch-16 snapshot. |
+| W28 | absorbed | `modules/ort-common/src/main/java/io/justsearch/ort/SessionOptionsApplier.java:86-112` applies the typed arena strategy and per-run arena-shrinkage policy; session handles close owned resources (`modules/ort-common/src/main/java/io/justsearch/ort/NativeSessionHandle.java:520-539`). | Tempdoc 397 typed ORT session lifecycle authority. |
+| W29 | absorbed | `modules/ui/src/main/java/io/justsearch/ui/api/KnowledgeSearchController.java:401` returns the typed `KnowledgeSearchResponse`; `modules/app-api/src/test/java/io/justsearch/app/api/knowledge/KnowledgeWireContractConformanceTest.java:35-62` checks that record and its nested types against the gRPC descriptor. | App API + wire contract authorities. |
+
+Closure tally: **20 absorbed, 1 removed, 8 still-present = 29/29 dispositioned**. The eight
+still-present rows are routed above. This document is closed as a historical inventory; it is not
+superseded by the TODO/FIXME ratchet and does not create a competing live issue store.
 
 ## Method
 
@@ -19,7 +66,8 @@ title: "378 — Workaround Inventory & Target-State Analysis"
 7. Target-state analysis (done)
 8. Work stream organization (done)
 
-**Active workarounds:** 17 (of 29 cataloged; W10, W15, W16, W18, W19, W20, W21, W22, W27, W29 resolved)
+**Historical 2026-04-08 snapshot:** 17 active of 29 cataloged. The authoritative present-tense
+dispositions are the closure table above.
 
 ---
 

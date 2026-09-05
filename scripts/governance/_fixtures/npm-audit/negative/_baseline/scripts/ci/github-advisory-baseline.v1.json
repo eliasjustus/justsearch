@@ -1,0 +1,10 @@
+{
+  "schema": "github-advisory-baseline.v1",
+  "targets": {
+    "root": { "advisories": [] },
+    "ui-web": { "advisories": [] },
+    "shell": { "advisories": [] },
+    "runtime-client": { "advisories": [] },
+    "wire-contract": { "advisories": [] }
+  }
+}

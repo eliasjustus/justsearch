@@ -1,6 +1,6 @@
 /**
  * todo-fixme gate classifications — tempdoc 530 §2.6.
- * Per-file count of TODO / FIXME / XXX comments; only-shrinks.
+ * Per-file count of TODO / FIXME / XXX markers in source comments; only-shrinks.
  */
 
 export const TODO_FIXME_CLASSIFICATIONS = new Set([

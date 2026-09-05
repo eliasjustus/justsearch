@@ -6,7 +6,7 @@ description: "Use NSIS installer with per-user install to LocalAppData and post-
 date: 2026-04-06
 probes:
   - adr-0024-per-user-install
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0024: App Packaging: NSIS, Per-User Install, Download-on-Demand
@@ -99,3 +99,18 @@ Use Squirrel (auto-updating installer framework) or electron-builder's installer
 
 ### MSIX (Microsoft Store)
 Use MSIX packaging for distribution through the Microsoft Store or sideloading. Rejected because MSIX requires either Store submission (with review process and restrictions) or enterprise sideloading certificates. Code signing for MSIX is more restrictive than NSIS (requires EV certificate for Store, or organization certificate for sideloading). Too much friction for an indie project at this stage.
+
+## Amendment — 2026-09-03 production reality
+
+The three packaging decisions remain unchanged: NSIS, per-user installation, and post-install model
+download. Their current shipped measurements and release policy supersede the dated operational
+figures above:
+
+- The published v0.2.0 installer is approximately 249 MB, while the current seven-package model set
+  is approximately 10.14 GB and remains outside the installer.
+- v0.2.0 shipped Authenticode-signed by Elias Justus. Branch rehearsals may omit signing, but every
+  `v*` release tag is now fail-closed on Authenticode signing and a complete MZ-bearing payload
+  census before publication.
+- The existing `adr-0024-per-user-install` probe remains the correct mechanical restatement of this
+  ADR's load-bearing premise: the NSIS `installMode` must remain `currentUser`. Signing and measured
+  artifact size are production properties, not changes to the packaging-format decision.

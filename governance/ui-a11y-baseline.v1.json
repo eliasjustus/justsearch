@@ -1,16 +1,12 @@
 {
   "$schema": "./ui-a11y-baseline.schema.json",
   "version": 1,
-  "description": "Shared a11y known-violation baseline (tempdoc 615 §13 Move 2). ONE authority for the per-surface axe rules accepted in the DETERMINISTIC route-mock capture state (jseval ui-shot --fixtures). Consumed by the Python ui-shot measurement (flags NEW-vs-known) AND the TS e2e accessibility-audit gate, so the tiers cannot silently disagree about 'passing' (§13.3 / P3). knownRules = accepted debt; a violation NOT listed is NEW and must be investigated. Regenerate via scripts/jseval/experiments/regen_a11y_baseline.py after a deliberate change.",
+  "description": "Shared a11y known-violation baseline (tempdoc 615 §13 Move 2). ONE authority for the per-surface axe rules accepted in the DETERMINISTIC route-mock capture state (jseval ui-shot --fixtures). Consumed by the Python ui-shot measurement and ui-a11y gate, which flag NEW-vs-known violations. knownRules = accepted debt; a violation NOT listed is NEW and must be investigated. Regenerate via scripts/jseval/experiments/regen_a11y_baseline.py after a deliberate change.",
   "captureState": "route-mock-fixtures (no backend, deterministic)",
   "surfaces": [
     {
       "surface": "search",
       "uiShotStep": "home",
-      "e2eViews": [
-        "search",
-        "aria"
-      ],
       "knownRules": [
         "aria-valid-attr-value"
       ],
@@ -19,33 +15,21 @@
     {
       "surface": "library",
       "uiShotStep": "library",
-      "e2eViews": [
-        "library"
-      ],
       "knownRules": []
     },
     {
       "surface": "settings",
       "uiShotStep": "settings",
-      "e2eViews": [
-        "settings"
-      ],
       "knownRules": []
     },
     {
       "surface": "security",
       "uiShotStep": "security",
-      "e2eViews": [
-        "security"
-      ],
       "knownRules": []
     },
     {
       "surface": "settings-light",
       "uiShotStep": "settings-light",
-      "e2eViews": [
-        "settings"
-      ],
       "knownRules": [
         "color-contrast"
       ],
@@ -54,9 +38,6 @@
     {
       "surface": "security-light",
       "uiShotStep": "security-light",
-      "e2eViews": [
-        "security"
-      ],
       "knownRules": [
         "color-contrast"
       ],
@@ -65,9 +46,6 @@
     {
       "surface": "health",
       "uiShotStep": "health",
-      "e2eViews": [
-        "health"
-      ],
       "knownRules": [
         "color-contrast"
       ],
@@ -76,81 +54,66 @@
     {
       "surface": "brain",
       "uiShotStep": "ai-brain",
-      "e2eViews": [
-        "brain"
-      ],
       "knownRules": []
     },
     {
       "surface": "help",
       "uiShotStep": "help",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "tasks-panel",
       "uiShotStep": "tasks-occlusion",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "library",
       "uiShotStep": "library-enriching",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-proportion",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-occlusion",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-bands",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-bands-detailed",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-composer-small",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-spine-single",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-spine-multi",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "chat",
       "uiShotStep": "chat-chip-yield",
-      "e2eViews": [],
       "knownRules": []
     },
     {
       "surface": "search-v3",
       "uiShotStep": "sv3-composer-occlusion",
-      "e2eViews": [],
       "knownRules": [],
       "note": "Tempdoc 859 live-leg — the FIRST Search v3 surface in this register. Until now `ui-a11y-gate` covered no sv3 step at all, so the window the product is being rebuilt around had zero axe coverage in the deterministic state; the independent measured audit that found it also ran axe against this capture and got 0 violations, which is why the row lands with an EMPTY knownRules list rather than accepted debt. `sv3-composer-occlusion` is the step to register because it is the only sv3 capture deterministic enough for the proportion register too (1280x800, `sv3-sources` fixtures variant, Sources disclosure open, scrolled to max), so both gates read the same rendered state."
     }
