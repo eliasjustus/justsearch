@@ -1,5 +1,5 @@
 ---
-title: "Context window is a derived resource"
+title: "ADR-0047: Context window is a derived resource"
 type: decision
 status: stable
 description: "The LLM context window is derived at activation from a ladder of explicit rungs (32k on GPU, 8k on CPU, stepped down on a launch abort) rather than configured as a user preference, and every prompt-side budget is a fraction of the live window rather than a constant."

@@ -1,5 +1,5 @@
 ---
-title: "Wire contract as a first-class artifact"
+title: "ADR-0038: Wire contract as a first-class artifact"
 type: decision
 status: accepted - mechanism superseded by tempdoc 564
 description: "The FE↔backend wire contract is a first-class, versioned artifact; hand-written per-language mirrors are forbidden; every consumer-side type is mechanically generated."

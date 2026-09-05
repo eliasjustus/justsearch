@@ -568,6 +568,12 @@ jobs:
       - name: Markdownlint canonical docs
         run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
 
+      - name: Validate docs frontmatter, headings and encoding
+        # Complements markdownlint (style) with the semantic rules: frontmatter parses, the H1
+        # equals the frontmatter title llms.txt indexes, no U+FFFD. Unwired until tempdoc 930
+        # §22.2 follow-up 7 cleared its last 2,219 findings; wiring it is what keeps it at zero.
+        run: node scripts/docs/docs-validate.mjs
+
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 

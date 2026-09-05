@@ -293,6 +293,50 @@ ok('CAP_LINES is the agreed 800-line cap', CAP_LINES === 800);
   ok('a lowered --cap fails a tempdoc that passes the default cap', res.status === 1);
 }
 
+// -------------------------------------------------------------------------------------------
+// The cap gates GROWTH: an already-over-cap tempdoc may be repaired, not extended
+// (930 §22.2 follow-up 7 — 195 of 627 tempdocs are already over the cap, so failing on any
+// touch would make a mechanical frontmatter/encoding repair impossible without a content move).
+// -------------------------------------------------------------------------------------------
+{
+  const dir = repo();
+  writeFile(dir, 'docs/tempdocs/940-legacy.md', lines(CAP_LINES + 100));
+  commitAll(dir, 'seed an already-over-cap tempdoc');
+  const baseSha = git(dir, 'rev-parse', 'HEAD');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', baseSha);
+
+  // Same line count, different content: a repair.
+  writeFile(dir, 'docs/tempdocs/940-legacy.md', lines(CAP_LINES + 100).replace('line 1\n', 'repaired\n'));
+  commitAll(dir, 'repair without growing');
+  ok('an over-cap tempdoc edited without growing passes', runCli(dir, []).status === 0);
+
+  // One line longer: growth.
+  writeFile(dir, 'docs/tempdocs/940-legacy.md', lines(CAP_LINES + 101));
+  commitAll(dir, 'grow by one line');
+  const grown = runCli(dir, []);
+  ok('adding a line to an over-cap tempdoc still fails', grown.status === 1);
+  ok('the growth failure names the number', /#? *940/.test(grown.stderr.replace(/\s+/g, ' ')));
+
+  // A shrink that stays over cap also passes.
+  writeFile(dir, 'docs/tempdocs/940-legacy.md', lines(CAP_LINES + 50));
+  commitAll(dir, 'shrink but stay over cap');
+  ok('an over-cap tempdoc that shrinks passes', runCli(dir, []).status === 0);
+}
+
+// -------------------------------------------------------------------------------------------
+// A tempdoc that CROSSES the cap in this diff still fails.
+// -------------------------------------------------------------------------------------------
+{
+  const dir = repo();
+  writeFile(dir, 'docs/tempdocs/950-growing.md', lines(CAP_LINES - 10));
+  commitAll(dir, 'base under the cap');
+  const baseSha = git(dir, 'rev-parse', 'HEAD');
+  git(dir, 'update-ref', 'refs/remotes/origin/main', baseSha);
+  writeFile(dir, 'docs/tempdocs/950-growing.md', lines(CAP_LINES + 10));
+  commitAll(dir, 'cross the cap');
+  ok('a tempdoc that crosses the cap in this diff fails', runCli(dir, []).status === 1);
+}
+
 for (const dir of created) {
   try {
     fs.rmSync(dir, { recursive: true, force: true });

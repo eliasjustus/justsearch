@@ -1,5 +1,5 @@
 ---
-title: "Wire contract format — protobuf + protovalidate (SUPERSEDED)"
+title: "ADR-0040: Wire contract format — protobuf + protovalidate (SUPERSEDED)"
 type: decision
 status: superseded
 description: "V1 picked protobuf 3 + protovalidate as the wire-contract spec format. Superseded by tempdoc 564, which found proto3 cannot faithfully model the wire and demoted it to a derived view."

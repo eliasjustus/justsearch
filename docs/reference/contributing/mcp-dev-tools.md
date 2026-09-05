@@ -5,7 +5,7 @@ status: stable
 description: "Dev orchestration tools for starting, monitoring, and verifying the JustSearch dev stack."
 ---
 
-# MCP Dev Tools Workflow
+# MCP Dev Tools Reference
 
 The `justsearch-dev-mcp` server is the agent-facing control surface for the local development stack. It wraps the dev runner, selected Local API calls, search/ingest helpers, and AI runtime toggles.
 

@@ -1,5 +1,5 @@
 ---
-title: Use Lucene Directly Without Search Platform
+title: "ADR-0003: Use Lucene Directly Without Search Platform"
 type: decision
 status: stable
 description: "Interact with Lucene API directly instead of Elasticsearch or Solr."

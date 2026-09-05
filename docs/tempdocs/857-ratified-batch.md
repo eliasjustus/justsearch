@@ -1,37 +1,7 @@
 ---
 number: 857
 title: The ratified batch — run-spine navigation ported, surface-audience honesty, pane closes on conversation switch
-status: PR-A IMPLEMENTED (2026-08-19) AND PR-B IMPLEMENTED (2026-08-19). Design is rev 2,
-  adversarially reviewed. PR-A (§10 "the run-spine navigation port", rows PR-A1-PR-A6) is implemented
-  in full, with the rev 2 amendments A1-A10 and one recorded deviation (the `runPrompt` anchor carries
-  a `:hold` suffix — see §13). Its live-verification rows (§10) are NOT yet run: they need the shared
-  dev stack and are handed to the next stack session, A9's ungated `measure()` cost being the one
-  genuinely open question. PR-A merged to `main` first (#516). PR-B (§10 "audience honesty + ledger
-  retirement + pane close", rows B1-B5) is implemented in full and merged into this branch on top of
-  PR-A (the two PRs touch disjoint files, confirmed by a conflict-free merge of `SearchV3View.ts`
-  against PR-A's `Sv3Main.ts`/`navigation.ts`/`keyboardHandler.ts` changes): `CorePlugin.ts` audience
-  flip (health/activity USER, logs untouched OPERATOR), `check-surface-composition.mjs`
-  `KNOWN_PARITY_DRIFT` emptied (both adverse half-states captured in the PR body per review B1),
-  `go-to-activity` action added beside `go-to-health` with `governance/sandbox-coverage.v1.json`'s two
-  reach rows updated, `listSurfacesByAudience()` and its test deleted, and the switch-guarded
-  `closePane()` added at `onSessionSelect` + `openBranch` (the `lastVisitedAt`-not-`lastActiveAt`
-  correction confirmed against source). Both PRs' code-comment self-references were re-stamped from
-  854 to 857 in their own diffs (PR-A's re-stamp landed with #516; PR-B's landed in this branch).
-  RENUMBERED 854 → 857 (2026-08-19). This design was authored, reviewed and implemented as **854**;
-  every commit message on the branch still carries that scope, because history is history. It was
-  renumbered when `854-fusion-residue-lane.md` MERGED TO `main` first (PR #517, commit `b816b98e`) and
-  took 854 in published history. 855 and 856 were already claimed by the settings-window and
-  merge-attribution worktrees, so 857 is the next free number. The ported code comments were
-  re-stamped to `857 PR-A` in the same change; `SearchV3View.ts:1854-1856` is a line number, not a
-  reference, and is deliberately untouched.
-  Worth recording for the next agent who hits this: `check-tempdoc-numbers` did NOT catch the
-  collision. It compares claims ACROSS worktrees, so once the competing doc merged, this tree held
-  both `854-fusion-residue-lane.md` and `854-ratified-batch.md` and the check still reported OK —
-  nothing mechanical would have stopped two 854s reaching `main`.
-  Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock,
-  A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10).
-  PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived
-  independent re-derivation.
+status: "PR-A IMPLEMENTED (2026-08-19) AND PR-B IMPLEMENTED (2026-08-19). Design is rev 2, adversarially reviewed. PR-A (§10 \"the run-spine navigation port\", rows PR-A1-PR-A6) is implemented in full, with the rev 2 amendments A1-A10 and one recorded deviation (the `runPrompt` anchor carries a `:hold` suffix — see §13). Its live-verification rows (§10) are NOT yet run: they need the shared dev stack and are handed to the next stack session, A9's ungated `measure()` cost being the one genuinely open question. PR-A merged to `main` first (#516). PR-B (§10 \"audience honesty + ledger retirement + pane close\", rows B1-B5) is implemented in full and merged into this branch on top of PR-A (the two PRs touch disjoint files, confirmed by a conflict-free merge of `SearchV3View.ts` against PR-A's `Sv3Main.ts`/`navigation.ts`/`keyboardHandler.ts` changes): `CorePlugin.ts` audience flip (health/activity USER, logs untouched OPERATOR), `check-surface-composition.mjs` `KNOWN_PARITY_DRIFT` emptied (both adverse half-states captured in the PR body per review B1), `go-to-activity` action added beside `go-to-health` with `governance/sandbox-coverage.v1.json`'s two reach rows updated, `listSurfacesByAudience()` and its test deleted, and the switch-guarded `closePane()` added at `onSessionSelect` + `openBranch` (the `lastVisitedAt`-not-`lastActiveAt` correction confirmed against source). Both PRs' code-comment self-references were re-stamped from 854 to 857 in their own diffs (PR-A's re-stamp landed with #516; PR-B's landed in this branch). RENUMBERED 854 → 857 (2026-08-19). This design was authored, reviewed and implemented as **854**; every commit message on the branch still carries that scope, because history is history. It was renumbered when `854-fusion-residue-lane.md` MERGED TO `main` first (PR #517, commit `b816b98e`) and took 854 in published history. 855 and 856 were already claimed by the settings-window and merge-attribution worktrees, so 857 is the next free number. The ported code comments were re-stamped to `857 PR-A` in the same change; `SearchV3View.ts:1854-1856` is a line number, not a reference, and is deliberately untouched. Worth recording for the next agent who hits this: `check-tempdoc-numbers` did NOT catch the collision. It compares claims ACROSS worktrees, so once the competing doc merged, this tree held both `854-fusion-residue-lane.md` and `854-ratified-batch.md` and the check still reported OK — nothing mechanical would have stopped two 854s reaching `main`. Rev 2 folded an adversarial review: three BLOCKING corrections to PR-A (A1 the `active()` deadlock, A2 the unstable `.scroller`, A3 the structurally blind test tier) and seven amendments (A4-A10). PR-B was unchanged by the review; D4's route enumeration and D3's reframing both survived independent re-derivation."
 created: 2026-08-19
 updated: 2026-08-19
 owner-decisions: D1-D4 ratified by the owner 2026-08-19 (recorded verbatim in §1)

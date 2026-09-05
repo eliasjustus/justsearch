@@ -166,6 +166,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
 | `docs/tempdocs/**` | `check-tempdoc-numbers` · `check-tempdoc-size` |
+| `docs/{explanation,reference,how-to,decisions}/**` | `docs-validate` |
 | indexing-job lifecycle surfaces | `--gate operation-surface` |
 | `CoreSurfaceCatalog.java` / surface `altitude` | `--gate surface-altitude` |
 | `governance/logic-seams.v1.json` or a registered seam | `check-logic-seams --mode gate` |

@@ -25,6 +25,7 @@
         "node scripts/docs/verify-canonical-doc-links.mjs",
         "node scripts/architecture/module-deps.mjs --check-canonical",
         "npx markdownlint \"docs/explanation/**/*.md\" \"docs/reference/**/*.md\" \"docs/how-to/**/*.md\" \"docs/decisions/**/*.md\"",
+        "node scripts/docs/docs-validate.mjs",
         "node scripts/docs/llmstxt-generate.mjs --check",
         "node scripts/docs/skills-sync.mjs --check"
       ]

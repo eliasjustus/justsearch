@@ -5,7 +5,7 @@ status: stable
 description: "Hybrid Inference (CPU/GPU) and VRAM management."
 ---
 
-# 05. AI Architecture (The "Brain")
+# AI Architecture
 
 JustSearch implements a **Hybrid Inference Architecture** to provide advanced AI features (RAG, Vision, Summarization) on consumer hardware with limited VRAM (e.g., 8GB).
 
