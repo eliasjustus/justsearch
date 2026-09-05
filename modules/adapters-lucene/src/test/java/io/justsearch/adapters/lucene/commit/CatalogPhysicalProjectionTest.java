@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.Chunking;
 import io.justsearch.adapters.lucene.commit.IndexFingerprint.FieldShape;
@@ -188,6 +189,39 @@ final class CatalogPhysicalProjectionTest {
         fingerprint(legacy.toString()),
         "stopping duplicate chunk storage and deleting the three physical entity text fields must"
             + " invalidate indexes built with the legacy shape");
+  }
+
+  /**
+   * Tempdoc 931 §C.1: the chunk revision hash is a stored field on every chunk document, so an
+   * index built without it is physically different and must not be treated as current. Asserted
+   * against the production catalog with the field removed rather than a literal digest, so the test
+   * keeps meaning when an unrelated catalog edit moves the fingerprint for its own reasons.
+   */
+  @Test
+  void theChunkParentRevisionFieldMovesTheProductionCatalogFingerprint() throws Exception {
+    JsonNode current = productionCatalog();
+    ObjectNode revision = field(current, "chunk_parent_content_sha256");
+    assertNotNull(revision, "the chunk revision hash is a production catalog field");
+    assertTrue(revision.path("stored").asBoolean(), "the RMW guard reads it from stored fields");
+    assertFalse(
+        revision.path("docValues").asBoolean(),
+        "it is a per-document payload, never sorted or faceted on");
+
+    ObjectNode legacy = (ObjectNode) current.deepCopy();
+    ArrayNode fields = (ArrayNode) legacy.path("fields");
+    for (int i = 0; i < fields.size(); i++) {
+      if ("chunk_parent_content_sha256".equals(fields.get(i).path("id").asText())) {
+        fields.remove(i);
+        break;
+      }
+    }
+    assertNull(field(legacy, "chunk_parent_content_sha256"));
+
+    assertNotEquals(
+        fingerprint(current.toString()),
+        fingerprint(legacy.toString()),
+        "an index whose chunks carry no parent-revision identity cannot serve the guarded RMW"
+            + " path, so it must read as a different physical shape");
   }
 
   @Test

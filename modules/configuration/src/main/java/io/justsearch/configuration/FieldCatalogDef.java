@@ -145,6 +145,8 @@ public final class FieldCatalogDef {
                 // Span offsets into parent extracted content (0-based, end exclusive) for click-to-verify UI.
                 new FieldDef("chunk_start_char", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("chunk_end_char", "long", true, true, List.of("filter", "sort"), null, null, false),
+                // Tempdoc 931 §C.1: the parent content revision the offsets above address.
+                new FieldDef("chunk_parent_content_sha256", "keyword", true, false, List.of(), null, null, false),
                 // Phase 6: chunk embeddings
                 new FieldDef("chunk_vector", "vector", false, false, List.of("chunk_vector"),
                         new VectorSpec(vectorDim), null, false, "preserve-reread-or-reset:chunk_embedding_status"),

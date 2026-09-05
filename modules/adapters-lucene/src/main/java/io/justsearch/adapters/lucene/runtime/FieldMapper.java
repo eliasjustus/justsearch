@@ -163,9 +163,28 @@ public final class FieldMapper {
   }
 
   Document toDocument(Map<String, Object> fields) {
+    return toDocument(fields, null);
+  }
+
+  /**
+   * Builds the Lucene document, reporting any dense-vector field dropped because its value could
+   * not be normalized (tempdoc 931 §C.3).
+   *
+   * <p>A zero-magnitude or non-finite embedding used to abort the whole write: {@link
+   * VectorNormalization} throws {@link IllegalArgumentException} and no caller caught it per
+   * document, so one bad vector in a batch lost every other document in it. The document is worth
+   * far more than the one field — it stays lexically searchable — so the field is dropped, the
+   * paired {@code *_status} in the same write is corrected to {@code FAILED} so backfill accounting
+   * stays truthful (and the write-time status/artifact contract is not handed a lie), and the drop
+   * is reported to {@code report} for the caller's per-batch WARN and counter.
+   *
+   * @param report accumulator for dropped vector fields, or null when the caller does not count
+   */
+  Document toDocument(Map<String, Object> fields, DroppedVectorReport report) {
     Document doc = new Document();
     int added = 0;
     if (fields != null) {
+      Map<String, String> droppedStatusTargets = detectUnusableVectors(fields, report);
       for (Map.Entry<String, Object> e : fields.entrySet()) {
         FieldDef def = byId.get(e.getKey());
         if (def == null) {
@@ -176,7 +195,12 @@ public final class FieldMapper {
           }
           continue;
         }
-        added += addFields(doc, def, e.getValue());
+        if (droppedStatusTargets.containsKey(def.id)) continue;
+        Object value =
+            droppedStatusTargets.containsValue(def.id)
+                ? SchemaFields.EMBEDDING_STATUS_FAILED
+                : e.getValue();
+        added += addFields(doc, def, value);
       }
     }
     if (added == 0) {
@@ -184,6 +208,84 @@ public final class FieldMapper {
       doc.add(new StoredField("_ingest_ts", System.currentTimeMillis()));
     }
     return doc;
+  }
+
+  /**
+   * Vector fields in this write whose value cannot be indexed, mapped to the status field that
+   * witnesses them (or the empty string when the catalog pairs none). Detection runs before the
+   * build loop so the paired status can be corrected regardless of map iteration order.
+   */
+  private Map<String, String> detectUnusableVectors(
+      Map<String, Object> fields, DroppedVectorReport report) {
+    Map<String, String> dropped = java.util.Collections.emptyMap();
+    for (Map.Entry<String, Object> e : fields.entrySet()) {
+      FieldDef def = byId.get(e.getKey());
+      if (def == null || !"vector".equals(def.type)) continue;
+      String reason = vectorRejectionReason(def, e.getValue());
+      if (reason == null) continue;
+      if (dropped.isEmpty()) dropped = new HashMap<>();
+      String statusTarget = rmwPolicyStatusTarget(def.rmwPolicy);
+      dropped.put(def.id, statusTarget == null ? "" : statusTarget);
+      if (report != null) {
+        report.record(asString(fields.get(primaryKeyField.id)), def.id, reason);
+      }
+    }
+    return dropped;
+  }
+
+  /**
+   * Why {@code value} cannot be written to {@code def}, or null when it can. Only normalization
+   * rejection is reported: a null value or a dimension mismatch are separate, already-handled
+   * conditions ({@code addFields} skips the former and throws on the latter, which
+   * {@code IndexingCoordinator.validate} catches at the front door).
+   */
+  private static String vectorRejectionReason(FieldDef def, Object value) {
+    float[] vec = asFloatArray(value);
+    if (vec == null) return null;
+    if (def.vectorFieldType == null
+        || def.vectorFieldType.vectorSimilarityFunction() != VectorSimilarityFunction.DOT_PRODUCT) {
+      return null;
+    }
+    if (def.vectorDim != null && vec.length != def.vectorDim) return null;
+    try {
+      VectorNormalization.l2NormalizedCopy(vec, "vector field " + def.id);
+      return null;
+    } catch (IllegalArgumentException e) {
+      return e.getMessage();
+    }
+  }
+
+  /**
+   * Per-write accumulator for dropped dense-vector fields: a count for the metric, a bounded sample
+   * of document ids for one WARN, and the last rejection reason. Not thread-safe by design — each
+   * write lane creates its own and reads it on the same thread.
+   */
+  static final class DroppedVectorReport {
+    private static final int MAX_SAMPLE = 3;
+
+    private int count;
+    private final List<String> sampleDocIds = new ArrayList<>(MAX_SAMPLE);
+    private String lastReason;
+
+    void record(String docId, String fieldId, String reason) {
+      count++;
+      lastReason = reason;
+      if (sampleDocIds.size() < MAX_SAMPLE) {
+        sampleDocIds.add((docId == null ? "<no id>" : docId) + "/" + fieldId);
+      }
+    }
+
+    int count() {
+      return count;
+    }
+
+    List<String> sampleDocIds() {
+      return List.copyOf(sampleDocIds);
+    }
+
+    String lastReason() {
+      return lastReason;
+    }
   }
 
   Integer ssotVectorDimensionOrNull() {
@@ -264,6 +366,16 @@ public final class FieldMapper {
           if (!SchemaFields.CHUNK_CONTENT.equals(def.id) || !"text".equals(def.type)) {
             throw new IllegalStateException(
                 "rmwPolicy 'rederive-parent-slice' is only supported on the chunk_content text field");
+          }
+          // Tempdoc 931 §C.1: the re-slice is only safe against the parent revision the chunk was
+          // cut from, so the catalog must also carry the stored revision hash the guard compares.
+          FieldDef revision = byId.get(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
+          if (revision == null || !revision.stored) {
+            throw new IllegalStateException(
+                "rmwPolicy 'rederive-parent-slice' requires a stored "
+                    + SchemaFields.CHUNK_PARENT_CONTENT_SHA256
+                    + " field — without it the RMW re-slice cannot tell the parent revision the"
+                    + " chunk was cut from apart from a later rewrite (tempdoc 931)");
           }
           continue;
         }
@@ -430,6 +542,12 @@ public final class FieldMapper {
             }
             // DocValues for sorting/faceting
             doc.add(new SortedDocValuesField(def.id, new BytesRef(s)));
+            count++;
+          } else if (s != null && def.stored) {
+            // Stored-only keyword: no postings, no doc-values column — payload the reader fetches
+            // by doc id (chunk_parent_content_sha256, tempdoc 931 §C.1). Without this branch the
+            // catalog could declare such a field and the mapper would silently write nothing.
+            doc.add(new StoredField(def.id, s));
             count++;
           }
         }

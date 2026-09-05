@@ -324,6 +324,13 @@
       "roles": ["filter", "sort"]
     },
     {
+      "id": "chunk_parent_content_sha256",
+      "type": "keyword",
+      "stored": true,
+      "docValues": false,
+      "roles": []
+    },
+    {
       "id": "chunk_start_line",
       "type": "long",
       "stored": true,
