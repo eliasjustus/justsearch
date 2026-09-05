@@ -265,7 +265,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
         new io.justsearch.indexerworker.services.WorkerWatcherMetricCatalog(ctx.metricRegistry());
     // Tempdoc 626 §Axis-A — OVERFLOW/burst recovery is now Worker-owned (in-process reconcile),
     // so the redundant Head watcher can be retired without dropping these safety nets.
-    java.util.function.BiConsumer<java.nio.file.Path, Boolean> reconcileSink =
+    java.util.function.BiConsumer<Path, Boolean> reconcileSink =
         this.ingestService::reconcileRoot;
     this.workerWatcher = new io.justsearch.indexerworker.services.WorkerMethvinWatcher(
         ctx.jobQueue(), workerWatcherCatalog, deletePathSink, reconcileSink);

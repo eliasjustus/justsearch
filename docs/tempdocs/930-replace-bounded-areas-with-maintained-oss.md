@@ -1,7 +1,7 @@
 ---
 title: "Replace bounded areas with maintained open source: whole-project analysis (product + agentic system + tooling) of where a polished, regularly-updated upstream can absorb bespoke code, ranked by maintainer effort saved"
 type: tempdocs
-status: "PUBLISHED + FOLLOW-UPS DONE (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661, #663 (§22 table, each with a green exact-SHA main run); the nine §22.2 owner actions incl. row 11 closed by seven more PRs (§22.3) plus the branch-protection change; one founder flag in §22.3. Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (follow-up 1 done 2026-09-05: all 37 accepted advisory identities cleared by upgrade, dependency-review-action not adopted; remaining — PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
+status: "PUBLISHED + FOLLOW-UPS DONE (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661, #663 (§22 table, each with a green exact-SHA main run); the nine §22.2 owner actions incl. row 11 closed by seven more PRs (§22.3) plus the branch-protection change; one founder flag in §22.3. Deviations per chunk in §21 and per PR in §22.1; every §22.2 follow-up closed (all 37 accepted advisory identities cleared, dependency-review-action not adopted; PMD in the build; jseval suite required; measured axe hosted; updater lane real). VDU skipped by founder decision."
 created: 2026-09-05
 updated: 2026-09-05
 lane: maintainer-effort / dependency strategy
@@ -576,8 +576,9 @@ codex-parity, tempdoc-size, tempdoc-numbers all pass.
 1. `npm-audit`: keep the kernel gate (current), or adopt `actions/dependency-review-action` per
    ADR-0044's replacement clause and retire the gate then.
 2. Trace backlog: archive any of the 17 GB before the OTLP sink restarts (chunk B).
-3. PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
-   `pmdMain` violations. Wire `pmdMain` or accept dormancy.
+3. ~~PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
+   `pmdMain` violations. Wire `pmdMain` or accept dormancy.~~ Resolved by §22.2 follow-up 2:
+   wired, and the (actually 130) violations cleared.
 4. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage with the gate (5 markers were
    baselined); ESLint has no root config.
 5. The four DROP-CANDIDATE invariants in the decision list.
@@ -698,8 +699,20 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    `scripts/ci/check-lockfile-completeness.mjs` (+ test, `ci.yml`, pre-merge table, local-repro
    inventory) walks every declared edge offline and fails on a missing entry; the only reliable
    repair is regenerating that lockfile from scratch, since incremental re-runs re-prune.
-2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
-   wire `pmdMain`, or accept dormancy explicitly.
+2. ~~PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
+   wire `pmdMain`, or accept dormancy explicitly.~~ **Done (follow-up 2, 2026-09-05.)** The real
+   count was 130 across 9 modules (109 `UnnecessaryFullyQualifiedName`, 6 `UnusedAssignment`,
+   5 `UnusedPrivateField`, 2 each `HardCodedCryptoKey` / `UnusedFormalParameter` /
+   `EmptyCatchBlock` / `SystemPrintln`, 1 each `UnusedLocalVariable` / `DoNotTerminateVM`) —
+   the earlier ~78 undercounted because `modules/benchmarks` carried `isIgnoreFailures = true`
+   (now removed) and only `modules/ui` had been measured. All cleared at the cause; four
+   `@SuppressWarnings("PMD.*")` with stated reasons remain (`StoreCipher`, `AiInstallService`,
+   `OpenApiSnapshotExporter`, `ExtractionSandboxChild`). `skipPmd` now defaults false, so
+   `pmdMain` runs in `check`/`build`, and CI's required `Build (no model blobs)` job gained a
+   `Static analysis (PMD)` step: 49s of a 352s job on the hosted run, on top of the completed
+   assemble (predicted ~23-30s locally with classes already compiled). `CommentContent`
+   was added to `ruleset-cli-tools.xml`, which had silently exempted `ssot-tools` and
+   `core-contracts`; both rulesets were probe-verified to fail on a planted marker.
 3. ~~`scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.~~
    **CLOSED 2026-09-05** (PR `lint(930): scripts and ps1 TODO coverage; ui-web zero warnings`).
    Root `eslint.config.mjs` covers `scripts/**` + `packaging/**` JS with `no-warning-comments`
@@ -711,6 +724,11 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    Both wired in CI's "Script lint" step. Markers found: 3 JS + 1 ps1 — 2 fixed at the cause
    (`scripts/docs/tempdoc-staleness-triage.mjs`, where the marker word was the subject matter, not
    debt), 2 pinned in suppression lists.
+   Java TEST sources are the same shape and remain uncovered: `pmdTest` stays behind
+   `-Ppmd.includeTests=true`, and measured 2026-09-05 it holds 455 violations (324
+   `UnnecessaryFullyQualifiedName`, 62 `SystemPrintln`, 19 `UnusedLocalVariable`, 17
+   `UnusedAssignment`, 16 `EmptyCatchBlock`, 10 `UnusedFormalParameter`, 6 `UnusedPrivateMethod`,
+   1 `UnusedPrivateField`) — but zero `CommentContent`, so no marker is parked there today either.
 4. ~~Promote `jseval-suite` to a required check (branch protection + the two inventories).~~
    **DONE 2026-09-05** — PR #665 (inventories, walltime lane, ADR-0044 amendment; 15/15 hosted
    passes, median 384 s) and the owner PATCH to classic branch protection (the ruleset holds no
@@ -769,7 +787,7 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 | #668 `lint(930): scripts+ps1 TODO coverage; ui-web zero warnings` | 3, 8 | superseded; green at `8a919ad1` |
 | #666 `deps(930): clear npm advisories, gate lockfile completeness` | 1 | superseded; green at `8a919ad1` |
 | #672 `ci(930): measured axe runs hosted` | 5 | green (`8a919ad1`) |
-| #670 `build(930): PMD runs in the build; violations cleared` | 2 | see PR |
+| #670 `build(930): PMD runs in the build; violations cleared` | 2 | landed `90a9d5fd`; main run pending at closeout |
 
 Founder flag: PR #667 changed `check-tempdoc-size` from "fails on any touch of an over-cap tempdoc" (the design
 the founder agreed in §18.1 row 8) to a no-growth ratchet: an over-cap tempdoc may be edited if

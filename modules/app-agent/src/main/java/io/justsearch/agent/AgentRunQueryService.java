@@ -507,7 +507,7 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
    */
   private static InteractionEvent backgroundBoundary(
       String runId, String conversationId, java.time.Instant at, String boundary) {
-    java.util.Map<String, Object> attrs = new java.util.LinkedHashMap<>();
+    Map<String, Object> attrs = new LinkedHashMap<>();
     attrs.put("nodeBoundary", boundary);
     attrs.put("originKind", "background");
     attrs.put("nodeId", runId);

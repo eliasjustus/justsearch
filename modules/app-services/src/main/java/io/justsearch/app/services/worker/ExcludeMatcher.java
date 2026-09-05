@@ -22,18 +22,17 @@ final class ExcludeMatcher {
   private static final ObjectMapper EXCLUDE_JSON = new ObjectMapper();
   private static final TypeReference<List<String>> EXCLUDE_LIST = new TypeReference<>() {};
 
-  private final boolean windows;
   private final List<Pattern> patterns;
   private final List<String> rawGlobs;
 
-  private ExcludeMatcher(boolean windows, List<Pattern> patterns, List<String> rawGlobs) {
-    this.windows = windows;
+  private ExcludeMatcher(List<Pattern> patterns, List<String> rawGlobs) {
     this.patterns = patterns == null ? List.of() : List.copyOf(patterns);
     this.rawGlobs = rawGlobs == null ? List.of() : List.copyOf(rawGlobs);
   }
 
-  static ExcludeMatcher empty(boolean windows) {
-    return new ExcludeMatcher(windows, List.of(), List.of());
+  /** Matches nothing, so the platform's case-folding rule has nothing to apply to. */
+  static ExcludeMatcher empty() {
+    return new ExcludeMatcher(List.of(), List.of());
   }
 
   /**
@@ -47,19 +46,19 @@ final class ExcludeMatcher {
 
   static ExcludeMatcher fromRawJson(String rawJson, boolean windows) {
     if (rawJson == null || rawJson.isBlank()) {
-      return empty(windows);
+      return empty();
     }
     try {
       List<String> list = EXCLUDE_JSON.readValue(rawJson, EXCLUDE_LIST);
       return fromPatterns(list, windows);
     } catch (Exception e) {
-      return empty(windows);
+      return empty();
     }
   }
 
   static ExcludeMatcher fromPatterns(List<String> globs, boolean windows) {
     if (globs == null || globs.isEmpty()) {
-      return empty(windows);
+      return empty();
     }
     java.util.LinkedHashSet<String> cleaned = new java.util.LinkedHashSet<>();
     for (String g : globs) {
@@ -74,14 +73,14 @@ final class ExcludeMatcher {
       if (cleaned.size() >= 512) break;
     }
     if (cleaned.isEmpty()) {
-      return empty(windows);
+      return empty();
     }
     int flags = windows ? Pattern.CASE_INSENSITIVE : 0;
     List<Pattern> compiled = new ArrayList<>();
     for (String glob : cleaned) {
       compiled.add(Pattern.compile(globToRegex(glob), flags));
     }
-    return new ExcludeMatcher(windows, compiled, new ArrayList<>(cleaned));
+    return new ExcludeMatcher(compiled, new ArrayList<>(cleaned));
   }
 
   boolean isEmpty() {

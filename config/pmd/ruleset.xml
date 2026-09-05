@@ -60,12 +60,13 @@
     ignored. Verified by planting `// TODO ...` in modules/app-util and running
     `./gradlew.bat :modules:app-util:pmdMain -PskipPmd=false` (2 violations, BUILD FAILED).
 
-    HONEST SCOPE: PMD is skipped locally unless `-PskipPmd=false`, and no workflow currently puts
-    `pmdMain` in its task graph (the unit-test lanes run `:modules:<m>:test`, not `check`), so this
-    rule bites only when PMD is deliberately run. Java main sources carry zero markers today, so
-    that is a latent gap rather than an open hole. Closing it means fixing the ~78 pre-existing
-    violations of the OTHER rules above (mostly UnnecessaryFullyQualifiedName) and then wiring
-    `pmdMain` into CI; `./gradlew.bat pmdMain -PskipPmd=false` reproduces them.
+    SCOPE (930 §22.2 follow-up 2 closed the gap this comment used to record): `pmdMain` now runs
+    in `check`/`build` by default and as the `Static analysis (PMD)` step of CI's required
+    `Build (no model blobs)` job, so the whole ruleset bites without anyone opting in. The 130
+    pre-existing violations of the other rules above were cleared in the same change.
+
+    Java TEST sources are still out of scope — `pmdTest` stays behind `-Ppmd.includeTests=true`
+    (JvmBaseConventionsPlugin), so a marker parked in a test file is caught by review, not here.
   -->
   <rule ref="category/java/documentation.xml/CommentContent">
     <properties>

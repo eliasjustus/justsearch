@@ -509,7 +509,7 @@ final class ApiSecurityFilters {
             // sentence that used to occupy it (an exception message, the corrupt-index remedy)
             // rides alongside in `detail` — a debug body is exactly where prose belongs, so the
             // sweep moves it rather than deleting it.
-            java.util.Map<String, String> body = new java.util.LinkedHashMap<>();
+            Map<String, String> body = new LinkedHashMap<>();
             body.put("error", required.errorLabel);
             body.put("unavailable", cap.name());
             body.put("health", cap.health().name());

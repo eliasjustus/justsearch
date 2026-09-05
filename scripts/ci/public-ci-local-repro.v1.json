@@ -46,7 +46,7 @@
     {
       "check": "Build (no model blobs)",
       "mode": "local-subset",
-      "commands": ["./gradlew.bat assemble -PskipWebBuild=false"]
+      "commands": ["./gradlew.bat assemble -PskipWebBuild=false", "./gradlew.bat pmdMain --console=plain"]
     },
     {
       "check": "Unit tests (app-ui)",

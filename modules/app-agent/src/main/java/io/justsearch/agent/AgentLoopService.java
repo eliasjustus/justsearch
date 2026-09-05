@@ -929,13 +929,13 @@ public final class AgentLoopService implements AgentService {
 
   @Override
   public List<InteractionEvent> threadEvents(
-      String conversationId, java.util.Set<String> answeredRunIds) {
+      String conversationId, Set<String> answeredRunIds) {
     return queries.threadEvents(conversationId, answeredRunIds);
   }
 
   @Override
   public io.justsearch.agent.api.interaction.ThreadProjection threadProjection(
-      String conversationId, java.util.Set<String> answeredRunIds) {
+      String conversationId, Set<String> answeredRunIds) {
     return queries.threadProjection(conversationId, answeredRunIds);
   }
 
