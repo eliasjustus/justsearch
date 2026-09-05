@@ -526,8 +526,6 @@ public final class IndexCountOps {
     }
   }
 
-  }
-
   /**
    * Queries enrichment coverage for documents under one watched root's path prefix (tempdoc 813
    * §1c) — the per-folder counterpart of {@link #queryEmbeddingCounts()} / {@link
