@@ -459,6 +459,13 @@ final class IndexStatusOps {
             .setRefreshLagMs(gauges.refreshLagMs())
             .setPendingBytes(pendingBytes == null ? 0L : pendingBytes.knownBytes())
             .setPendingUnknownSizeJobs(pendingBytes == null ? 0L : pendingBytes.unknownSizeJobs());
+    // Tempdoc 931 §E item 8 — merge state of the reader that SERVES search (the same reader
+    // activeDocCount is counted on), so maxDoc - numDocs is the deleted-but-unmerged backlog of the
+    // generation a query can actually reach, not of a half-built rebuild generation.
+    IndexCountOps activeCountOps = searchCountOps != null ? searchCountOps : ingestCountOps;
+    if (activeCountOps != null) {
+      b.setIndexMaxDoc(activeCountOps.maxDoc()).setIndexNumDocs(activeCountOps.docCount());
+    }
     for (long v : recentJobQueueDepthTrend()) {
       b.addRecentJobQueueDepth(v);
     }
@@ -718,6 +725,12 @@ final class IndexStatusOps {
     // diagnostic signal.
     LuceneRuntimeTypes.ChunkVectorPresence chkVec =
         ingestCountOps != null ? ingestCountOps.queryChunkVectorPresenceCount() : null;
+    // Tempdoc 931 §E item 8: the chunk-SPLADE stage, over CHUNK documents only. The `splade`
+    // FeatureCoverage below counts parents, so this is the only number that describes what the
+    // chunk-SPLADE retrieval leg has to score against.
+    LuceneRuntimeTypes.SpladeFeatureCounts chkSplade =
+        ingestCountOps != null ? ingestCountOps.queryChunkSpladeCounts() : null;
+    boolean chunkSpladeEnabled = chunkSpladeEnabled();
     // Tempdoc 821 §3-C3: the auditor projection. `expected` is the field-carrying denominator
     // (an absent status field means the stage does not apply, post-798), so a stage that lost a
     // sub-population reads `missing > 0` instead of hiding inside a coverage percentage that
@@ -756,6 +769,10 @@ final class IndexStatusOps {
                 // Presence-truthful coverage/readiness (tempdoc 717), not status-derived.
                 .setCoveragePercent(chkVec == null ? 0.0 : chkVec.coveragePercent())
                 .setVectorsReady(chkVec != null && chkVec.isReady(VECTOR_READY_PERCENT))
+                .setSpladeEnabled(chunkSpladeEnabled)
+                .setSpladeCompletedCount(chkSplade == null ? 0L : chkSplade.completed())
+                .setSpladePendingCount(chkSplade == null ? 0L : chkSplade.pending())
+                .setSpladeCoveragePercent(chkSplade == null ? 0.0 : chkSplade.coveragePercent())
                 .build())
         // Tempdoc 821 §3-C3 — the two thresholds the auditor owns, published so off-process
         // oracles read them instead of mirroring the Java constants.
@@ -906,6 +923,18 @@ final class IndexStatusOps {
     }
 
     return gpu.build();
+  }
+
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8) — published on the status snapshot so
+   * a consumer can tell "chunk SPLADE has no coverage because it is off" from "it is on and behind".
+   * Absent config reads as the flag's own default (false).
+   */
+  private boolean chunkSpladeEnabled() {
+    Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier = resolvedConfigSupplier;
+    io.justsearch.configuration.resolved.ResolvedConfig config =
+        supplier == null ? null : supplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
   }
 
   io.justsearch.ipc.SearchConfig buildSearchConfig() {

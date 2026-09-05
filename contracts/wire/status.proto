@@ -163,6 +163,12 @@ message CoreIndexView {
   // describing the whole non-chunk index (Health, jseval, sandbox evidence read it that way); a
   // user-facing "Searching N documents" string must use THIS field.
   int64 searchable_documents = 15 [json_name = "searchableDocuments"];
+  // Tempdoc 931 §E item 8: the ACTIVE (search-serving) reader's raw Lucene counters. indexMaxDoc
+  // includes deleted-but-unmerged documents, indexNumDocs does not; the difference is the deleted
+  // backlog no merge has reclaimed, which is how an evaluator tells a shrunk corpus apart from an
+  // unmerged index.
+  int64 index_max_doc = 16 [json_name = "indexMaxDoc"];
+  int64 index_num_docs = 17 [json_name = "indexNumDocs"];
 }
 
 message FailureTrackingView {
@@ -283,6 +289,14 @@ message ChunkCoverageView {
   int64 chunk_embedding_failed_count = 4 [json_name = "chunkEmbeddingFailedCount"];
   double chunk_vector_coverage_percent = 5 [json_name = "chunkVectorCoveragePercent"];
   bool chunk_vectors_ready = 6 [json_name = "chunkVectorsReady"];
+  // Tempdoc 931 §E item 8 — the chunk-SPLADE stage, over CHUNK documents only (the sibling
+  // spladeCoveragePercent counts parents). chunkSpladeEnabled is rag.chunk_splade.enabled: with it
+  // off no chunk carries splade_status at all, so the counts are legitimately zero and a consumer
+  // must read the flag before reading the coverage.
+  bool chunk_splade_enabled = 7 [json_name = "chunkSpladeEnabled"];
+  int64 chunk_splade_completed_count = 8 [json_name = "chunkSpladeCompletedCount"];
+  int64 chunk_splade_pending_count = 9 [json_name = "chunkSpladePendingCount"];
+  double chunk_splade_coverage_percent = 10 [json_name = "chunkSpladeCoveragePercent"];
 }
 
 message BatchTimingView {

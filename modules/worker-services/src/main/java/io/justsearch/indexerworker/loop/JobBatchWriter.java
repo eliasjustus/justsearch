@@ -60,6 +60,9 @@ public final class JobBatchWriter {
   private final LongConsumer indexedDelta;
   private final IndexingDocumentOps.StageRecorder stageRecorder;
   private final BooleanSupplier detailedTracingSupplier;
+  // Tempdoc 931 §E item 8 — a SUPPLIER, not a snapshot: rag.chunk_splade.enabled is read from the
+  // live resolved config on every write, so flipping it takes effect without a worker restart.
+  private final BooleanSupplier chunkSpladeEnabledSupplier;
 
   public JobBatchWriter(
       IndexingCoordinator indexingCoordinator,
@@ -75,7 +78,8 @@ public final class JobBatchWriter {
       StaleSnapshotResolver staleResolver,
       LongConsumer indexedDelta,
       IndexingDocumentOps.StageRecorder stageRecorder,
-      BooleanSupplier detailedTracingSupplier) {
+      BooleanSupplier detailedTracingSupplier,
+      BooleanSupplier chunkSpladeEnabledSupplier) {
     this.indexingCoordinator = indexingCoordinator;
     this.documentFieldOps = documentFieldOps;
     this.signalBus = signalBus;
@@ -90,6 +94,7 @@ public final class JobBatchWriter {
     this.indexedDelta = indexedDelta;
     this.stageRecorder = stageRecorder;
     this.detailedTracingSupplier = detailedTracingSupplier;
+    this.chunkSpladeEnabledSupplier = chunkSpladeEnabledSupplier;
   }
 
   /** Builds and writes an already-extracted job. Mirrors prior IndexingLoop.writeExtractedJob. */
@@ -143,7 +148,8 @@ public final class JobBatchWriter {
               indexingCoordinator,
               parentMetadata,
               ex.collection(),
-              ex.docUid());
+              ex.docUid(),
+              chunkSpladeEnabledSupplier.getAsBoolean());
       if (chunksIndexed > 0) {
         indexedDelta.accept(chunksIndexed);
         log.debug("Indexed {} chunks for: {}", chunksIndexed, ex.filePath().getFileName());

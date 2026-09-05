@@ -334,7 +334,7 @@ final class StatusLifecycleHandlerTest {
         withChunkCoverage(
             compatWorkerView(CompatibilityStatusView.empty()),
             /* indexedDocuments= */ 42,
-            new ChunkCoverageView(0, 0, 0, 0, 0.0, false));
+            new ChunkCoverageView(0, 0, 0, 0, 0.0, false, false, 0, 0, 0.0));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());
@@ -351,7 +351,7 @@ final class StatusLifecycleHandlerTest {
         withChunkCoverage(
             compatWorkerView(CompatibilityStatusView.empty()),
             /* indexedDocuments= */ 0,
-            new ChunkCoverageView(7, 0, 7, 0, 0.0, false));
+            new ChunkCoverageView(7, 0, 7, 0, 0.0, false, false, 0, 0, 0.0));
     ReadinessEnvelopeView env = handler.buildReadinessEnvelope(view, readySnapshot(), freshContact());
 
     assertEquals("DEGRADED", env.components().get("chunkEmbedding").state());

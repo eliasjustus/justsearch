@@ -38,6 +38,13 @@ package io.justsearch.app.api.status;
  * its meaning (the whole non-chunk index) because Health, jseval and sandbox evidence describe the
  * index itself; a user-facing "Searching N documents" string must read {@code searchableDocuments}
  * instead, which is the only one of the two the user could enumerate.
+ *
+ * <p>Tempdoc 931 §E item 8 (2026-09-05) added {@code indexMaxDoc} + {@code indexNumDocs}: the ACTIVE
+ * (search-serving) reader's raw Lucene counters. {@code indexMaxDoc} includes deleted-but-unmerged
+ * documents, {@code indexNumDocs} does not, so their difference is the deleted backlog no merge has
+ * reclaimed yet — the signal that separates "the corpus shrank" from "the index has not merged yet".
+ * {@code indexedDocuments} is not a substitute: it subtracts chunk documents and can be counted on
+ * the ingest reader during a rebuild.
  */
 @SuppressWarnings("ArrayRecordComponent") // 419 C3 V1/V2: intentional for API time-series payload
 public record CoreIndexView(
@@ -55,7 +62,9 @@ public record CoreIndexView(
     double[] recentDocsPerSec,
     long pendingBytes,
     long pendingUnknownSizeJobs,
-    long searchableDocuments) {
+    long searchableDocuments,
+    long indexMaxDoc,
+    long indexNumDocs) {
   public CoreIndexView {
     indexState = indexState == null ? "" : indexState;
     recentJobQueueDepth = recentJobQueueDepth == null ? new long[0] : recentJobQueueDepth;
@@ -77,7 +86,7 @@ public record CoreIndexView(
       long indexSizeBytes,
       int pendingVduCount) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
-        0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, indexedDocuments);
+        0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, indexedDocuments, 0L, 0L);
   }
 
   /** Backward-compatible 10-arg ctor; defaults the 419 V1/V2 trends to empty. */
@@ -94,7 +103,7 @@ public record CoreIndexView(
       long refreshLagMs) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        new long[0], new double[0], 0L, 0L, indexedDocuments);
+        new long[0], new double[0], 0L, 0L, indexedDocuments, 0L, 0L);
   }
 
   /** Backward-compatible 11-arg ctor; defaults the 419 V2 P2 docs/sec trend to empty. */
@@ -112,7 +121,7 @@ public record CoreIndexView(
       long[] recentJobQueueDepth) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        recentJobQueueDepth, new double[0], 0L, 0L, indexedDocuments);
+        recentJobQueueDepth, new double[0], 0L, 0L, indexedDocuments, 0L, 0L);
   }
 
   /** Backward-compatible 12-arg ctor; defaults the 813 Slice B pending-byte weights to zero. */
@@ -131,11 +140,12 @@ public record CoreIndexView(
       double[] recentDocsPerSec) {
     this(indexHealthy, indexedDocuments, pendingJobs, indexState, indexSizeBytes, pendingVduCount,
         writerQueueDepth, writerPendingDocs, commitCount, refreshLagMs,
-        recentJobQueueDepth, recentDocsPerSec, 0L, 0L, indexedDocuments);
+        recentJobQueueDepth, recentDocsPerSec, 0L, 0L, indexedDocuments, 0L, 0L);
   }
 
   public static CoreIndexView fallback(String indexState) {
     return new CoreIndexView(
-        false, 0, 0, indexState, 0, 0, 0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, 0L);
+        false, 0, 0, indexState, 0, 0, 0L, 0L, 0L, 0L, new long[0], new double[0], 0L, 0L, 0L, 0L,
+        0L);
   }
 }
