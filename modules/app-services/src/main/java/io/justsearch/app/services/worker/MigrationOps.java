@@ -7,6 +7,7 @@ import io.justsearch.ipc.MigrationPauseRequest;
 import io.justsearch.ipc.MigrationResumeRequest;
 import io.justsearch.ipc.MigrationRollbackRequest;
 import io.justsearch.ipc.MigrationStartRequest;
+import io.justsearch.ipc.SettleIndexRequest;
 import io.justsearch.ipc.CircuitBreakerOpenException;
 import java.util.Objects;
 import org.slf4j.Logger;
@@ -202,6 +203,60 @@ final class MigrationOps {
             log.error("runIndexGc RPC failed", e);
             return new io.justsearch.app.api.IndexingService.IndexGcOutcome(
                     false, 0, 0, "RPC failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Tempdoc 931 §E item 10 — purges deleted-but-unmerged documents from the active index. Lives
+     * beside {@link #runIndexGc} because both are worker-side index maintenance; this one operates
+     * on the writer INSIDE a generation, GC operates on generations.
+     *
+     * <p>Uses the {@code INDEX_GC} deadline category: a force-merge is the same order of long as a
+     * generation prune, and both are far past the standard RPC budget.
+     */
+    io.justsearch.app.api.IndexingService.SettleIndexOutcome settleIndex(
+            boolean expungeDeletesOnly, int maxSegments) {
+        try {
+            SettleIndexRequest req =
+                    SettleIndexRequest.newBuilder()
+                            .setExpungeDeletesOnly(expungeDeletesOnly)
+                            .setMaxSegments(Math.max(0, maxSegments))
+                            .build();
+            var resp =
+                    rpc.execute(
+                            "settleIndex",
+                            RemoteKnowledgeClient.RpcDeadlineCategory.INDEX_GC,
+                            stub -> stub.settleIndex(req));
+            if (!resp.getAccepted()) {
+                log.warn("settleIndex rejected: {}", resp.getError());
+                return io.justsearch.app.api.IndexingService.SettleIndexOutcome.refused(
+                        resp.getError());
+            }
+            log.info(
+                    "settleIndex accepted: maxDoc {}->{} numDocs {}->{} segments={} elapsedMs={}",
+                    resp.getMaxDocBefore(),
+                    resp.getMaxDocAfter(),
+                    resp.getNumDocsBefore(),
+                    resp.getNumDocsAfter(),
+                    resp.getSegmentsAfter(),
+                    resp.getElapsedMs());
+            return new io.justsearch.app.api.IndexingService.SettleIndexOutcome(
+                    true,
+                    resp.getMaxDocBefore(),
+                    resp.getNumDocsBefore(),
+                    resp.getMaxDocAfter(),
+                    resp.getNumDocsAfter(),
+                    resp.getSegmentsAfter(),
+                    resp.getElapsedMs(),
+                    "");
+        } catch (CircuitBreakerOpenException e) {
+            log.debug("settleIndex rejected by circuit breaker");
+            return io.justsearch.app.api.IndexingService.SettleIndexOutcome.refused(
+                    "Worker circuit breaker open");
+        } catch (Exception e) {
+            log.error("settleIndex RPC failed", e);
+            return io.justsearch.app.api.IndexingService.SettleIndexOutcome.refused(
+                    "RPC failed: " + e.getMessage());
         }
     }
 }

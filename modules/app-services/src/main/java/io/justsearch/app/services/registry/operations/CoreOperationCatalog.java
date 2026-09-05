@@ -99,6 +99,16 @@ public final class CoreOperationCatalog implements OperationCatalog {
    */
   public static final OperationRef INDEX_GC = new OperationRef("core.index-gc");
 
+  /**
+   * Tempdoc 931 §E item 10: purge deleted-but-unmerged documents from the ACTIVE index so two arms
+   * of a paired evaluation compare with equal merge state. LOW risk — it removes nothing a query
+   * can reach, it only collapses tombstones the searcher already hides — but it holds the writer
+   * for the duration of the merge, so it is confirm-free yet operator-audience.
+   * Wires through {@link io.justsearch.app.services.registry.operations.handlers.SettleIndexHandler}
+   * to {@code MigrationOps.settleIndex}.
+   */
+  public static final OperationRef SETTLE_INDEX = new OperationRef("core.settle-index");
+
   /** Slice 445: cancel an in-flight indexing job by pathHash. */
   public static final OperationRef CANCEL_INDEXING_JOB =
       new OperationRef("core.cancel-indexing-job");
@@ -355,7 +365,8 @@ public final class CoreOperationCatalog implements OperationCatalog {
       cancelIndexingJob(),
       retryIndexingJob(),
       resolvePathHash(),
-      indexGc());
+      indexGc(),
+      settleIndex());
 
   @Override
   public String namespace() {
@@ -528,6 +539,40 @@ public final class CoreOperationCatalog implements OperationCatalog {
         Set.of(ExecutorTag.UI),
         // Slice 484 §3.6: admin maintenance; bounded destructive (only prunes
         // marked-for-deletion segments when pruneMarkedOnly=true).
+        Audience.OPERATOR);
+  }
+
+  private static Operation settleIndex() {
+    return new Operation(
+        SETTLE_INDEX,
+        Presentation.forId(SETTLE_INDEX, Optional.empty(), Optional.of("maintenance")),
+        Interface.of(
+            "{\"type\":\"object\",\"properties\":{"
+                + "\"expungeDeletesOnly\":{\"type\":\"boolean\"},"
+                + "\"maxSegments\":{\"type\":\"integer\",\"minimum\":0}}}",
+            "{\"type\":\"object\",\"properties\":{"
+                + "\"accepted\":{\"type\":\"boolean\"},"
+                + "\"maxDocBefore\":{\"type\":\"integer\"},"
+                + "\"numDocsBefore\":{\"type\":\"integer\"},"
+                + "\"maxDocAfter\":{\"type\":\"integer\"},"
+                + "\"numDocsAfter\":{\"type\":\"integer\"},"
+                + "\"segmentsAfter\":{\"type\":\"integer\"},"
+                + "\"elapsedMs\":{\"type\":\"integer\"}}}"),
+        new OperationPolicy(
+            // LOW: nothing a query can reach is removed — only tombstones the searcher already
+            // hides are collapsed. No confirm for the same reason.
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.METADATA_ONLY,
+            RetryPolicy.noRetry(),
+            Set.of(RequiredCapability.WorkerOnline.INSTANCE),
+            false),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(SETTLE_INDEX),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.UI),
+        // Tempdoc 931 §E item 10: evaluation/admin maintenance, not an end-user affordance.
         Audience.OPERATOR);
   }
 

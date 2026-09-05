@@ -1151,6 +1151,12 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return migrationOps.runIndexGc(keepLatest, pruneMarkedOnly);
     }
 
+    @Override
+    public IndexingService.SettleIndexOutcome settleIndex(
+            boolean expungeDeletesOnly, int maxSegments) {
+        return migrationOps.settleIndex(expungeDeletesOnly, maxSegments);
+    }
+
     /**
      * Projects the Worker's gRPC quiescence message onto the app-api contract record.
      *
