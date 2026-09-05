@@ -89,10 +89,19 @@ public final class ParityDiagnostics {
    * content that could have been written under the wrong shape, so there is nothing to migrate:
    * the next commit stamps the fingerprint and the question answers itself. Only an index that
    * already holds documents whose shape was never recorded needs the one-time rebuild.
+   *
+   * <p>{@code storedInputs} is the second half of "recorded", added by tempdoc 931 §C.5. A commit
+   * written while a model digest was unresolvable carries no {@code index_fingerprint} but DOES
+   * carry {@code index_fingerprint_inputs} — its shape was recorded, just not as a digest. Charging
+   * that index the one-time upgrade rebuild would spend a full reindex because a model file was
+   * briefly unreadable during one commit, which is the destructive reading this whole tri-state
+   * exists to avoid. An index that predates the inputs key has neither, and still migrates once.
    */
   public static boolean isIndexWithoutRecordedFingerprint(
-      String storedFingerprint, long docCount) {
-    return isBlank(storedFingerprint) && !holdsNothingToMigrate(docCount);
+      String storedFingerprint, String storedInputs, long docCount) {
+    return isBlank(storedFingerprint)
+        && isBlank(storedInputs)
+        && !holdsNothingToMigrate(docCount);
   }
 
   /**
@@ -114,7 +123,13 @@ public final class ParityDiagnostics {
   public static List<Diff> diff(
       Map<String, String> stored, Map<String, Object> expected, long docCount) {
     List<Diff> diffs = new ArrayList<>();
-    diffs.addAll(determinateInputDiff(stored, expected, docCount));
+    // Runs when EITHER digest is missing and both sides recorded the inputs. It is the answer for
+    // that case, so the loop below must not also file the absent digest as its own finding.
+    boolean inputsCompared =
+        determinateInputComparisonAvailable(stored, expected) && !holdsNothingToMigrate(docCount);
+    if (inputsCompared) {
+      diffs.addAll(determinateInputDiff(stored, expected));
+    }
     for (String key : PARITY_KEYS) {
       String storedRaw = asString(stored == null ? null : stored.get(key));
       String expectedRaw = asString(expected == null ? null : expected.get(key));
@@ -132,10 +147,15 @@ public final class ParityDiagnostics {
       // this runtime, so it is treated as a mismatch and migrated once — the deliberate one-time
       // upgrade rebuild the wave-2 release is built around. Benign keys still skip: an unverifiable
       // boosts_fp is not worth reporting, let alone acting on. An EMPTY index is not migrated at
-      // all — see isIndexWithoutRecordedFingerprint.
+      // all — see isIndexWithoutRecordedFingerprint. Nor is one whose commit recorded the INPUTS
+      // instead of the digest: inputsCompared above already answered the question that the absent
+      // digest only asks, so migrating here too would both double-report and charge a rebuild to an
+      // index whose shape was verified (tempdoc 931 §C.5).
       if (isBlank(storedRaw)) {
         if (!REBUILD_REQUIRING_KEYS.contains(key)
-            || !isIndexWithoutRecordedFingerprint(storedRaw, docCount)) {
+            || inputsCompared
+            || !isIndexWithoutRecordedFingerprint(
+                storedRaw, storedInputsJson(stored), docCount)) {
           continue;
         }
         diffs.add(new Diff(key, stringify(storedRaw), stringify(expectedRaw), LEGACY_INDEX_HINT));
@@ -158,57 +178,98 @@ public final class ParityDiagnostics {
   }
 
   /**
-   * True when the digest comparison is unavailable but the fallback one is: this runtime could not
-   * compute an {@code index_fingerprint}, and BOTH sides recorded the canonical inputs.
+   * True when the digest comparison cannot answer but the fallback one can: <em>either</em> side is
+   * missing its {@code index_fingerprint}, and BOTH recorded the canonical inputs.
    *
-   * <p>Exposed so the guard's once-per-boot WARN can tell the operator which of the two things
-   * happened. "Parity is not being checked" and "parity is being checked on everything except the
-   * model digest I could not read" are different facts, and logging the first when the second is
-   * true is the same class of untruth as declining silently.
+   * <p>Symmetric on purpose (tempdoc 931 §C.5 follow-up). The first cut asked only about the
+   * EXPECTED side, which left the mirror case unchecked: an index committed while a model file was
+   * unreadable records no digest, and nothing re-stamps one until the next commit — so a static
+   * index opened by a runtime that CAN read every model had a full set of comparable inputs on both
+   * sides and was still not compared. Same bug-class as the one §C.5 fixed, pointing the other way.
+   *
+   * <p>When both digests are present the digest IS the answer and this returns false: it is the
+   * stronger comparison (it covers the model inputs the fallback has to drop) and running both
+   * would report one shape change twice.
+   *
+   * <p>Exposed so the guard's once-per-boot WARN can say which case it is in. "Parity is not being
+   * checked" and "parity is being checked on everything except the model digests" are different
+   * facts, and logging the first when the second is true is the same class of untruth as declining
+   * silently.
    */
   public static boolean determinateInputComparisonAvailable(
       Map<String, String> stored, Map<String, Object> expected) {
-    String expectedFingerprint =
-        asString(
-            expected == null
-                ? null
-                : expected.get(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY));
-    if (!isBlank(expectedFingerprint)) {
+    boolean eitherDigestMissing =
+        isBlank(storedFingerprint(stored)) || isBlank(expectedFingerprint(expected));
+    if (!eitherDigestMissing) {
       return false;
     }
-    String key = io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY;
-    return !isBlank(asString(stored == null ? null : stored.get(key)))
-        && !isBlank(asString(expected == null ? null : expected.get(key)));
+    return !isBlank(storedInputsJson(stored)) && !isBlank(expectedInputsJson(expected));
+  }
+
+  private static String storedFingerprint(Map<String, String> stored) {
+    return asString(
+        stored == null
+            ? null
+            : stored.get(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY));
+  }
+
+  private static String expectedFingerprint(Map<String, Object> expected) {
+    return asString(
+        expected == null
+            ? null
+            : expected.get(io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY));
+  }
+
+  private static String storedInputsJson(Map<String, String> stored) {
+    return asString(
+        stored == null
+            ? null
+            : stored.get(
+                io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY));
+  }
+
+  private static String expectedInputsJson(Map<String, Object> expected) {
+    return asString(
+        expected == null
+            ? null
+            : expected.get(
+                io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY));
   }
 
   /**
-   * The fallback comparison for an uncomputable expected fingerprint (tempdoc 931 §C.5).
+   * The fallback comparison for a missing fingerprint on either side (tempdoc 931 §C.5).
    *
    * <p>An {@code INDETERMINATE} model digest means one input is unknown, not that every input is.
    * Before this, an unreadable NER model file switched off the vector-dimension, chunking and
    * analyzer comparison it has nothing to do with — an index built under a genuinely different
-   * physical shape opened silently for as long as that file stayed unreadable. Here the unresolved
+   * physical shape opened silently for as long as that file stayed unreadable. Here the ambiguous
    * model keys are dropped from BOTH renderings and the remainder is compared; any difference is
    * routed as an {@code index_fingerprint} diff, so it takes the same exception, the same policy
    * branch and the same rebuild brake as a digest mismatch. No new reason code: it is the same
    * fact, established a different way.
    *
-   * <p>Empty when the digest was computable (the digest is then the better answer and is compared
-   * above), when either side recorded no inputs (a legacy commit keeps today's decline), or when
-   * the index holds nothing whose shape could be wrong.
+   * <p>The ignore list is a union of the two sides' unanswerable questions, because either side may
+   * be the one missing its digest: what THIS runtime cannot resolve now, plus — when the COMMIT
+   * recorded no digest — every model key it wrote as {@code null}. The second half is required
+   * because a stored {@code null} is ambiguous between "indeterminate then" and "not configured
+   * then", so comparing it against a digest this runtime can now read would report a difference
+   * that may not exist. See {@code IndexFingerprint.nullModelInputs} for the miss that buys.
+   *
+   * <p>Caller checks availability and doc count; this assumes both.
    */
   private static List<Diff> determinateInputDiff(
-      Map<String, String> stored, Map<String, Object> expected, long docCount) {
-    if (holdsNothingToMigrate(docCount)
-        || !determinateInputComparisonAvailable(stored, expected)) {
-      return List.of();
+      Map<String, String> stored, Map<String, Object> expected) {
+    java.util.Set<String> ignored =
+        new java.util.TreeSet<>(
+            io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs());
+    String storedInputs = storedInputsJson(stored);
+    if (isBlank(storedFingerprint(stored))) {
+      ignored.addAll(
+          io.justsearch.adapters.lucene.commit.IndexFingerprint.nullModelInputs(storedInputs));
     }
-    String key = io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_INPUTS_KEY;
     List<io.justsearch.adapters.lucene.commit.IndexFingerprint.InputDifference> differences =
         io.justsearch.adapters.lucene.commit.IndexFingerprint.differingInputs(
-            asString(stored.get(key)),
-            asString(expected.get(key)),
-            io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs());
+            storedInputs, expectedInputsJson(expected), ignored);
     if (differences.isEmpty()) {
       return List.of();
     }
@@ -218,10 +279,13 @@ public final class ParityDiagnostics {
             io.justsearch.adapters.lucene.commit.IndexFingerprint.COMMIT_META_KEY,
             summarize(differences, d -> d.stored()),
             summarize(differences, d -> d.expected()),
-            "The effective index shape changed on an input this runtime CAN resolve, compared via"
-                + " index_fingerprint_inputs because no index_fingerprint could be computed"
-                + " (unresolved model inputs: "
-                + io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs()
+            "The effective index shape changed on an input that CAN be resolved, compared via"
+                + " index_fingerprint_inputs because "
+                + (isBlank(storedFingerprint(stored))
+                    ? "this index recorded no index_fingerprint"
+                    : "this runtime could not compute an index_fingerprint")
+                + " (model inputs excluded as unanswerable: "
+                + ignored
                 + "). Differing inputs: "
                 + paths
                 + ". Reindex or run schema migration."));

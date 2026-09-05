@@ -178,30 +178,50 @@ public final class IndexMetadataParityGuard implements IndexOpenGuard {
    */
   private static void warnIfFingerprintUncomputable(
       Map<String, String> stored, Map<String, Object> expected) {
-    Object fingerprint =
+    Object expectedFingerprint =
         expected == null ? null : expected.get(IndexFingerprint.COMMIT_META_KEY);
-    boolean computable = fingerprint != null && !String.valueOf(fingerprint).isBlank();
-    if (computable || !uncomputableWarned.compareAndSet(false, true)) {
+    boolean expectedComputable =
+        expectedFingerprint != null && !String.valueOf(expectedFingerprint).isBlank();
+    boolean fallbackRuns = ParityDiagnostics.determinateInputComparisonAvailable(stored, expected);
+    // Nothing to say when the digests answer the question, and nothing to say for an index that
+    // records no shape at all: that case already emits a PARITY_DIFF carrying LEGACY_INDEX_HINT
+    // where it matters, and an unconditional line here would also fire for an EMPTY index, which is
+    // never migrated. Claim only what is known from these two maps.
+    if ((expectedComputable && !fallbackRuns) || !uncomputableWarned.compareAndSet(false, true)) {
       return;
     }
-    var unresolved = IndexFingerprint.indeterminateModelInputs();
-    String cause =
-        unresolved.isEmpty() ? "no model input could be resolved" : "unresolved: " + unresolved;
-    if (ParityDiagnostics.determinateInputComparisonAvailable(stored, expected)) {
+    if (!expectedComputable) {
+      var unresolved = IndexFingerprint.indeterminateModelInputs();
+      String cause =
+          unresolved.isEmpty() ? "no model input could be resolved" : "unresolved: " + unresolved;
+      if (fallbackRuns) {
+        log.warn(
+            "Index parity is being checked WITHOUT the model digests: this runtime could not"
+                + " compute an index_fingerprint ({}), so the recorded index_fingerprint_inputs are"
+                + " compared minus those keys. Every other physical input is still verified; fix"
+                + " the model resolution to restore the full check.",
+            cause);
+        return;
+      }
       log.warn(
-          "Index parity is being checked WITHOUT the model digests: this runtime could not compute"
-              + " an index_fingerprint ({}), so the recorded index_fingerprint_inputs are compared"
-              + " minus those keys. Every other physical input is still verified; fix the model"
-              + " resolution to restore the full check.",
+          "Index parity is NOT being checked: this runtime could not compute an index_fingerprint"
+              + " ({}) and no recorded index_fingerprint_inputs are available to compare instead."
+              + " The index is opened without verifying its physical shape; fix the model"
+              + " resolution to restore the check.",
           cause);
       return;
     }
+    // The mirror case: this runtime can resolve everything, but the COMMIT could not, so the index
+    // carries no digest and nothing re-stamps one until it is next written to. Silence here would
+    // have been the same untruth in the other direction.
     log.warn(
-        "Index parity is NOT being checked: this runtime could not compute an index_fingerprint"
-            + " ({}) and no recorded index_fingerprint_inputs are available to compare instead."
-            + " The index is opened without verifying its physical shape; fix the model"
-            + " resolution to restore the check.",
-        cause);
+        "Index parity is being checked WITHOUT the model digests: this index recorded no"
+            + " index_fingerprint (a model digest was unresolvable when it was committed), so its"
+            + " recorded index_fingerprint_inputs are compared minus the model keys it wrote as"
+            + " null ({}). A model ADDED since that commit is therefore not detected; the next"
+            + " commit records a digest and restores the full check.",
+        IndexFingerprint.nullModelInputs(
+            stored == null ? null : stored.get(IndexFingerprint.COMMIT_META_INPUTS_KEY)));
   }
 
   private static boolean allowMismatch() {
