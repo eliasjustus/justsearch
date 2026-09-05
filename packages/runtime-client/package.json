@@ -3,6 +3,22 @@
   "version": "0.1.0",
   "description": "Generated Node client for the stable JustSearch Runtime Contract read surface.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/justsearch-app/justsearch.git",
+    "directory": "packages/runtime-client"
+  },
+  "homepage": "https://github.com/justsearch-app/justsearch/blob/main/docs/reference/runtime-contract.md#generated-node-client",
+  "bugs": {
+    "url": "https://github.com/justsearch-app/justsearch/issues"
+  },
+  "keywords": [
+    "justsearch",
+    "local-first",
+    "runtime-contract",
+    "sdk",
+    "typescript"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -25,11 +41,15 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
     "check:pack": "node scripts/check-pack.mjs",
-    "smoke:live": "npm run build && node scripts/live-smoke.mjs"
+    "smoke:live": "npm run build && node scripts/live-smoke.mjs",
+    "prepublishOnly": "npm run check:regen && npm test && npm run check:pack"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
     "orval": "8.27.0",
     "typescript": "5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
