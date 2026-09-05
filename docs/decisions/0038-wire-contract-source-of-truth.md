@@ -270,9 +270,9 @@ The mirror named in the 2026-09-01 review is retired end to end:
 **Why a barrel rather than deletion.** The obvious reading of this ADR — delete the mirror, point
 its importers at the generated module — does not survive contact with the file. `surface.ts`
 exports a runtime **value** a type projection cannot provide: `PLACEMENTS`, the closed `Placement`
-list, which `scripts/ci/check-a11y-closure.mjs` parses out of this exact file by regex (`:60`,
-against the path pinned at `:40`) to assert every placement has a landmark role. Deleting the file
-would break that gate. (`AUDIENCES` is declared in the same shape at `surface.ts:49` but has **no
+list used for exhaustive switches (and, until tempdoc 930 chunk H retired the static
+`check-a11y-closure.mjs` gate that once parsed this exact file by regex, for its landmark-role
+coverage check too). (`AUDIENCES` is declared in the same shape at `surface.ts:49` but has **no
 consumer** — `grep -rn AUDIENCES modules/ui-web/src` returns only that declaration and the header
 comment naming it. It is not a reason to keep the file; it is a retirement candidate for the UI
 lane.) The file also exports `SurfaceFactory` — the 478 §4.A dispatch token minted client-side,

@@ -128,8 +128,10 @@ The invariants a hostile or careless author could otherwise corrupt are **co-pro
 - **overflow** — an `overflow` facet composes the `OverflowController` adaptive primitive; the author
   cannot naked-clip content.
 - **operability / landmark / contrast** — enforced by the conformance gate (contrast floor, required-region
-  presence/visibility, perf budget) and the standing presentation a11y gates (`check-controls-a11y`,
-  `check-a11y-closure`, `check-layout-purity`, the 558 contrast co-projection).
+  presence/visibility, perf budget), the standing `check-layout-purity` gate and the 558 contrast
+  co-projection (`check-contrast-matrix`), plus measured axe (ui-shot + `governance/ui-a11y-baseline.v1.json`)
+  and review — the static `check-controls-a11y` / `check-a11y-closure` oracles were retired (tempdoc 930
+  chunk H) because every traced a11y/contrast catch came from axe or by hand, never from them.
 
 ## The conformance gate (apply-time)
 

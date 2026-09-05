@@ -15,8 +15,8 @@
  *
  * Self-contained: reads/writes the backend (`/api/memory`) via the forwarded `api-base`. Composes the
  * one SurfaceLayout authority (layout-purity), no own <h1> — the shell topbar owns the page heading,
- * this surface uses <h2> so it is embeddable as a host member (a11y-closure), native controls
- * (controls-a11y), no bare colored literals (color-tokens).
+ * this surface uses <h2> so it is embeddable as a host member (578 heading closure), native
+ * controls (559 operability), no bare colored literals (the one theme authority).
  */
 
 import { html, css, nothing, type TemplateResult } from 'lit';

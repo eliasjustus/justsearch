@@ -18,7 +18,7 @@
  *    beside DIAGNOSTIC members, so a cross-altitude host preserves Law II inside the composite.
  *  - **a11y.** Roving-tabindex arrow-key navigation (the piece 571 §11.2-D5 said to add). The host
  *    owns the single page `<h1>`; member surfaces must NOT emit their own `<h1>`/`role="main"`
- *    (the `check-a11y-closure` member-demotion rule).
+ *    (the member-demotion rule; 571 §11 / 578).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';

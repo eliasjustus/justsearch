@@ -8,8 +8,8 @@
  * register that silently kept mapping the retired React stack (the `modules/ui-web/src/components`
  * directory of `.tsx` files, which no longer exists) while the live UI is Lit `shell-v0`. This gate
  * applies the same
- * positive-coverage discipline the product registers already obey (cf. check-declared-surfaces / 569 §16,
- * check-a11y-closure / 559) to the harness's own register:
+ * positive-coverage discipline the product registers already obey (cf. check-declared-surfaces / 569 §16)
+ * to the harness's own register:
  *
  *   (a) FRESHNESS — every source path the step index maps resolves on disk (under `srcRoot`). A
  *       deleted/renamed file fails here; the stale-React-path class becomes a build failure, not a

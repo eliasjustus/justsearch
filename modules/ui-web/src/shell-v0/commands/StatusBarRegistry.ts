@@ -31,8 +31,9 @@ export interface StatusBarItem {
    * accessible name of this metric (e.g. "Documents indexed"). The status item's
    * accessible name PROJECTS from this field through the one display authority
    * (`present({kind:'metric', id})`) rather than being a hand-stamped inline
-   * string in the renderer. Required for `core.*` items (the `controls-a11y`
-   * gate enforces it); a plugin item that omits it falls back to its humanized id.
+   * string in the renderer. Required for `core.*` items (the retired `controls-a11y`
+   * gate once enforced it; measured axe covers the rendered name now); a plugin item
+   * that omits it falls back to its humanized id.
    * A plain string (not the branded `DisplayLabel`) so this registry has no
    * import cycle with `present.ts` — the projector brands it.
    */

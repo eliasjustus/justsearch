@@ -13,7 +13,8 @@
  * internally consistent by construction, because every number here comes from one snapshot.
  *
  * The snapshot type is the generated wire authority `StatusResponse`; this module declares no local
- * response-shape interface (the `check-observed-state-collapse` rule).
+ * response-shape interface (the invariant `check-observed-state-collapse` used to gate-enforce,
+ * retired 930 chunk H in favour of review).
  */
 
 import type { StatusResponse } from '../../api/generated/index.js';
