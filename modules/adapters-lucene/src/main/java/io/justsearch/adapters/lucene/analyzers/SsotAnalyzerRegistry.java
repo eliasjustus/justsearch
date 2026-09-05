@@ -39,7 +39,6 @@ public final class SsotAnalyzerRegistry {
       org.slf4j.LoggerFactory.getLogger(SsotAnalyzerRegistry.class);
   private static final String CLASSPATH_ANALYZERS = "/SSOT/catalogs/analyzers.v1.json";
 
-  private final File repoRoot;
   private final Map<String, AnalyzerDefinition> definitionsById;
   private final Map<String, AnalyzerDescriptor> descriptorsById;
   private final Map<String, String> aliasToId;
@@ -51,7 +50,6 @@ public final class SsotAnalyzerRegistry {
   }
 
   SsotAnalyzerRegistry(File repoRoot) {
-    this.repoRoot = repoRoot;
     JsonNode root = loadAnalyzersCatalog(repoRoot);
     if (repoRoot != null) {
       // Was INFO; demoted to DEBUG because instances were created per gRPC

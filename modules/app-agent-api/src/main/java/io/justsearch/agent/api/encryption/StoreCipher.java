@@ -37,6 +37,9 @@ public final class StoreCipher {
 
   private final DataKeyState key;
 
+  // PMD traces the SecretKeySpec construction in seal/open back to this assignment and calls the
+  // key hard coded; it is not — DataKeyState#dek unwraps a runtime DEK and throws when locked.
+  @SuppressWarnings("PMD.HardCodedCryptoKey")
   public StoreCipher(DataKeyState key) {
     this.key = Objects.requireNonNull(key, "key");
   }

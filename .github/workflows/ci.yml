@@ -741,6 +741,16 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
 
+      # PMD rides this job because it needs exactly what `assemble` just produced (compiled main
+      # classes) and nothing else: measured at ~23s wall for all 30 `pmdMain` tasks on top of a
+      # completed compile, well inside the budget for an existing job, versus a new job that would
+      # pay a fresh checkout + JDK + compile. Tempdoc 930 §22.2 follow-up 2 — before this step no
+      # workflow put `pmdMain` in its task graph, so the ruleset (incl. the `CommentContent`
+      # parked-marker ban) never ran in CI. It is a separate step, not an `assemble` dependency:
+      # `assemble` produces artifacts, `check` verifies them, and PMD is verification.
+      - name: Static analysis (PMD)
+        run: ./gradlew pmdMain --console=plain
+
       # `gen-api-client --check` is an entry of the regen set (run in `Public claims`); the
       # classified OpenAPI snapshot's check shells out to Gradle, so it stays its own step and
       # belongs in this job, which has already assembled. Tempdoc 930 chunk F.

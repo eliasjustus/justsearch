@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.extract;
 
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -248,10 +247,13 @@ final class PdfOcrEngine {
           inFlight.acquire();
           boolean submitted = false;
           try {
-            BufferedImage image = renderer.renderImageWithDPI(pageIndex, renderDpi, ImageType.GRAY);
             Path png = renderDir.resolve("page-" + pageIndex + ".png");
-            ImageIO.write(image, "png", png.toFile());
-            image = null; // free ~9MB/page promptly; the PNG on disk is the only retained copy
+            // Never bound to a local: the render is ~9MB/page and the PNG on disk is the only copy
+            // this method keeps, so the image must be unreachable the moment the write returns.
+            ImageIO.write(
+                renderer.renderImageWithDPI(pageIndex, renderDpi, ImageType.GRAY),
+                "png",
+                png.toFile());
             Path base = renderDir.resolve("page-" + pageIndex);
             Future<PageOcr> future =
                 pool.submit(

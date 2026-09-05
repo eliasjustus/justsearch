@@ -598,13 +598,13 @@ public final class SearchTool implements OperationHandler {
 
   /** The corrected query from the unified trace's CORRECTION stage, or null when not applied. */
   private static String correctedQueryFromTrace(
-      io.justsearch.app.api.knowledge.SearchTrace trace) {
+      SearchTrace trace) {
     if (trace == null || trace.stages() == null) {
       return null;
     }
     for (var st : trace.stages()) {
-      if (st.id() == io.justsearch.app.api.knowledge.SearchTrace.StageId.CORRECTION
-          && st.status() == io.justsearch.app.api.knowledge.SearchTrace.StageStatus.EXECUTED) {
+      if (st.id() == SearchTrace.StageId.CORRECTION
+          && st.status() == SearchTrace.StageStatus.EXECUTED) {
         return st.detail();
       }
     }

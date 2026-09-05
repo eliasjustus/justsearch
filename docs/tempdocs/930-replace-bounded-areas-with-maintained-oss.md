@@ -576,8 +576,9 @@ codex-parity, tempdoc-size, tempdoc-numbers all pass.
 1. `npm-audit`: keep the kernel gate (current), or adopt `actions/dependency-review-action` per
    ADR-0044's replacement clause and retire the gate then.
 2. Trace backlog: archive any of the 17 GB before the OTLP sink restarts (chunk B).
-3. PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
-   `pmdMain` violations. Wire `pmdMain` or accept dormancy.
+3. ~~PMD runs in no CI job; the new Java TODO rule is dormant behind ~78 pre-existing
+   `pmdMain` violations. Wire `pmdMain` or accept dormancy.~~ Resolved by §22.2 follow-up 2:
+   wired, and the (actually 130) violations cleared.
 4. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage with the gate (5 markers were
    baselined); ESLint has no root config.
 5. The four DROP-CANDIDATE invariants in the decision list.
@@ -681,9 +682,25 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 
 1. `npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
    retire the kernel gate.
-2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
-   wire `pmdMain`, or accept dormancy explicitly.
+2. ~~PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
+   wire `pmdMain`, or accept dormancy explicitly.~~ **Done (follow-up 2, 2026-09-05.)** The real
+   count was 130 across 9 modules (109 `UnnecessaryFullyQualifiedName`, 6 `UnusedAssignment`,
+   5 `UnusedPrivateField`, 2 each `HardCodedCryptoKey` / `UnusedFormalParameter` /
+   `EmptyCatchBlock` / `SystemPrintln`, 1 each `UnusedLocalVariable` / `DoNotTerminateVM`) —
+   the earlier ~78 undercounted because `modules/benchmarks` carried `isIgnoreFailures = true`
+   (now removed) and only `modules/ui` had been measured. All cleared at the cause; four
+   `@SuppressWarnings("PMD.*")` with stated reasons remain (`StoreCipher`, `AiInstallService`,
+   `OpenApiSnapshotExporter`, `ExtractionSandboxChild`). `skipPmd` now defaults false, so
+   `pmdMain` runs in `check`/`build`, and CI's required `Build (no model blobs)` job gained a
+   `Static analysis (PMD)` step (~23s wall on top of the completed assemble). `CommentContent`
+   was added to `ruleset-cli-tools.xml`, which had silently exempted `ssot-tools` and
+   `core-contracts`; both rulesets were probe-verified to fail on a planted marker.
 3. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.
+   Java TEST sources are the same shape: `pmdTest` stays behind `-Ppmd.includeTests=true`, and
+   measured 2026-09-05 it holds 455 violations (324 `UnnecessaryFullyQualifiedName`, 62
+   `SystemPrintln`, 19 `UnusedLocalVariable`, 17 `UnusedAssignment`, 16 `EmptyCatchBlock`, 10
+   `UnusedFormalParameter`, 6 `UnusedPrivateMethod`, 1 `UnusedPrivateField`) — but zero
+   `CommentContent`, so no marker is parked there today either.
 4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
 5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.

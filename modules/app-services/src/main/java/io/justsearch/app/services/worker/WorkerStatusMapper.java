@@ -337,7 +337,7 @@ final class WorkerStatusMapper {
      * Straight passthrough — the arithmetic (including {@code missing}) belongs to the Worker,
      * which is the only side holding the reader the counts came from.
      */
-    private static java.util.List<StageCompletenessView> mapCompleteness(
+    private static List<StageCompletenessView> mapCompleteness(
             io.justsearch.ipc.EnrichmentCoverage enrichment) {
         return enrichment.getCompletenessList().stream()
                 .map(s -> new StageCompletenessView(

@@ -324,9 +324,9 @@ final class KnowledgeSearchEngine {
    * leg agreement (tempdoc 643 E1). Only counts a candidate whose stage rank is PRESENT (proto3 {@code
    * optional}) and {@code <= topK} — mirrors {@code HybridSearchOps.topKDocIds}'s rank-based selection. */
   private static Set<String> judgeArbitrationTopKDocIds(
-      List<io.justsearch.ipc.SearchResult> window, String stageWireId, int topK) {
+      List<SearchResult> window, String stageWireId, int topK) {
     Set<String> ids = new HashSet<>();
-    for (io.justsearch.ipc.SearchResult sr : window) {
+    for (SearchResult sr : window) {
       for (io.justsearch.ipc.HitStage hs : sr.getTraceList()) {
         if (hs.getId().equals(stageWireId) && hs.hasRank() && hs.getRank() <= topK) {
           ids.add(sr.getId());
@@ -384,7 +384,7 @@ final class KnowledgeSearchEngine {
    * @return the alpha to pass to {@link #blendPreRerankAndCrossEncoder}.
    */
   static double computeJudgeArbitrationAlpha(
-      List<io.justsearch.ipc.SearchResult> window,
+      List<SearchResult> window,
       float[] crossEncoderScores,
       double baseAlpha,
       double fusionProtectAlpha) {
@@ -432,8 +432,8 @@ final class KnowledgeSearchEngine {
    * whole-doc branch and are not a reliable leg-agreement signal (tempdoc 643
    * critical-analysis-pass finding).
    */
-  private static boolean chunkBranchActive(List<io.justsearch.ipc.SearchResult> window) {
-    for (io.justsearch.ipc.SearchResult sr : window) {
+  private static boolean chunkBranchActive(List<SearchResult> window) {
+    for (SearchResult sr : window) {
       for (io.justsearch.ipc.HitStage hs : sr.getTraceList()) {
         if (hs.getId().equals("chunk-merge")) {
           return true;
@@ -448,7 +448,7 @@ final class KnowledgeSearchEngine {
    * within {@code window}, or {@code -1.0} if either leg has no rank-bearing candidates (no
    * comparable signal — callers decide what "no signal" means for their own safe default).
    */
-  private static double legAgreementJaccard(List<io.justsearch.ipc.SearchResult> window) {
+  private static double legAgreementJaccard(List<SearchResult> window) {
     Set<String> sparseTopK =
         judgeArbitrationTopKDocIds(window, "sparse-retrieval", JUDGE_ARBITRATION_TOP_K);
     Set<String> denseTopK =
@@ -483,7 +483,7 @@ final class KnowledgeSearchEngine {
    * @param window the pre-RPC candidate window (same slice that would become the CE's docTexts).
    * @return true if the CE RPC can be safely skipped for this query.
    */
-  static boolean isFusionDecisiveForSkip(List<io.justsearch.ipc.SearchResult> window) {
+  static boolean isFusionDecisiveForSkip(List<SearchResult> window) {
     if (chunkBranchActive(window)) {
       return false;
     }
@@ -500,7 +500,7 @@ final class KnowledgeSearchEngine {
    */
   static double resolveBlendAlpha(
       RerankerConfig config,
-      List<io.justsearch.ipc.SearchResult> window,
+      List<SearchResult> window,
       float[] crossEncoderScores) {
     return config.judgeArbitrationEnabled()
         ? computeJudgeArbitrationAlpha(
@@ -515,7 +515,7 @@ final class KnowledgeSearchEngine {
    * here (independent of RPC/reranker correctness), so it should be unit-testable on its own.
    */
   static boolean shouldSkipCrossEncoder(
-      RerankerConfig config, List<io.justsearch.ipc.SearchResult> window) {
+      RerankerConfig config, List<SearchResult> window) {
     return config.judgeArbitrationEnabled()
         && config.judgeArbitrationSkipEnabled()
         && isFusionDecisiveForSkip(window);

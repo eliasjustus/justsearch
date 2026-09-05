@@ -166,7 +166,7 @@ public class LocalApiServer {
     // Tempdoc 737 Phase 1: settings writes that change chatEnabled nudge the runtime
     // reconciler (specChanged) so the persisted intent converges now, not at next boot.
     // Lazily resolved at fire time — null-safe for test paths without a HeadAssembly.
-    final io.justsearch.app.services.HeadAssembly haForSpecNudge = b.HeadAssembly;
+    final HeadAssembly haForSpecNudge = b.HeadAssembly;
     this.settingsController =
         new SettingsController(
             b.settingsStore,
@@ -474,7 +474,7 @@ public class LocalApiServer {
         (e, ctx) ->
             ctx.status(423)
                 .json(
-                    java.util.Map.of(
+                    Map.of(
                         "error",
                         "locked",
                         "locked",

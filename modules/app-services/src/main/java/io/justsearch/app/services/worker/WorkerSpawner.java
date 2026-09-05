@@ -155,9 +155,9 @@ public final class WorkerSpawner implements Closeable {
     private ScheduledFuture<?> energyTask;
     private WindowsJobObject jobObject;
     /** Latest polled OS energy-intent (tempdoc 630); read by /api/status for the "Paused" notice. */
-    private final java.util.concurrent.atomic.AtomicReference<io.justsearch.app.util.EnergyState>
+    private final AtomicReference<io.justsearch.app.util.EnergyState>
         energyState =
-            new java.util.concurrent.atomic.AtomicReference<>(io.justsearch.app.util.EnergyState.unknown());
+            new AtomicReference<>(io.justsearch.app.util.EnergyState.unknown());
 
     /**
      * Creates a WorkerSpawner with no-op telemetry.

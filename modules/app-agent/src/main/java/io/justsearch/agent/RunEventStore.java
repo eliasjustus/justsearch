@@ -62,7 +62,7 @@ public final class RunEventStore {
    * ledger is empty-until-unlock — a documented limitation) and writes refuse without overwriting. */
   public RunEventStore(Path rootDir, StoreCipher cipher) {
     this.rootDir = rootDir;
-    this.cipher = java.util.Objects.requireNonNull(cipher, "cipher");
+    this.cipher = Objects.requireNonNull(cipher, "cipher");
   }
 
   public static RunEventStore noop() {
