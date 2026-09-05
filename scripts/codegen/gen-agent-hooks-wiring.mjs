@@ -242,4 +242,14 @@ if (isMain) {
   }
 }
 
-export { MANIFEST, SETTINGS, readManifest, renderHooksBlock, renderSettings };
+export {
+  MANIFEST,
+  LOCAL_EXAMPLE_OUT,
+  PUBLIC_BASE,
+  SETTINGS,
+  readManifest,
+  renderHooksBlock,
+  renderLocalExample,
+  renderPublicTemplate,
+  renderSettings,
+};

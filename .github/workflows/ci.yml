@@ -271,6 +271,12 @@ jobs:
       - name: Test managed PR review record
         run: node scripts/ci/test-pr-review-record.mjs
 
+      - name: Test validated publication enqueue
+        run: node scripts/dev/run-gh.test.mjs
+
+      - name: Test direct publication-merge guard
+        run: node scripts/agent-analytics/hooks/publication-merge-guard.test.mjs
+
       - name: Test bounded advisory reporting
         run: node scripts/ci/test-report-github-advisories.mjs
 
