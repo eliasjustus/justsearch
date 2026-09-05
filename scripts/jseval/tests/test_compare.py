@@ -8,6 +8,7 @@ import pytest
 from jseval.compare_runs import (
     _bootstrap_ci,
     compare,
+    compare_index_state,
     compare_stage_decomposition,
     per_query_diff,
 )
@@ -177,3 +178,57 @@ class TestPerQueryDiff:
         diffs = per_query_diff(a, b, qrels, threshold=0.01)
         assert len(diffs) == 2
         assert diffs[0]["qid"] == "q2"  # worst regression first
+
+
+def _summary_with_index_state(deleted_docs: int, num_docs: int) -> dict:
+    return {"index_state_at_query": {"deleted_docs": deleted_docs, "num_docs": num_docs}}
+
+
+class TestCompareIndexState:
+    """Tempdoc 931 §E item 10: paired-arm merge-state (tombstone) divergence WARN."""
+
+    def test_large_divergence_warns(self):
+        # 222 vs 2629 deleted out of 1000 num_docs -- way past a 10% tolerance.
+        a = _summary_with_index_state(deleted_docs=222, num_docs=1000)
+        b = _summary_with_index_state(deleted_docs=2629, num_docs=1000)
+
+        diff = compare_index_state(a, b)
+
+        assert diff["merge_state_diverged"] is True
+        assert diff["deleted_docs_a"] == 222
+        assert diff["deleted_docs_b"] == 2629
+        assert diff["delta"] == 2407
+        assert diff["warning"] is not None
+        assert "BM25" in diff["warning"]
+
+    def test_small_divergence_does_not_warn(self):
+        # 100 vs 105 out of 1000 num_docs is well within 10%.
+        a = _summary_with_index_state(deleted_docs=100, num_docs=1000)
+        b = _summary_with_index_state(deleted_docs=105, num_docs=1000)
+
+        diff = compare_index_state(a, b)
+
+        assert diff["merge_state_diverged"] is False
+        assert diff["warning"] is None
+
+    def test_missing_block_in_either_run_yields_empty_dict(self):
+        a = _summary_with_index_state(deleted_docs=222, num_docs=1000)
+        b: dict = {}  # older summary.json, predates this feature
+
+        assert compare_index_state(a, b) == {}
+        assert compare_index_state(b, a) == {}
+
+    def test_null_fields_inside_block_yield_empty_dict(self):
+        # skip_readiness / older backend: the block is present but every field is None.
+        a = {"index_state_at_query": {"deleted_docs": None, "num_docs": None}}
+        b = _summary_with_index_state(deleted_docs=222, num_docs=1000)
+
+        assert compare_index_state(a, b) == {}
+
+    def test_custom_tolerance_pct(self):
+        # 200 out of 1000 is 20% -- within a widened 25% tolerance, over the 10% default.
+        a = _summary_with_index_state(deleted_docs=100, num_docs=1000)
+        b = _summary_with_index_state(deleted_docs=300, num_docs=1000)
+
+        assert compare_index_state(a, b, tolerance_pct=10.0)["merge_state_diverged"] is True
+        assert compare_index_state(a, b, tolerance_pct=25.0)["merge_state_diverged"] is False

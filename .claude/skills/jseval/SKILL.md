@@ -455,6 +455,16 @@ ran). Every field degrades to `null` when the Worker does not publish the metric
 columns exist on every row rather than appearing only on some — which is the point, an arm table
 with missing columns cannot be read.
 
+**Additive schema key, always present (tempdoc 931 §E item 10).** Every `run` with modes (a
+query phase) emits an `index_state_at_query` block, snapshotted right after the pre-query
+readiness gate passes: `{"max_doc", "num_docs", "deleted_docs", "chunk_splade_coverage_percent",
+"splade_coverage_percent", "chunk_vector_coverage_percent", "readiness_passed_at"}`. `deleted_docs`
+is `max_doc - num_docs` — the tombstone count that inflates BM25 collection statistics when it
+differs between two otherwise-identical fresh indexes of the same corpus (a measured case moved
+2,629 vs 222, shifting hit counts 3-4% with no code cause). Every field is `null` when the backend
+doesn't publish it (older backend, or `--skip-readiness`), so a paired-arm comparison always has
+the column to check before attributing a metric delta to code.
+
 **Additive schema key, always present (930 §18.1 row 7).** Every `run` also emits an
 `encoder_latency` block: `{"encoders": {"<encoder.name>": {"n", "p50_ms", "p95_ms"}}}`, derived
 from the `encoder.ort_run` spans in the Worker's `traces.ndjson` (rotated siblings included).
@@ -487,6 +497,8 @@ nothing rather than reporting a partial pass.
 - `ingest.worker_throughput_docs_per_sec` — primary indexing throughput
 - `search_config` — active search pipeline config snapshot from `/api/status` (343)
 - `env_overrides` — env vars applied by jseval config that differed from defaults (343)
+- `index_state_at_query.deleted_docs` — tombstone count at query-phase start, for paired-arm
+  merge-state comparability (931 §E item 10)
 - `git_sha` — for reproducibility
 
 ## YAML Run Config

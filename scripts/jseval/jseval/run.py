@@ -163,6 +163,35 @@ def _snapshot_search_config(base_url: str) -> dict | None:
         return None
 
 
+def _build_index_state_at_query(snapshot: dict, readiness_passed_at: str) -> dict:
+    """Merge/enrichment state at the moment the query phase starts (tempdoc 931 §E item 10).
+
+    Two fresh indexes of the same corpus can carry very different tombstone (deleted-doc)
+    counts -- a measured case moved 2,629 vs 222 -- which inflates BM25 collection statistics
+    on one arm and moves hit counts 3-4% with no code cause. Recording this block at query-phase
+    start lets a paired-arm comparison (see compare_runs.py) flag that divergence instead of
+    silently attributing it to the code under test. Every field degrades to ``None`` when the
+    backend snapshot doesn't publish it -- an older backend, or a ``skip_readiness`` run whose
+    ``snapshot`` is the ``ReadinessResult`` default empty dict.
+    """
+    max_doc = snapshot.get("indexMaxDoc")
+    num_docs = snapshot.get("indexNumDocs")
+    deleted_docs = (
+        max_doc - num_docs
+        if isinstance(max_doc, (int, float)) and isinstance(num_docs, (int, float))
+        else None
+    )
+    return {
+        "max_doc": max_doc,
+        "num_docs": num_docs,
+        "deleted_docs": deleted_docs,
+        "chunk_splade_coverage_percent": snapshot.get("chunkSpladeCoveragePercent"),
+        "splade_coverage_percent": snapshot.get("spladeCoveragePercent"),
+        "chunk_vector_coverage_percent": snapshot.get("chunkVectorCoveragePercent"),
+        "readiness_passed_at": readiness_passed_at,
+    }
+
+
 def execute_run(
     dataset_name: str,
     base_url: str,
@@ -270,6 +299,12 @@ def execute_run(
         )
         if not readiness_result.passed:
             log.warning("Readiness failed: %s", readiness_result.failure_reasons)
+
+    # tempdoc 931 §E item 10: snapshot merge/enrichment state right as the query
+    # phase starts (see _build_index_state_at_query).
+    index_state_at_query = _build_index_state_at_query(
+        readiness_result.snapshot, datetime.now(timezone.utc).isoformat(),
+    )
 
     # 3. For each mode: retrieve → score → provenance → ANN proof → comparability
     mode_results: dict[str, dict] = {}
@@ -424,7 +459,8 @@ def execute_run(
                              search_config, env_overrides, env_fingerprint,
                              run_manifest=run_manifest, base_dir=base_dir,
                              status_snapshot=state_snapshots.get("/api/status"),
-                             index_cache=index_cache, query_syntax=query_syntax)
+                             index_cache=index_cache, query_syntax=query_syntax,
+                             index_state_at_query=index_state_at_query)
     # Tempdoc 885: additive block from the background search-load thread (absent by default).
     if search_load:
         summary["search_load"] = search_load
@@ -532,6 +568,7 @@ def _build_summary(
     status_snapshot: dict | None = None,
     index_cache: dict | None = None,
     query_syntax: str | None = None,
+    index_state_at_query: dict | None = None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -545,6 +582,10 @@ def _build_summary(
         # (nothing sent on the wire) is recorded as the Head's own default, "simple" —
         # see `docs/reference/api-contract-map.md` (Knowledge Search API, `querySyntax`).
         "query_syntax": query_syntax or "simple",
+        # tempdoc 931 §E item 10: merge-state snapshot at query-phase start, always present
+        # (like `cadence`) so a paired-arm comparison table always has the column, even when
+        # every field inside is null (skip_readiness / older backend).
+        "index_state_at_query": index_state_at_query or _build_index_state_at_query({}, None),
         "qrels_summary": _compute_qrels_summary(qrels),
         "corpus_identity": _get_corpus_identity(dataset_name, meta, qrels, base_dir),
         "per_mode": {

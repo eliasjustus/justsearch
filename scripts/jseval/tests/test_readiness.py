@@ -187,6 +187,37 @@ class TestCheckSearchConditions:
         )
         assert not any("splade" in r for r in reasons)
 
+    # -- chunk-SPLADE (tempdoc 931 §E item 9) --------------------------------
+    # Checked off the backend-published chunkSpladeEnabled flag, independent
+    # of the caller's dense/splade request flags.
+
+    def test_chunk_splade_enabled_low_coverage_blocks(self):
+        reasons = _check_search_conditions(
+            _good_snapshot(
+                chunkDocCount=200, chunkSpladeEnabled=True,
+                chunkSpladeCoveragePercent=10.0,
+            ),
+            dense=False, splade=False, lambdamart=False, base_url="",
+        )
+        assert "chunk_splade_not_complete" in reasons
+
+    def test_chunk_splade_flag_absent_adds_nothing(self):
+        reasons = _check_search_conditions(
+            _good_snapshot(chunkDocCount=200, chunkSpladeCoveragePercent=0.0),
+            dense=False, splade=False, lambdamart=False, base_url="",
+        )
+        assert not any("chunk_splade" in r for r in reasons)
+
+    def test_chunk_splade_full_coverage_does_not_block(self):
+        reasons = _check_search_conditions(
+            _good_snapshot(
+                chunkDocCount=200, chunkSpladeEnabled=True,
+                chunkSpladeCoveragePercent=100.0,
+            ),
+            dense=False, splade=False, lambdamart=False, base_url="",
+        )
+        assert not any("chunk_splade" in r for r in reasons)
+
 
 # ---------------------------------------------------------------------------
 # check_index_idle_conditions
@@ -328,6 +359,36 @@ class TestCheckPipelineCompleteConditions:
         snap.pop("nerEnabled", None)
         reasons = _check_pipeline_complete_conditions(snap, -1)
         assert "splade_not_complete" in reasons
+
+    # -- chunk-SPLADE (tempdoc 931 §E item 9) --------------------------------
+    # Unlike embedding/splade/ner above, chunkSpladeEnabled defaults to False
+    # when absent (a genuinely new, optional field an older backend never
+    # publishes) rather than True (the back-compat default for pre-existing
+    # fields whose absence means "an old backend that always ran this stage").
+
+    def test_chunk_splade_enabled_low_coverage_blocks(self):
+        blocked = _check_pipeline_complete_conditions(
+            _pipeline_good_snapshot(
+                chunkSpladeEnabled=True, chunkSpladeCoveragePercent=42.0,
+            ),
+            -1,
+        )
+        assert "chunk_splade_not_complete" in blocked
+
+    def test_chunk_splade_flag_absent_adds_nothing(self):
+        snap = _pipeline_good_snapshot(chunkSpladeCoveragePercent=0.0)
+        snap.pop("chunkSpladeEnabled", None)
+        ok = _check_pipeline_complete_conditions(snap, -1)
+        assert "chunk_splade_not_complete" not in ok
+
+    def test_chunk_splade_full_coverage_does_not_block(self):
+        ok = _check_pipeline_complete_conditions(
+            _pipeline_good_snapshot(
+                chunkSpladeEnabled=True, chunkSpladeCoveragePercent=100.0,
+            ),
+            -1,
+        )
+        assert "chunk_splade_not_complete" not in ok
 
 
 # ---------------------------------------------------------------------------
