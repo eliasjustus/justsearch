@@ -1,7 +1,7 @@
 ---
 title: "UI naming convergence: Detailed mode and canonical Ask"
 type: tempdocs
-status: active
+status: complete
 created: 2026-09-03
 updated: 2026-09-05
 parent: 893-hygiene-registers
@@ -184,16 +184,16 @@ value or publishing the branch.
   is non-empty and run the selected captures with measurement evidence.
 - [x] Reconcile canonical and developer-facing prose: all three mode controls are top bar, Settings,
   and Brain; **Detailed** is the product label while `advanced` remains a compatibility identifier.
-- [ ] Run targeted backend and frontend tests, frontend typecheck/unit tests, documentation
+- [x] Run targeted backend and frontend tests, frontend typecheck/unit tests, documentation
   regeneration and drift checks, UI coverage and affected captures, then retry the post-merge suite
   once concurrent Gradle pressure subsides. Record any unrelated baseline failure rather than
   weakening its test.
-- [ ] Perform a fresh refute-first review of the final diff, fix every in-scope finding, and commit a
+- [x] Perform a fresh refute-first review of the final diff, fix every in-scope finding, and commit a
   self-contained closeout whose tempdoc evidence is sufficient for another agent.
 
 Publishing, opening a pull request, enqueueing, and merging are explicitly excluded from this pass.
 
-### Closure evidence in progress
+### Closure evidence
 
 - `UiModeIntentHttpContractTest` passed through a real loopback `LocalApiServer`. It verifies the
   CORS preflight admits `X-JustSearch-UI-Mode-Intent`, sends `simple:1`, `advanced:2`, then a stale
@@ -209,13 +209,42 @@ Publishing, opening a pull request, enqueueing, and merging are explicitly exclu
   transition); those are retained as capture evidence and are not presented as clean console runs.
 - The full accessibility gate passed all 20 registered surfaces with no new violation, and the full
   proportion gate reported every geometric constraint held.
-- Frontend typecheck passed. The unit suite passed 6,285 tests and hit only the two recorded cold-load
-  timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated rerun
-  passed all 35 tests. The complete `:modules:ui:test` task, including the new HTTP contract, passed.
-- Documentation regeneration and all five canonical drift checks passed. The wording sweep now
+- Frontend typecheck passed. An initial unit run passed 6,285 tests and hit only the two recorded
+  cold-load timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated
+  rerun passed all 35 tests. After the final `origin/main` catch-up, `npm run test:unit:run` passed all
+  469 files and 6,287 tests.
+- The worktree was caught up through merge commit `3ceec045`. The required post-merge
+  `./gradlew.bat build -x test` passed, and the subsequent repository-wide `./gradlew.bat test` passed
+  cleanly in 3m17s, including the previously load-sensitive Lucene concurrency regression. The
+  complete `:modules:ui:test` task, including the new HTTP contract, also passed independently.
+- Documentation regeneration plus `llmstxt-generate --check`, `skills-sync --check`, and the current
+  consolidated `node scripts/docs/docs-validate.mjs` check passed. The final wording sweep now
   reserves **Detailed** for the product disclosure mode while retaining `advanced` only where it is
   a wire value, internal identifier, or exact historical label.
 - Standards challenge: the WHATWG Fetch Standard confirms that a non-safelisted request header is
   preflight-relevant and checked against `Access-Control-Allow-Headers`; the W3C Web Locks draft
   confirms exclusive same-name locks prevent another context from acquiring that lock concurrently.
   Those are the two platform properties the HTTP preflight and cross-window sequence design rely on.
+
+### Final refute-first result and handoff
+
+The final review re-read the shared frontend authority, all three write adapters, the backend merge
+and stale-intent path, the production-stack HTTP test, the affected-step mapping, and the canonical
+mode contract against the final `origin/main` diff. It found no remaining in-scope correctness,
+security, accessibility, or discoverability defect. `git diff --check` passed, the affected-step row
+remains the exact 51-step union of its seven direct consumers, and the remaining capitalized
+“Advanced” matches are generic prose, compatibility/history text, configuration terminology, or
+corpus data rather than the retired product label.
+
+The backend's stale-intent ledger is intentionally per-process and bounded to 64 client IDs. That is
+the right boundary for one per-boot desktop loopback server: a restart cannot still receive an old
+request from the prior server process, and bounding untrusted header cardinality avoids an in-memory
+growth vector. It is not a durable or distributed conflict-resolution protocol and must not be
+represented as one.
+
+There are no unverified implementation assumptions or deferred checks. The two real diagnostics in
+the Brain fixture captures remain honestly recorded above; they are existing fixture/transition
+diagnostics, not clean-console evidence and not a regression from this work. No loopback trust-boundary
+rule changed: the new header is an ordering hint inside the existing authenticated mutation path, not
+an authentication mechanism. Publishing, opening a pull request, enqueueing, and merging to `main`
+remain the sole deferred actions and require separate authorization.
