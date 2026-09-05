@@ -149,7 +149,7 @@ the repository publish preflight, Gradle build/test, and frontend checks.
 - Focused compaction suites pass: compact-save 24 checks and compact-restore
   17 checks, including production-path serialization, cross-worktree
   provenance, one-shot consumption, and legacy-rule cleanup.
-- Agent analytics pass 50/50 test files; governance tests pass 30/30; the
+- Agent analytics pass 52/52 test files; governance tests pass 30/30; the
   hook-integrity, projection drift, Codex parity, always-loaded budget, and
   canonical-document checks pass.
 - The retained build-counter, intervene, repeat-guard, and subagent-model-guard
