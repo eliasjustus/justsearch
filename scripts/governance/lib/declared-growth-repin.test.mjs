@@ -4,12 +4,19 @@
  * Two layers are tested here:
  *   (1) the shared rule module itself — rule id, direction handling, and the four message shapes
  *       the pin-movement clause can take;
- *   (2) the rule AS THE GATES SEE IT — three real enforcers (`ts-any`, `todo-fixme`, `dead-code`)
- *       driven through the four cases the rule has to distinguish:
+ *   (2) the rule AS THE GATES SEE IT — three real enforcers (`module-deps`, `config-surface`,
+ *       `dead-code`) driven through the four cases the rule has to distinguish:
  *         growth declared + pin advanced to the measured value  → pass
  *         growth declared + pin unchanged                       → FAIL, new rule id
  *         growth declared + pin advanced but below measured     → FAIL, new rule id
  *         no growth declared                                    → untouched (still silent-growth)
+ *
+ * The three enforcers are picked for SHAPE, not convenience: `module-deps` is a per-row count
+ * ratchet over a JSON report, `config-surface` a fixed-metric ratchet whose rows are named metrics,
+ * `dead-code` a per-file ratchet whose count is summed out of a knip report. The FLOOR direction
+ * (`declared-regression`, where the pin must fall rather than rise) is unit-tested here against
+ * `test-efficacy`'s shape and driven through the real `npm-audit` and `test-efficacy` enforcers in
+ * `repin-fires-per-gate.test.mjs`.
  *
  * Run with: `node scripts/governance/lib/declared-growth-repin.test.mjs`
  * Exits non-zero on any failure.
@@ -28,8 +35,8 @@ import {
   repinRuleDescription,
   repinRuleId,
 } from './declared-growth-repin.mjs';
-import { enforceTsAny } from '../gates/ts-any/enforcer.mjs';
-import { enforceTodoFixme } from '../gates/todo-fixme/enforcer.mjs';
+import { enforceModuleDeps } from '../gates/module-deps/enforcer.mjs';
+import { enforceConfigSurface } from '../gates/config-surface/enforcer.mjs';
 import { enforceDeadCode } from '../gates/dead-code/enforcer.mjs';
 
 let passed = 0;
@@ -50,12 +57,12 @@ async function run(label, fn) {
 await run('rule id is <prefix>/declared-growth-without-repin and is described', () => {
   assert.equal(repinRuleId('dead-code'), 'dead-code/declared-growth-without-repin');
   assert.equal(
-    repinRuleId('test-to-code', REPIN_REGRESSION_RULE_SUFFIX),
-    'test-to-code/declared-regression-without-repin',
+    repinRuleId('test-efficacy', REPIN_REGRESSION_RULE_SUFFIX),
+    'test-efficacy/declared-regression-without-repin',
   );
-  const desc = repinRuleDescription('ts-any');
-  assert.deepEqual(Object.keys(desc), ['ts-any/declared-growth-without-repin']);
-  assert.match(desc['ts-any/declared-growth-without-repin'], /not advanced to the/);
+  const desc = repinRuleDescription('module-deps');
+  assert.deepEqual(Object.keys(desc), ['module-deps/declared-growth-without-repin']);
+  assert.match(desc['module-deps/declared-growth-without-repin'], /not advanced to the/);
 });
 
 await run('the message names the pin file, the row, the measured value and the remedy', () => {
@@ -76,42 +83,48 @@ await run('the message names the pin file, the row, the measured value and the r
 
 await run('a pin that moved but fell short reads differently from one that never moved', () => {
   const short = repinFinding({
-    rulePrefix: 'ts-any', classification: 'declared-growth', row: 'a.ts', measured: 9,
-    livePin: 7, priorPin: 5, baselineFile: 'gates/ts-any/baseline.txt',
+    rulePrefix: 'module-deps', classification: 'declared-growth', row: 'modules/core', measured: 9,
+    livePin: 7, priorPin: 5, baselineFile: 'gates/module-deps/baseline.txt',
   });
   assert.match(short.message, /moved 5 → 7 in this diff but still short of the measured value/);
   const unknown = repinFinding({
-    rulePrefix: 'ts-any', classification: 'declared-growth', row: 'a.ts', measured: 9,
-    livePin: 7, baselineFile: 'gates/ts-any/baseline.txt',
+    rulePrefix: 'module-deps', classification: 'declared-growth', row: 'modules/core', measured: 9,
+    livePin: 7, baselineFile: 'gates/module-deps/baseline.txt',
   });
   assert.doesNotMatch(unknown.message, /in this diff/, 'no prior pin ⇒ no claim about movement');
 });
 
 await run('a floor gate gets floor wording, not ceiling wording', () => {
   const f = repinFinding({
-    rulePrefix: 'test-to-code', classification: 'declared-regression', row: 'modules/core',
-    measured: 410, livePin: 500, priorPin: 520, baselineFile: 'gates/test-to-code/baseline.txt',
+    rulePrefix: 'test-efficacy', classification: 'strength-regression', row: 'search-fusion',
+    measured: 41, livePin: 50, priorPin: 52,
+    baselineFile: 'gates/test-efficacy/strength-baseline.v1.json',
     suffix: REPIN_REGRESSION_RULE_SUFFIX, direction: 'regression',
   });
-  assert.equal(f.ruleId, 'test-to-code/declared-regression-without-repin');
-  assert.match(f.message, /moved 520 → 500 in this diff but still short/,
+  assert.equal(f.ruleId, 'test-efficacy/declared-regression-without-repin');
+  assert.match(f.message, /moved 52 → 50 in this diff but still short/,
     'lowering a floor is movement TOWARDS the measured value');
   const wrongWay = repinFinding({
-    rulePrefix: 'test-to-code', classification: 'declared-regression', row: 'modules/core',
-    measured: 410, livePin: 540, priorPin: 520, baselineFile: 'gates/test-to-code/baseline.txt',
+    rulePrefix: 'test-efficacy', classification: 'strength-regression', row: 'search-fusion',
+    measured: 41, livePin: 54, priorPin: 52,
+    baselineFile: 'gates/test-efficacy/strength-baseline.v1.json',
     suffix: REPIN_REGRESSION_RULE_SUFFIX, direction: 'regression',
   });
   assert.match(wrongWay.message, /the wrong way/);
 });
 
-await run('a set-membership ratchet degrades to "the baseline does not carry this row"', () => {
+await run('a caller that cannot supply measured/livePin degrades to "does not carry this row"', () => {
+  // Reachable through `makeRatchetGate`, whose `detect()` contract does not oblige a client to
+  // return `count`/`base` — an omitted number must produce an honest sentence, not `undefined`.
   const f = repinFinding({
-    rulePrefix: 'dead-code-jvm', classification: 'declared-growth',
-    row: 'io.justsearch.Foo', baselineFile: 'gates/dead-code-jvm/baseline.txt',
-    pinLine: 'io.justsearch.Foo',
+    rulePrefix: 'atom-fork-ratchet', classification: 'declared-growth',
+    row: 'modules/ui-web/src/shell-v0/sub/probe.ts',
+    baselineFile: 'scripts/ci/atom-fork-ratchet-baseline.v1.json',
+    pinLine: '"modules/ui-web/src/shell-v0/sub/probe.ts": 1',
   });
   assert.match(f.message, /does not carry this row/);
-  assert.match(f.message, /io\.justsearch\.Foo/);
+  assert.match(f.message, /shell-v0\/sub\/probe\.ts/);
+  assert.doesNotMatch(f.message, /undefined|null/, 'an absent number must not leak into the prose');
 });
 
 await run('the growth-licensing vocabulary excludes baseline-edit-only classifications', () => {
@@ -148,132 +161,139 @@ function scaffold(files) {
 
 const CHANGESET = '---\nclassification: declared-growth\ntempdoc: 918\n---\nDeclared for the test.\n';
 
-// -- ts-any: `<path> <count> <date>` per-file counts over ui-web sources.
+const ids = (r) => r.findings.map((f) => f.ruleId);
+/** Only the ERROR findings decide the verdict; the note-level ones are commentary. */
+const errorIds = (r) => r.findings.filter((f) => f.level === 'error').map((f) => f.ruleId);
 
-const TS_GATE = {
-  id: 'ts-any',
-  baseline: { path: 'gates/ts-any/baseline.txt' },
-  changesetsDir: 'gates/ts-any/.changesets',
-  config: { sourceGlobs: ['modules/ui-web/src/**/*.{ts,tsx}'], excludeGlobs: [] },
+// -- module-deps: `<module> <count> <date>` per-row counts read out of a JSON report.
+
+const DEPS_GATE = {
+  id: 'module-deps',
+  baseline: { path: 'gates/module-deps/baseline.txt' },
+  changesetsDir: 'gates/module-deps/.changesets',
+  config: { reportPath: 'tmp/module-deps.json' },
 };
-const SRC = 'modules/ui-web/src/x.ts';
-/** Three `any`-casts, so the measured count is 3. */
-const THREE_ANY = 'const a = 1 as any;\nconst b = 2 as any;\nlet c: any;\n';
+const MODULE = 'modules/core';
+/** Three production deps, so the measured count is 3. */
+const THREE_DEPS = JSON.stringify({
+  modules: [{ name: MODULE, productionDeps: ['a', 'b', 'c'] }],
+});
 
-async function tsAnyOn(files) {
+async function depsOn(files) {
   const root = scaffold(files);
-  return enforceTsAny({
-    repoRoot: root, gate: TS_GATE, baselineRef: 'HEAD', fixtureMode: true, fixtureRoot: root,
+  return enforceModuleDeps({
+    repoRoot: root, gate: DEPS_GATE, baselineRef: 'HEAD', fixtureMode: true, fixtureRoot: root,
   });
 }
 
-const ids = (r) => r.findings.map((f) => f.ruleId);
-
-await run('ts-any: growth declared + pin advanced to the measured value → pass', async () => {
-  const r = await tsAnyOn({
-    [SRC]: THREE_ANY,
-    'gates/ts-any/baseline.txt': `${SRC} 3 2026-09-03\n`,
-    '_baseline/gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
-    'gates/ts-any/.changesets/918.md': CHANGESET,
+await run('module-deps: growth declared + pin advanced to the measured value → pass', async () => {
+  const r = await depsOn({
+    'tmp/module-deps.json': THREE_DEPS,
+    'gates/module-deps/baseline.txt': `${MODULE} 3 2026-09-03\n`,
+    '_baseline/gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
+    'gates/module-deps/.changesets/918.md': CHANGESET,
   });
   assert.equal(r.verdict, 'pass', `expected pass, got ${r.verdict}: ${ids(r).join(', ')}`);
-  assert.ok(!ids(r).includes('ts-any/declared-growth-without-repin'));
+  assert.ok(!ids(r).includes('module-deps/declared-growth-without-repin'));
 });
 
-await run('ts-any: growth declared + pin unchanged → FAIL with the new rule id', async () => {
-  const r = await tsAnyOn({
-    [SRC]: THREE_ANY,
-    'gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
-    '_baseline/gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
-    'gates/ts-any/.changesets/918.md': CHANGESET,
+await run('module-deps: growth declared + pin unchanged → FAIL with the new rule id', async () => {
+  const r = await depsOn({
+    'tmp/module-deps.json': THREE_DEPS,
+    'gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
+    '_baseline/gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
+    'gates/module-deps/.changesets/918.md': CHANGESET,
   });
   assert.equal(r.verdict, 'fail');
-  assert.deepEqual(ids(r), ['ts-any/declared-growth-without-repin']);
+  assert.deepEqual(errorIds(r), ['module-deps/declared-growth-without-repin']);
   const m = r.findings[0].message;
-  assert.match(m, /Measured 3 any-casts/);
-  assert.match(m, /the pin in gates\/ts-any\/baseline\.txt is 1, unchanged in this diff/);
+  assert.match(m, /Measured 3 cross-module deps/);
+  assert.match(m, /the pin in gates\/module-deps\/baseline\.txt is 1, unchanged in this diff/);
 });
 
-await run('ts-any: growth declared + pin advanced but below measured → FAIL', async () => {
-  const r = await tsAnyOn({
-    [SRC]: THREE_ANY,
-    'gates/ts-any/baseline.txt': `${SRC} 2 2026-09-03\n`,
-    '_baseline/gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
-    'gates/ts-any/.changesets/918.md': CHANGESET,
+await run('module-deps: growth declared + pin advanced but below measured → FAIL', async () => {
+  const r = await depsOn({
+    'tmp/module-deps.json': THREE_DEPS,
+    'gates/module-deps/baseline.txt': `${MODULE} 2 2026-09-03\n`,
+    '_baseline/gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
+    'gates/module-deps/.changesets/918.md': CHANGESET,
   });
   assert.equal(r.verdict, 'fail');
-  assert.deepEqual(ids(r), ['ts-any/declared-growth-without-repin']);
+  assert.deepEqual(errorIds(r), ['module-deps/declared-growth-without-repin']);
   assert.match(r.findings[0].message, /moved 1 → 2 in this diff but still short/);
 });
 
-await run('ts-any: no growth declared → untouched, still silent-growth', async () => {
-  const r = await tsAnyOn({
-    [SRC]: THREE_ANY,
-    'gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
-    '_baseline/gates/ts-any/baseline.txt': `${SRC} 1 2026-09-01\n`,
+await run('module-deps: no growth declared → untouched, still silent-growth', async () => {
+  const r = await depsOn({
+    'tmp/module-deps.json': THREE_DEPS,
+    'gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
+    '_baseline/gates/module-deps/baseline.txt': `${MODULE} 1 2026-09-01\n`,
   });
   assert.equal(r.verdict, 'fail');
-  assert.deepEqual(ids(r), ['ts-any/silent-growth'],
+  assert.deepEqual(ids(r), ['module-deps/silent-growth'],
     'without a changeset the pre-existing rule is what must fire, not the new one');
 });
 
-await run('ts-any: a shrink under a declared changeset still rebalances, not fails', async () => {
-  const r = await tsAnyOn({
-    [SRC]: THREE_ANY,
-    'gates/ts-any/baseline.txt': `${SRC} 5 2026-09-03\n`,
-    '_baseline/gates/ts-any/baseline.txt': `${SRC} 5 2026-09-01\n`,
-    'gates/ts-any/.changesets/918.md': CHANGESET,
+await run('module-deps: a shrink under a declared changeset still rebalances, not fails', async () => {
+  const r = await depsOn({
+    'tmp/module-deps.json': THREE_DEPS,
+    'gates/module-deps/baseline.txt': `${MODULE} 5 2026-09-03\n`,
+    '_baseline/gates/module-deps/baseline.txt': `${MODULE} 5 2026-09-01\n`,
+    'gates/module-deps/.changesets/918.md': CHANGESET,
   });
   assert.equal(r.verdict, 'pass');
-  assert.deepEqual(ids(r), ['ts-any/rebalance-available']);
+  assert.deepEqual(ids(r), ['module-deps/rebalance-available']);
 });
 
-// -- todo-fixme: the same four cases through a truth-table-driven gate.
+// -- config-surface: the same four cases through a truth-table-driven, fixed-metric gate.
 
-const TODO_GATE = {
-  id: 'todo-fixme',
-  baseline: { path: 'gates/todo-fixme/baseline.txt' },
-  changesetsDir: 'gates/todo-fixme/.changesets',
-  config: { sourceGlobs: ['modules/ui-web/src/**/*.{ts,tsx}'], excludeGlobs: [] },
+const CONFIG_GATE = {
+  id: 'config-surface',
+  baseline: { path: 'gates/config-surface/baseline.txt' },
+  changesetsDir: 'gates/config-surface/.changesets',
+  config: { reportPath: 'tmp/matrix.json' },
 };
-const TODO_SRC = 'modules/ui-web/src/y.ts';
-const TWO_TODOS = '// TODO: one\n// FIXME: two\n';
+/** Twelve declared yaml keys, so the measured value for the `yaml_keys` row is 12. */
+const MATRIX = JSON.stringify({ yamlKeyCount: 12, envSyspropPairCount: 1, configKeyCount: 1 });
+const pins = (yamlKeys, date) =>
+  `yaml_keys ${yamlKeys} ${date}\nenv_sysprop_pairs 1 ${date}\nconfig_keys 1 ${date}\n`;
 
-async function todoOn(files) {
+async function configOn(files) {
   const root = scaffold(files);
-  return enforceTodoFixme({
-    repoRoot: root, gate: TODO_GATE, baselineRef: 'HEAD', fixtureMode: true, fixtureRoot: root,
+  return enforceConfigSurface({
+    repoRoot: root, gate: CONFIG_GATE, baselineRef: 'HEAD', fixtureMode: true, fixtureRoot: root,
   });
 }
 
-await run('todo-fixme: pin advanced → pass; pin unchanged → the new rule id', async () => {
-  const advanced = await todoOn({
-    [TODO_SRC]: TWO_TODOS,
-    'gates/todo-fixme/baseline.txt': `${TODO_SRC} 2 2026-09-03\n`,
-    '_baseline/gates/todo-fixme/baseline.txt': `${TODO_SRC} 0 2026-09-01\n`,
-    'gates/todo-fixme/.changesets/918.md': CHANGESET,
+await run('config-surface: pin advanced → pass; pin unchanged → the new rule id', async () => {
+  const advanced = await configOn({
+    'tmp/matrix.json': MATRIX,
+    'gates/config-surface/baseline.txt': pins(12, '2026-09-03'),
+    '_baseline/gates/config-surface/baseline.txt': pins(5, '2026-09-01'),
+    'gates/config-surface/.changesets/918.md': CHANGESET,
   });
   assert.equal(advanced.verdict, 'pass', ids(advanced).join(', '));
 
-  const stalled = await todoOn({
-    [TODO_SRC]: TWO_TODOS,
-    'gates/todo-fixme/baseline.txt': `${TODO_SRC} 1 2026-09-01\n`,
-    '_baseline/gates/todo-fixme/baseline.txt': `${TODO_SRC} 1 2026-09-01\n`,
-    'gates/todo-fixme/.changesets/918.md': CHANGESET,
+  const stalled = await configOn({
+    'tmp/matrix.json': MATRIX,
+    'gates/config-surface/baseline.txt': pins(5, '2026-09-01'),
+    '_baseline/gates/config-surface/baseline.txt': pins(5, '2026-09-01'),
+    'gates/config-surface/.changesets/918.md': CHANGESET,
   });
   assert.equal(stalled.verdict, 'fail');
-  assert.ok(ids(stalled).includes('todo-fixme/declared-growth-without-repin'), ids(stalled).join(', '));
-  assert.match(stalled.findings[0].message, /Measured 2 TODO\/FIXME markers/);
+  assert.ok(ids(stalled).includes('config-surface/declared-growth-without-repin'),
+    ids(stalled).join(', '));
+  assert.match(stalled.findings[0].message, /Measured 12 application\.yaml keys/);
 });
 
-await run('todo-fixme: a pin raised under a changeset with the live count AT it still passes', async () => {
+await run('config-surface: a pin raised under a changeset with the live count AT it still passes', async () => {
   // This is the case the rule must NOT break: the author declared the growth AND advanced the pin,
   // so the baseline-shift rule sees a covered raise and the count rule sees no exceedance.
-  const r = await todoOn({
-    [TODO_SRC]: TWO_TODOS,
-    'gates/todo-fixme/baseline.txt': `${TODO_SRC} 2 2026-09-03\n`,
-    '_baseline/gates/todo-fixme/baseline.txt': `${TODO_SRC} 0 2026-09-01\n`,
-    'gates/todo-fixme/.changesets/918.md': CHANGESET,
+  const r = await configOn({
+    'tmp/matrix.json': MATRIX,
+    'gates/config-surface/baseline.txt': pins(12, '2026-09-03'),
+    '_baseline/gates/config-surface/baseline.txt': pins(5, '2026-09-01'),
+    'gates/config-surface/.changesets/918.md': CHANGESET,
   });
   assert.equal(r.verdict, 'pass');
   assert.ok(!ids(r).some((i) => i.endsWith('silent-baseline-shift')),

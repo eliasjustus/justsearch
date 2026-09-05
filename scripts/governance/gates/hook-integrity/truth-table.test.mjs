@@ -10,7 +10,6 @@ import {
   verdictForLoad,
   verdictForBite,
   verdictForBiteDeclared,
-  verdictForTierRegisterSync,
   verdictForOrphanHookFile,
 } from './truth-table.mjs';
 
@@ -42,9 +41,6 @@ ok('bite unsatisfied fails', verdictForBite({ hookId: 'x', satisfied: false, kin
 
 ok('blocking with bite spec passes', verdictForBiteDeclared({ hookId: 'x', hasBite: true }).status === 'pass');
 ok('blocking without bite spec fails', verdictForBiteDeclared({ hookId: 'x', hasBite: false }).status === 'fail');
-
-ok('resolved tier marker passes', verdictForTierRegisterSync({ marker: 'repeat-guard.mjs', resolved: true }).status === 'pass');
-ok('unresolved tier marker fails', verdictForTierRegisterSync({ marker: 'ghost.mjs', resolved: false }).status === 'fail');
 
 // tempdoc 861 Phase 6 — the file->manifest direction
 ok('catalogued hook file passes', verdictForOrphanHookFile({ file: 'repeat-guard.mjs', inCatalog: true }).status === 'pass');

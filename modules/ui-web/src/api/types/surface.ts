@@ -8,7 +8,7 @@
  * TypeScript by `scripts/codegen/gen-wire-schema-types.mjs` (registered in
  * `governance/contract-surfaces.v1.json` as `SurfaceWire`). Regenerate with
  * `./gradlew.bat :modules:app-api:updateSchemas` then
- * `node scripts/codegen/gen-wire-schema-types.mjs`; `check-wire-schema-types-regen` fails on drift.
+ * `node scripts/codegen/gen-wire-schema-types.mjs`; `regen-all --check` fails on drift.
  *
  * This file is not a mirror and must not become one again. Everything below is one of:
  *  1. a re-export or projection of `SurfaceWire` (the field SET comes from Java, mechanically);

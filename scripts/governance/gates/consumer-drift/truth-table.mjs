@@ -173,7 +173,7 @@ export function verdictForSlotRemoval(input) {
  *   - listed in `discovery.knownUncovered` → grandfathered (info; ratchet-from-here)
  *   - neither                              → fail: a NEW substrate escaped coverage
  *
- * This is the consumer-drift analog of the prose-tier-register meta-loop's
+ * This is the consumer-drift analog of the (since-retired) prose-tier-register meta-loop's
  * discovered-vs-declared anchor check. Grandfathering (the explicit
  * `knownUncovered` list, mirroring class-size-exceptions.txt) lets it land green
  * and tighten over time: adding the 11th substrate dir fails until it is either

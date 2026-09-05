@@ -1,0 +1,125 @@
+{
+  "src/api/contract.test.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    }
+  },
+  "src/api/devMode.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/api/domains/search.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/api/streams.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/commands/VirtualOperationCatalog.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/commands/whenExpression.ts": {
+    "no-fallthrough": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/components/Peek.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/components/SurfaceTabs.ts": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/components/chat/citationResolve.test.ts": {
+    "no-useless-escape": {
+      "count": 3
+    }
+  },
+  "src/shell-v0/components/chat/evidenceProjection.ts": {
+    "no-fallthrough": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/display/present.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/hover/HoverPreviewHost.ts": {
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/plugin-api/capabilities/theme.ts": {
+    "preserve-caught-error": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/primitives/provenance.ts": {
+    "no-restricted-imports": {
+      "count": 2
+    }
+  },
+  "src/shell-v0/primitives/surfaceLayout.ts": {
+    "no-irregular-whitespace": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/router/catalogResolver.ts": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/router/intentRouter.ts": {
+    "no-fallthrough": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/router/resolution.ts": {
+    "no-useless-escape": {
+      "count": 3
+    }
+  },
+  "src/shell-v0/state/aiVerdict.ts": {
+    "no-fallthrough": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/streaming/MultiplexedStream.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/substrates/tasks/indexingJobsBridge.ts": {
+    "no-fallthrough": {
+      "count": 1
+    }
+  },
+  "src/shell-v0/utils/statusTone.ts": {
+    "no-fallthrough": {
+      "count": 2
+    }
+  },
+  "src/utils/logger.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/utils/tauriRuntime.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    }
+  }
+}

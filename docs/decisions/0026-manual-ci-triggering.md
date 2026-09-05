@@ -159,10 +159,21 @@ on this runner's intermittent uptime.
 
 The workflow file, its `workflow-signal-policy.v1.json` entry, and its
 references in `agent-guide.md` and the `ci-triage` skill were removed.
-`docs/how-to/recalibrate-phase3-baseline.md` was rewritten in place (rather
+The how-to page `recalibrate-phase3-baseline.md` was rewritten in place (rather
 than deleted, since three other how-to docs link to it) to describe a manual
 `jseval calibrate` / `jseval gate` procedure instead of a nightly-gate
 rebase; that doc is now the sole recorded source of truth for the current
 baseline value, since it previously lived only in this workflow's env block.
 The underlying `jseval calibrate` / `jseval run` / `jseval gate` CLI
 capability is unaffected and remains available for manual use.
+
+> **Superseded in part (2026-09-05, tempdoc 930 §18.1 row 7).** The
+> cohort-envelope machinery this section preserved was removed: `jseval
+> calibrate`, `calibrate-drift-baseline`, `recalibrate-nightly-baseline`, the
+> `cohort_baselines/` registry, and the four how-to pages named above
+> (`recalibrate-phase3-baseline.md`, `calibrate-drift-baseline.md`,
+> `triage-psi-drift.md`, `envelope-staleness-policy.md`) are gone. No baseline
+> was ever captured on any machine, so the σ(nDCG@10) band the gate asserted
+> was unresolvable. `jseval gate` survives as a projection-presence check and
+> `jseval run` is unchanged. This ADR's actual decision — manual triggering for
+> self-hosted workflows — stands; only the named artefacts are stale.

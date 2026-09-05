@@ -1857,19 +1857,6 @@
         "x-owning-module": "ResourceApiModule"
       }
     },
-    "/api/governance/state": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response."
-          }
-        },
-        "summary": "GET /api/governance/state",
-        "tags": [
-          "governance"
-        ]
-      }
-    },
     "/api/gpu/capabilities": {
       "get": {
         "responses": {
@@ -3877,8 +3864,8 @@
     }
   },
   "x-justsearch-route-source": {
-    "routeCount": 243,
-    "routeDigest": "sha256:19ce45ab68f79176ba3a1704a083d6a4c12050ea32c77723fcf44424d5d7391f"
+    "routeCount": 242,
+    "routeDigest": "sha256:20af51cd50396b09a92152e45daf256c39d1b891968fbbb1847c074802592043"
   },
   "x-justsearch-surface": {
     "classification": "reference-client-structural-inventory",

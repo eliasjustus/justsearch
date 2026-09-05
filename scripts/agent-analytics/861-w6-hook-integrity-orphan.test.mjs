@@ -2,7 +2,7 @@
  * Tempdoc 861 Phase 6 — the hook-integrity gate's file->manifest direction.
  *
  * Every rule the gate already had (wiring, live-wiring, cwd-invariant, load, bite,
- * tier-register sync) starts FROM the manifest and checks outward. None of them ever
+ * live-wiring) starts FROM the manifest and checks outward. None of them ever
  * lists the hook directory, so a hook FILE that never made it into the manifest was
  * invisible to all five — which is exactly how `ui-shot-cleanup.mjs` sat on disk,
  * described as a live SessionEnd hook by an always-loaded rules file, for the

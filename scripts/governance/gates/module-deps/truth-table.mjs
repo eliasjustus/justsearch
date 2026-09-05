@@ -10,7 +10,7 @@ export function verdictForModule({ module, current, pinned, classification }) {
 
 /**
  * Was a pinned number in the module-deps baseline RAISED in this PR without a changeset saying so?
- * Mirrors todo-fixme / dead-code. Added by tempdoc 910: the ruleId was declared but unreachable.
+ * Mirrors dead-code. Added by tempdoc 910: the ruleId was declared but unreachable.
  *
  * @param {{module: string, priorPin: number, livePin: number, classification: string}} input
  */

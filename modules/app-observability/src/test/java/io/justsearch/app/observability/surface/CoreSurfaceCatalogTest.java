@@ -20,11 +20,12 @@ final class CoreSurfaceCatalogTest {
 
   @Test
   @DisplayName(
-      "Catalog ships 18 entries — 561 retired the standalone Agent surface; 565 §15.C retired"
-          + " core.workflow-surface; 569 §19 added the presentation gallery + editor; 576 §15 added"
-          + " core.governance-surface; 583 §D.3b added core.api-explorer-surface (the read-only"
-          + " route-manifest dashboard); 629 added core.security-surface (Security & Privacy); Search"
-          + " Thread S5b retired the standalone Search surface (folded into core.unified-chat-surface)")
+      "Catalog ships 17 entries — 561 retired the standalone Agent surface; 565 §15.C retired"
+          + " core.workflow-surface; 569 §19 added the presentation gallery + editor; 583 §D.3b added"
+          + " core.api-explorer-surface (the read-only route-manifest dashboard); 629 added"
+          + " core.security-surface (Security & Privacy); Search Thread S5b retired the standalone"
+          + " Search surface (folded into core.unified-chat-surface); 930 §19.3 F9(d) removed the"
+          + " governance dashboard")
   void surfaceCount() {
     SurfaceCatalog catalog = new CoreSurfaceCatalog();
     // Tempdoc 571 §11 / 578 added core.system-surface (the System hub host): 16 → 17. Tempdoc 578
@@ -35,7 +36,8 @@ final class CoreSurfaceCatalogTest {
     // Tempdoc 855 §5 item 1 absorbed core.security-surface into Settings as a member (RAIL →
     // DEEPLINK) — no count change, still 19 at this point.
     // Search Thread S5b RETIRED core.search-surface (folded into core.unified-chat-surface): 19 → 18.
-    assertEquals(18, catalog.definitions().size());
+    // Tempdoc 930 §19.3 F9(d) REMOVED core.governance-surface with the dashboard: 18 → 17.
+    assertEquals(17, catalog.definitions().size());
   }
 
   @Test

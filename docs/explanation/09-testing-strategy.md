@@ -219,7 +219,7 @@ node scripts/governance/run.mjs --gate wire --mode gate
 
 ### Test-efficacy (mutation adequacy on law-bearing seams)
 
-Beyond *volume* (the `test-to-code` ratchet) and *execution* (JaCoCo coverage), the **`test-efficacy`**
+Beyond *execution* (JaCoCo coverage), the **`test-efficacy`**
 discipline gate (tempdoc 555) measures whether tests on designated **law-bearing seams** actually
 *constrain* them — via PIT mutation **test-strength** (killed/covered) plus a no-coverage ceiling, over
 the pure seams declared in `governance/logic-seams.v1.json`. Because PIT re-runs the suite per mutant,

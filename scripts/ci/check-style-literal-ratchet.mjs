@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * style-literal-ratchet gate — tempdoc 574 Phase C.
+ * style-literal ratchet — tempdoc 574 Phase C.
+ *
+ * Tempdoc 930 chunk F retired the kernel gate that wrapped this script; the script itself is
+ * unchanged and still the enforcement. It moved from the `ui-web-gates` recipe's kernel-gate line
+ * to its script line, so `node scripts/ci/run-ui-web-gates.mjs` still runs it on every ui-web PR.
+ * What went is the changeset/registry ceremony around it, not the check.
  *
  * The 574 ambient/token authorities exist (`--z-overlay-*`, `--duration-*`/`--ease-*`,
  * `--font-size-*` in tokens.css), but the per-component FORKS that should reference them are
@@ -120,9 +125,9 @@ const sumTotals = (current) =>
 /**
  * Pure detection: scan `srcRoot` and compare each file's per-class count to the
  * baseline. Returns the current counts, the parsed baseline, and one structured
- * failure per (file, class) regression. Shared by the CLI and the 530 kernel
- * enforcer (`scripts/governance/gates/style-literal-ratchet/`) — ONE detection
- * authority, no reimplementation.
+ * failure per (file, class) regression. Exported so the ratchet has ONE detection authority
+ * even though only the CLI below consumes it today (the 530 kernel enforcer that was the second
+ * consumer was retired by tempdoc 930 chunk F).
  */
 export function detect({ srcRoot = SRC, baselinePath = BASELINE } = {}) {
   const current = scanFiles(srcRoot);

@@ -55,7 +55,7 @@ closure. This was `gate`-enforced (tempdoc 550 thesis V) via the
 so it is **honor-system guidance now, not build-enforced**: an independent
 (second-agent, reviewer ≠ committer) review with live verification before closing
 a substrate slice remains expected practice — but no gate fails the build if it is
-skipped (tier-register row 30; `docs/reference/contributing/discipline-gate-kernel.md`).
+skipped (`docs/reference/contributing/discipline-gate-kernel.md`).
 
 A follow-up agent's source-verbatim verification pass (§B.AF-style) is a
 higher-fidelity check than the implementing agent's own §B.AC-style
@@ -71,7 +71,7 @@ retired (tempdoc 563)**, so it is **honor-system guidance now, not build-enforce
 an independent, *measured* (axe / contrast oracle — not eyeballed), live-verified
 whole-screen UX audit by an auditor ≠ committer before closing presentation-authority
 work remains expected practice — but no gate fails the build if it is skipped
-(tier-register row 31; `docs/reference/contributing/discipline-gate-kernel.md`).
+(`docs/reference/contributing/discipline-gate-kernel.md`).
 
 ## Verification gate items
 

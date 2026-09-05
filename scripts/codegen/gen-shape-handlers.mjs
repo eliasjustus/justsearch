@@ -21,7 +21,7 @@
  *   node scripts/codegen/gen-shape-handlers.mjs --live    # fetch /api/registry/shapes
  *   node scripts/codegen/gen-shape-handlers.mjs --check   # exit non-zero on diff
  *
- * The CI gate (`scripts/ci/check-shape-handler-regen.mjs`) wraps `--check`.
+ * The CI gate (`scripts/ci/regen-all.mjs --check`) wraps `--check`.
  */
 
 import { execFileSync } from 'node:child_process';

@@ -219,21 +219,24 @@ def test_project_release_still_projects_when_hardware_field_missing():
     assert set(proj["baselines"]) == {"beir/scifact"}
 
 
-# --- tempdoc 640 R2: envelope-derived band (data-driven; graceful fallback) ---
+# --- tempdoc 930 §18.1 row 7: the band is pinned-or-fixed, never envelope-derived ---
 
-def test_envelope_band_is_data_driven_with_graceful_fixed_fallback():
+def test_band_falls_back_to_the_fixed_default_and_a_pin_overrides_it():
     base = {"baselines": {"beir/scifact": {"mode": "hybrid", "metrics": {"ce_p50_ms": 160.0}}}}
     run = _summary("hybrid", ce_p50=180.0)  # ratio 1.125 vs baseline 160
-    # No cohort envelope -> the FIXED band (1.25) applies -> 1.125 <= 1.25 -> pass (unchanged behavior).
-    assert evaluate(base, run, "beir/scifact", manifest=None)["exit_code"] == 0
-    # Cohort envelope present (CE-stage mean 160, sd 8 -> CV 0.05 -> band 1+2*0.05 = 1.10):
-    # 1.125 > 1.10 -> regression. Proves the band adapts to measured noise, tighter than the guess.
-    mani = {"non_determinism_envelope": {"metrics": {"hybrid": {
-        "ce_p50_ms": {"mean": 160.0, "stdev": 8.0, "n": 5}}}}}
-    rep = evaluate(base, run, "beir/scifact", manifest=mani)
+    # No per-entry pin -> the FIXED band (1.25) applies -> 1.125 <= 1.25 -> pass.
+    rep = evaluate(base, run, "beir/scifact", manifest=None)
+    assert rep["exit_code"] == 0
+    ce = next(c for c in rep["checks"] if c["name"] == "ce_p50_ms")
+    assert "[default]" in ce["detail"]
+    # 640 R2's data-driven `1 +/- k*CV` band read `manifest.non_determinism_envelope`, which no
+    # cohort ever carried; a manifest can no longer tighten the band, only an explicit pin can.
+    pinned = {"baselines": {"beir/scifact": {
+        "mode": "hybrid", "metrics": {"ce_p50_ms": 160.0}, "bands": {"ce_p50_ms": 1.10}}}}
+    rep = evaluate(pinned, run, "beir/scifact", manifest=None)
     assert rep["exit_code"] == 1
     ce = next(c for c in rep["checks"] if c["name"] == "ce_p50_ms")
-    assert ce["status"] == "fail" and "envelope" in ce["detail"]
+    assert ce["status"] == "fail" and "[pinned]" in ce["detail"]
 
 
 # --- review fix #2: the file-level default_bands must be honored -------------
