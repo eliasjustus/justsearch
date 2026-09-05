@@ -210,15 +210,17 @@ triggers ADR-0044 already grants that workflow. This adds no trigger and
 touches no self-hosted runner, so the manual-only policy for self-hosted and
 specialty workflows is unchanged.
 
-**The lane is ADVISORY, not required.** Like `integration-tests` and
-`jseval-suite`, it is deliberately absent from
-`scripts/ci/workflow-signal-policy.v1.json`'s `requiredStatusChecks` and from
-`scripts/ci/public-ci-local-repro.v1.json` — adding a non-required context to
-the latter fails `validatePublicCiLocalRepro` by design. Promotion to a
-required check is a separate decision that wants stability evidence from this
-lane first (a hosted Linux Chromium renders differently from the Windows
-baseline the register's `knownRules` were captured on, and only real runs can
-show whether that is a source of NEW-violation noise).
+**The lane is ADVISORY, not required.** Like `integration-tests`, it is
+deliberately absent from `scripts/ci/workflow-signal-policy.v1.json`'s
+`requiredStatusChecks` and from `scripts/ci/public-ci-local-repro.v1.json` —
+adding a non-required context to the latter fails
+`validatePublicCiLocalRepro` by design. Promotion to a required check is a
+separate decision that wants stability evidence from this lane first (a hosted
+Linux Chromium renders differently from the Windows machine the register's
+`knownRules` were captured on, and only real runs can show whether that is a
+source of NEW-violation noise). That is the path `jseval-suite` walked: added
+as an unrequired hosted job by §18.1 row 7, promoted to a required check only
+after it had run.
 
 `ui-proportion-gate` keeps its local-only status and its ADR-0026 citation for
 now: its baseline is pixel geometry, which is far more runner-dependent than

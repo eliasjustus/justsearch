@@ -694,7 +694,7 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    two consecutive runs. Advisory (absent from `requiredStatusChecks` and from
    `public-ci-local-repro.v1.json`) because a hosted Linux Chromium renders differently from
    the Windows machine the register's `knownRules` were captured on; promotion needs
-   stability evidence from this lane first, same path as follow-up 4. Recorded as the
+   stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the
    ADR-0026 amendment 2026-09-05. `ui-proportion-gate` deliberately stays local-only — its
    baseline is pixel geometry, far more runner-dependent than an axe rule id.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.

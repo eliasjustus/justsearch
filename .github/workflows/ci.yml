@@ -665,14 +665,14 @@ jobs:
     # dev stack. Measured locally at 350s wall for the register's 20 surfaces including a
     # cold Vite start, exit 0.
     #
-    # ADVISORY, following `integration-tests` and `jseval-suite`: deliberately absent from
+    # ADVISORY, following `integration-tests`: deliberately absent from
     # scripts/ci/workflow-signal-policy.v1.json's requiredStatusChecks and from
     # scripts/ci/public-ci-local-repro.v1.json (adding an entry to the latter while the job
     # is not a required check FAILS validatePublicCiLocalRepro by design). Promotion to a
     # required check is a separate decision that wants stability evidence from this lane
-    # first — the same path `jseval-suite` is on (§22.2 follow-up 4). Recorded as the
-    # 2026-09-05 amendment to ADR-0026, which is why the gate's own docstrings no longer
-    # say "not CI-wired".
+    # first — the path `jseval-suite` walked between §18.1 row 7 and §22.2 follow-up 4.
+    # Recorded as the 2026-09-05 amendment to ADR-0026, which is why the gate's own
+    # docstrings no longer say "not CI-wired".
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
