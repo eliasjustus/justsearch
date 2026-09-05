@@ -30,7 +30,7 @@ import { hooksDisabled } from '../lib/hook-base.mjs';
 
 const FABLE_PATTERN = /fable/i;
 
-/** Pure decision core (mirrors bash-guard's evaluateBashCommand shape). */
+/** Pure decision core: takes the tool input, returns a decision — no I/O. */
 export function evaluateAgentSpawn(toolInput) {
   const model = toolInput?.model;
   if (typeof model === 'string' && model.trim() !== '') {

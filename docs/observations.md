@@ -17,8 +17,9 @@ and goes one step further: no pile at all.
 
 **Where findings go now** — CLAUDE.md `rule:log-pre-existing-issues` ("Route Out-of-Scope Findings,
 Don't Log Them"): a wrong doc/comment with a one-line fix is fixed in place; a red or flaky command
-on `main` becomes a dated pin with an exit in `scripts/agent-analytics/expected-state.v1.json` plus
-a tracked fix; a platform lesson becomes a hook or an `agent-lessons.md` line; a product defect goes
+on `main` is fixed, or the flaky test is quarantined in its own runner with a tracked fix (tempdoc
+930 retired the expected-state pin mechanism, which had made red-on-main cheaper to live with than
+to fix); a platform lesson becomes a hook or an `agent-lessons.md` line; a product defect goes
 to the owning tempdoc's open-items section or its domain register.
 
 **The retired content** is in git history — the last full store is at commit `7b85a5a6`

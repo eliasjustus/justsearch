@@ -3,7 +3,7 @@
  * (the load-bearing proof) that this hint NEVER kills a process even when its own holder
  * lookup is genuinely reap-eligible on the §6.3 matrix.
  *
- * Three layers, mirroring `exec-substrate-hint.test.mjs`'s established pattern:
+ * Three layers:
  *
  *   1. `classifyBuildCommand` pure corpus — gradlew/npm-shaped commands fire, read-only npm
  *      subcommands and unrelated commands stay silent.

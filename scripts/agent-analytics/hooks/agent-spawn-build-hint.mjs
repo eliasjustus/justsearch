@@ -3,8 +3,8 @@
 /**
  * PreToolUse hook on Bash (tempdoc 861 §6.4 / §7.1 Phase 5) — the `before-a-build` occasion.
  *
- * "Before a build — advisory only; it never kills [A4], in the `exec-substrate-hint` idiom
- * (including its per-session marker de-dup). A registered spawn holding paths under the tree a
+ * "Before a build — advisory only; it never kills [A4], with per-session marker de-dup.
+ * A registered spawn holding paths under the tree a
  * `gradlew`/`npm` invocation is about to write turns a mystifying `EPERM`/`-4048` into a named
  * cause and a one-line remedy. This is the trigger the 2026-07-15 observation itself asked for,
  * and the only occasion covering the owner-alive case — at advisory tier by deliberate choice,
@@ -18,7 +18,7 @@
  * reap downgrades to a `report` carrying `ceiling: 'reap'`. This hook never calls `executeReap`
  * and holds no kill list to spend even if it wanted to.
  *
- * Per-session marker de-dup, mirroring `exec-substrate-hint.mjs`: once a given holder
+ * Per-session marker de-dup: once a given holder
  * (recordId) has been named for a session, it is not re-named on every subsequent
  * gradlew/npm invocation that session — the holder's identity doesn't change between build
  * attempts, so re-printing the same line would be the exact "residence, not delivery" waste
@@ -87,8 +87,8 @@ async function main() {
       callerSessionId: sessionId,
       // [861 W5 review F-5] Applied BEFORE the process-table read (inside `findBuildHolders`),
       // not after: an already-nudged holder is excluded from the candidate set before it can
-      // trigger a PowerShell spawn, mirroring `exec-substrate-hint.mjs`'s check-before-work
-      // order. When every path-matched record is already-nudged, `findBuildHolders` never reads
+      // trigger a PowerShell spawn — check before work, not after.
+      // When every path-matched record is already-nudged, `findBuildHolders` never reads
       // the process table at all.
       recordFilter: (e) => !e.recordId || !alreadyNudged(sessionId, e.recordId),
     });

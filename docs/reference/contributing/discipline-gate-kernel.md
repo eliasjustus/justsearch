@@ -230,7 +230,7 @@ into `check` or the public hosted `CI` fact lanes. Produce fresh evidence manual
 `node scripts/ci/report-pit-strength.mjs --run`, then run
 `node scripts/governance/run.mjs --gate test-efficacy --mode gate`. The cheap
 `scripts/ci/check-logic-seams.mjs` register-integrity validator runs in the normal gate job
-(every CI run + locally). The `seam-hint` PostToolUse hook is the authoring-time oracle.
+(every CI run + locally) — run it directly at authoring time after editing a registered seam.
 
 The kernel briefly carried a non-ratchet, coverage-style gate, `independent-review`
 (tempdoc 550 thesis V), plus a presentation-work sibling `ux-audit-closure`

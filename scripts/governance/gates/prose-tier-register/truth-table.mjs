@@ -3,7 +3,9 @@
  * Conforms to scripts/governance/lib/truth-table-runner.mjs.
  */
 
-const ALLOWED_TIERS = new Set(['prose-only', 'hook', 'hook-hint', 'archunit', 'lint', 'gate']);
+// `harness` (tempdoc 930 row 4): the Claude Code harness itself refuses the action via
+// `.claude/settings.json` `permissions.deny` — no project code runs, so there is no marker to resolve.
+const ALLOWED_TIERS = new Set(['prose-only', 'hook', 'hook-hint', 'harness', 'archunit', 'lint', 'gate']);
 
 /** @param {{rowId: string, tier: string}} input */
 export function verdictForRowTier(input) {
