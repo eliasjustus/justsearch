@@ -137,10 +137,6 @@ public final class FieldMapper {
     this.statusWitnessFields = deriveStatusWitnessFields(byId);
   }
 
-  Document toDocument(Map<String, Object> fields) {
-    return toDocument(fields, null);
-  }
-
   /**
    * Builds the Lucene document, reporting any dense-vector field dropped because its value could
    * not be normalized (tempdoc 931 §C.3).
