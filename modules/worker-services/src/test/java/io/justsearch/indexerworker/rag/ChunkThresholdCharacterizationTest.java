@@ -45,7 +45,7 @@ final class ChunkThresholdCharacterizationTest {
     assertEquals(
         0,
         ChunkDocumentWriter.regenerateChunks(
-            documentFieldOps, indexingCoordinator, "below", belowThreshold, null));
+            documentFieldOps, indexingCoordinator, "below", belowThreshold, null, false));
 
     String oneEffectiveChunk =
         "x".repeat(ChunkSplitter.DEFAULT_CHUNK_TOKENS)
@@ -57,7 +57,7 @@ final class ChunkThresholdCharacterizationTest {
     assertEquals(
         0,
         ChunkDocumentWriter.regenerateChunks(
-            documentFieldOps, indexingCoordinator, "one-chunk", oneEffectiveChunk, null));
+            documentFieldOps, indexingCoordinator, "one-chunk", oneEffectiveChunk, null, false));
 
     verify(indexingCoordinator, times(1)).deleteChunksForParentDocId("below");
     verify(indexingCoordinator, times(1)).deleteChunksForParentDocId("one-chunk");
