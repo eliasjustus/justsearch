@@ -10,6 +10,9 @@ without Docker or a full collector.
 
 Usage:  python scripts/agent-analytics/otlp-sink.py [--port 4318] [--out DIR]
 Endpoints (OTLP/HTTP, protobuf): POST /v1/traces, /v1/metrics, /v1/logs
+Streams written: traces / metrics / logs (one per endpoint, verbatim) plus
+`ledger.ndjson`, the body-free projection of logs that carries the numbers on
+a long retention while the raw bodies age out (see LEDGER_KEEP below).
 """
 import argparse, datetime, json, os, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -229,19 +232,152 @@ ROUTES = {
 }
 
 
+# --- ledger.ndjson: the body-free projection of logs (tempdoc 930 F2) -----
+# logs.ndjson is the only stream whose retention is genuinely infeasible:
+# `api_request` records embed the request/response bodies, so the stream
+# rotates every ~25 minutes of active work (~1 GB/active day) and RETENTION
+# can only keep a couple of archives -- which means the numbers analytics
+# actually reads (tokens, cost, durations, per-tool outcomes) age out of the
+# capture within an hour, together with the bodies nothing reads.
+#
+# The ledger separates those two lifetimes. It is a PROJECTION of the same
+# decoded log records (not a second capture authority): the route below still
+# writes logs.ndjson verbatim first, and every ledger row is derived from a
+# record already in that batch. Rows carry an allow-listed, body-free
+# attribute subset, so the stream runs ~1 MB/day and 90 archives of 20 MB is
+# years of history rather than hours.
+#
+# Written as its own base name (not appended into logs.ndjson) precisely
+# because the point is a SEPARATE retention policy -- one rotation policy per
+# base name is the sink's existing shape, so a second lifetime needs a second
+# base.
+LEDGER_FILE = "ledger.ndjson"
+
+# The route whose decoded records the ledger projects from.
+LEDGER_SOURCE_ROUTE = "/v1/logs"
+
+# Allow-list per event name (`event.name` attribute; body `claude_code.<name>`
+# is the fallback). ONLY these names are copied -- an attribute added upstream
+# is absent from the ledger until it is named here, so the stream cannot grow
+# a body by accident. Identity attributes are deliberately NOT listed:
+# `user.email`, `user.account_id`, `user.account_uuid`, `user.id` and
+# `organization.id` are all dropped, and `session.id` is the one identity the
+# ledger keeps because it is the field every reader joins on
+# (telemetry-io.mjs `loadEventsFromOtlp`/`loadCostsFromOtlp`).
+LEDGER_KEEP = {
+    "api_request": (
+        "model", "input_tokens", "output_tokens", "cache_read_tokens",
+        "cache_creation_tokens", "cost_usd", "duration_ms", "request_id",
+        "query_source", "agent.name", "agent_id",
+    ),
+    "subagent_completed": (
+        "agent_type", "total_tokens", "total_tool_uses", "duration_ms",
+        "model", "final_model", "model_swapped",
+    ),
+    "tool_result": ("tool_name", "success", "duration_ms"),
+    "tool_decision": ("tool_name", "decision", "duration_ms"),
+}
+
+# Second net UNDER the allow-list, not a replacement for it: if one of the
+# names above ever starts carrying content upstream, it is dropped here rather
+# than silently reintroducing bodies into the long-retention stream.
+LEDGER_CONTENT_TOKENS = ("prompt", "body", "content", "message", "input",
+                         "output", "text", "arguments", "result")
+
+LEDGER_MAX_VALUE_CHARS = 512
+
+
+def _ledger_event_name(rec):
+    """`event.name` for a decoded log record, falling back to the body string
+    (`claude_code.api_request` -> `api_request`) for a harness that sets only
+    the body. Returns None when neither is a usable string."""
+    attrs = rec.get("attributes") or {}
+    name = attrs.get("event.name")
+    if isinstance(name, str) and name:
+        return name
+    body = rec.get("body")
+    if isinstance(body, str) and body:
+        prefix = "claude_code."
+        return body[len(prefix):] if body.startswith(prefix) else body
+    return None
+
+
+def _ledger_value_ok(name, value):
+    """Whether an allow-listed attribute's VALUE may enter the ledger.
+
+    A number/bool is always allowed: it cannot carry a request body, and that
+    exemption is what lets `input_tokens` / `output_tokens` through a
+    content-name screen that contains the substrings `input` and `output`.
+    A string is screened on both the name (content vocabulary) and the length
+    cap; anything structured (list/map) is refused outright -- no allow-listed
+    attribute is structured, so one appearing means the shape changed."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return True
+    if not isinstance(value, str):
+        return False
+    if len(value) > LEDGER_MAX_VALUE_CHARS:
+        return False
+    low = name.lower()
+    return not any(tok in low for tok in LEDGER_CONTENT_TOKENS)
+
+
+def build_ledger_rows(records):
+    """Project decoded log records (decode_logs' output) to compact ledger
+    rows. A record whose event name is not in LEDGER_KEEP yields nothing --
+    silently, by design: the ledger is a named subset, not a filtered copy of
+    everything."""
+    out = []
+    for rec in records:
+        if rec.get("signal") != "log":
+            continue
+        event = _ledger_event_name(rec)
+        keep = LEDGER_KEEP.get(event)
+        if keep is None:
+            continue
+        attrs = rec.get("attributes") or {}
+        kept = {}
+        for name in keep:
+            if name not in attrs:
+                continue
+            value = attrs[name]
+            if _ledger_value_ok(name, value):
+                kept[name] = value
+        ts = attrs.get("event.timestamp")
+        out.append({
+            "signal": "ledger",
+            "event": event,
+            "time_unix_nano": rec.get("time_unix_nano", 0),
+            "ts": ts if isinstance(ts, str) and len(ts) <= LEDGER_MAX_VALUE_CHARS else None,
+            "session.id": attrs.get("session.id"),
+            "attributes": kept,
+        })
+    return out
+
+
 ROTATE_BYTES = 20 * 1024 * 1024  # rotate a stream file past 20 MB (mirrors event-writer)
 
 # Per-stream archive retention: int = max archived generations kept (oldest
-# pruned first), None = keep every archive forever. metrics is the sole
-# source the cost baseline is computed from (tempdoc 745) and must never be
-# pruned; traces is small enough (~4 GB/month) to also keep in full; logs
-# carries the bulk of the volume (raw API bodies, ~40 GB/month) so only a
-# short window survives locally.
-RETENTION = {"logs": 2, "traces": None, "metrics": None}
+# pruned first), None = keep every archive forever. Measured on this machine
+# (tempdoc 930 F2), superseding the earlier "traces ~4 GB/month" estimate:
+#   metrics  ~tens of MB total     -- None: the sole source the cost baseline
+#                                    is computed from (tempdoc 745), never pruned.
+#   logs     ~1 GB per ACTIVE day  -- 2: `api_request` rows embed request and
+#                                    response bodies, so the file rotates every
+#                                    ~25 min of active work. Long raw retention
+#                                    is infeasible; ledger carries the numbers.
+#   ledger   ~1 MB per day         -- 90: the body-free projection of logs
+#                                    (LEDGER_KEEP above). 90 rotations of 20 MB
+#                                    is years at this rate, so the numbers
+#                                    outlive the bodies by orders of magnitude.
+#   traces   17 GB unpruned here   -- 14: was None, which is what let it reach
+#                                    17 GB. 14 archives caps it at ~280 MB while
+#                                    still covering the recent window span
+#                                    analysis actually reads.
+RETENTION = {"logs": 2, "ledger": 90, "traces": 14, "metrics": None}
 
 # Guards rotate-then-prune so two concurrent POSTs to the same route (the
 # server is a ThreadingHTTPServer -- one thread per connection) can't both
-# archive the same oversized file. One lock shared across all three streams
+# archive the same oversized file. One lock shared across all four streams
 # (rather than a lock per stream) is deliberate: rotation is a rare,
 # sub-millisecond event relative to POST volume, so the cross-stream
 # serialization it costs is negligible, and it avoids a small per-stream
@@ -307,8 +443,8 @@ def _append_error(out_dir, message):
 
 def _prune_archives(out_dir, base):
     """Delete the oldest archives for `base` beyond its RETENTION cap. A cap
-    of None (traces, metrics) means never prune -- metrics in particular is
-    the cost baseline's sole source and must survive indefinitely. A failure
+    of None (metrics) means never prune -- metrics is the cost baseline's sole
+    source and must survive indefinitely. A failure
     to remove one archive is logged (not swallowed) and does not stop the
     rest of the prune."""
     cap = RETENTION.get(base)
@@ -329,7 +465,7 @@ def rotate_if_big(filepath):
     old `.prev`-only scheme this replaced, the current file is always renamed
     (never deleted) and every archive is timestamped and kept unless its
     stream's RETENTION says otherwise -- so a stream with RETENTION None
-    (metrics, traces) retains its full history instead of losing everything
+    (metrics) retains its full history instead of losing everything
     older than one rotation. (tempdoc 745: a rotation was directly observed
     destroying 21 MB under the old scheme, with metrics -- the cost
     baseline's sole source -- exposed to the same loss.)
@@ -365,6 +501,18 @@ def rotate_if_big(filepath):
             _prune_archives(out_dir, base)
         except OSError as e:
             _append_error(out_dir, f"rotate/prune failed for {base}: {e}")
+
+
+def write_stream(out_dir, fname, records, compact=False):
+    """Rotate-if-needed, then append `records` as NDJSON to `out_dir/fname`.
+    Every stream (including the ledger) goes through the one rotate/prune path
+    so a new base name inherits the existing retention machinery unchanged."""
+    outpath = os.path.join(out_dir, fname)
+    rotate_if_big(outpath)
+    separators = (",", ":") if compact else None
+    with open(outpath, "a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r, separators=separators) + "\n")
 
 
 def make_handler(out_dir):
@@ -411,11 +559,13 @@ def make_handler(out_dir):
                     records = decode(req)
                     count = len(records)
                     if records:
-                        outpath = os.path.join(out_dir, fname)
-                        rotate_if_big(outpath)
-                        with open(outpath, "a", encoding="utf-8") as f:
-                            for r in records:
-                                f.write(json.dumps(r) + "\n")
+                        write_stream(out_dir, fname, records)
+                        if self.path == LEDGER_SOURCE_ROUTE:
+                            # Projection, written AFTER the verbatim stream so a
+                            # ledger-side failure can never cost the raw capture.
+                            ledger_rows = build_ledger_rows(records)
+                            if ledger_rows:
+                                write_stream(out_dir, LEDGER_FILE, ledger_rows, compact=True)
                     elif self.path not in zero_record_announced:
                         zero_record_announced.add(self.path)
                         with open(os.path.join(out_dir, "errors.log"), "a", encoding="utf-8") as f:

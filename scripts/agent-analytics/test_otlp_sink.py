@@ -15,8 +15,12 @@ Covers the defects this fix closes:
      one rotation" was destroyed forever (a rotation was directly observed
      destroying 21 MB). Rotation now archives with a timestamped, never-
      overwritten filename and prunes per a per-stream RETENTION policy, with
-     metrics/traces (RETENTION=None) never pruned at all — see
-     `RotationTests` below.
+     metrics (RETENTION=None) never pruned at all — see `RotationTests` below.
+  4. logs.ndjson embeds request/response bodies, so it rotates every ~25 min
+     of active work and can only retain a couple of archives — which aged the
+     NUMBERS out of the capture along with the bodies. `ledger.ndjson` is the
+     body-free projection kept for 90 archives (tempdoc 930 F2) — see
+     `LedgerTests` below.
 
 Loaded via importlib (the hyphenated filename `otlp-sink.py` is not a valid
 Python module name), mirroring `scripts/sandbox/test_sandbox_launch_evidence_archive.py`'s
@@ -29,6 +33,7 @@ from __future__ import annotations
 import email.message
 import importlib.util
 import io
+import json
 import os
 import socket
 import tempfile
@@ -345,6 +350,53 @@ class LiveServerTests(unittest.TestCase):
             len(route_lines), 1, f"expected exactly one rate-limited announce, got {route_lines}"
         )
 
+    def test_logs_export_also_writes_the_ledger_projection(self):
+        # A projection nothing writes is dead (tempdoc 745), so the ledger is
+        # asserted through the real POST path, not build_ledger_rows alone.
+        req = logs_service_pb2.ExportLogsServiceRequest()
+        lr = req.resource_logs.add().scope_logs.add().log_records.add()
+        lr.time_unix_nano = 1788576679696000000
+        lr.body.string_value = "claude_code.api_request"
+        for key, value in (("event.name", "api_request"), ("session.id", "sess-e2e"),
+                           ("user.email", "someone@example.com"), ("model", "claude-sonnet-5")):
+            kv = lr.attributes.add()
+            kv.key = key
+            kv.value.string_value = value
+        kv = lr.attributes.add()
+        kv.key = "input_tokens"
+        kv.value.int_value = 11
+        body = req.SerializeToString()
+
+        response = self._send_raw(
+            "/v1/logs",
+            {"Content-Type": "application/x-protobuf", "Content-Length": str(len(body))},
+            body,
+        )
+        self.assertIn(b"200", response.split(b"\r\n", 1)[0])
+        self.assertTrue((Path(self.out_dir) / "logs.ndjson").exists(), "raw stream still written")
+        ledger_path = Path(self.out_dir) / "ledger.ndjson"
+        self.assertTrue(ledger_path.exists(), "the same POST must write the ledger stream")
+        lines = [l for l in ledger_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, lines)
+        row = json.loads(lines[0])
+        self.assertEqual(row["event"], "api_request")
+        self.assertEqual(row["session.id"], "sess-e2e")
+        self.assertEqual(row["attributes"], {"model": "claude-sonnet-5", "input_tokens": 11})
+        self.assertNotIn("someone@example.com", lines[0])
+        self.assertNotIn(", ", lines[0], "the ledger row is written with compact separators")
+
+    def test_metrics_export_writes_no_ledger(self):
+        req = _metric_export_request("claude_code.token.usage", {"type": "output"}, 5)
+        body = req.SerializeToString()
+        self._send_raw(
+            "/v1/metrics",
+            {"Content-Type": "application/x-protobuf", "Content-Length": str(len(body))},
+            body,
+        )
+        self.assertTrue((Path(self.out_dir) / "metrics.ndjson").exists())
+        self.assertFalse((Path(self.out_dir) / "ledger.ndjson").exists(),
+                         "only the log route projects to the ledger")
+
 
 class RotationTests(unittest.TestCase):
     """Direct unit tests of the module-level rotate/prune/archive functions —
@@ -420,13 +472,27 @@ class RotationTests(unittest.TestCase):
         for i in range(4):
             self.assertIn(f"m{i}-padded", contents)
 
-    def test_traces_retention_none_is_never_pruned(self):
-        self.assertIsNone(otlp_sink.RETENTION.get("traces"))
+    def test_traces_retention_is_capped_not_unbounded(self):
+        # traces was RETENTION None until tempdoc 930 F2, which is what let it
+        # reach 17 GB on this machine. Pins the cap so a revert to None (the
+        # unbounded growth this closes) fails here rather than on disk months
+        # later.
+        self.assertEqual(otlp_sink.RETENTION.get("traces"), 14)
+        otlp_sink.RETENTION["traces"] = 2
         for i in range(3):
             self._write("traces", f"t{i}-padded-out-past-ten-bytes\n")
             self._rotate("traces")
         archives = otlp_sink._list_archives(self.out_dir, "traces")
-        self.assertEqual(len(archives), 3, f"expected all 3 archives kept, got {archives}")
+        self.assertEqual(len(archives), 2, f"expected the oldest archive pruned, got {archives}")
+        contents = "".join(Path(p).read_text(encoding="utf-8") for p in archives)
+        self.assertNotIn("t0-padded", contents, "oldest traces archive should have been pruned")
+
+    def test_ledger_retention_is_long(self):
+        # The ledger's whole point: the numbers outlive the bodies. logs keeps
+        # 2 archives (~1 GB/active day of embedded request bodies), the
+        # body-free projection keeps 90 (~1 MB/day).
+        self.assertEqual(otlp_sink.RETENTION.get("ledger"), 90)
+        self.assertLess(otlp_sink.RETENTION["logs"], otlp_sink.RETENTION["ledger"])
 
     def test_archive_naming_collision_safe_within_same_second(self):
         fixed_ts = "2026-07-16T133648Z"
@@ -487,6 +553,161 @@ class RotationTests(unittest.TestCase):
         archives = otlp_sink._list_archives(self.out_dir, "logs")
         self.assertEqual(len(archives), 1)
         self.assertIn("content-past-ten-bytes\n", Path(archives[0]).read_text(encoding="utf-8"))
+
+
+def _log_record(event_name, attributes, time_unix_nano=1788576679696000000):
+    """A decode_logs-shaped record, with the identity attributes every real
+    Claude Code log record carries (so the drop-list is exercised, not assumed).
+    Attribute NAMES are verbatim from a captured record; every value is
+    synthetic — no live-corpus identity belongs in a fixture."""
+    attrs = {
+        "user.id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "session.id": "11111111-2222-4333-8444-555555555555",
+        "organization.id": "22222222-3333-4444-8555-666666666666",
+        "user.email": "someone@example.com",
+        "user.account_uuid": "33333333-4444-4555-8666-777777777777",
+        "user.account_id": "user_000000000000000000000000",
+        "event.name": event_name,
+        "event.timestamp": "2026-09-05T02:51:19.696Z",
+        "event.sequence": 8168,
+        "prompt.id": "44444444-5555-4666-8777-888888888888",
+    }
+    attrs.update(attributes)
+    return {
+        "signal": "log",
+        "time_unix_nano": time_unix_nano,
+        "severity": "",
+        "body": f"claude_code.{event_name}",
+        "attributes": attrs,
+        "resource": {"service.name": "claude-code"},
+    }
+
+
+class LedgerTests(unittest.TestCase):
+    """`build_ledger_rows` — the body-free projection of the log stream
+    (tempdoc 930 F2). Attribute names in these fixtures are copied verbatim
+    from a real captured record."""
+
+    def test_api_request_keeps_exactly_the_numeric_subset(self):
+        rec = _log_record("api_request", {
+            "model": "claude-sonnet-5",
+            "input_tokens": 2,
+            "output_tokens": 579,
+            "cache_read_tokens": 109312,
+            "cache_creation_tokens": 885,
+            "cost_usd": 0.0298689,
+            "cost_usd_micros": 29869,
+            "duration_ms": 6460,
+            "request_id": "req_000000000000000000000000",
+            "client_request_id": "55555555-6666-4777-8888-999999999999",
+            "speed": "normal",
+            "query_source": "agent:builtin:general-purpose",
+            "effort": "high",
+            "agent.name": "general-purpose",
+            "skill.name": "derisk",
+        })
+        rows = otlp_sink.build_ledger_rows([rec])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["event"], "api_request")
+        self.assertEqual(row["session.id"], "11111111-2222-4333-8444-555555555555")
+        self.assertEqual(row["time_unix_nano"], 1788576679696000000)
+        self.assertEqual(row["ts"], "2026-09-05T02:51:19.696Z")
+        self.assertEqual(sorted(row["attributes"]), sorted([
+            "model", "input_tokens", "output_tokens", "cache_read_tokens",
+            "cache_creation_tokens", "cost_usd", "duration_ms", "request_id",
+            "query_source", "agent.name",
+        ]))
+        # The content-name screen contains the substrings "input"/"output"; the
+        # token counts must survive it (they are numbers, not bodies).
+        self.assertEqual(row["attributes"]["input_tokens"], 2)
+        self.assertEqual(row["attributes"]["output_tokens"], 579)
+        # Not allow-listed -> absent, even though they are harmless.
+        for absent in ("cost_usd_micros", "speed", "effort", "skill.name", "client_request_id"):
+            self.assertNotIn(absent, row["attributes"])
+
+    def test_identity_attributes_are_dropped_except_session_id(self):
+        rec = _log_record("api_request", {"model": "claude-sonnet-5", "input_tokens": 1})
+        row = otlp_sink.build_ledger_rows([rec])[0]
+        serialized = json.dumps(row)
+        for leaked in ("someone@example.com", "user_000000000000000000000000",
+                       "33333333-4444-4555-8666-777777777777",
+                       "22222222-3333-4444-8555-666666666666"):
+            self.assertNotIn(leaked, serialized, f"identity value {leaked} leaked into the ledger")
+        self.assertIn("session.id", row)
+
+    def test_tool_result_drops_tool_input_and_keeps_outcome(self):
+        rec = _log_record("tool_result", {
+            "tool_name": "Grep",
+            "tool_use_id": "toolu_000000000000000000000000",
+            "success": "true",
+            "duration_ms": "380",
+            "tool_input": '{"pattern":"sensitive-looking-content"}',
+            "tool_input_size_bytes": "234",
+            "tool_result_size_bytes": "11379",
+            "decision_source": "config",
+            "decision_type": "accept",
+        })
+        row = otlp_sink.build_ledger_rows([rec])[0]
+        self.assertEqual(row["attributes"],
+                         {"tool_name": "Grep", "success": "true", "duration_ms": "380"})
+        self.assertNotIn("sensitive-looking-content", json.dumps(row))
+
+    def test_tool_decision_and_subagent_completed_subsets(self):
+        decision = _log_record("tool_decision", {
+            "decision": "accept", "source": "config", "tool_name": "Grep",
+            "tool_use_id": "toolu_015", "tool_source": "builtin",
+        })
+        subagent = _log_record("subagent_completed", {
+            "agent_type": "general-purpose", "agent.source": "built-in",
+            "is_built_in": True, "is_async": True, "total_tokens": 120406,
+            "total_tool_uses": 72, "duration_ms": 406776,
+            "model": "claude-sonnet-5", "final_model": "claude-sonnet-5",
+            "model_swapped": False,
+        })
+        rows = otlp_sink.build_ledger_rows([decision, subagent])
+        self.assertEqual(rows[0]["attributes"],
+                         {"tool_name": "Grep", "decision": "accept"})
+        self.assertEqual(rows[1]["attributes"], {
+            "agent_type": "general-purpose", "total_tokens": 120406,
+            "total_tool_uses": 72, "duration_ms": 406776,
+            "model": "claude-sonnet-5", "final_model": "claude-sonnet-5",
+            "model_swapped": False,
+        })
+
+    def test_unlisted_event_and_non_log_signals_yield_no_rows(self):
+        rows = otlp_sink.build_ledger_rows([
+            _log_record("user_prompt", {"prompt_length": 42}),
+            {"signal": "trace", "name": "claude_code.tool_decision", "attributes": {}},
+        ])
+        self.assertEqual(rows, [])
+
+    def test_body_fallback_when_event_name_attribute_is_absent(self):
+        rec = _log_record("api_request", {"model": "claude-opus-5", "input_tokens": 3})
+        del rec["attributes"]["event.name"]
+        rows = otlp_sink.build_ledger_rows([rec])
+        self.assertEqual(len(rows), 1, "body 'claude_code.api_request' must still resolve")
+        self.assertEqual(rows[0]["event"], "api_request")
+
+    def test_oversized_and_structured_values_are_refused(self):
+        rec = _log_record("api_request", {
+            "model": "m" * (otlp_sink.LEDGER_MAX_VALUE_CHARS + 1),
+            "request_id": ["structured", "not", "scalar"],
+            "input_tokens": 7,
+        })
+        row = otlp_sink.build_ledger_rows([rec])[0]
+        self.assertNotIn("model", row["attributes"], "value past the 512-char cap must be dropped")
+        self.assertNotIn("request_id", row["attributes"], "a structured value must be dropped")
+        self.assertEqual(row["attributes"]["input_tokens"], 7)
+
+    def test_content_named_string_attribute_is_refused_even_if_allow_listed(self):
+        # Second net under the allow-list: if `query_source` (allow-listed)
+        # ever arrived carrying content it would still be kept, so the screen
+        # is asserted directly on the predicate for a content-named string.
+        self.assertFalse(otlp_sink._ledger_value_ok("output_tokens", "a body string"))
+        self.assertTrue(otlp_sink._ledger_value_ok("output_tokens", 579))
+        self.assertFalse(otlp_sink._ledger_value_ok("tool_input", "x"))
+        self.assertTrue(otlp_sink._ledger_value_ok("tool_name", "Grep"))
 
 
 if __name__ == "__main__":
