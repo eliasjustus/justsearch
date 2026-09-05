@@ -76,6 +76,16 @@
       "commands": ["gitleaks dir . --config .gitleaks.toml --redact"]
     },
     {
+      "check": "jseval Python suite",
+      "mode": "local-subset",
+      "commands": [
+        "node scripts/ci/check-jseval-lock.mjs",
+        "python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt",
+        "python -m pip install \"pytest>=7.0\" \"pyyaml>=6.0\" \"hypothesis>=6.0\" \"jsonschema>=4.0\"",
+        "python -m pytest scripts/jseval/tests -q -p no:cacheprovider"
+      ]
+    },
+    {
       "check": "cla-assistant",
       "mode": "hosted-only",
       "reason": "Depends on GitHub contributor identity, signatures, and organization-side CLA state."
