@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from jseval.run import (
     METRIC_CONTRACT,
+    _build_index_state_at_query,
     _build_summary,
     _compute_ce_coverage,
     _compute_chunk_completeness,
@@ -929,6 +930,98 @@ class TestBuildSummaryEmbedsCeCoverage:
         assert summary["per_mode"]["hybrid"]["comparability_reasons"] == []
         assert summary["per_mode"]["hybrid"]["ann_proof_status"] == "PASS"
         assert summary["per_mode"]["hybrid"]["error_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 931 §E item 10: merge-state snapshot at query-phase start
+# ---------------------------------------------------------------------------
+
+class TestBuildIndexStateAtQuery:
+    def test_full_snapshot_computes_deleted_docs(self):
+        block = _build_index_state_at_query(
+            {
+                "indexMaxDoc": 2851,
+                "indexNumDocs": 222,
+                "chunkSpladeCoveragePercent": 100.0,
+                "spladeCoveragePercent": 99.95,
+                "chunkVectorCoveragePercent": 100.0,
+            },
+            "2026-09-05T00:00:00+00:00",
+        )
+        assert block == {
+            "max_doc": 2851,
+            "num_docs": 222,
+            "deleted_docs": 2629,
+            "chunk_splade_coverage_percent": 100.0,
+            "splade_coverage_percent": 99.95,
+            "chunk_vector_coverage_percent": 100.0,
+            "readiness_passed_at": "2026-09-05T00:00:00+00:00",
+        }
+
+    def test_missing_optional_fields_degrade_to_null(self):
+        # An empty snapshot (skip_readiness, or an older backend that publishes none of
+        # these fields) must not raise -- every field degrades to None, including the
+        # derived deleted_docs (which cannot be computed without both operands).
+        block = _build_index_state_at_query({}, "2026-09-05T00:00:00+00:00")
+        assert block == {
+            "max_doc": None,
+            "num_docs": None,
+            "deleted_docs": None,
+            "chunk_splade_coverage_percent": None,
+            "splade_coverage_percent": None,
+            "chunk_vector_coverage_percent": None,
+            "readiness_passed_at": "2026-09-05T00:00:00+00:00",
+        }
+
+    def test_partial_snapshot_only_max_doc_still_nulls_deleted_docs(self):
+        # deleted_docs requires BOTH operands -- a snapshot with only one of the two
+        # doc-count fields must not silently compute a wrong (e.g. max_doc - 0) delta.
+        block = _build_index_state_at_query(
+            {"indexMaxDoc": 500}, "2026-09-05T00:00:00+00:00",
+        )
+        assert block["max_doc"] == 500
+        assert block["num_docs"] is None
+        assert block["deleted_docs"] is None
+
+
+class TestBuildSummaryEmbedsIndexStateAtQuery:
+    def _mode_results(self):
+        return {
+            "hybrid": {
+                "aggregate_metrics": {}, "ann_proof": AnnProofResult(status="PASS"),
+                "comparability": ComparabilityResult(comparable=True), "run_evidence": {},
+                "pipeline_tracking": {"observed": ["dense", "cross_encoder"]},
+                "latency_stats": {}, "score_stats": {},
+            },
+        }
+
+    def test_present_when_passed(self, tmp_path):
+        from types import SimpleNamespace
+
+        meta = SimpleNamespace(source="golden", name="golden/demo", doc_count=1, query_count=0)
+        block = _build_index_state_at_query(
+            {"indexMaxDoc": 100, "indexNumDocs": 90}, "2026-09-05T00:00:00+00:00",
+        )
+        summary = _build_summary(
+            "golden/demo", ["hybrid"], self._mode_results(), meta, {},
+            base_dir=tmp_path, status_snapshot=_status_snapshot(48, 100.0),
+            index_state_at_query=block,
+        )
+        assert summary["index_state_at_query"] == block
+
+    def test_absent_param_still_emits_null_block(self, tmp_path):
+        # Additive-key contract (like `cadence`): the key is always present, even when the
+        # caller doesn't pass one (existing call sites that predate this feature).
+        from types import SimpleNamespace
+
+        meta = SimpleNamespace(source="golden", name="golden/demo", doc_count=1, query_count=0)
+        summary = _build_summary(
+            "golden/demo", ["hybrid"], self._mode_results(), meta, {},
+            base_dir=tmp_path, status_snapshot=_status_snapshot(48, 100.0),
+        )
+        assert "index_state_at_query" in summary
+        assert summary["index_state_at_query"]["max_doc"] is None
+        assert summary["index_state_at_query"]["readiness_passed_at"] is None
 
 
 # --- tempdoc 885: search_load block wiring ----------------------------------

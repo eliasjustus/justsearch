@@ -349,6 +349,12 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
     if bucket_by == "decision_kind":
         bucket_results = _compare_by_decision_kind(a_data, b_data, qrels)
 
+    # Tempdoc 931 §E item 10: flag a paired-arm merge-state divergence (tombstone counts)
+    # that would confound the metric comparison above with no code cause.
+    index_state_diff = compare_runs.compare_index_state(
+        a_data["summary"], b_data["summary"],
+    )
+
     if ctx.obj.get("json"):
         output: dict[str, object] = {"metrics": results}
         if pipeline_diff:
@@ -357,7 +363,9 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
             output["stage_decomposition"] = stage_diff
         if bucket_results:
             output["by_decision_kind"] = bucket_results
-        if not pipeline_diff and not stage_diff and not bucket_results:
+        if index_state_diff:
+            output["index_state"] = index_state_diff
+        if not pipeline_diff and not stage_diff and not bucket_results and not index_state_diff:
             output = results  # preserve original format when no extra data
         click.echo(json.dumps(output, indent=2, default=str))
     else:
@@ -368,6 +376,8 @@ def cmd_compare(ctx, run_a, run_b, mode, verbose, fail_on_regression, bucket_by)
             _print_stage_decomposition_comparison(stage_diff)
         if bucket_results:
             _print_decision_kind_comparison(bucket_results)
+        if index_state_diff:
+            _print_index_state_comparison(index_state_diff)
 
     if fail_on_regression:
         for metric, r in results.items():
@@ -582,6 +592,18 @@ def _print_pipeline_comparison(diff: dict) -> None:
             ratio_str = f" ({ratio:.2f}x)" if ratio else ""
             flag = " REGRESSED" if comp.get("regressed") else ""
             click.echo(f"  {key}: {a_val} -> {b_val} (delta={delta:+.1f}){ratio_str}{flag}")
+    click.echo()
+
+
+def _print_index_state_comparison(diff: dict) -> None:
+    """Tempdoc 931 §E item 10: paired-arm merge-state (tombstone) divergence WARN."""
+    click.echo("Index merge state (deleted docs, run A vs run B):")
+    click.echo(
+        f"  {diff['deleted_docs_a']} -> {diff['deleted_docs_b']} "
+        f"(delta={diff['delta']:+}, threshold=+/-{diff['threshold']})"
+    )
+    if diff.get("merge_state_diverged"):
+        click.echo(click.style(f"  WARNING: {diff['warning']}", fg="yellow"))
     click.echo()
 
 
