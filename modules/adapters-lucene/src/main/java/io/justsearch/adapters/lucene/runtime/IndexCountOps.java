@@ -88,6 +88,36 @@ public final class IndexCountOps {
   }
 
   /**
+   * Returns the index's {@code maxDoc} — live documents PLUS deleted-but-unmerged tombstones.
+   *
+   * <p>The gap against {@link #docCount()} is the merge debt a settle purges (tempdoc 931 §E item
+   * 10): tombstones still contribute to BM25 collection statistics, so two indexes of the same
+   * corpus with different tombstone counts score the same query differently.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public long maxDoc() {
+    try {
+      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
+   * Returns the number of leaf segments the current searcher reads.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int segmentCount() {
+    try {
+      return bridge.withSearcher(searcher -> searcher.getIndexReader().leaves().size());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
    * {@link #docCount()} without the swallow: propagates the reader {@link IOException} instead of
    * reporting 0.
    *
@@ -493,23 +523,6 @@ public final class IndexCountOps {
     } catch (IOException e) {
       log.debug("Failed to query chunk SPLADE counts: {}", e.getMessage());
       return new SpladeFeatureCounts(0, 0, 0, 0);
-    }
-  }
-
-  /**
-   * The reader's {@code maxDoc} — live documents PLUS deleted-but-unmerged ones (tempdoc 931 §E
-   * item 8). Paired with {@link #docCount()} ({@code numDocs}) it makes merge state observable: the
-   * difference is the deleted-document backlog a merge has not reclaimed yet, which an evaluator
-   * needs to tell "the corpus shrank" apart from "the index has not merged yet".
-   *
-   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
-   */
-  public long maxDoc() {
-    try {
-      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
-    } catch (IOException e) {
-      log.debug("Failed to read maxDoc: {}", e.getMessage());
-      return 0;
     }
   }
 

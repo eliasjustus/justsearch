@@ -281,6 +281,53 @@ public interface IndexingService {
     throw new UnsupportedOperationException("Indexing service unavailable");
   }
 
+  /**
+   * Outcome of a settle (purge deleted-but-unmerged documents from the active index).
+   *
+   * <p>Tempdoc 931 §E item 10. The before/after counts are the point of the call, not decoration:
+   * a paired evaluation records them to show that both arms queried an index with the same merge
+   * state, since tombstones stay in the BM25 collection statistics.
+   *
+   * @param accepted whether the worker performed the settle (false = refused)
+   * @param maxDocBefore maxDoc (live + tombstones) before the settle
+   * @param numDocsBefore numDocs (live only) before the settle
+   * @param maxDocAfter maxDoc after the settle
+   * @param numDocsAfter numDocs after the settle
+   * @param segmentsAfter leaf-segment count after the settle
+   * @param elapsedMs wall time the worker spent merging and committing
+   * @param error worker error message when {@code accepted=false}; empty string on success
+   */
+  record SettleIndexOutcome(
+      boolean accepted,
+      long maxDocBefore,
+      long numDocsBefore,
+      long maxDocAfter,
+      long numDocsAfter,
+      int segmentsAfter,
+      long elapsedMs,
+      String error) {
+    public SettleIndexOutcome {
+      java.util.Objects.requireNonNull(error, "error");
+    }
+
+    /** Sentinel for a refusal, carrying no counts. */
+    public static SettleIndexOutcome refused(String error) {
+      return new SettleIndexOutcome(false, 0L, 0L, 0L, 0L, 0, 0L, error);
+    }
+  }
+
+  /**
+   * Purges deleted-but-unmerged documents from the ACTIVE index and returns the before/after
+   * document counts.
+   *
+   * @param expungeDeletesOnly when true (the default caller shape) only expunge deletes; when
+   *     false, also force-merge down to {@code maxSegments} segments
+   * @param maxSegments target segment count for the force-merge branch (0 = worker default of 1)
+   */
+  default SettleIndexOutcome settleIndex(boolean expungeDeletesOnly, int maxSegments) {
+    throw new UnsupportedOperationException("Indexing service unavailable");
+  }
+
   // =========================================================================
   // Failed job inspection
   // =========================================================================
@@ -538,6 +585,11 @@ public interface IndexingService {
 
       @Override
       public IndexGcOutcome runIndexGc(int keepLatest, boolean pruneMarkedOnly) {
+        throw new UnsupportedOperationException("Indexing service unavailable");
+      }
+
+      @Override
+      public SettleIndexOutcome settleIndex(boolean expungeDeletesOnly, int maxSegments) {
         throw new UnsupportedOperationException("Indexing service unavailable");
       }
 

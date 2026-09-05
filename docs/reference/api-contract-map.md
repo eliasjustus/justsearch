@@ -730,6 +730,34 @@ Coverage invariant: `HealthEventEmitCoverageTest` (in `modules/app-services` tes
 **Response fields:**
 - `suggestions`: `[{label: string, path: string}]` â€” folders that exist and are not already watched
 
+### Index Settle API
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java` (`handleSettleIndex`)
+
+`POST /api/indexing/settle` purges deleted-but-unmerged documents from the ACTIVE index (Worker RPC
+`IngestService.SettleIndex`). Tempdoc 931 section E item 10: a tombstone still counts in the BM25
+collection statistics, so two indexes of the same corpus carrying different tombstone counts answer
+the same query differently. A paired evaluation calls this between the indexing phase and the query
+phase so both arms compare with equal merge state.
+
+**Request body (all optional):**
+- `expungeDeletesOnly`: boolean, default `true` -- purge tombstones only. When `false` the Worker
+  ALSO force-merges the segment layout.
+- `maxSegments`: integer, default `0` -- target segment count for the force-merge branch
+  (`0` means the Worker default of 1). Only read when `expungeDeletesOnly` is `false`.
+
+**Response (202):** `{status: "settle completed", expungeDeletesOnly, maxDocBefore, numDocsBefore,
+maxDocAfter, numDocsAfter, segmentsAfter, elapsedMs}`.
+
+**Response (409):** `{status: "settle rejected by worker", error}` -- the Worker refuses when the
+index runtime is unavailable, a blue/green migration is in flight (`MIGRATING`/`SWITCHING`/`UNKNOWN`),
+or an upgrade quiescence preparation owns the Worker barrier.
+
+**Substrate equivalent:** the `core.settle-index` Operation (`SettleIndexHandler`), same arguments and
+the same structured output.
+
+**Contract test:** `IndexingControllerSettleTest` (202 counts, defaults, force-merge args, 409 refusal)
+
 ### OpenAI-compatible API (`/v1/*`)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/OpenAiCompatController.java`

@@ -47,6 +47,8 @@ import io.justsearch.ipc.ClearFailedJobsRequest;
 import io.justsearch.ipc.ClearFailedJobsResponse;
 import io.justsearch.ipc.ResetIndexRequest;
 import io.justsearch.ipc.ResetIndexResponse;
+import io.justsearch.ipc.SettleIndexRequest;
+import io.justsearch.ipc.SettleIndexResponse;
 import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.UpdatePathsRequest;
@@ -132,6 +134,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final IngestSwitchBufferOps switchBufferOps;
   private final MigrationControlOps migrationOps;
   private final WorkerUpgradeQuiescence upgradeQuiescence;
+  private final IndexSettleOps settleOps;
   private RootWatcherRegistry rootWatcherRegistry = new RootWatcherRegistry();
 
   // Tempdoc 419 / T5.3 (ADR-0028): scoped reverse-lookup store. Defaults to NOOP so any
@@ -180,6 +183,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
     this.upgradeQuiescence =
         new WorkerUpgradeQuiescence(jobQueue, indexingLoop, this.indexGenerationManager);
+    this.settleOps =
+        new IndexSettleOps(ingestLifecycle, this.indexGenerationManager, this.upgradeQuiescence);
     io.justsearch.adapters.lucene.runtime.IndexCountOps ingestCountOps =
         ingestLifecycle != null ? ingestLifecycle.indexCountOps() : null;
     io.justsearch.adapters.lucene.runtime.IndexCountOps searchCountOps =
@@ -489,6 +494,14 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void runIndexGc(IndexGcRequest request, StreamObserver<IndexGcResponse> responseObserver) {
     try (var ignored = openRequestMdc()) {
       migrationOps.runIndexGc(request, responseObserver);
+    }
+  }
+
+  @Override
+  public void settleIndex(
+      SettleIndexRequest request, StreamObserver<SettleIndexResponse> responseObserver) {
+    try (var ignored = openRequestMdc()) {
+      settleOps.settleIndex(request, responseObserver);
     }
   }
 

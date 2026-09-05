@@ -881,6 +881,43 @@ public final class WritePathOps {
     }
   }
 
+  /**
+   * Tempdoc 931 §E item 10 — purges deleted-but-unmerged documents so the index's {@code maxDoc}
+   * converges on its {@code numDocs}.
+   *
+   * <p>Tombstones are not inert: they stay in the collection statistics BM25 scores against, so
+   * two indexes built from the same corpus but carrying different tombstone counts answer the same
+   * query with different hit counts. A paired evaluation that wants to attribute a delta to a code
+   * change has to equalize merge state first.
+   *
+   * <p>Does NOT commit — the caller commits through {@code CommitOps.commitAndTrack(SETTLE)} so
+   * the commit stays attributed (see {@code CommitFunnelArchTest}).
+   *
+   * @param expungeDeletesOnly when true, only {@code forceMergeDeletes}; when false, also
+   *     {@code forceMerge} down to {@code maxSegments}
+   * @param maxSegments target segment count for the force-merge branch (values below 1 clamp to 1)
+   */
+  void settle(boolean expungeDeletesOnly, int maxSegments) {
+    guardWritable();
+    LifecycleSnapshot snap = session.snapshot;
+    IndexWriter w = snap != null ? snap.writer() : null;
+    if (w == null) {
+      throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
+    }
+    try {
+      w.forceMergeDeletes(true);
+      if (!expungeDeletesOnly) {
+        w.forceMerge(Math.max(1, maxSegments), true);
+      }
+      log.info(
+          "settle: expungeDeletesOnly={} maxSegments={}",
+          expungeDeletesOnly,
+          expungeDeletesOnly ? 0 : Math.max(1, maxSegments));
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(classifyIOException(e), "Failed to settle index", e);
+    }
+  }
+
   /** Deletes all documents from the index. Used by profiling reset. */
   void deleteAll() {
     try {
