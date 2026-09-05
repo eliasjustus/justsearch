@@ -3,18 +3,19 @@
 /**
  * Document-structure closure for the Search v3 window (tempdoc 857 PR-A).
  *
- * `scripts/ci/check-a11y-closure.mjs` enforces rule (5) — one page `<h1>` and one `main` landmark,
- * both owned by the Shell — but it CANNOT see this directory: its walk reads `VIEWS_DIR` with a
- * non-recursive `readdirSync` (`:134`) and loops only those files (`:140`), so every file under
- * `views/search-v3/**` (and `views/security/**`) is unscanned. The window about to become THE window
- * therefore has no heading-structure guard at all.
+ * The Shell owns the page's one `<h1>` and one `main` landmark (a surface view must not add a
+ * second of either). At the time this test was written, `scripts/ci/check-a11y-closure.mjs`
+ * enforced that rule elsewhere but could not see this directory (its walk was non-recursive), so
+ * this test covered the gap directly. Tempdoc 930 chunk H later retired that static gate
+ * repo-wide (every traced a11y catch came from measured axe or by hand, never from it), so this
+ * is now the sole standing regression test for the invariant in this window, not a stand-in for
+ * a gate's blind spot.
  *
- * This is the scoped half of that fix. Making the gate's walk recursive is the other half, and it is
- * deliberately NOT bundled here: it turns the build red today on a real, pre-existing defect —
- * `Sv3Composer.ts:1403` emits a second page `<h1>` for the hero — and deciding between demoting that
- * heading and suppressing the topbar's in that state is a hero design question this PR has no mandate
- * to answer. The finding is logged as an observation and pinned below, so it can be neither lost nor
- * quietly joined by a second one.
+ * A real, pre-existing defect is pinned below rather than fixed here: `Sv3Composer.ts:1403` emits
+ * a second page `<h1>` for the hero, and deciding between demoting that heading and suppressing
+ * the topbar's in that state is a hero design question this test has no mandate to answer. The
+ * finding is logged as an observation and pinned below, so it can be neither lost nor quietly
+ * joined by a second one.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -28,13 +29,13 @@ const sources = (): { name: string; text: string }[] =>
     .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
     .map((name) => ({ name, text: readFileSync(join(HERE, name), 'utf8') }));
 
-// Deliberately the GATE's own patterns (`scripts/ci/check-a11y-closure.mjs:142, 148`), not
-// lookalikes: when the recursive-walk fix lands, this stand-in and the gate must be able to disagree
-// only about SCOPE, never about what counts as a violation.
+// The same patterns the retired check-a11y-closure.mjs gate used (930 chunk H), kept identical so
+// this test's notion of "a heading" / "a main landmark" does not quietly drift from the one that
+// was gate-enforced elsewhere.
 const H1 = /<\/h1>/g;
 const MAIN_LANDMARK = /role=(['"`])main\1|<main[\s>]/;
 
-describe('Search v3 document structure (857 PR-A — the scoped stand-in for check-a11y-closure)', () => {
+describe('Search v3 document structure (857 PR-A)', () => {
   it('the transcript region declares no page heading and no main landmark of its own', () => {
     // Sv3Main is the file this PR restructured: it now stamps navigation landmarks on the question,
     // the answer, every run step and every held decision. Landmarks are `data-item-id` anchors, NOT

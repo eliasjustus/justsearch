@@ -9,8 +9,9 @@
  *
  * Migration intent (C3): used for JS-context token references (dynamic style
  * strings). Inside `css\`\`` templates, design tokens stay LITERAL CSS — Lit's
- * css tag rejects string interpolation, and the theme-token-closure gate already
- * guarantees the name is defined. The C3 codemod instead strips dead hardcoded
+ * css tag rejects string interpolation, and the `TokenName` union generated from
+ * tokens.css already constrains the name (the theme-token-closure gate that also
+ * checked it was retired in 930 chunk H). The C3 codemod instead strips dead hardcoded
  * fallbacks so the token's value lives only in tokens.css / the active palette.
  */
 import type { TokenName } from './token-names.generated.js';

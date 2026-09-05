@@ -16,8 +16,9 @@
  * `part="control"` (style via `::part(control)`) and content via the default
  * `<slot>`. So a chip, an icon-only "…", and a text button are all the same
  * operable primitive with different skins — the bad state (an interactive element
- * that isn't keyboard-operable / has no name) is unrepresentable through it, and
- * the `controls-a11y` gate bans interaction handlers off this primitive.
+ * that isn't keyboard-operable / has no name) is unrepresentable through it. Keeping
+ * interaction handlers ON this primitive (never on a bare div) is the standing rule; the
+ * static `controls-a11y` gate that used to scan for it was retired in 930 chunk H.
  *
  * Tempdoc 596 — typed AVAILABILITY (see the `availability` property): an unavailable
  * affordance renders `aria-disabled` + a REACHABLE reason and a NON-SILENT blocked
@@ -555,8 +556,9 @@ export class Control extends JfElement {
     const name = this.resolvedName();
     // 559 Authority V §11 — the typed seam at the Lit-template ceiling (557 §5):
     // a control with no resolvable name (no operationId, no label, no slot text)
-    // is the bad form. The `controls-a11y` gate forbids it at build; this is the
-    // runtime dev signal (tree-shaken in production via import.meta.env.DEV).
+    // is the bad form. This runtime dev signal (tree-shaken in production via
+    // import.meta.env.DEV) is the live check since the static `controls-a11y` build
+    // gate was retired (930 chunk H); measured axe covers the rendered surfaces.
     if (
       (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV &&
       !name &&

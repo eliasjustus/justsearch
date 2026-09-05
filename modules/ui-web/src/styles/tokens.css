@@ -108,8 +108,9 @@
      fallback always won and every non-Dark theme silently broke. Defined here
      as theme-aware aliases of canonical tokens (which are redefined in
      [data-theme="light"] + palettes) so they resolve per active theme and the
-     fallbacks are never reached. Closure enforced by
-     scripts/ci/check-theme-token-closure.mjs. */
+     fallbacks are never reached. (Closure was gate-enforced by
+     scripts/ci/check-theme-token-closure.mjs until tempdoc 930 chunk H retired it in favour of
+     measured axe + review.) */
   --surface-primary: var(--surface-2);
   --surface-secondary: var(--surface-1);
   --surface-tertiary: var(--surface-3);

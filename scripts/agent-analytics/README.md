@@ -265,10 +265,38 @@ for pointing Codex CLI's own `[otel]` exporter at this sink.
 
 **Volume tradeoff:** the normalised twin roughly **doubles** `metrics.ndjson` volume for every
 mapped data point, and `RETENTION["metrics"]` is `None` (never pruned — metrics is the sole
-cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning; the
-main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of metrics archives as of
-this writing. Stated here as a known tradeoff — changing the retention policy is an owner
-decision, not made by this PR.
+cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning. For
+the current per-stream volumes and caps see the `RETENTION` comment in `otlp-sink.py`, which is
+the one place they are stated.
+
+## OTLP streams and retention (930 F2)
+
+`otlp-sink.py` writes **four** streams under `tmp/agent-telemetry/otlp/`, all rotating at 20 MB
+through the same archive/prune path but under different `RETENTION` caps (the authoritative
+numbers live in that constant's comment, not here):
+
+| Stream | Contents | Archives kept |
+|---|---|---|
+| `metrics.ndjson` | decoded metric points + `gen_ai.usage` twins | all (`None`) — cost-baseline source |
+| `logs.ndjson` | decoded log records **verbatim**, request/response bodies included | 2 — rotates every ~25 min of active work |
+| `ledger.ndjson` | body-free **projection** of the log stream | 90 |
+| `traces.ndjson` | decoded spans | 14 — was unpruned, which is how it reached 17 GB |
+
+`ledger.ndjson` exists because `logs.ndjson`'s retention is the one that cannot be extended:
+`api_request` records embed request and response bodies (~1 GB per active day), so the numbers
+analytics actually reads used to age out within the hour alongside bodies nothing reads. The
+ledger keeps those numbers on a separate lifetime at ~1 MB/day. It is a projection, not a second
+capture authority — the `/v1/logs` route writes `logs.ndjson` verbatim first, then derives rows
+from the same decoded batch. Rows are emitted for `api_request`, `subagent_completed`,
+`tool_result` and `tool_decision` only, and carry a per-event **allow-list** of attributes
+(`LEDGER_KEEP`: model, token counts, cost, durations, request id, query source, agent name/type,
+tool name, success/decision). Under the allow-list sits a second net that refuses any string
+value whose attribute name contains a content word (`prompt`, `body`, `content`, `message`,
+`input`, `output`, `text`, `arguments`, `result`) or that exceeds 512 chars — numbers and
+booleans are exempt, which is what lets `input_tokens`/`output_tokens` through. `session.id` is
+the only identity attribute kept (it is what every reader joins on); `user.email`, `user.id`,
+`user.account_id`, `user.account_uuid` and `organization.id` are dropped. Read it with
+`readOtlpLedger(dir)` from `lib/telemetry-io.mjs`.
 
 ## Control shims (886 PR 4)
 
