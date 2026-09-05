@@ -15,13 +15,28 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.ObjectMapper;
 
-/** Tempdoc 915 B6b — the Head half of feedback identity survival across a full rebuild. */
-class LabelStoreSurvivesRebuildTest {
+/**
+ * Tempdoc 915 B6b — the Head half of feedback identity, which is a property of the DERIVED label
+ * store, not of a Lucene index.
+ *
+ * <p>Named for what it proves after tempdoc 931 §C.4. It used to be called
+ * {@code LabelStoreSurvivesRebuildTest}, which read as a claim about an index rebuild — and nothing
+ * here rebuilds one: it deletes the derived label file and re-projects it from the authored NDJSON
+ * stores. That is a real and necessary property (the authored stores outlive the index generation,
+ * and re-projection is key-stable), but it is not the Blue→Green claim, and a test whose name
+ * overstates its subject is how a contract row ends up believed to be covered when it is not.
+ *
+ * <p>The index-rebuild half is
+ * {@code DocumentIdentityBootImportTest.blueUidIsImportedBeforePausedMigrationReindexesIntoGreen},
+ * which drives a real Worker through a Blue→Green migration and reads the surviving {@code doc_uid}
+ * back off the production gRPC search response — the exact value this projection keys on.
+ */
+class LabelStoreRegenerationKeepsUidKeysTest {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @Test
-  void authoredFeedbackReprojectsToSameUidAfterDerivedStoreIsRebuilt(@TempDir Path dataDir)
+  void regeneratingTheDerivedLabelStoreReprojectsTheSameUidKeys(@TempDir Path dataDir)
       throws Exception {
     String uidPreservedByWorkerRebuild = "2c88bc44-7d55-4e72-a348-39e0de07c551";
     String uidShownAcrossRebuild = "8f97be31-42a5-409a-874c-68a9707340b1";
@@ -58,12 +73,13 @@ class LabelStoreSurvivesRebuildTest {
     List<String> firstKeys = projectedDocIds(dataDir);
     Files.delete(FeedbackLabels.realLabelPath(dataDir));
 
-    // PR-A's DocumentIdentityBootImportTest proves Blue→Green preserves this UID. PR-B composes
-    // with that contract here: the authored stores outlive the index generation, and rebuilding
-    // the derived label file produces the identical UID key without consulting Lucene from Head.
-    LabelProjection.Result afterFullRebuild = FeedbackLabels.rebuild(dataDir);
+    // Re-projecting from the authored stores alone, with the derived file deleted: no index is
+    // involved, which is the point — Head never touches Lucene, so the only thing it can prove is
+    // that its own projection is key-stable. Whether the UID itself survives a Blue→Green rebuild
+    // is asserted where the rebuild happens (see this class's javadoc).
+    LabelProjection.Result afterRegeneration = FeedbackLabels.rebuild(dataDir);
 
-    assertEquals(first, afterFullRebuild);
+    assertEquals(first, afterRegeneration);
     assertEquals(List.of(uidPreservedByWorkerRebuild, uidShownAcrossRebuild), firstKeys);
     assertEquals(firstKeys, projectedDocIds(dataDir));
     assertFalse(

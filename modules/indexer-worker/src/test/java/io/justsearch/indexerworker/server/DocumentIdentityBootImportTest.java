@@ -2,18 +2,24 @@
 package io.justsearch.indexerworker.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.indexerworker.identity.DocumentIdentityStore;
+import io.justsearch.indexerworker.index.IndexGenerationManager;
 import io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.ipc.IngestServiceGrpc;
 import io.justsearch.ipc.PathMapping;
+import io.justsearch.ipc.SearchRequest;
+import io.justsearch.ipc.SearchResponse;
+import io.justsearch.ipc.SearchResult;
+import io.justsearch.ipc.SearchServiceGrpc;
 import io.justsearch.ipc.UpdatePathsRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -265,6 +271,84 @@ final class DocumentIdentityBootImportTest {
       chunks++;
     }
     assertTrue(chunks > 1, "ordinary migration indexing must derive chunks from the parent uid");
+
+    // Tempdoc 931 §C.4 — the rebuild claim, read where PR-B's consumer reads it.
+    //
+    // Everything above reaches Green through the Worker's own fixture handles. The value feedback
+    // is keyed on is not that one: it is the `doc_uid` entry in a SearchResult's generic fields map
+    // (SearchResponseBuilder.java:653-656 for a chunk hit's parent metadata, the stored-field
+    // projection for a whole-document hit), which KnowledgeSearchController.withFeedbackUid adds to
+    // the projection on every Head search. A uid that survives the migration in the index but not
+    // on the wire orphans every label just the same.
+    //
+    // Green is not the SERVING generation while the migration is in flight — searchLifecycle is
+    // Blue by construction — so the search has to happen after the cutover. The production cutover
+    // ends in a Worker restart (KnowledgeServerMigrationOps promotes, then calls
+    // initiateShutdownAction), so this reproduces exactly that sequence: commit Green, close, promote,
+    // boot again. Searching the in-flight server instead would have queried BLUE and passed on
+    // Blue's own uid, proving nothing about the rebuild.
+    server.lifecycleManagerForTests().commitOps().commitAndTrack();
+    channel.shutdownNow();
+    channel = null;
+    server.close();
+    server = null;
+
+    IndexGenerationManager postMigration = new IndexGenerationManager(layout.indexBase());
+    postMigration.promoteBuildingGenerationToActive();
+
+    server = new KnowledgeServer(WorkerBootFixture.workerConfig(layout.dataDir()));
+    server.start();
+    server.releaseModelReadyLatchForTests();
+    channel =
+        ManagedChannelBuilder.forAddress("127.0.0.1", server.getPort()).usePlaintext().build();
+
+    SearchRequest asHeadSendsIt =
+        SearchRequest.newBuilder()
+            .setQuery("continuity")
+            .setLimit(10)
+            .addProjection(SchemaFields.PATH)
+            .addProjection(SchemaFields.DOC_UID)
+            .build();
+    // A fresh boot over an index that already has segments opens DEFERRED: read-only first, with
+    // the writer and the analyzers arriving on the background upgrade. So both "not ready yet"
+    // shapes are polled through — the RPC failing outright, and the RPC answering empty — rather
+    // than being read as the answer.
+    List<SearchResult> uidBearingHits = List.of();
+    long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
+    Object lastOutcome = "no search attempted";
+    while (System.nanoTime() < deadline && uidBearingHits.isEmpty()) {
+      try {
+        SearchResponse searchResponse =
+            SearchServiceGrpc.newBlockingStub(channel)
+                .withDeadlineAfter(30, TimeUnit.SECONDS)
+                .search(asHeadSendsIt);
+        lastOutcome = searchResponse;
+        uidBearingHits =
+            searchResponse.getResultsList().stream()
+                .filter(hit -> hit.getFieldsMap().containsKey(SchemaFields.DOC_UID))
+                .toList();
+      } catch (io.grpc.StatusRuntimeException notReadyYet) {
+        lastOutcome = notReadyYet.getStatus();
+      }
+      if (uidBearingHits.isEmpty()) {
+        Thread.sleep(200L);
+      }
+    }
+    assertFalse(
+        uidBearingHits.isEmpty(),
+        "the promoted Green must serve the document over the wire AND carry the feedback key;"
+            + " last outcome="
+            + lastOutcome);
+    for (SearchResult hit : uidBearingHits) {
+      assertEquals(
+          renamedDocId, hit.getId(), "the hit identifies the renamed parent, not a chunk");
+      assertEquals(
+          blueUid,
+          hit.getFieldsMap().get(SchemaFields.DOC_UID),
+          "the promoted generation must serve the uid Blue served: this is the exact value Head"
+              + " keys feedback on, so a re-minted uid here silently orphans every label authored"
+              + " before the rebuild");
+    }
   }
 
   @Test
