@@ -118,18 +118,11 @@ class CombinedEnrichmentBackfillOpsTest {
 
     lenient()
         .when(documentFieldOps.queryDocIdsByField(anyString(), anyString(), anyInt()))
-        .thenAnswer(
-            inv -> {
-              String field = inv.getArgument(0);
-              String value = inv.getArgument(1);
-              List<String> matches = new ArrayList<>();
-              for (var e : fakeIndex.entrySet()) {
-                if (value.equals(e.getValue().get(field))) {
-                  matches.add(e.getKey());
-                }
-              }
-              return matches;
-            });
+        .thenAnswer(inv -> matchingDocIds(inv.getArgument(0), inv.getArgument(1), false));
+
+    lenient()
+        .when(documentFieldOps.queryNonChunkDocIdsByField(anyString(), anyString(), anyInt()))
+        .thenAnswer(inv -> matchingDocIds(inv.getArgument(0), inv.getArgument(1), true));
 
     lenient()
         .when(indexingCoordinator.updateDocumentsBatch(anyList()))
@@ -157,6 +150,17 @@ class CombinedEnrichmentBackfillOpsTest {
               }
               return out;
             });
+  }
+
+  /** Mirrors the two selection queries: term match, optionally with chunk docs excluded. */
+  private List<String> matchingDocIds(String field, String value, boolean excludeChunks) {
+    List<String> matches = new ArrayList<>();
+    for (var e : fakeIndex.entrySet()) {
+      if (!value.equals(e.getValue().get(field))) continue;
+      if (excludeChunks && "true".equals(e.getValue().get(SchemaFields.IS_CHUNK))) continue;
+      matches.add(e.getKey());
+    }
+    return matches;
   }
 
   private void seedDoc(String docId, String content, Map<String, String> statusFields) {
@@ -902,21 +906,93 @@ class CombinedEnrichmentBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "chunk-SPLADE flag OFF (default): a splade-PENDING chunk doc escalates through the retry"
-          + " seam — no encode, and no data-less COMPLETED for the RMW reset policy to bounce")
-  void chunkSpladeOff_chunkDocSpladePending_escalatesInsteadOfClaimingCompleted() throws Exception {
+      "chunk-SPLADE flag OFF (default): a splade-PENDING chunk doc is not selected, not enrolled"
+          + " and not rewritten — the pass converges on the first cycle (tempdoc 931)")
+  void chunkSpladeOff_chunkDocSpladePending_isNotSelectedOrRewritten() throws Exception {
     seedSpladeChunkDoc(
         "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
 
-    CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
+    CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
 
+    assertFalse(outcome.wroteAnything(), "a stage that does not apply must not rewrite the doc");
     Map<String, Object> state = fakeIndex.get("chunk-1");
-    // Flag off there is nothing to encode, so the stage may not claim COMPLETED: marking it would
-    // be a data-less COMPLETED that the reset-status RMW policy sends back to PENDING forever.
     assertEquals(SchemaFields.SPLADE_STATUS_PENDING, state.get(SchemaFields.SPLADE_STATUS));
-    assertEquals("1", state.get(SchemaFields.SPLADE_RETRY_COUNT));
+    assertNull(
+        state.get(SchemaFields.SPLADE_RETRY_COUNT),
+        "a retry count for a stage that was never attempted is the rewrite-without-advance shape");
     assertNull(state.get(SchemaFields.SPLADE), "flag off must never write sparse data");
     verify(spladeEncoder, never()).encodeBatch(anyList());
+    verify(indexingCoordinator, never()).updateDocumentsBatch(anyList());
+  }
+
+  @Test
+  @DisplayName(
+      "chunk-SPLADE flag OFF: repeating the cycle past SPLADE_MAX_RETRIES never drives a chunk to"
+          + " terminal FAILED and never reports progress — the non-converging loop of tempdoc 931")
+  void chunkSpladeOff_repeatedCycles_neverEscalateChunkToFailed() throws Exception {
+    seedSpladeChunkDoc(
+        "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
+
+    for (int cycle = 0; cycle <= SchemaFields.SPLADE_MAX_RETRIES; cycle++) {
+      CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
+          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
+      assertFalse(outcome.wroteAnything(), "cycle " + cycle + " rewrote a doc it cannot advance");
+      assertFalse(outcome.progressed(), "cycle " + cycle + " claimed progress it did not make");
+    }
+
+    Map<String, Object> state = fakeIndex.get("chunk-1");
+    assertEquals(
+        SchemaFields.SPLADE_STATUS_PENDING,
+        state.get(SchemaFields.SPLADE_STATUS),
+        "flag-off chunks must stay PENDING so flipping the flag on picks them up");
+  }
+
+  @Test
+  @DisplayName(
+      "chunk-SPLADE flag OFF: a BLANK-content chunk escalates only the stage that was attempted —"
+          + " its chunk embedding, never the SPLADE stage the flag turned off")
+  void chunkSpladeOff_blankContentChunk_escalatesEmbeddingOnly() throws Exception {
+    // Arrives through the chunk-embedding cache, not the splade-status selection: its parent
+    // content cannot be reconstructed, so the embed stage genuinely failed and owns a retry seam.
+    seedChunkDoc("chunk-blank", "parent-0", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
+    fakeIndex.get("chunk-blank").put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+        context(true, true, false, false, true, false));
+
+    Map<String, Object> state = fakeIndex.get("chunk-blank");
+    assertEquals("1", state.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
+    assertNull(
+        state.get(SchemaFields.SPLADE_RETRY_COUNT),
+        "the SPLADE stage was never attempted for this chunk — it has nothing to retry");
+    assertEquals(SchemaFields.SPLADE_STATUS_PENDING, state.get(SchemaFields.SPLADE_STATUS));
+  }
+
+  @Test
+  @DisplayName(
+      "chunk-SPLADE flag OFF: a chunk's splade_status must not consume a batch slot the parent"
+          + " backlog needs — the splade-pending selection excludes chunk documents")
+  void chunkSpladeOff_chunkDocsAreExcludedFromTheSpladePendingSelection() throws Exception {
+    seedSpladeChunkDoc(
+        "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
+    seedDoc(
+        "parent-2",
+        "parent body text",
+        Map.of(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING));
+    when(spladeEncoder.encodeBatch(anyList()))
+        .thenReturn(new ArrayList<>(List.of(Map.of("tok", 1.0f))));
+
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
+
+    verify(documentFieldOps, never())
+        .queryDocIdsByField(
+            eq(SchemaFields.SPLADE_STATUS), eq(SchemaFields.SPLADE_STATUS_PENDING), anyInt());
+    verify(spladeEncoder, times(1))
+        .encodeBatch(argThat(texts -> texts.size() == 1 && texts.contains("parent body text")));
+    assertEquals(
+        SchemaFields.SPLADE_STATUS_COMPLETED,
+        fakeIndex.get("parent-2").get(SchemaFields.SPLADE_STATUS));
   }
 
   @Test
@@ -924,10 +1000,15 @@ class CombinedEnrichmentBackfillOpsTest {
       "a chunk doc pulled in by the splade-status query must not have EMBEDDING_STATUS or"
           + " NER_STATUS manufactured for it — an ABSENT status means the stage does not apply")
   void chunkDocParentLane_absentStatusesAreNotManufactured() throws Exception {
+    // Flag ON, so the splade-status query is the route that pulls the chunk in (flag off it is
+    // excluded from that selection entirely — tempdoc 931).
     seedSpladeChunkDoc(
         "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
+    when(spladeEncoder.encodeBatch(anyList()))
+        .thenReturn(new ArrayList<>(List.of(Map.of("tok", 1.0f))));
 
-    CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true));
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+        context(true, true, true, false, false, true));
 
     Map<String, Object> state = fakeIndex.get("chunk-1");
     assertNull(

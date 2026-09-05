@@ -16,6 +16,8 @@ import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.slf4j.Logger;
@@ -469,12 +471,40 @@ public final class DocumentFieldOps {
    * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
    */
   public List<String> queryDocIdsByField(String field, String value, int limit) {
+    return queryDocIdsByField(field, value, limit, false);
+  }
+
+  /**
+   * Queries document IDs matching a specific field value, omitting chunk documents.
+   *
+   * <p>A chunk carries {@code splade_status=PENDING} from creation whether or not chunk SPLADE is
+   * enabled (ChunkDocumentWriter), so with the flag off that status is not a work signal: selecting
+   * on it hands the backfill batch slots it can only rewrite, never advance. Chunks still reach the
+   * combined pass through their own {@code chunk_embedding_status} selection.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public List<String> queryNonChunkDocIdsByField(String field, String value, int limit) {
+    return queryDocIdsByField(field, value, limit, true);
+  }
+
+  private List<String> queryDocIdsByField(
+      String field, String value, int limit, boolean excludeChunks) {
     if (field == null || value == null || limit <= 0) {
       return List.of();
     }
     try {
       return bridge.withSearcher(searcher -> {
-        Query query = new TermQuery(new Term(field, value));
+        Query valueQuery = new TermQuery(new Term(field, value));
+        Query query =
+            excludeChunks
+                ? new BooleanQuery.Builder()
+                    .add(valueQuery, BooleanClause.Occur.MUST)
+                    .add(
+                        new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                        BooleanClause.Occur.MUST_NOT)
+                    .build()
+                : valueQuery;
         var topDocs = searcher.search(query, limit);
 
         List<String> docIds = new ArrayList<>(topDocs.scoreDocs.length);
