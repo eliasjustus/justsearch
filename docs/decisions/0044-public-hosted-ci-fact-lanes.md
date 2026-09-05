@@ -7,7 +7,7 @@ date: 2026-06-27
 probes:
   - adr-0044-fact-lane-triggers-checked
   - adr-0044-advisory-fact-lane-bounded
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-05
 ---
 
 # ADR-0044: Public hosted CI fact lanes
@@ -155,3 +155,31 @@ This narrows the fact-lane rule: a stable check name is insufficient unless the 
 transport itself terminates with an explicit result and the comparison unit cannot hide a
 defect swap. If GitHub supplies a repository-native dependency-review signal with the same
 lockfile coverage and identity-baseline behavior, it may replace this producer in place.
+
+## Amendment: `jseval Python suite` becomes a required fact lane (2026-09-05)
+
+The `jseval Python suite` job added by tempdoc 930 chunk D runs `scripts/jseval/tests` on a
+hosted Linux runner. It landed advisory: the job reported on every push, pull request, and
+merge group, but it was absent from `scripts/ci/workflow-signal-policy.v1.json`, so nothing
+blocked a merge on it. A measurement harness that stands behind public claims is exactly the
+kind of fact a lane is for, and an advisory lane proves only that someone chose to read it.
+
+The lane is promoted to a required status check. The evidence for promotion is stability, not
+intent: across the 13 completed `main` push and `merge_group` runs from the lane's landing
+commit `18e2833f` (2026-09-05T06:46Z) through `3dc054e3` (2026-09-05T08:23Z) it passed 13 times
+and failed zero times, with a median wall-clock of 384s and an observed max of 432s under a
+20-minute job timeout. The one non-success observation is a whole-run concurrency cancellation
+of superseded push run `33952759665`, in which two other jobs were cancelled alongside it.
+Promotion converts any future flake into a merge blocker, so the zero-failure record is the
+precondition, not a nicety.
+
+Required-lane bookkeeping follows the same rule as every other lane: the check gains a
+`local-subset` entry in `scripts/ci/public-ci-local-repro.v1.json` and a lane in
+`scripts/ci/ci-walltime-policy.v1.json` with its hard timeout and measured budget. The local
+subset is an approximation in one specific way — the hosted lane deliberately runs without the
+`agent`, `ui`, and `scan` extras so their `pytest.importorskip` guards are exercised, while a
+developer workstation usually has them installed and therefore runs more tests, not fewer.
+
+Branch protection itself remains a repository setting outside this repo's diff, so the
+`main-merge-queue` ruleset is updated by a maintainer after this change lands;
+`scripts/ci/check-branch-protection.mjs` reports the gap in the interval.
