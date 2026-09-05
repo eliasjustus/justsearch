@@ -679,6 +679,40 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
+
+- **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
+  planner rule: skip dense only when another leg can answer AND the *rarest* analyzed query term
+  occurs in ≥ `index.hybrid.vector_skip_min_df_fraction` (default 0.25) of `content` documents, on
+  ≥ 100 field docs (`SearchPlanner.planDenseSkip`, `SearchInputCapture` min DF fraction). C5b asked
+  for comparable per-language skip rates and no material quality loss on the six pre-registered
+  corpora before PR-C0 may merge.
+- **Skip rate (index-only hybrid, PR-C0 tip `0bb0b8cb`, 17 min, every run `comparable=True`;
+  `denseStatus`/`denseReason` now persisted per query by jseval and rolled up by
+  `scripts/jseval/915_c0_skip_rate.py`).** legal-clerc-200 4/200 (2.0 %, all
+  `SKIPPED_NO_DISCRIMINATIVE_TERM`); scifact 0/300; enron-qa 0/300; ohr-bench-clean 0/962;
+  miracl-de-2k 0/305; miracl-fr-2k 0/343. The 4 legal hits prove the gate path is live; the zeros
+  are the rule's real answer (a natural-language query almost never has *every* term in ≥ 25 % of
+  documents). Per language: en 0–2 %, de 0 %, fr 0 % — comparable; the retired rule could only
+  ever fire for English.
+- **Quality (paired, same machine, same hour, fresh `--clean` index, `--pipeline --embedding`,
+  control = PR-A branch `c0e5dbf5` without C0).** legal-clerc-200: C0 0.5989 / P@1 0.390 / R@10
+  0.825 vs control 0.5914 / 0.365 / 0.830 → Δ +0.0075 nDCG@10, inside the F-057 legal 2σ line
+  (0.0136); miracl-de-2k: 0.8575 / 0.6656 / 0.9967 on both arms (identical; the rule fired 0/305 and
+  the old rule never fired on German, so C0 is a no-op there by construction). Every leg observed on
+  every arm. Scifact/enron/fr/OHR fully-enriched no-regression runs were not run (≈1.5 h, over the
+  wave's 2 h budget) — a limit, not a pass.
+- **Calibration worth keeping.** Two no-C2 legal arms share only 24/200 identical top-10 lists
+  (20 up, 21 down, mean +0.0075): top-10 churn on legal is run-to-run noise; only the mean and the
+  hit count carry signal. `summary.json`'s `ingest.index_size_bytes` is a mid-ingest status snapshot
+  (16.1 MB vs 33.6 MB reported for indexes that are 40.9 MB vs 43.0 MB on disk) — measure index
+  bytes on disk, by Lucene file type.
+- **Consequence for the owner.** At 0.25 the dense skip is a no-op on every corpus we measure, so
+  PR-C0 is a locale-invariance change, not a latency lever; if the old English savings mattered,
+  the knob to revisit is the DF fraction, and this row is the baseline to beat.
+- **Method + run dirs.** tempdoc 931 §D (3a table, 3b/3c design); runs under
+  `.claude/worktrees/wave3-{c0,pa}/scripts/jseval/tmp/eval-results/20260905T02*` (gitignored).
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
@@ -2699,9 +2733,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 
@@ -2777,7 +2811,7 @@ above)*
 
 - **Answer:** The GPL→LambdaMART learned-fusion reranker (2-feature: sparse+vector, trained on GPL **synthetic** queries) does NOT improve ranking and **consistently degrades** nDCG on real queries. It is non-viable in our cold-start (no real-feedback) situation. **Do not re-propose "activate/enrich GPL-LambdaMART" as a quality lever without real user-click data first.**
 - **Evidence:** tempdoc 245 measured it across three BEIR datasets — **SciFact −0.009, Arguana −0.10, NFCorpus −0.021** (`245-execution-log.md:61`); root cause *"GPL synthetic queries don't transfer to real BEIR queries"* (`245:332`); verdict *"not viable without real user query data," "may be fundamentally unrecoverable"* (`245:1263`). **Re-confirmed live 2026-06-15** (tempdoc 580 §12.8–12.9): on cord19 the GPL-trained model was a **degenerate no-op** — `hybrid_run.trec` byte-identical with vs without the model (LightGBM "no meaningful features" training warning); the reranker executes (`KnowledgeSearchEngine.java:531-574`) but changes nothing.
-- **Conditions/caveats:** 234 *predicted* LambdaMART beats fixed fusion *"when ≥500 labelled queries are available"* — the failure is specifically the **GPL synthetic substitute** for those labels, not learning-to-rank per se. The substrate (GPL pipeline + LambdaMartReranker, 2-feature) is built+wired and the bootstrap first-model bug was fixed (580 §12.7); what's missing is **real implicit-feedback capture** (clicks/opens — confirmed absent, 580 §12.1). So this is a *ship-then-learn* dependency, not a code/feature change. (D-002's corpus-adaptive CC-weight idea / FW-001 is a separate, also-superseded lever — see 580 §10.) **Real labels are necessary but NOT sufficient (580 §13.7, code-verified):** the V1 feature vector `[sparse, vector]` IS fusion's own leg scores (`LambdaMartFeatureSchema`; reranker runs on the *already-fused* list reading the same `sparse-/dense-retrieval` stage scores, `KnowledgeSearchEngine.java:544-560`) and even collapses BM25+SPLADE into one "sparse" slot — so the model is informationally *poorer* than the fusion it post-processes and is **structurally capped below fusion regardless of label quality**. Any real lift needs BOTH rich features beyond fusion's own scores (234 V2 schema) AND real labels. **Do not "capture feedback → re-activate the existing 2-feature model"** — that satisfies labels and still loses to fusion. (The §13.3 *additive-feature, label-free* fusion-weight selector is the cheaper sibling lever this analysis points to.) **Refinement (580 §16, code-verified):** "real labels confirmed absent" is too strong — *user-click/explicit* feedback is absent (a build away), but the **agentic path already persists a graded real-query signal** (retrieved ⊃ grounding ⊃ cited, with `parentDocId`/`chunkIndex` + similarity; `AgentCitationResolver`/`AgentInteractionMapper`). It's real-query (unlike GPL synthetic → sidesteps 245's failure mode) and a **harvest, not a build** — but it is **reorder-only** (recall-blind: the agent can only grade within retrieved top-k, with a circularity risk) and LLM-judged, not user behavior. The cheapest first-real-label experiment: assemble the persisted citation tuples, train on them, A/B on held-out real queries.
+- **Conditions/caveats:** 234 *predicted* LambdaMART beats fixed fusion *"when ≥500 labelled queries are available"* — the failure is specifically the **GPL synthetic substitute** for those labels, not learning-to-rank per se. The substrate now captures search-interaction and agent-citation dispositions and projects new rows under stable parent UIDs (`FeatureSnapshots`, `KnowledgeSearchController`, `AgentDispositionWiring`, and `LabelProjection`); legacy path rows remain readable without backfill. This closes the identity and durability prerequisite, not the quality gate: no evidence yet shows that the collected labels are numerous, representative, or sufficient to improve held-out ranking. **Real labels are necessary but NOT sufficient:** the V1 feature vector `[sparse, vector]` is fusion's own leg scores (`LambdaMartFeatureSchema`; the reranker reads the same sparse/dense retrieval scores), and it collapses BM25+SPLADE into one sparse slot, so the model is informationally poorer than the fusion it post-processes. Any real lift needs both richer features and measured real-label coverage. **Do not "capture feedback → re-activate the existing 2-feature model"**; train and A/B on held-out real queries only after the adoption threshold is met. Agent citations remain reorder-only and recall-blind, with a circularity risk, and are LLM-judged rather than user behavior.
 
 ### F-022: CC beats RRF for chunk-branch fusion (CC shipped as default)
 
@@ -3334,7 +3368,17 @@ Questions — these are "we should eventually" not "we need to know."
 - **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
 - **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
 - **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
-- **FW-008: Vector quantization cross-machine evidence** — Codec wiring implemented (default off). Needs cross-machine benchmark evidence before enabling by default. Source: RAG-004 (retired from issues/). **Still open (verified 2026-06-15):** default remains Float32 (`JustSearchCodec.java:43`); only storage (~75%) is measured — the **nDCG quality cost of Int8 is unmeasured** (single-machine only, RAG-003/235). **Post-cutoff capability note (580 §14.1, Lucene-10.4.0-verified):** `Lucene104(Hnsw)ScalarQuantizedVectorsFormat` exposes **1/2/4/7/8-bit** + **asymmetric 2-bit-store/4-bit-query** ("2-bit recall-competitive with old 4-bit") — so a lower-bit path than Int8 is config-only (no new dep) but reindex-required and recall is corpus-dependent; an **efficiency** lever (memory), not a quality one — eval-gate recall before adopting.
+- **FW-008: Vector quantization evidence** — **Implementation candidate updated 2026-09-03;
+  evidence remains open.** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
+  Int8, and makes quantization the unconfigured write default while retaining explicit Float32
+  opt-out. Restart, mixed-segment, merge, and configuration tests are short-checkable, but they do
+  not establish ranking quality or footprint. The default is not accepted or merge-ready until the
+  tempdoc 915 campaign passes the stricter intersection: jseval nDCG@10 and R@10 within 0.010 on
+  the registered corpora, EngineVectorIndexBench Float32 recall@50 at least 0.97 and Int8 no more
+  than 0.01 absolute below it, smaller index bytes, and reported RSS. Cross-machine
+  replication remains desirable but is not silently claimed. The lower-bit
+  `SINGLE_BIT_QUERY_NIBBLE` `chunk_vector` arm remains report-only and cannot authorize a shipped
+  default.
 - **FW-009: Citation scorer threshold calibration** — Default 0.5 threshold works in tests but not validated across real-world content types. Source: RAG-006 (retired from issues/).
 - **FW-010: 1M+ vector scale benchmarks** — No runs at 1M+ vectors or cross-machine. Current evidence limited to smaller datasets on single machine. Source: RAG-003 (retired from issues/).
 
@@ -3432,8 +3476,8 @@ query-time stages search against.
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
 | 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
-| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
-| 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
+| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes the multi-valued keyword fields `entity_persons_raw`, `entity_organizations_raw`, and `entity_locations_raw` for filters, facets, and NER-membership evidence selection; the redundant analyzed entity-text duplicates were retired in 915 PR-C2 |
+| 8   | **HNSW Vector Indexing** | `JustSearchCodecV2`            | M=16, efConstruction=200; restart-safe per-field Int8 default, explicit Float32 opt-out        |
 | 9   | **Commit**               | `CommitOps`                    | On time (>10 s), size (>1,000 docs), or shutdown; NRT refresh                                 |
 
 ---
