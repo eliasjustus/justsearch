@@ -335,6 +335,30 @@ share, ending in a literal `PASS`/`FAIL`. `-GenerateOnly` prepares the `.wsb` wi
 > Sandbox they will find and silently `/S`-uninstall a real install (this happened once during
 > authoring — tempdoc 760). The guest header carries the same warning.
 
+## Pre-release verification (update preserves models)
+
+Run this **before publishing**, once a candidate installer exists. Tempdoc 617 D2 allows
+monolithic full-installer updates only because the user's models — up to ~9 GB — are reused in
+place, and a monolithic update runs uninstall-then-install over the existing install. The
+`check-update-preserves-models` script only checks the *declared* packaging surface; this lane
+checks a built one.
+
+```bash
+# Gate the candidate you are about to publish against the current latest release.
+gh workflow run update-preserves-models.yml \
+  -f base_release_tag=<previous vX.Y.Z> \
+  -f candidate_source=run-artifact \
+  -f candidate_run_id=<the build-installer.yml run id from step 6>
+```
+
+It installs the previous release silently, seeds model files under
+`%APPDATA%\io.justsearch.shell\models`, installs the candidate over it, and asserts every seeded
+byte is unchanged — then uninstalls and asserts they are *still* unchanged (ADR-0024). Download the
+`update-preserves-models-evidence` artifact and keep it with the release evidence. Full reference,
+including what the lane does not cover: `docs/how-to/verify-update-preserves-models.md`.
+
+Unlike the Sandbox harness above, this one runs unattended on a hosted runner and needs no GUI.
+
 ## Release-note authority
 
 Do not maintain a second “next cut” list here. Human-authored release notes live in

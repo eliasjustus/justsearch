@@ -14,9 +14,13 @@
  * upgrade half of the cycle destroys the models it was supposed to preserve. Both are one careless
  * line, and neither shows up until a real user upgrades.
  *
- * This is a static gate on the DECLARED surface. It cannot prove a built installer is clean; the
- * Sandbox N->N+1 round retaining authored-state survival evidence is what does that (§9 items 3-5).
- * What it does prevent is the declaration silently changing underneath that round.
+ * This is a static gate on the DECLARED surface. It cannot prove a built installer is clean. The
+ * empirical half is `.github/workflows/update-preserves-models.yml`, which installs a published
+ * release N, seeds model files, installs N+1 over it, then uninstalls, asserting the seeded bytes
+ * survive both — see `docs/how-to/verify-update-preserves-models.md`. That lane supersedes tempdoc
+ * 617 §9 item 3 (the published installer-over-release round) and the model-survival half of item 5,
+ * which had never been executed. §9 item 4 (the in-app updater path) still needs a GUI Sandbox.
+ * What this gate prevents is the declaration silently changing underneath that lane.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

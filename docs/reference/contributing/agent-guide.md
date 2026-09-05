@@ -370,6 +370,15 @@ gate:
 - `codeql.yml` when you need semantic code scanning outside GitHub's managed
   security surfaces.
 - `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
+- `update-preserves-models.yml` after editing NSIS hooks, `tauri.conf.json`
+  bundle resources, or sidecar staging — it installs a published release, seeds
+  model files, upgrades to the next release and asserts they survive
+  (`docs/how-to/verify-update-preserves-models.md`). The
+  `check-update-preserves-models` script is only the static half.
+- `prepare-winget-manifests.yml` and `sign-vendored-mirrors.yml` are release-cut
+  steps documented in `docs/how-to/cut-a-release.md`.
+- `onramp-smoke.yml` for the model-less Tier 0 first-success proof;
+  `ci-walltime-trend.yml` for CI wall-time trend reporting.
 
 After changes to query orchestration, fusion weights, reranking, or anything
 that could shift nDCG@10, re-run the arm and compare (no workflow wraps it):
@@ -396,6 +405,7 @@ gh workflow run ci.yml                              # re-run public hosted fact 
 gh workflow run docs-lint.yml                       # manual docs verification
 gh workflow run codeql.yml                          # semantic code scanning
 gh workflow run build-installer.yml --ref <vX.Y.Z>  # installer/release attach
+gh workflow run update-preserves-models.yml         # N->N+1 model survival
 gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```
