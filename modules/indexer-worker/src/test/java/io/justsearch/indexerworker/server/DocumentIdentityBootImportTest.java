@@ -19,6 +19,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.lucene.search.MatchAllDocsQuery;
@@ -239,32 +240,70 @@ final class DocumentIdentityBootImportTest {
     server.indexGenerationManagerForTests().setMigrationPaused(false, null);
     awaitGreenUid(layout, renamedDocId, blueUid, Duration.ofSeconds(15));
 
-    var documents =
-        server
-            .lifecycleManagerForTests()
-            .readPathOps()
-            .search(
-                new MatchAllDocsQuery(),
-                100,
-                Set.of(
-                    SchemaFields.DOC_UID,
-                    SchemaFields.IS_CHUNK,
-                    SchemaFields.PARENT_DOC_ID,
-                    SchemaFields.CHUNK_INDEX),
-                LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
-                null);
-    int chunks = 0;
-    for (var hit : documents.hits()) {
-      if (!"true".equals(hit.fields().get(SchemaFields.IS_CHUNK))) {
-        continue;
-      }
-      assertEquals(renamedDocId, hit.fields().get(SchemaFields.PARENT_DOC_ID));
+    // The chunks are written in a pass AFTER the parent (ChunkDocumentWriter
+    // .regenerateChunksFromExistingParent runs once the parent row is in), so "the parent's uid is
+    // visible" does not yet mean "its chunks are visible" — a one-shot scan here failed on a loaded
+    // CI runner. Wait for the condition the assertion actually needs, with the same bound; a
+    // migration that never derives the chunks still fails, with the state in the message.
+    List<Map<String, String>> chunkHits = awaitGreenChunks(renamedDocId, 2, Duration.ofSeconds(15));
+    for (Map<String, String> fields : chunkHits) {
+      assertEquals(renamedDocId, fields.get(SchemaFields.PARENT_DOC_ID));
       assertEquals(
-          blueUid + "#" + hit.fields().get(SchemaFields.CHUNK_INDEX),
-          hit.fields().get(SchemaFields.DOC_UID));
-      chunks++;
+          blueUid + "#" + fields.get(SchemaFields.CHUNK_INDEX),
+          fields.get(SchemaFields.DOC_UID),
+          "ordinary migration indexing must derive chunks from the parent uid");
     }
-    assertTrue(chunks > 1, "ordinary migration indexing must derive chunks from the parent uid");
+  }
+
+  /** Chunk hits of {@code parentDocId} once at least {@code minimum} are visible, else fails. */
+  private List<Map<String, String>> awaitGreenChunks(
+      String parentDocId, int minimum, Duration timeout) throws Exception {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    List<Map<String, String>> chunkHits = List.of();
+    while (true) {
+      var documents =
+          server
+              .lifecycleManagerForTests()
+              .readPathOps()
+              .search(
+                  new MatchAllDocsQuery(),
+                  100,
+                  Set.of(
+                      SchemaFields.DOC_UID,
+                      SchemaFields.IS_CHUNK,
+                      SchemaFields.PARENT_DOC_ID,
+                      SchemaFields.CHUNK_INDEX),
+                  LuceneRuntimeTypes.RuntimeSearchSort.RELEVANCE,
+                  null);
+      chunkHits =
+          documents.hits().stream()
+              .map(hit -> hit.fields())
+              .filter(fields -> "true".equals(fields.get(SchemaFields.IS_CHUNK)))
+              .filter(fields -> parentDocId.equals(fields.get(SchemaFields.PARENT_DOC_ID)))
+              .toList();
+      if (chunkHits.size() >= minimum) {
+        return chunkHits;
+      }
+      if (System.nanoTime() >= deadline) {
+        break;
+      }
+      Thread.sleep(100L);
+    }
+    assertTrue(
+        chunkHits.size() >= minimum,
+        "Green never derived "
+            + minimum
+            + " chunks for "
+            + parentDocId
+            + " before the bounded timeout (saw "
+            + chunkHits.size()
+            + "); state="
+            + server.indexGenerationManagerForTests().readStateBestEffort()
+            + ", queue="
+            + server.jobQueueForTests().jobStateCounts()
+            + ", failures="
+            + server.jobQueueForTests().failureSummary());
+    return chunkHits;
   }
 
   @Test
