@@ -1,5 +1,5 @@
 ---
-title: "Manual-Only CI Triggering"
+title: "ADR-0026: Manual-Only CI Triggering"
 type: decision
 status: accepted - narrowed by ADR-0044
 description: "Manual-only workflow policy for the former self-hosted/local-runner model; ADR-0044 now narrows this for the public hosted CI lane."

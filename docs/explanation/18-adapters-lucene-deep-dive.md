@@ -5,7 +5,7 @@ status: stable
 description: "HNSW search, SPLADE learned sparse retrieval, hybrid fusion, commit metadata system."
 ---
 
-# 18. Adapters-Lucene Deep Dive (The "Search Engine" Internals)
+# Adapters-Lucene Deep Dive
 
 The `modules/adapters-lucene` module provides the core search engine integration for JustSearch. It wraps Apache Lucene 10 with HNSW vector search, hybrid BM25+KNN fusion, and a sophisticated commit metadata system for schema evolution.
 

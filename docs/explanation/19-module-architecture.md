@@ -5,7 +5,7 @@ status: stable
 description: "Gradle multi-project structure, dependency layers, and governance rules."
 ---
 
-# 19. Module Architecture & Dependency Governance
+# Module Architecture & Dependency Governance
 
 JustSearch uses a Gradle multi-project architecture with dependency governance enforced at build and test time.
 The authoritative module inventory and direct internal dependency edges are generated from `settings.gradle.kts` and `modules/**/build.gradle.kts` in `docs/reference/architecture/module-deps.md`.

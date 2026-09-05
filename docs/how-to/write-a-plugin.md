@@ -5,7 +5,7 @@ status: stable
 description: "Author a V1.5 plugin that runs in a SES Compartment, contributes a Surface, and integrates with the host's trust + capability model."
 ---
 
-# How to write a JustSearch plugin
+# Writing a JustSearch plugin
 
 This guide walks through writing a complete V1.5 plugin from
 scratch. Before you start, you should be familiar with:

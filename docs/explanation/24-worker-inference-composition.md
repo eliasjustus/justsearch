@@ -5,7 +5,7 @@ status: stable
 description: "How the Worker process builds ORT sessions and wires the six encoder roles onto a single typed composition pipeline."
 ---
 
-# 24. Worker Inference Composition
+# Worker Inference Composition
 
 The Worker process hosts six ORT-backed encoders — embedding, SPLADE,
 NER, BGE-M3, cross-encoder reranker, and citation scorer. Each one needs

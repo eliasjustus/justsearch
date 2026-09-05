@@ -1,5 +1,5 @@
 ---
-title: "App Packaging: NSIS, Per-User Install, Download-on-Demand"
+title: "ADR-0024: App Packaging: NSIS, Per-User Install, Download-on-Demand"
 type: decision
 status: stable
 description: "Use NSIS installer with per-user install to LocalAppData and post-install model download via Install AI flow."

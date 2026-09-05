@@ -5,7 +5,7 @@ status: stable
 description: 'The `EnvRegistry` and "Gatekeeper" pattern.'
 ---
 
-# 06. Configuration & The "Single Source of Truth"
+# Configuration & SSOT
 
 JustSearch enforces a strict configuration philosophy designed to prevent "it works on my machine" bugs and hidden dependencies.
 

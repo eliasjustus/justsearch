@@ -5,7 +5,7 @@ status: stable
 description: "Formatting logic, JobQueue, and Tika usage."
 ---
 
-# 03. The Knowledge Server (Worker Process)
+# Knowledge Server
 
 The **Knowledge Server** (`modules/indexer-worker`) is the heavy-lifting "Body" of JustSearch. It runs as a headless Java process, spawned and managed by the Main Process.
 

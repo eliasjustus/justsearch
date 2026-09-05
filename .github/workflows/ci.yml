@@ -568,6 +568,12 @@ jobs:
       - name: Markdownlint canonical docs
         run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
 
+      - name: Validate docs frontmatter, headings and encoding
+        # Complements markdownlint (style) with the semantic rules: frontmatter parses, the H1
+        # equals the frontmatter title llms.txt indexes, no U+FFFD. Unwired until tempdoc 930
+        # §22.2 follow-up 7 cleared its last 2,219 findings; wiring it is what keeps it at zero.
+        run: node scripts/docs/docs-validate.mjs
+
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 
@@ -1233,7 +1239,11 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan]
+    # `jseval-suite` is in this list because it is a required lane with a wall-clock
+    # budget: `report-ci-walltime-attribution.mjs` drops any job with no end time, so an
+    # attribution taken while the ~6.5-minute suite still runs would omit it entirely and
+    # `report-ci-walltime-budget.mjs` would warn `missing-required-lane` on every run.
+    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan, jseval-suite]
     if: always()
     steps:
       - name: Checkout

@@ -1533,7 +1533,7 @@ approved P-F/P-C pilots (that call remains open). Nothing in the wave weakens a 
   not-found reproduced on gh 2.90.0; pending=8 had no live specimen — remains doc-grounded,
   wrapper design unchanged).
 - **R4 (encoding root-fix) CONFIRMED live.** Bare piped python mangles non-ASCII
-  (`umlaut-�`); `PYTHONIOENCODING=utf-8` scoped fixes it. The P-K interpreter-runner's core
+  (`umlaut-ä`); `PYTHONIOENCODING=utf-8` scoped fixes it. The P-K interpreter-runner's core
   mechanism is validated on this box.
 - **R5 (hint-hook cost) HELD.** Register = one `{file, role}` entry + binding in
   `agent-hooks.v1.json` (36 hooks today), hook-integrity gate covers wiring/load/bite, and

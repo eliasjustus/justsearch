@@ -1,5 +1,5 @@
 ---
-title: "CPU vs GPU Model Selection Strategy"
+title: "ADR-0019: CPU vs GPU Model Selection Strategy"
 type: decision
 status: stable
 description: "Ship separate FP32 ONNX models for CPU use; use model_manifest.json to select CPU vs GPU variants at runtime."
