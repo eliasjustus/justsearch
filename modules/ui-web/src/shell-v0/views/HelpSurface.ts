@@ -84,7 +84,7 @@ const SHORTCUTS: ShortcutRow[] = [
 ];
 
 const TROUBLESHOOTING: string[] = [
-  'If search results look stale, use "Reindex" in Library (Advanced) or Health.',
+  'If search results look stale, use "Reindex" in Library (Detailed) or Health.',
   'If indexing seems stuck, try "Restart worker" in Health.',
   'Use "Copy diagnostic summary" above before reporting a bug; review it before posting.',
 ];

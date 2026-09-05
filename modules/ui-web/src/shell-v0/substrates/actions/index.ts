@@ -787,15 +787,14 @@ export function registerShellActions(deps: ShellActionDeps): void {
       return { kind: 'navigate' as const, to: target };
     });
 
-  // Search Thread S5b — the standalone Search rail surface is retired; its retrieve tier folded
-  // into the one window (core.unified-chat-surface). The action + label stay (a distinct palette
-  // entry from "Go to Chat"), only the target repoints.
+  // Tempdoc 923 / Search Thread S5b — the standalone Search rail surface is retired; its retrieve
+  // tier folded into the one window (core.unified-chat-surface). Search is the place; Ask and
+  // Delegate are consequences inside it, so there is exactly one palette destination for the place.
   navigateAction('core.action.shell.go-to-search', 'Go to Search', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-library', 'Go to Library', 'core.library-surface');
   navigateAction('core.action.shell.go-to-settings', 'Go to Settings', 'core.settings-surface');
   navigateAction('core.action.shell.go-to-health', 'Go to System Health', 'core.health-surface');
   navigateAction('core.action.shell.go-to-activity', 'Go to Activity', 'core.activity-surface');
-  navigateAction('core.action.shell.go-to-chat', 'Go to Chat', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-browse', 'Go to Browse', 'core.browse-surface');
   // Round-14 F2 — the Brain surface had no plain navigation entry: the only palette routes to it
   // were the two install-flavoured ones below, so "open Brain" (and Memory, which is a TAB on Brain
@@ -810,8 +809,7 @@ export function registerShellActions(deps: ShellActionDeps): void {
   // That exclusion is correct (see the "does not project model-terms install operations" test),
   // but it also silently dropped both from being *listed* in the palette at all — leaving only
   // their zero-arg sibling `core.cancel-ai-install` (no terms gate) reachable, which is the F-1
-  // symptom. Fix: give them navigate-only palette entries (same "distinct label, shared target"
-  // pattern as go-to-search/go-to-chat above) that route to the Brain surface, where
+  // symptom. Fix: give them navigate-only palette entries that route to the Brain surface, where
   // BrainSurface's `hostConfirm` collects the actual terms acceptance before invoking.
   //
   // Round-14 F3 — the LABELS now say what invoking them does. "Start AI Install" promised to start

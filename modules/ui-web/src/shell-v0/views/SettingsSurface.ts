@@ -45,7 +45,14 @@ import { localizeResourceKey, onCatalogUpdated } from '../../i18n/resourceCatalo
 import { applyAppearance, getSurfaceMode, setSurfaceMode } from '../state/themeState.js';
 // Tempdoc 874 — the Search v3 chat-column width preset (FE-only, user-state document).
 import { getChatWidth, setChatWidth, type ChatWidth } from '../state/chatWidthState.js';
-import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
+import {
+  enqueueUiModePersistence,
+  UI_MODE_INTENT_HEADER,
+  setUiMode,
+  getUiMode,
+  getUiModeRevision,
+  subscribeUiMode,
+} from '../state/uiModeState.js';
 // 569 Move 1/3 — the body-tier apply path: a real region rendered from a declaration.
 import {
   subscribePresentation,
@@ -895,11 +902,20 @@ export class SettingsSurface extends JfElement {
       // This surface owns the persist lifecycle the statechart's save-settings edge triggers:
       // optimistic apply already happened (set-appearance effect); persistence is best-effort.
       this.saving = true;
-      void this.doFetch('/api/settings/v2', {
+      const persist = (signal?: AbortSignal, intent?: string): Promise<Response> => this.doFetch('/api/settings/v2', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(intent ? { [UI_MODE_INTENT_HEADER]: intent } : {}),
+        },
         body: JSON.stringify(settings),
-      })
+        signal,
+      });
+      const ui = settings['ui'];
+      const writesMode = typeof ui === 'object' && ui !== null && 'mode' in ui;
+      // Mode writes share one queue with Brain and the top bar. Other settings retain their existing
+      // independent lifecycle because they do not compete for the `ui.mode` field.
+      void (writesMode ? enqueueUiModePersistence(persist) : persist())
         .catch((err: unknown) => {
           this.error = err instanceof Error ? err.message : String(err);
         })
@@ -1013,17 +1029,21 @@ export class SettingsSurface extends JfElement {
       method: init?.method,
       headers: init?.headers as Record<string, string> | undefined,
       body: init?.body as string | undefined,
+      signal: init?.signal ?? undefined,
     });
   }
 
   private async loadSettings(): Promise<void> {
+    const modeRevision = getUiModeRevision();
     try {
       const res = await this.doFetch('/api/settings/v2');
       if (!res.ok) return;
       const data = (await res.json()) as AllSettings;
-      this.ui = data.ui ?? {};
+      // Boot restoration normally seeds uiModeState first. Retain the fallback for isolated mounts,
+      // but never let this slower surface-local GET overwrite a choice made while it was in flight.
+      if (getUiModeRevision() === modeRevision) setUiMode(data.ui?.mode);
+      this.ui = { ...(data.ui ?? {}), mode: getUiMode() };
       this.llm = data.llm ?? {};
-      setUiMode(this.ui.mode); // Q8: publish to the app-wide UI-mode authority
       this.readOnly = data.settingsMode === 'in_memory';
       // §2.C: replay the persisted appearance on load (one writer) so the theme
       // survives reload and the high-contrast class is applied.

@@ -21,10 +21,9 @@ For design philosophy and architecture, see `docs/explanation/10-ui-ux-design.md
 > (Meta-Llama-3.1-8B, 2026-06-13):** typed search returns populated results with
 > highlighted snippets, facet filters (Type/Format/Language with counts), result
 > count + timing, and the "Keyword search · AI-expanded query" retrieval-mode badge;
-> clicking a result row opens the Inspector (Preview / Context / Answer / Ask tabs)
-> with extracted-text preview; the Ask tab streams a grounded RAG answer with inline
-> `[n]` citations + a source chip; clicking a citation jumps to Preview and highlights
-> the grounding passage. **Spot-unverified (lower-value nuances):** arrow-key cursor
+> clicking a result opens a tabless document-reading pane inside the Search conversation
+> zone; grounded Q&A stays in the same thread through **Ask**, with inline citations and
+> source chips. **Spot-unverified (lower-value nuances):** arrow-key cursor
 > vs `Enter`-to-inspect, multi-select checkboxes, and citation hover-cards — re-check
 > against `shell-v0/views/UnifiedChatView.ts` (retrieve tier) + `shell-v0/components/searchResults/ResultsCard.ts`
 > if a specific claim matters (Search Thread S5b: the standalone `SearchSurface.ts` this
@@ -39,9 +38,9 @@ The search interface uses a five-zone layout:
 | Zone | Name | Position | Purpose |
 |------|------|----------|---------|
 | A | Command Bar | Top | Search input, syntax toggle, autocomplete, history |
-| B | Rail | Left edge | View switcher (chat, library, brain, system, settings). Search is no longer a rail peer (tempdoc 577 Goal 3): it is the unified Chat window's `retrieve` base tier; the standalone surface stays DEEPLINK-routable. |
+| B | Rail | Left edge | View switcher (Search, Library, Brain, System, Settings). Search is the one interaction window: `retrieve` is its base tier, **Ask** requests a cited answer, and **Delegate** starts multi-step agent work. |
 | C | Stage | Center | Result list + filters, or Launchpad home |
-| D | Inspector | Right | Document preview and AI Q&A |
+| D | Document pane | Right | Tabless document reading inside the Search conversation zone; Q&A remains in the thread |
 | E | Status Deck | Bottom | System readiness, result count, processing time, AI mode, hints |
 
 Focus cycles through zones via Tab / Shift+Tab. Cmd/Ctrl+K always returns focus to Zone A (search input).
@@ -155,7 +154,7 @@ Located between the command bar and the result list. Collapsed by default, expan
 | Date range | any, 24h, 7d, 30d | any |
 | Language | Dynamic list from facets | — |
 | MIME base | Multi-select pill toggles (text, image, application, etc.) | — |
-| Path prefix | Free-text path filter (Advanced mode) | — |
+| Path prefix | Free-text path filter (Detailed mode) | — |
 | Facets toggle | Enable/disable facet computation | off |
 
 ### MIME Base Facet Toggles
@@ -406,43 +405,12 @@ The browse panel was removed by P15. Its only unique value (snippet preview) is 
 
 ---
 
-## 9. Inspector Panel (Zone D)
+## 9. Document pane (Zone D)
 
-The Inspector is a right-side panel that opens when a result is selected (arrow keys or click).
-
-### Opening and Closing
-- Opens on result selection (single click or arrow key navigation)
-- Closes via the collapse button (panel icon in tab bar)
-- Toggleable with Cmd/Ctrl+\
-
-### Resizing
-- Drag the left edge of the Inspector to resize
-- Minimum width: 280px
-- Maximum width: 50% of window
-- Width persists across sessions in `useLayoutStore`
-
-### Tab Bar
-- Two tabs: **Preview** (default) and **AI**
-- AI tab only shown when AI is available or AI content exists
-- Active tab persisted to localStorage (`justsearch-inspector-tab`)
-- File count badge and collapse button in tab bar header
-- AI tab shows spinner badge when generating on Preview tab
-
-### Preview Tab (Default)
-- Paged text preview of document content (fetched from `/api/preview` endpoint)
-- Load-more capability for long documents
-- Inline retry button on preview load errors
-- Markdown/Raw toggle for .md files
-- Match reason pills (which fields matched)
-- VDU provenance badges (text extraction quality indicators)
-- Citation click in AI tab auto-switches to Preview tab and highlights passage
-
-### AI Tab
-- Text input for asking questions about the selected document(s)
-- Dynamic placeholder based on selection count
-- Summarize button for AI-generated summaries
-- AI response area with Markdown rendering and citation support
-- "Complete" status badge after generation finishes
+Selecting a result opens a tabless reading pane inside the Search conversation zone. The pane owns
+document preview and navigation only; it does not create a second Answer or Ask workspace. Grounded
+questions are sent with **Ask** in the same Search thread, and citation navigation focuses the relevant
+document passage. `inspectorState.ts` retains the historical name as an internal compatibility detail.
 - Context indicators: safety, token count, RAG status
 - Expandable context details: chunks used/found, context size, document list
 - Clickable citation list with relevance scores and excerpts

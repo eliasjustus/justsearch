@@ -678,7 +678,11 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
             if view_name == "ai-brain-advanced":
-                b = page.get_by_test_id(S.TID_BRAIN_SWITCH_TO_ADVANCED)
+                # Tempdoc 923 — Brain now projects the shared app-wide detail level through its
+                # accessible header control. The retired Simple-panel "Switch to Advanced" hook
+                # no longer exists; select the current user-facing Detailed choice instead.
+                detail_level = page.get_by_role("group", name="Detail level").first
+                b = detail_level.get_by_role("button", name="Detailed", exact=True)
                 await b.wait_for(state="visible", timeout=10_000)
                 await b.click(timeout=5_000)
                 if cooldown_ms > 0:
@@ -723,7 +727,7 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
 
     _DENSITY_LABEL = {"compact": "Compact", "comfort": "Comfortable",
                       "comfortable": "Comfortable", "rich": "Spacious"}
-    _MODE_LABEL = {"simple": "Simple", "advanced": "Advanced"}
+    _MODE_LABEL = {"simple": "Simple", "advanced": "Detailed"}
 
     def _density_setup(density: str):
         async def setup(page):
@@ -746,11 +750,12 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
 
     def _mode_setup(mode: str):
         async def setup(page):
-            # tempdoc 615 §6.1b: UI mode is the live Settings Simple/Advanced `option-btn` (persists via
+            # tempdoc 923: UI mode is the live Settings Simple/Detailed `option-btn` (the compatible
+            # wire value remains `advanced`; the control persists via
             # `/api/settings/v2` `ui.mode`), not the retired store + filter toggle. Set it, then search.
             await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(state="visible", timeout=15_000)
             await _goto_surface(page, S.RAIL_SURFACE_SETTINGS)
-            # The Simple/Advanced cards are `option-btn`s with sub-labels; match by leading text.
+            # The Simple/Detailed cards are `option-btn`s with sub-labels; match by leading text.
             btn = page.locator("button.option-btn", has_text=_MODE_LABEL.get(mode, "Simple"))
             await btn.first.wait_for(state="visible", timeout=10_000)
             await btn.first.click()

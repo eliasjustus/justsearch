@@ -91,6 +91,21 @@ const ALT_SURFACE: Surface = {
   provenance: { tier: 'TRUSTED_PLUGIN', contributorId: 'acme', version: '0.1.0' },
 };
 
+const LEGACY_ASK_SURFACE: Surface = {
+  ...ALT_SURFACE,
+  id: 'core.ask-surface',
+  placement: 'DEEPLINK',
+};
+
+const UNIFIED_SEARCH_SURFACE: Surface = {
+  ...ALT_SURFACE,
+  id: 'core.unified-chat-surface',
+  presentation: {
+    labelKey: 'registry-surface.unified-chat-surface.label',
+    descriptionKey: 'registry-surface.unified-chat-surface.description',
+  },
+};
+
 function makeCatalog(entries: Surface[]): SurfaceCatalog {
   return {
     schemaVersion: '1.0.0',
@@ -361,6 +376,29 @@ describe('Stage — split mode (tempdoc 521 §22 Phase A.2)', () => {
     expect(panes?.length).toBe(2);
     const picker = stage.shadowRoot?.querySelector('jf-pane-picker');
     expect(picker).not.toBeNull();
+  });
+
+  it('923 F-22 — offers Search once and hides legacy interaction-mode addresses', async () => {
+    seedSurfaceCatalog(
+      makeCatalog([CORE_SURFACE, ALT_SURFACE, LEGACY_ASK_SURFACE, UNIFIED_SEARCH_SURFACE]),
+    );
+    const stage = document.createElement('jf-stage') as StageElement & {
+      secondarySurface?: Surface | null;
+      splitAxis?: 'horizontal' | 'vertical' | null;
+    };
+    stage.surface = CORE_SURFACE;
+    stage.secondarySurface = ALT_SURFACE;
+    stage.splitAxis = 'horizontal';
+    stage.apiBase = '';
+    document.body.appendChild(stage);
+    await stage.updateComplete;
+
+    const picker = stage.shadowRoot?.querySelector('jf-pane-picker') as
+      | (HTMLElement & { candidates?: Array<{ id: string; label: string }> })
+      | null;
+    const ids = picker?.candidates?.map((candidate) => candidate.id) ?? [];
+    expect(ids).toContain('core.unified-chat-surface');
+    expect(ids).not.toContain('core.ask-surface');
   });
 
   it('honors the vertical splitAxis', async () => {

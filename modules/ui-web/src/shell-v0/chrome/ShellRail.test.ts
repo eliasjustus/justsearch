@@ -59,7 +59,7 @@ const SETTINGS = makeRailSurface(
 const SYSTEM = makeRailSurface('core.system-surface', 'jf-system-surface');
 // Tempdoc 855 §5 item 2 — Token Editor is DEEPLINK-placement now, not RAIL: seeded here (not via
 // `makeRailSurface`) so the fixture is honest about what the real catalog wire declares, to assert
-// it never reaches the rail's `railSurfaces` base filter, in either Simple or Advanced mode.
+// it never reaches the rail's `railSurfaces` base filter, in either Simple or Detailed mode.
 const THEME_EDITOR: Surface = {
   ...makeRailSurface('vendor.token-editor.editor-surface', 'jf-token-editor-surface'),
   placement: 'DEEPLINK',
@@ -213,7 +213,7 @@ describe('Shell — userConfig-driven rail (slice 472)', () => {
   });
 });
 
-describe('Shell — Simple/Advanced rail filter (tempdoc 586 F-2)', () => {
+describe('Shell — Simple/Detailed rail filter (tempdoc 586 F-2)', () => {
   beforeEach(() => {
     resetSurfaceCatalog();
     __resetUserConfigForTest();
@@ -245,14 +245,14 @@ describe('Shell — Simple/Advanced rail filter (tempdoc 586 F-2)', () => {
     expect(ids).not.toContain('vendor.token-editor.editor-surface');
   });
 
-  it('Advanced mode restores System (Theme Editor stays off the rail — it is DEEPLINK, not RAIL)', async () => {
+  it('Detailed mode restores System (Theme Editor stays off the rail — it is DEEPLINK, not RAIL)', async () => {
     seedSurfacesWithDiagnostics();
     setUiMode('advanced');
     const shell = await renderShell();
     const ids = shell.surfaces.map((s) => s.id);
     expect(ids).toContain('core.system-surface');
     expect(ids).toContain('core.brain-surface');
-    // 855 §5 item 2 — DEEPLINK placement means Advanced mode does not restore it either; it was
+    // 855 §5 item 2 — DEEPLINK placement means Detailed mode does not restore it either; it was
     // never excluded by the Simple-mode filter to begin with.
     expect(ids).not.toContain('vendor.token-editor.editor-surface');
   });

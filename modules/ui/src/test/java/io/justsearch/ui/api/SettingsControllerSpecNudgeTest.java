@@ -1,6 +1,8 @@
 package io.justsearch.ui.api;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -9,6 +11,11 @@ import io.javalin.http.Context;
 import io.justsearch.app.services.settings.UiSettingsStore;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -44,6 +51,12 @@ final class SettingsControllerSpecNudgeTest {
     return ctx;
   }
 
+  private Context contextWithBodyAndIntent(String body, String intent) {
+    Context ctx = contextWithBody(body);
+    when(ctx.header(SettingsController.UI_MODE_INTENT_HEADER)).thenReturn(intent);
+    return ctx;
+  }
+
   @Test
   @DisplayName("write that sets chatEnabled true (from unset) fires the nudge once")
   void changedChatEnabledFires() {
@@ -73,5 +86,64 @@ final class SettingsControllerSpecNudgeTest {
     controller.handleUpdateSettingsV2(contextWithBody("{\"ui\":{\"chatEnabled\":true}}"));
     controller.handleUpdateSettingsV2(contextWithBody("{\"ui\":{\"chatEnabled\":false}}"));
     assertEquals(2, nudges.get());
+  }
+
+  @Test
+  @DisplayName("concurrent partial patches serialize their whole-document transaction")
+  void concurrentPartialPatchesDoNotClobberOneAnother() throws Exception {
+    CountDownLatch firstBodyEntered = new CountDownLatch(1);
+    CountDownLatch releaseFirstBody = new CountDownLatch(1);
+    CountDownLatch secondCallStarted = new CountDownLatch(1);
+    CountDownLatch secondBodyEntered = new CountDownLatch(1);
+    Context first = contextWithBody("{\"ui\":{\"mode\":\"advanced\"}}");
+    when(first.body()).thenAnswer(ignored -> {
+      firstBodyEntered.countDown();
+      if (!releaseFirstBody.await(5, TimeUnit.SECONDS)) {
+        throw new AssertionError("test did not release the first settings request");
+      }
+      return "{\"ui\":{\"mode\":\"advanced\"}}";
+    });
+    Context second = contextWithBody("{\"ui\":{\"theme\":\"dark\"}}");
+    when(second.body()).thenAnswer(ignored -> {
+      secondBodyEntered.countDown();
+      return "{\"ui\":{\"theme\":\"dark\"}}";
+    });
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> firstCall = executor.submit(() -> controller.handleUpdateSettingsV2(first));
+      assertTrue(firstBodyEntered.await(5, TimeUnit.SECONDS));
+      Future<?> secondCall = executor.submit(() -> {
+        secondCallStarted.countDown();
+        controller.handleUpdateSettingsV2(second);
+      });
+
+      assertTrue(secondCallStarted.await(5, TimeUnit.SECONDS));
+      assertFalse(secondBodyEntered.await(1, TimeUnit.SECONDS),
+          "the second request must not enter while the first owns the settings transaction");
+      releaseFirstBody.countDown();
+      firstCall.get(5, TimeUnit.SECONDS);
+      secondCall.get(5, TimeUnit.SECONDS);
+
+      assertTrue(secondBodyEntered.await(5, TimeUnit.SECONDS));
+      assertEquals("advanced", store.load().getMode());
+      assertEquals("dark", store.load().getTheme());
+    } finally {
+      releaseFirstBody.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  @DisplayName("a late timed-out mode intent cannot overwrite a newer intent")
+  void staleModeIntentCannotOverwriteNewerMode() {
+    controller.handleUpdateSettingsV2(contextWithBodyAndIntent(
+        "{\"ui\":{\"mode\":\"advanced\"}}", "client-a:2"));
+    controller.handleUpdateSettingsV2(contextWithBodyAndIntent(
+        "{\"ui\":{\"mode\":\"simple\",\"theme\":\"dark\"}}", "client-a:1"));
+
+    assertEquals("advanced", store.load().getMode());
+    assertEquals("dark", store.load().getTheme(),
+        "a stale mode token must not discard unrelated fields in the same partial patch");
   }
 }

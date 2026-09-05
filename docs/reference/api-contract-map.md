@@ -364,7 +364,7 @@ Resume contract notes:
 
 ### Settings API
 
-**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/SettingsV2Controller.java`
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/SettingsController.java`
 
 `GET /api/settings/v2`:
 
@@ -373,6 +373,11 @@ Resume contract notes:
 `POST /api/settings/v2`:
 
 - Persists updated settings. Returns 409 `SETTINGS_READ_ONLY` when `settingsMode` is `in_memory` (eval mode) — saves are silently discarded in this mode without the 409.
+- Shell mode writes include `X-JustSearch-UI-Mode-Intent: <client-id>:<sequence>`. The client ID and
+  Web-Lock-allocated sequence are durable in origin storage, putting reloads and concurrent shell
+  windows in one monotonic ordering domain. The server ignores only the `ui.mode` field of an older
+  intent while still applying unrelated fields in that partial patch. The header is optional for
+  compatibility.
 - Contract test: `SettingsV2ContractTest` validates round-trip (save → load → read) with no field loss.
 
 Source: tempdoc 368 (RC6).
