@@ -20,7 +20,9 @@ import {
   buildChecksArgs,
   classifyMergeSnapshot,
   classifyWorkflowRun,
+  enqueuePullRequest,
   mergeWait,
+  parseEnqueueArgs,
   parseValueFlag,
   parseRequiredOnly,
   parseTimeoutSec,
@@ -229,6 +231,67 @@ await runAsync('run-wait-sha handles registration followed by exact-SHA success'
   assert.equal(code, 0);
   assert.equal(call, 2);
 });
+
+// --- validated publication enqueue gateway ---
+run('parseEnqueueArgs accepts only a PR number and optional repository slug', () => {
+  assert.deepEqual(parseEnqueueArgs(['933']), { prNumber: 933, repo: null });
+  assert.deepEqual(parseEnqueueArgs(['933', '--repo', 'justsearch-app/justsearch']), {
+    prNumber: 933,
+    repo: 'justsearch-app/justsearch',
+  });
+  assert.throws(() => parseEnqueueArgs(['0']), /positive/);
+  for (const ambiguous of ['1e3', '0x10', '+7', '7.0', '01']) {
+    assert.throws(() => parseEnqueueArgs([ambiguous]), /positive/, ambiguous);
+  }
+  assert.throws(() => parseEnqueueArgs(['999999999999999999999']), /safe-integer/);
+  assert.throws(() => parseEnqueueArgs(['933', '--squash']), /accepts only/);
+  assert.throws(() => parseEnqueueArgs(['933', '--repo', 'invalid']), /owner\/repo/);
+});
+
+run('enqueue validates preview and managed record before requesting the ordinary merge queue', () => {
+  const calls = [];
+  const code = enqueuePullRequest('gh-bin', 933, 'justsearch-app/justsearch', {
+    nodeBin: 'node-bin',
+    previewScript: 'preview-script',
+    reviewRecordScript: 'review-script',
+    run: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    },
+    writeError: () => {},
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(calls, [
+    { command: 'node-bin', args: ['preview-script', '--pr', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+    { command: 'node-bin', args: ['review-script', 'check', '--pr', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+    { command: 'gh-bin', args: ['pr', 'merge', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+  ]);
+});
+
+for (const [label, results, expected] of [
+  ['preview refusal', [{ status: 1 }], 1],
+  ['preview spawn error', [{ error: new Error('missing') }], 2],
+  ['preview signal', [{ status: null, signal: 'SIGTERM' }], 2],
+  ['preview missing status', [{}], 2],
+  ['review refusal', [{ status: 0 }, { status: 1 }], 1],
+]) {
+  run(`enqueue fails closed on ${label} without requesting a merge`, () => {
+    const calls = [];
+    const queue = [...results];
+    const code = enqueuePullRequest('gh-bin', 933, null, {
+      nodeBin: 'node-bin',
+      previewScript: 'preview-script',
+      reviewRecordScript: 'review-script',
+      run: (command, args) => {
+        calls.push({ command, args });
+        return queue.shift() ?? { status: 0 };
+      },
+      writeError: () => {},
+    });
+    assert.equal(code, expected);
+    assert(!calls.some((call) => call.command === 'gh-bin'), JSON.stringify(calls));
+  });
+}
 
 // --- Report ---
 if (failures.length > 0) {

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import MarkdownIt from 'markdown-it';
+import { unescapeAll } from 'markdown-it/lib/common/utils.mjs';
 
 import {
   findSessionIdValues,
@@ -27,6 +28,10 @@ const REVIEW_HEADING_RE = /^(?:review(?: record| state)?|scope and risk|verifica
 const REVIEW_LABEL_RE = /^(?:Authorship|Review|Testing|Tests|Test plan|Verification|Checks):\s*\S.*$/i;
 const TEMPLATE_RESIDUE_RE = /(?:Explain why this durable change was needed|Describe one observable outcome|Describe verification or `Not run: <reason>`|<session-uuid>)/i;
 const REVIEW_TEMPLATE_RESIDUE_RE = /(?:agent \| human \| mixed \| trusted-bot|Describe the affected surface|List reproducible checks and results|State unresolved findings and decisions)/i;
+const PROVIDER_BANNER_TEXT_RE = /\b(?:generated|created|written)\s+(?:with|by)\s+Claude\s+Code\b/i;
+const PROVIDER_LINK_RE = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)*claude\.com\/claude-code(?=$|[/?#"'<>\s)])|(?:https?:\/\/)?(?:[a-z0-9-]+\.)*claude\.ai\/code\/session(?=$|[/?#"'<>\s)])/i;
+const OPAQUE_HTML_TAG_RE = /^<\/?(?:pre|code|script|style|template)\b/i;
+const OPAQUE_HTML_TAGS = new Set(['pre', 'code', 'script', 'style', 'template']);
 
 const md = new MarkdownIt({ html: true });
 
@@ -63,6 +68,84 @@ function hasTopLevelReviewResidue(markdown) {
     for (let line = token.map[0]; line < token.map[1]; line += 1) {
       if (REVIEW_LABEL_RE.test(lines[line]?.trim() ?? '')) return true;
     }
+  }
+  return false;
+}
+
+function providerLinkInHtmlTag(tag) {
+  if (!/^<\s*a\b/i.test(tag)) return false;
+  const href = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i);
+  return href ? PROVIDER_LINK_RE.test(unescapeAll(href[1] ?? href[2] ?? href[3])) : false;
+}
+
+function providerResidueInHtmlBlock(html) {
+  const tokens = html.match(/<!--[\s\S]*?(?:-->|$)|<[^>]*>|[^<]+|</g) ?? [];
+  const opaque = [];
+  let visibleText = '';
+  for (const token of tokens) {
+    if (token.startsWith('<!--')) continue;
+    const close = token.match(/^<\s*\/\s*([a-z][a-z0-9-]*)/i);
+    if (close) {
+      if (opaque.at(-1) === close[1].toLowerCase()) opaque.pop();
+      continue;
+    }
+    const open = token.match(/^<\s*([a-z][a-z0-9-]*)/i);
+    if (open) {
+      const tag = open[1].toLowerCase();
+      if (opaque.length > 0) {
+        if (OPAQUE_HTML_TAGS.has(tag) && !/\/\s*>$/.test(token)) opaque.push(tag);
+        continue;
+      }
+      if (OPAQUE_HTML_TAGS.has(tag) && !/\/\s*>$/.test(token)) {
+        opaque.push(tag);
+        continue;
+      }
+      if (providerLinkInHtmlTag(token)) return true;
+      continue;
+    }
+    if (opaque.length === 0) visibleText += ` ${unescapeAll(token)}`;
+  }
+  return PROVIDER_BANNER_TEXT_RE.test(visibleText) || PROVIDER_LINK_RE.test(visibleText);
+}
+
+function hasProviderResidue(markdown) {
+  const tokens = md.parse(markdown, {});
+  let blockquoteDepth = 0;
+  for (const token of tokens) {
+    if (token.type === 'blockquote_open') {
+      blockquoteDepth += 1;
+      continue;
+    }
+    if (token.type === 'blockquote_close') {
+      blockquoteDepth = Math.max(0, blockquoteDepth - 1);
+      continue;
+    }
+    if (blockquoteDepth > 0) continue;
+    if (token.type === 'html_block') {
+      if (providerResidueInHtmlBlock(token.content)) return true;
+      continue;
+    }
+    if (token.type !== 'inline') continue;
+
+    let visibleText = '';
+    let opaqueHtmlDepth = 0;
+    for (const child of token.children ?? []) {
+      if (child.type === 'html_inline' && OPAQUE_HTML_TAG_RE.test(child.content)) {
+        if (/^<\//.test(child.content)) opaqueHtmlDepth = Math.max(0, opaqueHtmlDepth - 1);
+        else if (!/\/\s*>$/.test(child.content)) opaqueHtmlDepth += 1;
+        continue;
+      }
+      if (opaqueHtmlDepth > 0) continue;
+      if (child.type === 'text') visibleText += child.content;
+      else if (child.type === 'softbreak' || child.type === 'hardbreak') visibleText += ' ';
+      else if (child.type === 'link_open') {
+        const href = child.attrGet('href');
+        if (href && PROVIDER_LINK_RE.test(href)) return true;
+      } else if (child.type === 'html_inline') {
+        if (providerLinkInHtmlTag(child.content)) return true;
+      }
+    }
+    if (PROVIDER_BANNER_TEXT_RE.test(visibleText) || PROVIDER_LINK_RE.test(visibleText)) return true;
   }
   return false;
 }
@@ -173,7 +256,7 @@ function validatePublicBody(pullRequest, errors, warnings) {
   if (/<details\b/i.test(body)) errors.push(finding('public-details', 'Public PR body contains an HTML <details> block.'));
   if (PROCESS_MARKER_RE.test(`${pullRequest.expectedLandedSubject}\n${body}`)) errors.push(finding('public-process-marker', 'Public title/body contains a WIP, review-round, or stack-state marker.'));
   if (INTERNAL_LINE_RE.test(body) || INTERNAL_FENCE_RE.test(body)) errors.push(finding('public-stack-base-log', 'Public PR body contains a reserved stack/base log marker.'));
-  if (/Generated with Claude Code|claude\.ai\/code\/session/i.test(body)) errors.push(finding('public-provider-banner', 'Public PR body contains a provider banner or provider session URL.'));
+  if (hasProviderResidue(body)) errors.push(finding('public-provider-banner', 'Public PR body contains a provider banner or provider session URL.'));
   if (hasTopLevelReviewResidue(body)) errors.push(finding('public-review-residue', 'Public PR body contains review-record structure.'));
   if (TEMPLATE_RESIDUE_RE.test(body)) errors.push(finding('public-template-residue', 'Public PR body still contains pull-request template placeholders.'));
   if (SHA_RE.test(body)) warnings.push(finding('public-raw-sha', 'Public PR body contains a raw 40-character SHA; confirm it is durable context.'));
