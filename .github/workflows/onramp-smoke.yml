@@ -20,154 +20,78 @@ env:
   NODE_VERSION: "24.14.0"
   JAVA_VERSION: "25"
 
+
 jobs:
-  onramp-devcontainer-smoke:
-    name: Devcontainer first-success (Tier 0, model-less)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      DEVCONTAINER_ID_LABEL: justsearch.onramp-smoke=${{ github.run_id }}-${{ github.run_attempt }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install pinned Dev Container CLI
-        run: npm install --global @devcontainers/cli@0.89.0 --audit=false
-
-      - name: Start dev container
-        run: >-
-          devcontainer up --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
-          --gpu-availability none
-
-      - name: Verify container toolchains
-        run: |
-          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL" bash -lc '
-            set -euo pipefail
-            java_version="$(java -version 2>&1)"
-            node_version="$(node --version)"
-            python_version="$(python3 --version)"
-            rust_version="$(rustc --version)"
-            rust_toolchain="$(rustup show active-toolchain)"
-
-            printf "%s\n" "$java_version" "$node_version" "$python_version" "$rust_version" "$rust_toolchain"
-            grep -Eq '\''version "25([.]|")'\'' <<< "$java_version"
-            grep -Eq '\''^v24[.]'\'' <<< "$node_version"
-            grep -Eq '\''^Python 3[.]13[.]'\'' <<< "$python_version"
-            grep -Eq '\''^rustc [0-9]+[.]'\'' <<< "$rust_version"
-            grep -Eq '\''^stable-'\'' <<< "$rust_toolchain"
-          '
-
-      - name: Verify bootstrap check mode
-        run: >-
-          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
-          node scripts/setup/bootstrap.mjs --check
-
-      - name: Build required distributions
-        run: >-
-          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL"
-          ./gradlew assemble :modules:ui:installDist :modules:indexer-worker:installDist
-          -PskipWebBuild=true
-
-      - name: Onramp first-success smoke (Tier 0)
-        run: |
-          devcontainer exec --workspace-folder . --id-label "$DEVCONTAINER_ID_LABEL" bash -lc '
-            set -euo pipefail
-            empty_models="$(mktemp -d)"
-            trap '\''rm -rf "$empty_models"'\'' EXIT
-            test -z "$(find "$empty_models" -mindepth 1 -print -quit)"
-            JUSTSEARCH_MODELS_DIR="$empty_models" node scripts/dev/test-onramp-first-success.mjs
-          '
-
-      - name: Remove dev container
-        if: always()
-        run: |
-          mapfile -t containers < <(docker ps --all --quiet --filter "label=$DEVCONTAINER_ID_LABEL")
-          if [ "${#containers[@]}" -gt 0 ]; then
-            docker rm --force "${containers[@]}"
-          fi
-
-  onramp-tier0-smoke:
-    name: Onramp first-success (Tier 0, model-less)
+  update-preserves-models-probe:
+    name: TEMPORARY probe of the update-preserves-models lane
     runs-on: windows-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      # The dev stack spawns the Vite frontend (readiness gates on the backend only, but install its
-      # deps so the spawn is clean — mirrors the proven local run).
-      - name: Install frontend deps
-        working-directory: modules/ui-web
-        run: npm ci --audit=false
-
-      # Pre-build so the smoke's stack-start budget isn't spent on a cold, from-scratch Gradle build.
-      # `dev-runner start` runs `assemble -PskipWebBuild=true` (dev-runner.cjs:1010-1013) as its
-      # up-to-date gate; run that EXACT task+flag here so its later check is UP-TO-DATE (~seconds)
-      # instead of a cold whole-project compile INSIDE startStack's 240s window
-      # (stage-reference-corpus.mjs:34). NOTE: `assemble` covers ALL modules — installDist of just
-      # ui+worker (the first fix attempt) left benchmarks/test-support to recompile, which still blew
-      # the 240s budget (run 28905787720). Keep the whole-project `assemble` here, plus installDist for
-      # the launch dir (dev-runner.cjs:1037 fail-fasts without it). Without any of this, the lane fails
-      # at "FAIL stack start timed out" (the original 2026-07-02 run 28607534344).
-      - name: Build (assemble + installDist — keeps stack-start off the cold-build path)
-        run: ./gradlew.bat assemble :modules:ui:installDist :modules:indexer-worker:installDist -PskipWebBuild=true
-
-      # Force the model-less Tier 0 path deterministically (independent of whether models/ exists).
-      - name: Prepare empty models dir
+      - name: Download base (N) installer
         shell: pwsh
-        run: New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\empty-models" | Out-Null
-
-      # Fast, model-less anti-regression: dev inference resolution must NEVER fall back to a CPU
-      # baseline (tempdoc 656 Move 1/2). No stack, no models needed — runs before the heavier smoke.
-      - name: Dev-runner runtime resolution regression test
-        run: npm run test:dev-runner
-
-      - name: Onramp doctor (diagnostic — reports the tier)
-        continue-on-error: true
         env:
-          JUSTSEARCH_MODELS_DIR: ${{ runner.temp }}\empty-models
-        run: node scripts/dev/doctor.mjs
-
-      # The proof: start stack -> ingest examples/onramp-corpus -> query -> assert a first result.
-      # Self-tears-down. Asserts Tier 0 unconditionally; the Tier-1 check is skipped with no models.
-      - name: Onramp first-success smoke (Tier 0)
-        env:
-          JUSTSEARCH_MODELS_DIR: ${{ runner.temp }}\empty-models
-        run: node scripts/dev/test-onramp-first-success.mjs
-
-      # On failure, surface the Head/worker logs dev-runner writes to files — the workflow stream only
-      # shows dev-runner's own stderr, so a stack that launches but never reports ready would otherwise
-      # look silent here. Failure-only; kept as standing diagnostics for this heavy, otherwise-opaque lane.
-      - name: Dump stack logs (on failure)
-        if: failure()
-        shell: bash
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # dev-runner's data dir defaults to modules/ui-web/.dev-data (dev-runner.cjs:251), not repo root.
-          DD=$(find . -maxdepth 4 -type d -name .dev-data 2>/dev/null | head -1)
-          echo "dataDir=$DD"
-          if [ -z "$DD" ]; then echo "(.dev-data not found anywhere)"; exit 0; fi
-          echo "### run.json / active.json / manifest.json ###"
-          find "$DD" \( -name active.json -o -name run.json -o -name manifest.json \) 2>/dev/null | while read -r f; do echo "===== $f ====="; cat "$f" 2>/dev/null; echo; done
-          echo "### logs (tail 200 each) ###"
-          find "$DD" -name '*.log' 2>/dev/null | while read -r f; do echo "===== $f ====="; tail -200 "$f" 2>/dev/null; echo; done
+          New-Item -ItemType Directory -Path base -Force | Out-Null
+          gh release download 'v0.1.0' --repo $env:GITHUB_REPOSITORY --pattern '*_x64-setup.exe' --dir base
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download the base installer." }
+          Get-ChildItem base | Format-Table Name, Length
+
+      - name: Download candidate (N+1) installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Path candidate -Force | Out-Null
+          gh release download 'v0.2.0' --repo $env:GITHUB_REPOSITORY --pattern '*_x64-setup.exe' --dir candidate
+          if ($LASTEXITCODE -ne 0) { throw "Failed to download the candidate installer." }
+          Get-ChildItem candidate -Recurse -File | Format-Table FullName, Length
+
+      - name: Resolve installers and assert a real version increase
+        id: resolve
+        shell: pwsh
+        run: |
+          function Resolve-Setup {
+            param([string]$Dir, [string]$Label)
+            $exe = Get-ChildItem -Path $Dir -Recurse -File -Filter '*_x64-setup.exe' |
+              Sort-Object Length -Descending | Select-Object -First 1
+            if (-not $exe) { throw "No *_x64-setup.exe found for $Label under $Dir." }
+            if ($exe.Name -notmatch '_(?<v>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.\-]+)?)_x64-setup\.exe$') {
+              throw "Cannot parse a version out of the $Label installer name '$($exe.Name)'."
+            }
+            return [pscustomobject]@{ Path = $exe.FullName; Version = $Matches['v'] }
+          }
+          $base = Resolve-Setup -Dir 'base' -Label 'base (N)'
+          $cand = Resolve-Setup -Dir 'candidate' -Label 'candidate (N+1)'
+          Write-Host "Base      : $($base.Version)  $($base.Path)"
+          Write-Host "Candidate : $($cand.Version)  $($cand.Path)"
+          if ($base.Version -eq $cand.Version) { throw "Base and candidate are the same version." }
+          $baseCore = [version](($base.Version -split '-')[0])
+          $candCore = [version](($cand.Version -split '-')[0])
+          if ($candCore -lt $baseCore) { throw "Candidate is older than base; allowDowngrades=false." }
+          "basePath=$($base.Path)"       >> $env:GITHUB_OUTPUT
+          "baseVersion=$($base.Version)" >> $env:GITHUB_OUTPUT
+          "candPath=$($cand.Path)"       >> $env:GITHUB_OUTPUT
+          "candVersion=$($cand.Version)" >> $env:GITHUB_OUTPUT
+
+      - name: Install N, seed models, upgrade to N+1, uninstall, assert survival
+        shell: pwsh
+        run: |
+          ./scripts/release/update-preserves-models-test.ps1 `
+            -BaseInstaller '${{ steps.resolve.outputs.basePath }}' `
+            -CandidateInstaller '${{ steps.resolve.outputs.candPath }}' `
+            -BaseVersion '${{ steps.resolve.outputs.baseVersion }}' `
+            -CandidateVersion '${{ steps.resolve.outputs.candVersion }}' `
+            -OutFile "$env:GITHUB_WORKSPACE/evidence/update-preserves-models.v1.json"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-preserves-models-evidence
+          path: evidence/update-preserves-models.v1.json
+          if-no-files-found: warn
+          retention-days: 90
