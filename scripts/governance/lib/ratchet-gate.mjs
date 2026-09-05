@@ -11,8 +11,13 @@
  *
  * A ratchet "regression" (a file exceeding its baseline) is a FAIL unless a
  * declared changeset (`declared-growth` / `merge-import` / `emergency-override`)
- * covers it — mirroring the `ts-any` gate (530 §2.5), the per-file-ratchet
- * template.
+ * covers it — the per-file-ratchet template (530 §2.5).
+ *
+ * Tempdoc 930 chunk F left `atom-fork-ratchet` as the factory's ONE client
+ * (`style-literal-ratchet` was retired to the standalone
+ * `scripts/ci/check-style-literal-ratchet.mjs`, which the ui-web gate set runs
+ * directly). The factory stays because it is where the changeset / rebalance /
+ * repin machinery lives, but nothing here may assume a second client's shape.
  */
 import { resolve, join } from 'node:path';
 
@@ -75,11 +80,10 @@ export function makeRatchetGate({
         // definition one whose pin was not advanced to its measured value in this diff.
         //
         // `count` and `base` are threaded through so the finding states the numbers. Without them
-        // the shared message degrades to "the baseline does not carry this row", which for these
-        // two gates is usually FALSE — the row exists, it is the per-class number that is stale.
-        // The two factory clients report slightly different failure shapes: style-literal carries a
-        // per-class `cls` (its baseline row is an object of class counts), atom-fork does not (its
-        // row is a bare number). Both carry `count`/`base`, which is what the message needs.
+        // the shared message degrades to "the baseline does not carry this row", which for this
+        // gate is usually FALSE — the row exists, it is the number that is stale. `detect()` does
+        // not oblige a client to supply them, so the degraded wording is still reachable; that
+        // path is covered by declared-growth-repin.test.mjs.
         const baselineFile = gate.baseline?.path ?? '(gate baseline)';
         verdict = 'fail';
         findings.push(repinFinding({
@@ -89,10 +93,8 @@ export function makeRatchetGate({
           measured: f.count,
           livePin: f.base,
           baselineFile,
-          unit: f.cls ? `raw ${f.cls} literals` : measuredUnit,
-          pinLine: f.cls
-            ? `"${f.file}": { "${f.cls}": ${f.count}, … } in ${baselineFile}`
-            : `"${f.file}": ${f.count} in ${baselineFile}`,
+          unit: measuredUnit,
+          pinLine: `"${f.file}": ${f.count} in ${baselineFile}`,
           uri: f.file,
         }));
       } else {

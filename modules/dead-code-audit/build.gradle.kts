@@ -70,16 +70,23 @@ testing {
 // Whole-program import holds ~1,300 classes + their members in memory; give the test room.
 tasks.named<Test>("test") {
   maxHeapSize = "2g"
-  // The ArchUnit test writes its report to the repo-root tmp/ dir; pass the absolute path so the
-  // location is independent of the test's working directory.
-  val deadCodeReport = rootProject.layout.projectDirectory.file("tmp/dead-code-jvm-report.json")
-  systemProperty("deadcode.reportPath", deadCodeReport.asFile.absolutePath)
-  // The report is the `dead-code-jvm` governance gate's REQUIRED input (tempdoc 884 §F row 9,
-  // wired into CI by PR #604). It lives outside the task's build dir, so until it was declared as
-  // an output a FROM-CACHE hit on this task restored nothing and the gate failed with
-  // kernel/input-missing on every PR whose audit inputs were unchanged (first seen on PR #608,
-  // 2026-09-02). Declaring it makes the build cache restore the report alongside the test results.
-  outputs.file(deadCodeReport).withPropertyName("deadCodeJvmReport")
+  // Tempdoc 930 chunk F. WholeProgramDeadCodeTest used to write tmp/dead-code-jvm-report.json for
+  // the `dead-code-jvm` kernel gate to ratchet; both the report and the gate are gone. The ratchet
+  // is now ArchUnit's own FreezingArchRule and its committed violation store below, so the accepted
+  // set lives next to the rule that produces it and is enforced by this test task rather than by a
+  // separate CI step reading a filesystem side effect.
+  //
+  // ArchUnit resolves a relative store path against the JVM working directory, so pass the absolute
+  // one (system properties prefixed `archunit.` override src/test/resources/archunit.properties).
+  val archunitStore = layout.projectDirectory.dir("archunit_store")
+  systemProperty("archunit.freeze.store.default.path", archunitStore.asFile.absolutePath)
+  // The store is a checked-in ratchet OUTSIDE any source set — same reason the sysaccess allowlist
+  // below is declared: without this, editing the accepted set leaves the task up to date and the
+  // ratchet silently stops running.
+  inputs
+      .dir(archunitStore)
+      .withPropertyName("deadCodeArchUnitStore")
+      .withPathSensitivity(PathSensitivity.RELATIVE)
 
   // SystemAccessFunnelTest ratchets against a checked-in file OUTSIDE any source set. Without
   // declaring it as an input, Gradle considers the task up to date after the allowlist changes and

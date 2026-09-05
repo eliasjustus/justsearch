@@ -1,27 +1,30 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.deadcode;
 
+import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.domain.JavaModifier;
+import com.tngtech.archunit.lang.ArchCondition;
+import com.tngtech.archunit.lang.ArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
+import com.tngtech.archunit.lang.syntax.ArchRuleDefinition;
+import com.tngtech.archunit.library.freeze.FreezingArchRule;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tempdoc 638 — whole-program closed-world dead-code report.
+ * Tempdoc 638 — whole-program closed-world dead-class rule.
  *
  * <p>Unlike {@code UnreferencedCodeTest} (which runs on app-launcher's <em>Head-process</em>
  * classpath and only inspects private/package-private members), this test imports the union of
@@ -30,11 +33,18 @@ import org.junit.jupiter.api.Test;
  * the whole program is dead regardless of visibility — the library-style public exclusion does not
  * apply here.
  *
- * <p>This test is <b>report-only</b>: it never fails. It writes the current set of dead symbols to
- * {@code tmp/dead-code-jvm-report.json}; the governance {@code dead-code-jvm} gate ratchets that
- * report against a baseline. The deliberate <b>reachability roots</b> (the boundary where callers
- * come from outside the analysed bytecode — framework dispatch, serialization, JNI, entry points,
- * published API) are encoded as the {@code isRoot*} skips below, mirroring GraalVM native-image's
+ * <p><b>Ratcheting (tempdoc 930 chunk F).</b> This used to be a report-only test that wrote
+ * {@code tmp/dead-code-jvm-report.json} for a bespoke governance gate to ratchet against
+ * {@code gates/dead-code-jvm/baseline.txt}. Both are gone: the rule is now an ordinary
+ * {@link ArchRule} wrapped in ArchUnit's own {@link FreezingArchRule}, whose violation store
+ * ({@code modules/dead-code-audit/archunit_store/}, committed) IS the baseline. A new dead class
+ * fails the build; removing one and re-running shrinks the store automatically. Same ratchet, an
+ * upstream implementation, and it fails in the test task that already builds the classpath instead
+ * of in a separate CI step reading a JSON side-effect.
+ *
+ * <p>The deliberate <b>reachability roots</b> (the boundary where callers come from outside the
+ * analysed bytecode — framework dispatch, serialization, JNI, entry points, published API) are
+ * encoded as the {@code isRoot*} skips below, mirroring GraalVM native-image's
  * reachability-metadata categories (reflection / JNI / serialization / proxies / entry points).
  */
 class WholeProgramDeadCodeTest {
@@ -96,44 +106,73 @@ class WholeProgramDeadCodeTest {
   }
 
   @Test
-  void emit_whole_program_dead_code_report() {
+  void no_new_whole_program_dead_classes() {
     // Shared with SystemAccessFunnelTest so the whole-program import happens once per JVM
     // rather than once per analysis (tempdoc 883: this module gained a second whole-program rule).
     JavaClasses classes = ImportedProgram.classes();
 
     assertWholeProgramCoverage(classes);
 
-    // Holder roots: a class whose nested type is referenced is a live namespace shell even though
-    // its own outer name has no direct incoming dependency (ArchUnit counts the ref against the
-    // nested type). Pre-compute the enclosing names of every referenced nested type.
-    Set<String> referencedNestedHolders = new java.util.HashSet<>();
-    for (JavaClass c : classes) {
-      if (c.getEnclosingClass().isPresent() && !c.getDirectDependenciesToSelf().isEmpty()) {
-        referencedNestedHolders.add(c.getEnclosingClass().get().getName());
-      }
-    }
-
-    List<String[]> dead = new ArrayList<>(); // {kind, symbol, location}
-
     // Scope: whole-program dead *classes* — the public/cross-module gap UnreferencedCodeTest leaves
     // (it covers private/package-private members on the Head classpath only). Whole-program dead
     // *method* detection was measured at ~6.4k findings, noise-dominated by reflectively-serialized
     // accessors / builders / fluent APIs — that needs GraalVM-metadata-level roots and is the
     // low-value long tail (tempdoc 638 §design); deliberately out of scope here.
+    ArchRule rule =
+        ArchRuleDefinition.classes()
+            .that(areWholeProgramDeadClassCandidates(referencedNestedHolders(classes)))
+            .should(beReferencedSomewhereInTheWholeProgram());
+
+    FreezingArchRule.freeze(rule).check(classes);
+  }
+
+  // --- the rule ---------------------------------------------------------------------------------
+
+  /**
+   * Holder roots: a class whose nested type is referenced is a live namespace shell even though its
+   * own outer name has no direct incoming dependency (ArchUnit counts the ref against the nested
+   * type). Pre-computed over the whole import because a {@link JavaClass} cannot enumerate its own
+   * nested types.
+   */
+  private static Set<String> referencedNestedHolders(JavaClasses classes) {
+    Set<String> holders = new HashSet<>();
     for (JavaClass c : classes) {
-      if (!c.getPackageName().startsWith("io.justsearch")) {
-        continue;
-      }
-      if (isRootClass(c) || !isDeadClassCandidate(c) || referencedNestedHolders.contains(c.getName())) {
-        continue;
-      }
-      // Dead class: nothing in the whole program depends on it.
-      if (c.getDirectDependenciesToSelf().isEmpty()) {
-        dead.add(new String[] {"class", c.getName(), sourceOf(c)});
+      if (c.getEnclosingClass().isPresent() && !c.getDirectDependenciesToSelf().isEmpty()) {
+        holders.add(c.getEnclosingClass().get().getName());
       }
     }
+    return holders;
+  }
 
-    writeReport(dead);
+  private static DescribedPredicate<JavaClass> areWholeProgramDeadClassCandidates(
+      Set<String> referencedNestedHolders) {
+    // The description is part of the FreezingArchRule store key. Keep it stable: renaming it
+    // orphans modules/dead-code-audit/archunit_store and re-freezes every accepted violation.
+    return new DescribedPredicate<>(
+        "are top-level io.justsearch classes that are not reachability roots") {
+      @Override
+      public boolean test(JavaClass c) {
+        return c.getPackageName().startsWith("io.justsearch")
+            && isDeadClassCandidate(c)
+            && !isRootClass(c)
+            && !referencedNestedHolders.contains(c.getName());
+      }
+    };
+  }
+
+  private static ArchCondition<JavaClass> beReferencedSomewhereInTheWholeProgram() {
+    return new ArchCondition<>("be referenced somewhere in the whole program") {
+      @Override
+      public void check(JavaClass c, ConditionEvents events) {
+        // The violation text is the store's per-violation key, so it must be machine-independent:
+        // no source URL (it is an absolute file: path and would differ per checkout).
+        events.add(
+            new SimpleConditionEvent(
+                c,
+                !c.getDirectDependenciesToSelf().isEmpty(),
+                "class " + c.getName() + " is unreferenced across the whole program"));
+      }
+    };
   }
 
   // --- reachability roots (the closed-world boundary) -----------------------------------------
@@ -192,22 +231,22 @@ class WholeProgramDeadCodeTest {
 
   /**
    * Fail loudly if the import did not cover the whole program — a silently-truncated classpath would
-   * yield a too-small report and corrupt the ratchet baseline (review finding F2).
+   * yield a too-small analysis and let the frozen store drift (review finding F2).
    */
   private static void assertWholeProgramCoverage(JavaClasses classes) {
     long n = classes.stream().filter(c -> c.getPackageName().startsWith("io.justsearch")).count();
     if (n < MIN_EXPECTED_CLASSES) {
       throw new IllegalStateException(
-          "dead-code-jvm: imported only "
+          "whole-program dead-code: imported only "
               + n
               + " io.justsearch classes (< "
               + MIN_EXPECTED_CLASSES
-              + ") — classpath likely truncated; report would be unsound.");
+              + ") — classpath likely truncated; the frozen store would be unsound.");
     }
     for (String sentinel : COVERAGE_SENTINELS) {
       if (!classes.contain(sentinel)) {
         throw new IllegalStateException(
-            "dead-code-jvm: coverage sentinel " + sentinel + " absent — a module is off the analysis classpath.");
+            "whole-program dead-code: coverage sentinel " + sentinel + " absent — a module is off the analysis classpath.");
       }
     }
   }
@@ -237,47 +276,5 @@ class WholeProgramDeadCodeTest {
       }
     }
     return false;
-  }
-
-  // --- report emission ------------------------------------------------------------------------
-
-  private static String sourceOf(JavaClass c) {
-    return c.getSource().map(Object::toString).orElse(c.getName());
-  }
-
-  private static void writeReport(List<String[]> dead) {
-    Set<String> lines = new TreeSet<>(); // sorted, deduped — stable report
-    StringBuilder sb = new StringBuilder();
-    sb.append("{\n  \"deadSymbols\": [\n");
-    List<String> entries = new ArrayList<>();
-    for (String[] d : dead) {
-      entries.add(
-          "    {\"kind\": \""
-              + esc(d[0])
-              + "\", \"symbol\": \""
-              + esc(d[1])
-              + "\", \"location\": \""
-              + esc(d[2])
-              + "\"}");
-      lines.add(d[0] + " " + d[1]);
-    }
-    sb.append(String.join(",\n", new TreeSet<>(entries)));
-    sb.append("\n  ],\n  \"count\": ").append(lines.size()).append("\n}\n");
-
-    String reportPath = System.getProperty("deadcode.reportPath", "tmp/dead-code-jvm-report.json");
-    try {
-      Path out = Path.of(reportPath);
-      if (out.getParent() != null) {
-        Files.createDirectories(out.getParent());
-      }
-      Files.writeString(out, sb.toString());
-      System.out.println("[dead-code-jvm] wrote " + lines.size() + " dead symbols to " + out);
-    } catch (IOException e) {
-      throw new UncheckedIOException(e);
-    }
-  }
-
-  private static String esc(String s) {
-    return s.replace("\\", "\\\\").replace("\"", "\\\"");
   }
 }

@@ -11,9 +11,20 @@ live `/api/indexing/roots` response reports anything other than exactly the corp
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+#: `_normalize_root_path` collapses separator style and case because Windows paths are
+#: case-insensitive and accept both separators. On POSIX neither premise holds — a drive
+#: letter is not a root and a backslash is an ordinary filename character — so the two
+#: tests that assert that equivalence are Windows-only. Everything else in this file is
+#: platform-neutral and runs everywhere, including the `jseval-suite` Linux job.
+_WINDOWS_PATH_SEMANTICS = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="asserts Windows path semantics (drive letter, backslash separator, case-insensitive)",
+)
 
 from jseval.utility_calibrate import (
     McpConfigInvalidAlwaysLoadError,
@@ -70,6 +81,7 @@ def test_exactly_scoped_root_passes(MockClient):
     assert result.failure_reasons == []
 
 
+@_WINDOWS_PATH_SEMANTICS
 @patch("jseval.utility_calibrate.httpx.Client")
 def test_multiple_equivalent_roots_do_not_false_positive(MockClient):
     # Same directory reported with different separator/case/trailing-slash — must
@@ -143,6 +155,7 @@ def test_endpoint_unreachable_fails_loudly(MockClient):
 
 
 class TestNormalizeRootPath:
+    @_WINDOWS_PATH_SEMANTICS
     def test_case_and_separator_insensitive(self):
         a = _normalize_root_path(r"F:\Eval\Golden\corpus-dir")
         b = _normalize_root_path("f:/eval/golden/corpus-dir/")

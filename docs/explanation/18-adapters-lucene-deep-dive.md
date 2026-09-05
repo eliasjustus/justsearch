@@ -374,6 +374,14 @@ path additionally includes `PARENT_TOKEN_COUNT` in its stored-field
 allowlist so downstream fusion can modulate SPLADE weight by parent
 document length (see [23-search-pipeline-overview.md § Stage 13b](23-search-pipeline-overview.md)).
 
+`rag.chunk_splade.enabled` controls the chunk-SPLADE stage on **both the
+write side and the query-side leg** (tempdoc 712, 931 §E item 8): with the
+flag off no backfill lane encodes chunk `splade` postings, `ChunkDocumentWriter`
+writes no `splade_status` on new chunks, and `SearchExecutor` does not run the
+chunk-SPLADE leg at all — so the leg cannot score against a partial population
+left over from an earlier flag-on window. The whole-doc path is unaffected by
+this flag.
+
 ### 4B.4 Known Limitation
 
 SPLADE-v3 uses a BERT-base encoder with a 512-token max sequence length

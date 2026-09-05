@@ -27,17 +27,22 @@ import copy
 
 import pytest
 
-from jseval import agent_utility_inspect as aui
-from jseval.utility_comparison import _stats_from_pairs
-from jseval.utility_evidence import read_evidence, sanitize_observation
-from jseval.utility_governance import RESOURCE_EXHAUSTION, classify_error_kind
-from jseval.utility_recompose import (
+pytest.importorskip("inspect_ai")
+
+from jseval import agent_utility_inspect as aui  # noqa: E402
+from jseval.utility_comparison import _stats_from_pairs  # noqa: E402
+from jseval.utility_evidence import read_evidence, sanitize_observation  # noqa: E402
+from jseval.utility_governance import (  # noqa: E402
+    RESOURCE_EXHAUSTION,
+    classify_error_kind,
+)
+from jseval.utility_recompose import (  # noqa: E402
     finalize_evidence,
     finalize_observation_groups,
     semantic_digest,
 )
-from tests.test_agent_utility_inspect import _rmsg, _state
-from tests.test_utility_evidence import _observation
+from tests.test_agent_utility_inspect import _rmsg, _state  # noqa: E402
+from tests.test_utility_evidence import _observation  # noqa: E402
 
 _EXHAUSTION = "per-cell wall-clock budget exhausted"
 _USD_EXHAUSTION = "result error: None | {'subtype': 'error_max_budget_usd'}"

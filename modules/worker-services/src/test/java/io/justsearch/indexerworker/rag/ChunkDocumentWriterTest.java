@@ -77,7 +77,7 @@ final class ChunkDocumentWriterTest {
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
 
-    int regenerated = ChunkDocumentWriter.regenerateChunksFromExistingParent(lifecycle.documentFieldOps(), lifecycle.indexingCoordinator(), parentDocId, content);
+    int regenerated = ChunkDocumentWriter.regenerateChunksFromExistingParent(lifecycle.documentFieldOps(), lifecycle.indexingCoordinator(), parentDocId, content, true);
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -146,7 +146,8 @@ final class ChunkDocumentWriterTest {
             content,
             new ChunkDocumentWriter.ParentChunkMetadata(
                 "text/markdown", "text/markdown", "markdown", "en", parentTokenCount, null,
-                "parent-uid"));
+                "parent-uid"),
+            true);
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -178,7 +179,8 @@ final class ChunkDocumentWriterTest {
             content,
             new ChunkDocumentWriter.ParentChunkMetadata(
                 "text/markdown", "text/markdown", "markdown", "en", null,
-                SchemaFields.AGENT_HISTORY_COLLECTION, "parent-uid"));
+                SchemaFields.AGENT_HISTORY_COLLECTION, "parent-uid"),
+            true);
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -213,7 +215,7 @@ final class ChunkDocumentWriterTest {
 
     int regenerated =
         ChunkDocumentWriter.regenerateChunksFromExistingParent(
-            lifecycle.documentFieldOps(), lifecycle.indexingCoordinator(), parentDocId, content);
+            lifecycle.documentFieldOps(), lifecycle.indexingCoordinator(), parentDocId, content, true);
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -243,7 +245,8 @@ final class ChunkDocumentWriterTest {
             lifecycle.indexingCoordinator(),
             parentDocId,
             content,
-            validMetadata);
+            validMetadata,
+            true);
     assertTrue(initial > 1);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -260,7 +263,8 @@ final class ChunkDocumentWriterTest {
                 lifecycle.indexingCoordinator(),
                 parentDocId,
                 content,
-                missingUidMetadata));
+                missingUidMetadata,
+                true));
 
     lifecycle.commitOps().maybeRefreshBlocking();
     assertEquals(
@@ -292,7 +296,8 @@ final class ChunkDocumentWriterTest {
             lifecycle.indexingCoordinator(),
             metadata,
             null,
-            "canonical-parent-uid");
+            "canonical-parent-uid",
+            true);
     assertTrue(indexed > 1);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -300,6 +305,69 @@ final class ChunkDocumentWriterTest {
     assertEquals(indexed, findChunks(canonicalParentId).size());
     assertFalse(canonicalParentId.equals(nonCanonicalParentId), "fixture must detect normalization");
     assertTrue(findChunks(nonCanonicalParentId).isEmpty());
+  }
+
+  @Test
+  @DisplayName("splade_status is stamped only when rag.chunk_splade.enabled is on (931 §E item 8)")
+  void spladeStatusIsStampedOnlyWhenChunkSpladeIsEnabled() throws Exception {
+    // The shared chunk-testing catalog omits splade_status, so this case needs one that carries it
+    // (same shape as SSOT/catalogs/fields.v1.json: stored=false, docValues=true, role=filter).
+    List<FieldCatalogDef.FieldDef> fields =
+        new ArrayList<>(FieldCatalogDef.forChunkTesting(0).fields());
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.SPLADE_STATUS, "keyword", false, true, List.of("filter"), null, null,
+            false));
+    FieldCatalogDef catalog = new FieldCatalogDef("chunk-test+splade-status", fields);
+
+    String content = repeat("chunk splade flag coverage ", 500);
+    try (RunningRuntime runtime =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(catalog)
+            .atPath(tempDir.resolve("splade-status"))
+            .open()) {
+
+      // Flag OFF: no splade_status at all. PENDING would claim outstanding work for a stage every
+      // backfill lane refuses to run, and would sit in IndexCountOps#countWithField's denominator
+      // forever. Absence is the post-798 "this stage does not apply" encoding.
+      int off =
+          ChunkDocumentWriter.regenerateChunks(
+              runtime.documentFieldOps(),
+              runtime.indexingCoordinator(),
+              "d:/docs/flag-off.md",
+              content,
+              new ChunkDocumentWriter.ParentChunkMetadata(
+                  "text/markdown", "text/markdown", "markdown", "en", null, null, "parent-uid-off"),
+              false);
+      assertTrue(off > 1, "precondition: the fixture produces several chunks");
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+      assertEquals(
+          0,
+          runtime
+              .indexCountOps()
+              .countByField(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING),
+          "flag off: no chunk may carry splade_status=PENDING");
+
+      // Flag ON: the stage applies, so the chunk is enrolled as PENDING for the backfill lanes.
+      int on =
+          ChunkDocumentWriter.regenerateChunks(
+              runtime.documentFieldOps(),
+              runtime.indexingCoordinator(),
+              "d:/docs/flag-on.md",
+              content,
+              new ChunkDocumentWriter.ParentChunkMetadata(
+                  "text/markdown", "text/markdown", "markdown", "en", null, null, "parent-uid-on"),
+              true);
+      assertTrue(on > 1);
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+      assertEquals(
+          on,
+          runtime
+              .indexCountOps()
+              .countByField(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING),
+          "flag on: exactly the chunks written under the flag are enrolled as PENDING");
+    }
   }
 
   private List<LuceneRuntimeTypes.SearchHit> findChunks(String parentDocId) {

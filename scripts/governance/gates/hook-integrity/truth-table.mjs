@@ -5,11 +5,10 @@
  * The enforcer does the impure measurement (parse manifest/settings, spawn
  * `node --check`, run bite subprocesses) and dispatches each measurement here.
  *
- * The invariant: the `hook` enforcement tier (claimed ~100% in the tier-register)
- * is only real if every wired hook is REACHABLE (cwd-invariant command + the file
- * loads) and every BLOCKING hook BITES (emits its block signal on a violating
- * input). "The file exists" — all the prose-tier-register gate could check — is
- * three properties short of "the hook enforces". This table closes the gap.
+ * The invariant: a hook only enforces if it is REACHABLE (cwd-invariant command +
+ * the file loads) and, when blocking, BITES (emits its block signal on a violating
+ * input). "The file exists" is three properties short of "the hook enforces", and
+ * this table is what closes that gap.
  */
 
 const ID = 'hook-integrity';
@@ -151,14 +150,3 @@ export function verdictForOrphanHookFile({ file, inCatalog }) {
   return { ruleId: `${ID}/hook-file-in-catalog`, status: 'pass', reason: `'${file}' is in manifest.hooks` };
 }
 
-/** Every `hook:` marker in the tier-register resolves to a manifest catalog entry. */
-export function verdictForTierRegisterSync({ marker, resolved }) {
-  if (!resolved) {
-    return {
-      ruleId: `${ID}/tier-register-hook-unresolved`,
-      status: 'fail',
-      reason: `tier-register marker 'hook:${marker}' does not resolve to a manifest.hooks entry`,
-    };
-  }
-  return { ruleId: `${ID}/tier-register-hook-resolves`, status: 'pass', reason: `hook:${marker} resolves` };
-}

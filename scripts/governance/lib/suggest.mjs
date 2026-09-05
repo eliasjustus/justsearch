@@ -31,14 +31,10 @@ const NAMESPACED_FAIL_PATTERNS = [
 function defaultClassificationForGate(gateId) {
   // Pragmatic defaults based on each gate's classifications.mjs.
   switch (gateId) {
-    case 'class-size':
-      return 'declared-growth';
     case 'npm-audit':
       return 'declared-regression';
-    case 'ui-bundle':
-      return 'declared-growth';
-    case 'prose-tier-register':
-      return 'new-rule-registered';
+    case 'test-efficacy':
+      return 'strength-regression';
     default:
       return 'declared-growth';
   }

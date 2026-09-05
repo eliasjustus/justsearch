@@ -12,7 +12,6 @@
  *   - load       : every hook file parses (`node --check`) — crash-on-load can't ship.
  *   - bite       : every blocking hook emits its block signal on a violating fixture
  *                  (command-signal), or references a unit test that proves its core.
- *   - tier-sync  : every `hook:` marker in the tier-register resolves to the manifest.
  *   - orphan     : every hook FILE on disk (excluding *.test.mjs) appears in the manifest
  *                  catalog — the FILE->manifest direction (tempdoc 861 Phase 6). The five
  *                  phases above all start FROM the manifest and check outward; none of them
@@ -42,7 +41,6 @@ import {
   verdictForLoad,
   verdictForBite,
   verdictForBiteDeclared,
-  verdictForTierRegisterSync,
   verdictForOrphanHookFile,
 } from './truth-table.mjs';
 
@@ -119,13 +117,6 @@ export async function enforceHookIntegrity(options) {
   const sourceRoot = fixtureMode && fixtureRoot ? fixtureRoot : repoRoot;
   const manifestPath = resolve(sourceRoot, gate.config?.manifest ?? 'governance/agent-hooks.v1.json');
   const settingsPath = resolve(sourceRoot, '.claude/settings.local.json');
-  // Relocated out of always-loaded context by tempdoc 799 K.2. Config-driven so a
-  // future move is a registry edit, not a code edit (the trap this gate itself hit).
-  const tierRegisterPath = resolve(
-    sourceRoot,
-    gate.config?.tierRegister ?? 'docs/reference/contributing/tier-register.md',
-  );
-
   const findings = [];
   let verdict = 'pass';
   const push = (v, uri) => {
@@ -244,23 +235,7 @@ export async function enforceHookIntegrity(options) {
     }
   }
 
-  // 5. Tier-register sync — every `hook:` marker resolves to a manifest catalog entry.
-  if (existsSync(tierRegisterPath)) {
-    const md = readFileSync(tierRegisterPath, 'utf8');
-    const seen = new Set();
-    for (const m of md.matchAll(/`hook:([^`]+)`/g)) {
-      const file = m[1].trim();
-      // Skip grammar/template placeholders (e.g. `hook:<filename>` in the format
-      // section) — a real marker names a concrete `.mjs` file.
-      if (!file.endsWith('.mjs') || file.includes('<')) continue;
-      if (seen.has(file)) continue;
-      seen.add(file);
-      const id = file.replace(/\.mjs$/, '');
-      push(verdictForTierRegisterSync({ marker: file, resolved: !!catalog[id] }), 'docs/reference/contributing/tier-register.md');
-    }
-  }
-
-  // 6. File -> manifest — every hook FILE on disk appears in the manifest catalog (861 Phase 6).
+  // 5. File -> manifest — every hook FILE on disk appears in the manifest catalog (861 Phase 6).
   //    Exclude only `*.test.mjs` siblings. [A12]: the catalog's `"wiring": "opt-in"` escape is
   //    NOT consulted here — an opt-in hook is still IN the catalog (it opts out of the
   //    live-wiring check above, a different phase entirely); this check asks only whether a

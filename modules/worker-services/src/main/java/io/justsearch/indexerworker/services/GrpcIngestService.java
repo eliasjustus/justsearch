@@ -406,6 +406,20 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void setResolvedConfigSupplier(
       Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier) {
     statusOps.setResolvedConfigSupplier(supplier);
+    this.resolvedConfigSupplier = supplier;
+  }
+
+  // Tempdoc 931 §E item 8: kept here too (not only forwarded to statusOps) so the VDU chunk
+  // regeneration path can read rag.chunk_splade.enabled from the LIVE config on every write.
+  private volatile Supplier<io.justsearch.configuration.resolved.ResolvedConfig>
+      resolvedConfigSupplier;
+
+  /** {@code rag.chunk_splade.enabled}; absent config reads as the flag's own default (false). */
+  private boolean chunkSpladeEnabled() {
+    Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier = resolvedConfigSupplier;
+    io.justsearch.configuration.resolved.ResolvedConfig config =
+        supplier == null ? null : supplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
   }
 
   private <T> boolean replyIfIndexRuntimeUnavailable(
@@ -911,7 +925,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       return 0;
     }
     return ChunkDocumentWriter.regenerateChunksFromExistingParent(
-        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId, content);
+        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId,
+        content, chunkSpladeEnabled());
   }
 
   @Override

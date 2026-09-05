@@ -1,5 +1,6 @@
 package io.justsearch.app.services.registry.snapshot;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -128,6 +129,12 @@ class LiveWitnessTest {
 
   /** An Operation with one executor, so it derives a consumer and is not itself an orphan. */
   private static Operation runtimeOp(OperationRef ref) {
+    return runtimeOp(ref, Set.of(ExecutorTag.AGENT), List.of());
+  }
+
+  /** An Operation with an explicit executor set and inline consumer hooks (the two merge inputs). */
+  private static Operation runtimeOp(
+      OperationRef ref, Set<ExecutorTag> executors, List<ConsumerHook> consumers) {
     return new Operation(
         ref,
         Presentation.of(
@@ -145,7 +152,79 @@ class LiveWitnessTest {
         OperationLineage.empty(),
         Binding.of(ref),
         Provenance.core("1.0"),
-        Set.of(ExecutorTag.AGENT));
+        executors,
+        Audience.OPERATOR,
+        consumers);
+  }
+
+  private static Operation find(ContributionRegistry live, OperationRef ref) {
+    return live.operations().stream()
+        .filter(o -> o.id().equals(ref))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError("fixture op not installed: " + ref.value()));
+  }
+
+  /**
+   * ADR-0042's no-fork property: this witness REUSES the build-tier consumer merge ({@link
+   * RegistrySnapshotExporter#operationConsumerIds}) rather than re-deriving "has a consumer" over the
+   * live registry. That is the one thing the rest of this class does not imply — a forked merge would
+   * still pass every orphan case above. The retired {@code check-live-witness.mjs} asserted it by
+   * scraping the source for the symbol (tempdoc 930 dropped that register + script); it is asserted
+   * behaviourally here instead, over a fixture that exercises BOTH merge inputs. A fork reading only
+   * inline hooks disagrees on the executor-only row; one reading only executors disagrees on the
+   * inline-only row.
+   */
+  @Test
+  void witnessReusesTheBuildTierConsumerMergeForOperations() {
+    ContributionRegistry live = composed();
+    OperationRef executorOnly = new OperationRef("vendor.merge.executor-only");
+    OperationRef inlineOnly = new OperationRef("vendor.merge.inline-only");
+    OperationRef neither = new OperationRef("vendor.merge.neither");
+    live.install(
+        new ContributionRegistry.Installation(
+            runtimeSourcePlugin("vendor.merge-fixture.source"),
+            List.of(
+                runtimeOp(executorOnly, Set.of(ExecutorTag.AGENT), List.of()),
+                runtimeOp(
+                    inlineOnly,
+                    Set.of(),
+                    List.of(new ConsumerHook.Realized("inline-consumer", Audience.OPERATOR))),
+                runtimeOp(neither, Set.of(), List.of())),
+            Map.of()));
+
+    // The fixture must actually exercise both merge inputs, or the agreement below is vacuous.
+    assertTrue(
+        find(live, executorOnly).consumers().isEmpty()
+            && !RegistrySnapshotExporter.operationConsumerIds(find(live, executorOnly)).isEmpty(),
+        "executor-only row must get its consumer from executor derivation alone");
+    assertTrue(
+        find(live, inlineOnly).executors().isEmpty()
+            && !RegistrySnapshotExporter.operationConsumerIds(find(live, inlineOnly)).isEmpty(),
+        "inline-only row must get its consumer from the inline hook alone");
+    assertTrue(
+        RegistrySnapshotExporter.operationConsumerIds(find(live, neither)).isEmpty(),
+        "the zero-executor, zero-hook row must merge to no consumers");
+
+    Set<String> perBuildTierMerge =
+        live.operations().stream()
+            .filter(o -> RegistrySnapshotExporter.operationConsumerIds(o).isEmpty())
+            .map(o -> o.id().value())
+            .collect(Collectors.toSet());
+    Set<String> perWitness =
+        LiveWitness.orphanedDeliveries(live).stream()
+            .filter(o -> "operation".equals(o.kind()))
+            .map(Orphan::id)
+            .collect(Collectors.toSet());
+    assertEquals(
+        perBuildTierMerge,
+        perWitness,
+        "the live witness must classify every delivered operation exactly as the build-tier merge"
+            + " does — a divergence means the consumer-presence notion was forked");
+    assertEquals(
+        Set.of(neither.value()),
+        perWitness,
+        "fixture guard: only the zero-executor, zero-hook row is an orphan, so the agreement above"
+            + " spans all three merge outcomes rather than an all-empty set");
   }
 
   /** The installing plugin, carrying a realized consumer hook so the installation is not orphaned. */

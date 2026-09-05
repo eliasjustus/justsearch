@@ -39,8 +39,10 @@ import java.util.List;
  * <p>Per ADR-0042: delivery-PRESENCE not a traffic count (decision 4); a contribution is "delivered"
  * once composed into the registry, not when invoked (decision 1); Realized hooks only — the only kind
  * that exists today (decision 3). This is a pure read over a fully-composed registry; it is exercised
- * by {@code LiveWitnessTest} (the teeth — the only tier that sees runtime composition) and named as an
- * authority in {@code governance/live-witness.v1.json}.
+ * by {@code LiveWitnessTest}, which is the sole authority for this tier — the only one that sees
+ * runtime composition, and (since tempdoc 930 retired the {@code live-witness} register and its
+ * offline wiring check) the only thing that holds the no-fork reuse of {@link
+ * RegistrySnapshotExporter#operationConsumerIds} in place.
  */
 public final class LiveWitness {
 

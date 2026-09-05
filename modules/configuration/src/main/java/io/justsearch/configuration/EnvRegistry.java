@@ -1024,7 +1024,12 @@ public enum EnvRegistry {
     RAG_MMR_MAX_CANDIDATES("rag.mmr.max_candidates", "JUSTSEARCH_RAG_MMR_MAX_CANDIDATES", LifecycleStage.PERMANENT),
     /** Enable chunk-level vector retrieval for RAG. */
     RAG_CHUNK_VECTORS_ENABLED("rag.chunk_vectors.enabled", "JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED", LifecycleStage.PERMANENT),
-    /** Enable chunk-level SPLADE enrichment (tempdoc 712; default false, evidence-gated). */
+    /**
+     * Controls the chunk-SPLADE stage on BOTH the write side (backfill lanes encode chunk docs'
+     * {@code chunk_content}, and {@code ChunkDocumentWriter} enrols the chunk on
+     * {@code splade_status}) and the query-side leg ({@code SearchExecutor}'s chunk-SPLADE
+     * retrieval leg). Tempdoc 712; default false, evidence-gated (931 §E item 8).
+     */
     RAG_CHUNK_SPLADE_ENABLED("rag.chunk_splade.enabled", "JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED", LifecycleStage.PERMANENT),
     /** Enable the RAG doc-level union leg for chunkless docs (tempdoc 749; default true). */
     RAG_UNION_ENABLED("rag.union.enabled", "JUSTSEARCH_RAG_UNION_ENABLED", LifecycleStage.PERMANENT),

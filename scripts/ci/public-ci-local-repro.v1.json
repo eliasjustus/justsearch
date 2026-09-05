@@ -37,7 +37,7 @@
         "./gradlew.bat checkLicense --no-configuration-cache --no-parallel",
         "node scripts/codegen/dump-cargo-licenses.mjs",
         "cmd /c \"cd modules\\ui-web && npx --yes license-checker --production --json --relativeOnly > ..\\..\\build\\npm-licenses.json\"",
-        "node scripts/ci/check-notices-regen.mjs"
+        "node scripts/ci/regen-all.mjs --check --only notices"
       ]
     },
     {

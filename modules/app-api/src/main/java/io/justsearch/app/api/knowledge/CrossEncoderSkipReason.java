@@ -18,14 +18,14 @@ package io.justsearch.app.api.knowledge;
  * <ul>
  *   <li><b>By-design skips</b> — the pipeline decided not to rerank (config, query type, corpus
  *       shape, the 643 fusion-confidence shortcut). Nothing degraded; these stay diagnostic-tier
- *       and are declared {@code noWordingExempt} in {@code
- *       governance/search-degradation-reason-codes.v1.json}.
+ *       and are deliberately unworded on the FE.
  *   <li><b>Drops</b> — the relevance model was supposed to run and did not (budget pre-check miss,
  *       RPC failure, model absent at runtime, inference failure, unstated or unrecognised cause).
  *       Results are still returned, ranked
  *       by fusion/LambdaMART instead. This is a degradation and is worded at the user tier by
- *       {@code CROSS_ENCODER_SKIP_WORDING} in {@code searchTraceExplain.ts}; the {@code
- *       check-search-degradation-reason-codes} gate holds the two in correspondence.
+ *       {@code CROSS_ENCODER_SKIP_WORDING} in {@code searchTraceExplain.ts}; {@code
+ *       searchTraceExplain.test.ts} pins that map against a mirror of this enum's drop members
+ *       (the offline correspondence check was retired in tempdoc 930 — it ran in no workflow).
  * </ul>
  */
 public enum CrossEncoderSkipReason {
