@@ -642,6 +642,7 @@ final class StatusRecordSchemaTest {
         "chunk_heading_level",           // chunk geometry
         "chunk_heading_text",            // chunk geometry
         "chunk_index",                   // chunk geometry
+        "chunk_parent_content_sha256",   // tempdoc 931 §C.1 — write-path RMW guard, never projected
         "chunk_start_char",              // chunk geometry
         "chunk_start_line",              // chunk geometry
         "chunk_total",                   // chunk geometry
@@ -651,12 +652,9 @@ final class StatusRecordSchemaTest {
         "doc_uid",                       // internal dedup key
         "embedding_retry_count",         // enrichment metadata
         "embedding_status",              // enrichment metadata
-        "entity_locations_raw",          // NER raw spans
-        "entity_locations_text",         // NER extracted text
-        "entity_organizations_raw",      // NER raw spans
-        "entity_organizations_text",     // NER extracted text
-        "entity_persons_raw",            // NER raw spans
-        "entity_persons_text",           // NER extracted text
+        "entity_locations_raw",          // NER entity values
+        "entity_organizations_raw",      // NER entity values
+        "entity_persons_raw",            // NER entity values
         "extraction_method",             // indexing metadata
         "extraction_quality_score",      // indexing metadata
         "extraction_status",             // tempdoc 410 §11 — indexing provenance, not surfaced

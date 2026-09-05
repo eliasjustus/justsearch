@@ -124,6 +124,36 @@ public final class IndexCountOps {
   }
 
   /**
+   * {@link #countByField} over whole documents only, excluding chunks.
+   *
+   * <p>The pair of {@code DocumentFieldOps.queryNonChunkDocIdsByField}: a lane that will not select
+   * chunk documents must not gate itself on a count that includes them, or a permanently-parked
+   * chunk population reads as perpetual outstanding work.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int countNonChunkByField(String field, String value) {
+    if (field == null || value == null) {
+      return 0;
+    }
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query query =
+            new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(field, value)), BooleanClause.Occur.MUST)
+                .add(
+                    new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                    BooleanClause.Occur.MUST_NOT)
+                .build();
+        return searcher.count(query);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to count non-chunk {}={}: {}", field, value, e.getMessage());
+      return 0;
+    }
+  }
+
+  /**
    * {@link #countByField} without the swallow: propagates the reader {@link IOException} to a caller
    * that must distinguish "no document matches" from "the reader could not be read".
    *

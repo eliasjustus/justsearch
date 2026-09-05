@@ -14,6 +14,7 @@ import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexing.SchemaFields;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -235,8 +236,8 @@ class NerBackfillOpsTest {
     }
 
     @Test
-    @DisplayName("writes RAW list and space-joined TEXT for every non-empty entity type")
-    void writesRawAndText_forEveryNonEmptyEntityType() {
+    @DisplayName("writes one multi-valued RAW list for every non-empty entity type")
+    void writesRaw_forEveryNonEmptyEntityType() {
       Map<String, Object> updates = new java.util.HashMap<>();
       NerResult result =
           new NerResult(
@@ -244,28 +245,29 @@ class NerBackfillOpsTest {
 
       NerBackfillOps.applyEntityFieldUpdates(updates, result);
 
-      assertEquals(List.of("Ada Lovelace", "Alan Turing"), updates.get(SchemaFields.ENTITY_PERSONS_RAW));
-      assertEquals("Ada Lovelace Alan Turing", updates.get(SchemaFields.ENTITY_PERSONS_TEXT));
+      assertEquals(
+          Set.of(
+              SchemaFields.ENTITY_PERSONS_RAW,
+              SchemaFields.ENTITY_ORGANIZATIONS_RAW,
+              SchemaFields.ENTITY_LOCATIONS_RAW),
+          updates.keySet(),
+          "NER must not recreate the retired analyzed entity-text duplicates");
+      assertEquals(
+          List.of("Ada Lovelace", "Alan Turing"),
+          updates.get(SchemaFields.ENTITY_PERSONS_RAW));
       assertEquals(List.of("NASA"), updates.get(SchemaFields.ENTITY_ORGANIZATIONS_RAW));
-      assertEquals("NASA", updates.get(SchemaFields.ENTITY_ORGANIZATIONS_TEXT));
       assertEquals(List.of("Paris", "Berlin"), updates.get(SchemaFields.ENTITY_LOCATIONS_RAW));
-      assertEquals("Paris Berlin", updates.get(SchemaFields.ENTITY_LOCATIONS_TEXT));
     }
 
     @Test
-    @DisplayName("omits RAW/TEXT fields for entity types with no extracted values")
+    @DisplayName("omits RAW fields for entity types with no extracted values")
     void omitsFields_forEmptyEntityTypes() {
       Map<String, Object> updates = new java.util.HashMap<>();
       NerResult result = new NerResult(List.of("Ada Lovelace"), List.of(), List.of());
 
       NerBackfillOps.applyEntityFieldUpdates(updates, result);
 
-      assertTrue(updates.containsKey(SchemaFields.ENTITY_PERSONS_RAW));
-      assertTrue(updates.containsKey(SchemaFields.ENTITY_PERSONS_TEXT));
-      assertFalse(updates.containsKey(SchemaFields.ENTITY_ORGANIZATIONS_RAW));
-      assertFalse(updates.containsKey(SchemaFields.ENTITY_ORGANIZATIONS_TEXT));
-      assertFalse(updates.containsKey(SchemaFields.ENTITY_LOCATIONS_RAW));
-      assertFalse(updates.containsKey(SchemaFields.ENTITY_LOCATIONS_TEXT));
+      assertEquals(Map.of(SchemaFields.ENTITY_PERSONS_RAW, List.of("Ada Lovelace")), updates);
     }
   }
 }

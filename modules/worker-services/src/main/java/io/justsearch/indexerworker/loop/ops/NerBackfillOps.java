@@ -197,13 +197,9 @@ public final class NerBackfillOps {
   }
 
   /**
-   * Pure derivation of the {@code ENTITY_*_RAW}/{@code ENTITY_*_TEXT} field updates from a {@link
-   * NerResult} — no I/O. Shared by {@link #processNerBackfill} (per-doc immediate write) and the
-   * combined enrichment path (merges into its own single batched write), so the {@code
-   * String.join(" ", ...)} derivation can't drift between the two lanes (tempdoc 710 §B1 D.1).
-   * Mirrors {@link #computeNerFailureUpdate}'s shared-pure-helper shape — mutates {@code updates}
-   * in place instead of returning a new map, matching the mutate-in-place convention both call
-   * sites already use for their batch-update map.
+   * Pure derivation of the multi-valued {@code ENTITY_*_RAW} facet/filter updates from a {@link
+   * NerResult} — no I/O. Shared by {@link #processNerBackfill} and the combined enrichment path so
+   * both preserve the exact entity lists. Mutates {@code updates} in place to match both callers.
    *
    * @param updates the batch-update map to populate in place; a no-op if {@code result} is empty
    * @param result the NER extraction result
@@ -214,16 +210,12 @@ public final class NerBackfillOps {
     }
     if (!result.persons().isEmpty()) {
       updates.put(SchemaFields.ENTITY_PERSONS_RAW, new ArrayList<>(result.persons()));
-      updates.put(SchemaFields.ENTITY_PERSONS_TEXT, String.join(" ", result.persons()));
     }
     if (!result.organizations().isEmpty()) {
       updates.put(SchemaFields.ENTITY_ORGANIZATIONS_RAW, new ArrayList<>(result.organizations()));
-      updates.put(
-          SchemaFields.ENTITY_ORGANIZATIONS_TEXT, String.join(" ", result.organizations()));
     }
     if (!result.locations().isEmpty()) {
       updates.put(SchemaFields.ENTITY_LOCATIONS_RAW, new ArrayList<>(result.locations()));
-      updates.put(SchemaFields.ENTITY_LOCATIONS_TEXT, String.join(" ", result.locations()));
     }
   }
 

@@ -47,6 +47,15 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public static final String WRITE_BARRIER_WAIT_US = "index.runtime.write_barrier_wait_us";
   public static final String VALIDATION_FAILURE_TOTAL = "index.runtime.validation_failure_total";
 
+  /**
+   * Dense-vector FIELDS dropped from a write because the value could not be normalized — a
+   * zero-magnitude or non-finite embedding (tempdoc 931 §C.3). Distinct from
+   * {@link #VALIDATION_FAILURE_TOTAL}, which counts documents a write lane rejected: here the
+   * document IS written, minus the one field, with its embedding status set to FAILED. A non-zero
+   * trend means the encoder is producing degenerate vectors, not that indexing is failing.
+   */
+  public static final String VECTOR_DROPPED_TOTAL = "index.runtime.vector_dropped_total";
+
   // Tempdoc 417 Phase 3b: 4 status gauges archived to RRD and surfaced on /api/status via
   // CoreIndexView. Suppliers read RuntimeSession atomics + CommitOps.refreshLagMs().
   public static final String WRITER_QUEUE_DEPTH = "index.runtime.writer_queue_depth";
@@ -127,6 +136,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
               .unit(Unit.COUNT)
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
               .build(),
+          MetricDefinition.counter(VECTOR_DROPPED_TOTAL).unit(Unit.COUNT).build(),
           MetricDefinition.counter(COMMIT_TOTAL)
               .unit(Unit.COUNT)
               .tagKeys(IndexRuntimeTags.REASON_KEYS)
@@ -190,6 +200,8 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
   public final HistogramMetric<SwapTags> swapDurationMs;
   public final HistogramMetric<EmptyTags> writeBarrierWaitUs;
   public final CounterMetric<ValidationTags> validationFailureTotal;
+  /** Dropped dense-vector fields — see {@link #VECTOR_DROPPED_TOTAL}. */
+  public final CounterMetric<EmptyTags> vectorDroppedTotal;
   /** Commits by trigger — see {@link #COMMIT_TOTAL}. */
   public final CounterMetric<CommitTags> commitTotal;
   // Phase 3b status gauges — register their async callbacks at catalog construction; the
@@ -236,6 +248,7 @@ public final class IndexRuntimeMetricCatalog implements MetricCatalog {
     this.swapDurationMs = registry.buildHistogram(SWAP_DURATION_MS);
     this.writeBarrierWaitUs = registry.buildHistogram(WRITE_BARRIER_WAIT_US);
     this.validationFailureTotal = registry.buildCounter(VALIDATION_FAILURE_TOTAL);
+    this.vectorDroppedTotal = registry.buildCounter(VECTOR_DROPPED_TOTAL);
     this.commitTotal = registry.buildCounter(COMMIT_TOTAL);
     this.writerQueueDepth =
         registry.buildGauge(

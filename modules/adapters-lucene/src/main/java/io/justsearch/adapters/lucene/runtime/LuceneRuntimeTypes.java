@@ -478,6 +478,13 @@ public final class LuceneRuntimeTypes {
 
     default void onValidationFailure(ValidationReason reason) {}
 
+    /**
+     * Dense-vector fields dropped from a write because their value could not be normalized — a
+     * zero-magnitude or non-finite embedding (tempdoc 931 §C.3). The document itself is still
+     * written; this counts the fields lost, not the documents.
+     */
+    default void onVectorFieldDropped(int count) {}
+
     // ==========================================================================
     // Tempdoc 406 substrate observability — drain / swap / lock contention.
     // All default no-op; production exporter (WorkerLuceneTelemetryAdapter)

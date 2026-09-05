@@ -40,8 +40,10 @@ final class WorkerBootFixture {
 
   /**
    * Commits {@code docs} documents into {@code path}. {@code fingerprintOverride} of {@code null}
-   * stamps what this runtime would write (a MATCHING index); a hex string stamps a foreign shape;
-   * {@link #NO_FINGERPRINT} stamps none at all, which is what every pre-upgrade index looks like.
+   * stamps what this runtime would write (a MATCHING index); a hex string stamps a foreign shape
+   * (leaving the canonical inputs as this runtime writes them, so the DIGEST is what disagrees);
+   * {@link #NO_FINGERPRINT} stamps no recorded shape at all — neither digest nor inputs — which is
+   * what every pre-upgrade index looks like.
    */
   static final String NO_FINGERPRINT = "<<absent>>";
 
@@ -49,6 +51,11 @@ final class WorkerBootFixture {
     Map<String, Object> meta = new HashMap<>(new SsotCommitMetadataSource().build());
     if (NO_FINGERPRINT.equals(fingerprintOverride)) {
       meta.remove(IndexFingerprint.COMMIT_META_KEY);
+      // Both keys, or this stops modelling a pre-upgrade index. Tempdoc 931 §C.5 stamps the
+      // canonical inputs beside the digest, and an index carrying those HAS a recorded shape — it
+      // is compared, not migrated. A fixture that removed only the digest would quietly stop
+      // exercising the one-time legacy migration it exists for.
+      meta.remove(IndexFingerprint.COMMIT_META_INPUTS_KEY);
     } else if (fingerprintOverride != null) {
       meta.put(IndexFingerprint.COMMIT_META_KEY, fingerprintOverride);
     }
@@ -82,6 +89,11 @@ final class WorkerBootFixture {
     Map<String, Object> meta = new HashMap<>(new SsotCommitMetadataSource().build());
     if (NO_FINGERPRINT.equals(fingerprintOverride)) {
       meta.remove(IndexFingerprint.COMMIT_META_KEY);
+      // Both keys, or this stops modelling a pre-upgrade index. Tempdoc 931 §C.5 stamps the
+      // canonical inputs beside the digest, and an index carrying those HAS a recorded shape — it
+      // is compared, not migrated. A fixture that removed only the digest would quietly stop
+      // exercising the one-time legacy migration it exists for.
+      meta.remove(IndexFingerprint.COMMIT_META_INPUTS_KEY);
     } else if (fingerprintOverride != null) {
       meta.put(IndexFingerprint.COMMIT_META_KEY, fingerprintOverride);
     }

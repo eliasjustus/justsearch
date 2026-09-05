@@ -593,7 +593,7 @@ class ComponentsFactoryTest {
     try (MMapDirectory dir = new MMapDirectory(idx);
         IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
       Document doc =
-          mapper.toDocument(Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"));
+          mapper.toDocument(Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"), null);
       writer.addDocument(doc);
       writer.commit();
     }
@@ -617,7 +617,7 @@ class ComponentsFactoryTest {
             new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
       Document doc =
           multiMapper.toDocument(
-              Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"));
+              Map.of("doc_id", "d1", "tags", List.of("a", "b"), "status", "active"), null);
       writer.addDocument(doc);
       writer.commit();
     }
@@ -663,7 +663,7 @@ class ComponentsFactoryTest {
 
     try (MMapDirectory dir = new MMapDirectory(idx);
         IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
-      Document doc = singleMapper.toDocument(Map.of("doc_id", "d1", "tags", "solo"));
+      Document doc = singleMapper.toDocument(Map.of("doc_id", "d1", "tags", "solo"), null);
       writer.addDocument(doc);
       writer.commit();
     }

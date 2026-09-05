@@ -43,9 +43,9 @@ class TextSearchIntegrationTest extends RuntimeTestBase {
       assertTrue(rendered.contains(SchemaFields.CONTENT));
       assertTrue(rendered.contains(SchemaFields.TITLE));
       assertTrue(rendered.contains(SchemaFields.AUTHOR));
-      assertFalse(rendered.contains(SchemaFields.ENTITY_PERSONS_TEXT));
-      assertFalse(rendered.contains(SchemaFields.ENTITY_ORGANIZATIONS_TEXT));
-      assertFalse(rendered.contains(SchemaFields.ENTITY_LOCATIONS_TEXT));
+      assertFalse(rendered.contains("entity_persons_text"));
+      assertFalse(rendered.contains("entity_organizations_text"));
+      assertFalse(rendered.contains("entity_locations_text"));
     } finally {
       if (runtime != null) runtime.close();
       if (previous != null) System.setProperty(legacyKey, previous);

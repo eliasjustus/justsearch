@@ -71,6 +71,11 @@ public final class WorkerLuceneTelemetryAdapter implements LuceneRuntimeTypes.Te
   }
 
   @Override
+  public void onVectorFieldDropped(int count) {
+    if (count > 0) catalog.vectorDroppedTotal.add(count, EmptyTags.INSTANCE);
+  }
+
+  @Override
   public void onSwapStart(SwapReason reason) {
     catalog.swapStartedTotal.increment(
         SwapTags.of(reason == null ? SwapReason.UNKNOWN : reason));

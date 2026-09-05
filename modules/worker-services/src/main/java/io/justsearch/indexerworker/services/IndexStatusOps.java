@@ -1112,36 +1112,47 @@ final class IndexStatusOps {
   // ==================== Schema Compatibility Helpers (U21-MIG-001) ====================
 
   private String safeSchemaFingerprintCurrent() {
+    Object fp = expectedCommitMetadataBestEffort().get(IndexFingerprint.COMMIT_META_KEY);
+    return fp == null ? "" : String.valueOf(fp);
+  }
+
+  /** The metadata this runtime would commit, or an empty map if it cannot be built. */
+  private Map<String, Object> expectedCommitMetadataBestEffort() {
     try {
-      Object fp =
-          new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
-      return fp == null ? "" : String.valueOf(fp);
+      return new SsotCommitMetadataSource().build();
     } catch (Exception e) {
-      log.debug("Failed to get current schema fingerprint: {}", e.getMessage());
-      return "";
+      log.debug("Failed to build expected commit metadata: {}", e.getMessage());
+      return Map.of();
     }
   }
 
   private String safeSchemaFingerprintStored() {
+    String fp = storedCommitUserData().get(IndexFingerprint.COMMIT_META_KEY);
+    return fp == null ? "" : fp;
+  }
+
+  /**
+   * The commit user data the compat state is judged against, never null.
+   *
+   * <p>The open-time snapshot, because commits during the runtime's lifetime (NER backfill,
+   * embedding rebuild) overwrite the stored fingerprint with the current one and would mask a
+   * mismatch. Extracted so the {@code index_fingerprint_inputs} fallback reads the SAME snapshot
+   * the digest does — two different reads of "what this index recorded" is how the guard and the
+   * status surface end up describing different indexes.
+   */
+  private Map<String, String> storedCommitUserData() {
     if (openTimeCommitUserData == null) {
-      return "";
+      return Map.of();
     }
     try {
-      // Use the open-time snapshot to detect schema mismatches reliably.
-      // Commits during the runtime's lifetime (NER backfill, embedding rebuild, etc.)
-      // overwrite the stored fingerprint with the current one, masking the mismatch.
       Map<String, String> ud = openTimeCommitUserData.get();
       if (ud == null || ud.isEmpty()) {
         ud = latestCommitUserDataBestEffort.get();
       }
-      if (ud == null) {
-        return "";
-      }
-      String fp = ud.get(IndexFingerprint.COMMIT_META_KEY);
-      return fp == null ? "" : fp;
+      return ud == null ? Map.of() : ud;
     } catch (Exception e) {
-      log.debug("Failed to get stored schema fingerprint: {}", e.getMessage());
-      return "";
+      log.debug("Failed to read stored commit metadata: {}", e.getMessage());
+      return Map.of();
     }
   }
 
@@ -1161,13 +1172,20 @@ final class IndexStatusOps {
     }
     long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
     if (stored.isEmpty()) {
-      // No recorded shape: either the index predates the key or a commit was made while an
-      // input was indeterminate. Which one it is cannot be told from the commit, so the same
-      // predicate the open-time guard uses decides it here — one rule, two consumers, so a
-      // brand-new empty index is never reported as needing a rebuild by one and not the other.
-      return ParityDiagnostics.isIndexWithoutRecordedFingerprint(stored, docCount)
-          ? "BLOCKED_LEGACY"
-          : "COMPATIBLE";
+      // No recorded DIGEST. Two different indexes look like this and they get different answers
+      // (tempdoc 931 §C.5): one that predates index_fingerprint_inputs recorded no shape at all and
+      // is migrated once; one committed while a model digest was unresolvable recorded its shape as
+      // inputs, and the guard compares those rather than charging it a rebuild. The same predicate
+      // and the same diff the open-time guard runs decide both here — one rule, two consumers, so
+      // the banner cannot demand a reindex the guard is not performing.
+      Map<String, String> ud = storedCommitUserData();
+      if (ParityDiagnostics.isIndexWithoutRecordedFingerprint(
+          stored, ud.get(IndexFingerprint.COMMIT_META_INPUTS_KEY), docCount)) {
+        return "BLOCKED_LEGACY";
+      }
+      return ParityDiagnostics.diff(ud, expectedCommitMetadataBestEffort(), docCount).isEmpty()
+          ? "COMPATIBLE"
+          : "BLOCKED_MISMATCH";
     }
     if (current.equals(stored)) {
       return "COMPATIBLE";

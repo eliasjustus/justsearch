@@ -584,6 +584,9 @@ metadata.put("grammar_hash", sha256(intentGrammar));
 indexFingerprint(fieldsCatalog, analyzerDefs, vectorFormat, hnswParams, chunking,
         embeddingModelSha, spladeModelSha)   // IndexFingerprint.compute(...)
     .ifPresent(fp -> metadata.put("index_fingerprint", fp));   // omitted, never guessed, if indeterminate
+metadata.put("index_fingerprint_inputs", canonicalJson(...));  // ALWAYS stamped; the digest's own inputs,
+                                                               // compared (minus the ambiguous model keys)
+                                                               // whenever EITHER side lacks a digest
 metadata.put("boosts_fp", sha256(boostsConfig));               // benign — never a rebuild trigger
 ```
 
@@ -596,7 +599,11 @@ never compared:
 ```java
 void checkOnOpen(Path indexPath, Map<String, Object> expected) {
     Map<String, String> stored = readCommitMetadata(indexPath);
-    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);  // blank either side => skip, never "mismatch"
+    // blank stored/expected => skip, never "mismatch" — except that a blank digest on EITHER side falls
+    // back to comparing index_fingerprint_inputs minus the model keys neither side can state
+    // unambiguously, reported under the index_fingerprint key
+    // (docs/explanation/11-index-schema-migration.md).
+    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);
     if (diffs.isEmpty()) {
         return;
     }

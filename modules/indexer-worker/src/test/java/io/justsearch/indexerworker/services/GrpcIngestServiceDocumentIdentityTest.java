@@ -67,6 +67,7 @@ final class GrpcIngestServiceDocumentIdentityTest {
     String oldHash = DocumentIdentityStore.pathHash(oldPath);
     String newHash = DocumentIdentityStore.pathHash(newPath);
     String parentUid = "00000000-0000-4000-8000-000000000077";
+    String parentContent = "alpha beta";
     identityStore.importExisting(oldHash, parentUid, 10L);
 
     runtime
@@ -83,27 +84,28 @@ final class GrpcIngestServiceDocumentIdentityTest {
                     SchemaFields.FILENAME,
                     "old-report.pdf",
                     SchemaFields.CONTENT,
-                    "parent content")));
+                    parentContent)));
+    int[] chunkStarts = {0, 6};
+    int[] chunkEnds = {5, parentContent.length()};
     for (int i = 0; i < 2; i++) {
-      runtime
-          .indexingCoordinator()
-          .indexSingle(
-              new IndexDocument(
-                  Map.of(
-                      SchemaFields.DOC_ID,
-                      "chunk:test-" + i,
-                      SchemaFields.DOC_UID,
-                      parentUid + "#" + i,
-                      SchemaFields.PATH,
-                      oldPath,
-                      SchemaFields.IS_CHUNK,
-                      "true",
-                      SchemaFields.PARENT_DOC_ID,
-                      oldPath,
-                      SchemaFields.CHUNK_INDEX,
-                      i,
-                      SchemaFields.CONTENT,
-                      "chunk " + i)));
+      Map<String, Object> chunk = new java.util.HashMap<>();
+      chunk.put(SchemaFields.DOC_ID, "chunk:test-" + i);
+      chunk.put(SchemaFields.DOC_UID, parentUid + "#" + i);
+      chunk.put(SchemaFields.PATH, oldPath);
+      chunk.put(SchemaFields.IS_CHUNK, "true");
+      chunk.put(SchemaFields.PARENT_DOC_ID, oldPath);
+      chunk.put(SchemaFields.CHUNK_INDEX, i);
+      chunk.put(SchemaFields.CHUNK_TOTAL, 2);
+      chunk.put(SchemaFields.CHUNK_START_CHAR, chunkStarts[i]);
+      chunk.put(SchemaFields.CHUNK_END_CHAR, chunkEnds[i]);
+      chunk.put(SchemaFields.CHUNK_CONTENT, parentContent.substring(chunkStarts[i], chunkEnds[i]));
+      // Tempdoc 931 §C.1 — the rename RMWs each chunk, and the chunk_content re-slice refuses any
+      // parent revision but the one the chunk was cut from. ChunkDocumentWriter stamps this in
+      // production; this fixture hand-builds its chunks, so it stamps it too.
+      chunk.put(
+          SchemaFields.CHUNK_PARENT_CONTENT_SHA256,
+          io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(parentContent));
+      runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk));
     }
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();
