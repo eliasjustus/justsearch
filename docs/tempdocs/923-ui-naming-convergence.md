@@ -213,8 +213,8 @@ Publishing, opening a pull request, enqueueing, and merging are explicitly exclu
   cold-load timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated
   rerun passed all 35 tests. After each of the final two `origin/main` catch-ups,
   `npm run test:unit:run` passed all 469 files and 6,287 tests.
-- The worktree was caught up through publication-candidate merge commit `ba9e845c` (including
-  mainline `bc631dc2`). The required `./gradlew.bat build -x test` and repository-wide
+- The worktree was caught up through publication-candidate merge commit `038c3ab1` (including
+  mainline `8bd591a4`). The required `./gradlew.bat build -x test` and repository-wide
   `./gradlew.bat test` both passed after that merge. The preceding uncached full-suite run passed
   cleanly in 3m17s, including the previously load-sensitive Lucene concurrency regression. The
   complete `:modules:ui:test` task, including the new HTTP contract, also passed independently.
