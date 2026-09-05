@@ -92,8 +92,15 @@ npm --prefix packages/runtime-client run check:pack
 ```
 
 CI performs generation drift checks with the repository Node toolchain and executes the built
-client at the Node 20 runtime floor. npm publication remains a founder action; a green package gate
-does not imply that this repository has published the package.
+client at the Node 20 runtime floor. The packed README links to the runtime-manifest discovery
+contract and tells native callers to pass its `head.apiBaseUrl` value to the client factory. Package
+publication runs a fail-closed `prepublishOnly` lifecycle that checks generated-source coherence,
+builds and tests the client, and verifies the tarball contents before npm can publish it. That
+publication preflight requires the Node 22.18+ generation toolchain even though the resulting client
+supports Node 20 at runtime.
+
+npm publication remains a founder action; a green package gate or dry-run does not imply that this
+repository has published the package.
 
 ## Stability policy
 
