@@ -131,6 +131,7 @@ Evidence tiers:
 | Tier | Default evidence | Ownership rule |
 |---|---|---|
 | Hosted-required unit evidence | `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)` with `-PskipWebBuild=true` | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
+| Hosted-required harness evidence | `jseval Python suite` — `scripts/jseval/tests` on the hosted Linux runner, without the `agent`/`ui`/`scan` extras so their `pytest.importorskip` guards are exercised | Required since 2026-09-05 (ADR-0044 amendment). Must stay fully mocked and backend-free; a test that needs a live backend belongs in another tier. |
 | Local parser/fixture evidence | PDF/OCR/Office fixture tests disabled under `CI=true` | Must be declared in `scripts/ci/test-evidence-policy.v1.json` with replacement evidence and cadence. |
 | Local worker-process integration evidence | `src/integrationTest` cases that spawn worker/server processes | Must be declared when skipped under `CI=true`; run locally before changing the owned integration surface. |
 | Opt-in system/AI evidence | `modules/system-tests` tags and opt-in Gradle flags | Owned by the system-tests source sets and documented tags. |

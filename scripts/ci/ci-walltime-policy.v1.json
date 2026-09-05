@@ -72,6 +72,14 @@
       "advisoryBudgets": { "maxWallSeconds": 360 }
     },
     {
+      "job": "jseval Python suite",
+      "requiredCheck": "jseval Python suite",
+      "owner": "scripts/jseval pytest suite on the hosted Linux runner",
+      "hardTimeoutSeconds": 1200,
+      "notes": "Measured 2026-09-05 over the 13 successful main push and merge_group runs since the lane landed at 18e2833f: median 384s, observed max 432s, min 257s, zero failures. Separate evidence window from the other lanes; re-measure with them at the next reviewBy.",
+      "advisoryBudgets": { "maxWallSeconds": 540 }
+    },
+    {
       "job": "Secret scan",
       "requiredCheck": "Secret scan",
       "owner": "gitleaks public history scan",

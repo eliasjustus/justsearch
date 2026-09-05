@@ -320,7 +320,8 @@ The public repository has two CI postures:
   remains the historical basis for that manual-specialty posture.
 
 The public hosted `CI` workflow is split into stable fact lanes: public claims,
-license and notices, no-model build, unit tests, and secret scan. A red
+license and notices, no-model build, unit tests, secret scan, and the
+`jseval Python suite` (required since 2026-09-05, ADR-0044 amendment). A red
 check should name the fact that failed rather than one generic build bucket.
 
 The public unit-test signal is sharded into `Unit tests (app-ui)`, `Unit tests
