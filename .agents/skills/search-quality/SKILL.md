@@ -683,6 +683,40 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
+
+- **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
+  planner rule: skip dense only when another leg can answer AND the *rarest* analyzed query term
+  occurs in ≥ `index.hybrid.vector_skip_min_df_fraction` (default 0.25) of `content` documents, on
+  ≥ 100 field docs (`SearchPlanner.planDenseSkip`, `SearchInputCapture` min DF fraction). C5b asked
+  for comparable per-language skip rates and no material quality loss on the six pre-registered
+  corpora before PR-C0 may merge.
+- **Skip rate (index-only hybrid, PR-C0 tip `0bb0b8cb`, 17 min, every run `comparable=True`;
+  `denseStatus`/`denseReason` now persisted per query by jseval and rolled up by
+  `scripts/jseval/915_c0_skip_rate.py`).** legal-clerc-200 4/200 (2.0 %, all
+  `SKIPPED_NO_DISCRIMINATIVE_TERM`); scifact 0/300; enron-qa 0/300; ohr-bench-clean 0/962;
+  miracl-de-2k 0/305; miracl-fr-2k 0/343. The 4 legal hits prove the gate path is live; the zeros
+  are the rule's real answer (a natural-language query almost never has *every* term in ≥ 25 % of
+  documents). Per language: en 0–2 %, de 0 %, fr 0 % — comparable; the retired rule could only
+  ever fire for English.
+- **Quality (paired, same machine, same hour, fresh `--clean` index, `--pipeline --embedding`,
+  control = PR-A branch `c0e5dbf5` without C0).** legal-clerc-200: C0 0.5989 / P@1 0.390 / R@10
+  0.825 vs control 0.5914 / 0.365 / 0.830 → Δ +0.0075 nDCG@10, inside the F-057 legal 2σ line
+  (0.0136); miracl-de-2k: 0.8575 / 0.6656 / 0.9967 on both arms (identical; the rule fired 0/305 and
+  the old rule never fired on German, so C0 is a no-op there by construction). Every leg observed on
+  every arm. Scifact/enron/fr/OHR fully-enriched no-regression runs were not run (≈1.5 h, over the
+  wave's 2 h budget) — a limit, not a pass.
+- **Calibration worth keeping.** Two no-C2 legal arms share only 24/200 identical top-10 lists
+  (20 up, 21 down, mean +0.0075): top-10 churn on legal is run-to-run noise; only the mean and the
+  hit count carry signal. `summary.json`'s `ingest.index_size_bytes` is a mid-ingest status snapshot
+  (16.1 MB vs 33.6 MB reported for indexes that are 40.9 MB vs 43.0 MB on disk) — measure index
+  bytes on disk, by Lucene file type.
+- **Consequence for the owner.** At 0.25 the dense skip is a no-op on every corpus we measure, so
+  PR-C0 is a locale-invariance change, not a latency lever; if the old English savings mattered,
+  the knob to revisit is the DF fraction, and this row is the baseline to beat.
+- **Method + run dirs.** tempdoc 931 §D (3a table, 3b/3c design); runs under
+  `.claude/worktrees/wave3-{c0,pa}/scripts/jseval/tmp/eval-results/20260905T02*` (gitignored).
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
