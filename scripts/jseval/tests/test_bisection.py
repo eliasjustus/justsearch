@@ -65,13 +65,10 @@ def _register(output_dir: Path, run_dir: Path, manifest: dict, *,
     )
 
 
-def _envelope(mode: str = "full", metric: str = "nDCG@10", stdev: float = 0.001,
-              mean: float = 0.70) -> dict:
-    return {
-        "schema_version": 1, "cohort_hash": "abc",
-        "calibrated_at": "2026-04-22T00:00:00Z",
-        "metrics": {mode: {metric: {"mean": mean, "stdev": stdev, "n": 5}}},
-    }
+#: Tempdoc 930 §18.1 row 7 replaced the `k * envelope_sigma` threshold with a fixed
+#: absolute one. 0.002 keeps every pre-existing case's verdict: the "attributed" fixtures
+#: move the metric by 0.30 and the "within" fixture by 0.0005.
+_TIGHT = 0.002
 
 
 class TestIndex:
@@ -186,7 +183,7 @@ class TestSyntheticHash:
 class TestBisect:
     def test_identical_cohorts(self, tmp_path):
         m = _manifest(hash_="x")
-        result = bisection.bisect(m, m, envelope=_envelope(), output_dir=tmp_path)
+        result = bisection.bisect(m, m, output_dir=tmp_path)
         assert result["status"] == "identical-cohorts"
         assert result["axes_diff"] == []
 
@@ -209,8 +206,7 @@ class TestBisect:
         syn_dir = _write_run_dir(tmp_path, "syn", syn_manifest, metric_value=0.40)
         _register(tmp_path, syn_dir, syn_manifest)
 
-        result = bisection.bisect(a, b, envelope=_envelope(stdev=0.001),
-                                  output_dir=tmp_path)
+        result = bisection.bisect(a, b, threshold=_TIGHT, output_dir=tmp_path)
         assert result["status"] == "single-axis"
         attr = next(a for a in result["attributions"] if a["axis"] == "policy_hash")
         assert attr["status"] == "attributed"
@@ -225,8 +221,8 @@ class TestBisect:
         _register(tmp_path, run_a_dir, a)
         _register(tmp_path, run_b_dir, b)
 
-        # Synthetics for each axis, but neither single-axis drops more
-        # than 2σ — only the combination does.
+        # Synthetics for each axis, but neither single-axis delta clears the
+        # threshold — only the combination does.
         for axis in ("policy_hash", "git_sha"):
             syn = bisection.build_synthetic_manifest(a, b, axis)
             s_hash = bisection.synthetic_manifest_hash(syn)
@@ -237,8 +233,7 @@ class TestBisect:
             )
             _register(tmp_path, syn_dir, syn_manifest)
 
-        result = bisection.bisect(a, b, envelope=_envelope(stdev=0.001),
-                                  output_dir=tmp_path)
+        result = bisection.bisect(a, b, threshold=_TIGHT, output_dir=tmp_path)
         assert result["status"] == "MULTI_AXIS_INTERACTION"
 
     def test_no_cached_runs(self, tmp_path):
@@ -250,13 +245,12 @@ class TestBisect:
         _register(tmp_path, run_a_dir, a)
         _register(tmp_path, run_b_dir, b)
 
-        result = bisection.bisect(a, b, envelope=_envelope(stdev=0.001),
-                                  output_dir=tmp_path)
+        result = bisection.bisect(a, b, threshold=_TIGHT, output_dir=tmp_path)
         assert result["status"] == "no-cached-runs"
         attr = next(a for a in result["attributions"] if a["axis"] == "policy_hash")
         assert attr["status"] == "no-cached-run"
 
-    def test_within_envelope_marks_non_attributed(self, tmp_path):
+    def test_within_threshold_marks_non_attributed(self, tmp_path):
         a = _manifest(hash_="a", policy_hash="p-a")
         b = _manifest(hash_="b", policy_hash="p-b")
         run_a_dir = _write_run_dir(tmp_path, "a", a, metric_value=0.70)
@@ -265,17 +259,17 @@ class TestBisect:
         s_hash = bisection.synthetic_manifest_hash(syn)
         syn_manifest = dict(syn)
         syn_manifest["manifest_hash"] = s_hash
-        # Metric within ±2σ.
+        # Metric moves by 0.0005, inside the threshold.
         syn_dir = _write_run_dir(tmp_path, "syn", syn_manifest, metric_value=0.7005)
         _register(tmp_path, syn_dir, syn_manifest)
 
-        result = bisection.bisect(a, b, envelope=_envelope(stdev=0.01),
-                                  output_dir=tmp_path)
+        result = bisection.bisect(a, b, threshold=_TIGHT, output_dir=tmp_path)
         attr = next(at for at in result["attributions"]
                     if at["axis"] == "policy_hash")
-        assert attr["status"] == "within-envelope"
+        assert attr["status"] == "within-threshold"
+        assert attr["threshold"] == _TIGHT
 
-    def test_no_envelope_status(self, tmp_path):
+    def test_threshold_defaults_when_none_is_passed(self, tmp_path):
         a = _manifest(hash_="a", policy_hash="p-a")
         b = _manifest(hash_="b", policy_hash="p-b")
         run_a_dir = _write_run_dir(tmp_path, "a", a, metric_value=0.70)
@@ -284,14 +278,15 @@ class TestBisect:
         s_hash = bisection.synthetic_manifest_hash(syn)
         syn_manifest = dict(syn)
         syn_manifest["manifest_hash"] = s_hash
+        # 0.70 -> 0.50 is far outside DEFAULT_THRESHOLD (0.02).
         syn_dir = _write_run_dir(tmp_path, "syn", syn_manifest, metric_value=0.50)
         _register(tmp_path, syn_dir, syn_manifest)
-        # No envelope for the metric.
-        result = bisection.bisect(a, b, envelope={"metrics": {}},
-                                  output_dir=tmp_path)
+
+        result = bisection.bisect(a, b, output_dir=tmp_path)
+        assert result["threshold"] == bisection.DEFAULT_THRESHOLD
         attr = next(at for at in result["attributions"]
                     if at["axis"] == "policy_hash")
-        assert attr["status"] == "no-envelope"
+        assert attr["status"] == "attributed"
 
 
 class TestWriteReport:
@@ -316,7 +311,7 @@ class TestSynthesizeAndBisect:
         m = _manifest(hash_="x")
         result = bisection.synthesize_and_bisect(
             m, m,
-            envelope=_envelope(stdev=0.001),
+            threshold=_TIGHT,
             output_dir=tmp_path,
             data_dir=tmp_path / "data",
             dataset="scifact",
@@ -330,7 +325,7 @@ class TestSynthesizeAndBisect:
         b = _manifest(hash_="b", policy_hash="p-b")
         result = bisection.synthesize_and_bisect(
             a, b,
-            envelope=_envelope(stdev=0.001),
+            threshold=_TIGHT,
             output_dir=tmp_path,
             data_dir=tmp_path / "data",
             dataset="scifact",
@@ -358,7 +353,7 @@ class TestSynthesizeAndBisect:
 
         result = bisection.synthesize_and_bisect(
             a, b,
-            envelope=_envelope(stdev=0.001),
+            threshold=_TIGHT,
             output_dir=tmp_path,
             data_dir=tmp_path / "data",
             dataset="scifact",
@@ -393,7 +388,7 @@ class TestSynthesizeAndBisect:
         monkeypatch.setattr("subprocess.run", _fake_run)
         result = bisection.synthesize_and_bisect(
             a, b,
-            envelope=_envelope(stdev=0.001),
+            threshold=_TIGHT,
             output_dir=tmp_path,
             data_dir=tmp_path / "data",
             dataset="scifact",

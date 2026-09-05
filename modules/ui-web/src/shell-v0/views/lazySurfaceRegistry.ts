@@ -49,11 +49,10 @@ const LOADERS: ReadonlyMap<string, () => Promise<unknown>> = new Map<
   // directly — so the lazy row is gone (no catalog entry resolves to jf-system-self-view anymore).
   // Tempdoc 571 §11 / 578 — the System hub host (presents Health · Logs · Activity as tabs).
   ['jf-system-surface', () => import('./SystemSurface.js')],
-  // Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard (read-only kernel projection). DEEPLINK
-  // dev/operator tool, off-rail; lazy-loaded on first navigation.
-  ['jf-governance-view', () => import('./GovernanceView.js')],
+  // Tempdoc 930 §19.3 F9(d): the `jf-governance-view` row is retired with the governance dashboard —
+  // nothing resolves that tag any more.
   // Tempdoc 583 §D.3b — the API explorer (read-only route-manifest projection). DEEPLINK dev tool,
-  // off-rail; lazy-loaded on first navigation (sibling of the governance dashboard).
+  // off-rail; lazy-loaded on first navigation.
   ['jf-api-explorer-view', () => import('./ApiExplorerView.js')],
   // Tempdoc 851 (owner decision 2026-08-19): the `jf-search-v2` row is retired with its window —
   // 818 never reached its §5 cutover, so nothing resolves that tag any more.

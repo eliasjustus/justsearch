@@ -1,5 +1,5 @@
 /**
- * atom-fork-ratchet truth-table — tempdoc 574 §25 Phase 4. Mirrors the ts-any
+ * atom-fork-ratchet truth-table — tempdoc 574 §25 Phase 4. Mirrors the per-file-count
  * per-file-ratchet verdict logic (verdict is inlined in the shared
  * `makeRatchetGate` factory; this is the kernel-required pure verdict function).
  */

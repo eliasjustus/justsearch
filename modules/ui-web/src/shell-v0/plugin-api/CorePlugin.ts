@@ -70,18 +70,10 @@ const CORE_SURFACES: PluginSurfaceContribution[] = [
     audience: 'USER',
     placement: 'DEEPLINK',
   },
-  // Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard (read-only projection of the
-  // discipline-gate kernel via GET /api/governance/state). DEEPLINK dev/operator tool, off-rail.
-  {
-    id: 'core.governance-surface',
-    mountTag: 'jf-governance-view',
-    labelKey: 'registry-surface.governance-surface.label',
-    descriptionKey: 'registry-surface.governance-surface.description',
-    audience: 'DEVELOPER',
-    placement: 'DEEPLINK',
-  },
+  // Tempdoc 930 §19.3 F9(d): `core.governance-surface` is retired — the governance dashboard (its
+  // view, controller, route and generator) is removed; the discipline-gate kernel itself stays.
   // Tempdoc 583 §D.3b — the API explorer: read-only projection of GET /api/meta/routes (the
-  // self-describing route manifest). DEEPLINK dev/operator tool, off-rail; sibling of governance.
+  // self-describing route manifest). DEEPLINK dev/operator tool, off-rail.
   {
     id: 'core.api-explorer-surface',
     mountTag: 'jf-api-explorer-view',

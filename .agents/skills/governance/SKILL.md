@@ -2,28 +2,30 @@
 name: governance
 description: >-
   TRIGGER when: editing baseline files
-  (scripts/ci/npm-audit-ratchet-baseline.v1.json,
-  docs/reference/contributing/tier-register.md), authoring gate changesets,
+  (scripts/ci/github-advisory-baseline.v1.json,
+  gates/<id>/baseline.txt), authoring gate changesets,
   running the discipline-gate kernel, or seeing a SARIF
-  ruleId from prose-tier-register / npm-audit / consumer-drift /
+  ruleId from npm-audit / consumer-drift /
   ssot-catalog-sync and unsure what to do. Loads the kernel's protocol +
   classification grammar + CLI subcommands.
 ---
 # Discipline-gate kernel (tempdoc 530)
 
 The kernel that gates ratchet-style hygiene metrics across the repo.
-**`governance/registry.v1.json` is the authority — 35 gates as of 2026-08-18; read it
+**`governance/registry.v1.json` is the authority — 29 gates as of 2026-09-05; read it
 rather than trusting any list in prose.** The frequently-hit ones: `npm-audit`,
-`prose-tier-register`, `consumer-drift` (tempdoc 531 — substrate consumer-floor
-enforcement), `ssot-catalog-sync` (root↔classpath catalog mirror), `config-surface`
-(dead settings + surface ratchet), and the count-ratchets `todo-fixme`, `ts-any`,
-`style-literal-ratchet`, `atom-fork-ratchet`.
+`consumer-drift` (tempdoc 531 — substrate consumer-floor enforcement),
+`ssot-catalog-sync` (root↔classpath catalog mirror), `config-surface` (dead settings
++ surface ratchet), and the count-ratchets `dead-code`, `module-deps`,
+`atom-fork-ratchet`.
 
-(Four *specific* size/count ratchets — `class-size`, `clone`, `ui-bundle`,
-`exception-count` — were removed end-to-end for go-public, tempdoc 634; that removal did
-not end count-ratcheting in general, and the four named above are live. The coverage-style
-human-audit gates `independent-review` and `ux-audit-closure` were retired earlier —
-tempdoc 530 §Remediation.)
+(Retired, so do not go looking for them: `class-size`, `clone`, `ui-bundle`,
+`exception-count` for go-public, tempdoc 634; the human-audit gates `independent-review`
+and `ux-audit-closure`, tempdoc 530 §Remediation; and — tempdoc 930 chunk F — `ts-any`,
+`todo-fixme`, `dead-code-jvm`, `style-literal-ratchet`, `test-to-code` and
+`prose-tier-register`, whose properties moved to ESLint, PMD, ArchUnit's
+`FreezingArchRule` and a plain `scripts/ci` lint respectively. That table lives in
+`docs/reference/contributing/discipline-gate-kernel.md` §"Retired to commodity tools".)
 
 ## Quickstart
 
@@ -86,14 +88,13 @@ Vocabularies are **per gate** — using another gate's word fails the loader.
 | Gate | Classifications |
 |---|---|
 | `npm-audit` | `declared-regression` · `lockfile-import` · `emergency-override` · `severity-decrease` |
-| `prose-tier-register` | `tier-change` · `new-rule-registered` · `rule-retired` · `emergency-override` |
 | `runtime-state` | `new-rule-registered` · `tier-change` · `rule-retired` |
 | `consumer-drift` | `slot-retraction` · `grace-extension` · `emergency-override` (frontmatter needs a `slot:` field naming the affected slot) |
 | `ssot-catalog-sync` | `intentional-divergence` · `mirror-retirement` · `emergency-override` (frontmatter needs a `mirror:` field naming the affected mirror) |
 | `test-efficacy` | `strength-regression` · `seam-retraction` · `emergency-override` |
 | `register-guard-resolution` | `guard-downgrade` |
 | `tempdoc-wiring` | `emergency-override` |
-| **count-ratchets** — `todo-fixme` · `ts-any` · `style-literal-ratchet` · `atom-fork-ratchet` · `dead-code` · `module-deps` · `adr-coverage` · `test-to-code` · `config-surface` | the shared growth family: `declared-growth` · `declared-regression` · `merge-import` · `emergency-override` |
+| **count-ratchets** — `atom-fork-ratchet` · `dead-code` · `module-deps` · `adr-coverage` · `config-surface` | the shared growth family: `declared-growth` · `declared-regression` · `merge-import` · `emergency-override` |
 
 Read the gate's own README for nuances — `gates/<id>/.changesets/README.md` — and note that
 not every gate ships one; when it doesn't, `run.mjs --explain <ruleId>` is the fallback.
@@ -105,18 +106,21 @@ documented:
 
 1. **Silent baseline-shifts** — relaxing the npm-audit baseline without a
    changeset → `npm-audit/silent-baseline-shift`.
-2. **Silent tier-changes** — moving a register row's tier without a
-   changeset → `prose-tier-register/silent-tier-change`.
-3. **Silent unanchored rules** — new must/never/always sentences in
-   `CLAUDE.md` / `.claude/rules/` outside any anchored section →
-   `prose-tier-register/untagged-sentence`.
+2. **Silent pin raises** — advancing a gate's baseline without a changeset →
+   `<gate>/silent-baseline-shift` (the gates carrying that block are listed in
+   `discipline-gate-kernel.md`).
+3. **Growth licensed but not re-pinned** — a changeset without the matching pin
+   advance in the same diff → `<gate>/declared-growth-without-repin`.
 
-The third check is intentional cross-harness governance: this Codex workflow
-audits the separately maintained Claude instruction surface; it does not make
-those files executable Codex instructions.
+The cross-harness prose scan that used to sit here (the `prose-tier-register`
+gate's unanchored-sentence rule, which audited the separately maintained Claude
+instruction surface from this Codex workflow) was retired with that gate —
+tempdoc 930 chunk F. `scripts/ci/check-always-loaded-budget.mjs` is what still
+bounds both harnesses' always-loaded prose.
 
-If you're authoring a rule, anchor it with `<!-- rule:<slug> -->` and add a
-row to `docs/reference/contributing/tier-register.md` with the same slug.
+If you're authoring a prose rule, still anchor it with `<!-- rule:<slug> -->` —
+the anchors are read by hooks and by the always-loaded budget lint. There is no
+longer a tier register to add a row to.
 
 ## See also
 

@@ -8,7 +8,7 @@
  * cross-referenced with live readiness (GET /api/status) so the explorer doubles as a "what works
  * right now" map. Read-only — no controls, nothing to mutate.
  *
- * Mirrors GovernanceView (the sibling read-only DEEPLINK dev dashboard): composes SurfaceLayout,
+ * A read-only DEEPLINK dev dashboard: composes SurfaceLayout,
  * emits no own page-title <h1> or main landmark (the shell owns those; tempdoc 578 a11y-closure) —
  * only sections; tokens only (no bare colored literals, §6 ban); degrades to a confident empty/error
  * state. Side-effect registers <jf-api-explorer-view> for the chrome dispatcher.

@@ -123,6 +123,15 @@ def _cadence_block(first_search: dict | None) -> dict:
     )
 
 
+def _encoder_latency_block() -> dict:
+    """Tempdoc 930 §18.1 row 7: absolute per-encoder ONNX p50/p95 from the same
+    ``<data_dir>/telemetry/`` stream the cadence block reads. Informational — no
+    threshold and no baseline (that is the point; see :mod:`jseval.encoder_latency`)."""
+    from . import encoder_latency as encoder_latency_mod
+
+    return encoder_latency_mod.build_block(_worker_data_dir())
+
+
 def _snapshot_search_config(base_url: str) -> dict | None:
     """Fetch active search config from /api/status at run start (343 item 0.4).
 
@@ -317,6 +326,7 @@ def execute_run(
         if search_load:
             summary["search_load"] = search_load
         summary["cadence"] = _cadence_block(first_search_probe)
+        summary["encoder_latency"] = _encoder_latency_block()
         return summary
 
     # 1. Load dataset
@@ -479,15 +489,8 @@ def execute_run(
     # 4. Build summary + run manifest (tempdoc 400 LR1-a)
     search_config = _snapshot_search_config(base_url)
     state_snapshots = manifest_mod.capture_state_snapshots(base_url)
-    # Phase 2.2b: point compute_manifest at the envelope root so calibrated
-    # envelopes (written by `jseval calibrate`) are auto-embedded when the
-    # run's cohort_hash matches. Tempdoc 716: envelopes are filed under the
-    # jseval-owned data root (read_envelope falls back to the pre-716
-    # legacy roots, incl. env JUSTSEARCH_DATA_DIR, with a WARN). The worker
-    # data dir stays a separate concern — it is where the Worker writes
-    # telemetry/, which write_run copies into the run dir.
-    from ._paths import DEFAULT_JSEVAL_DATA_DIR
-    envelope_data_dir = DEFAULT_JSEVAL_DATA_DIR
+    # The Worker-owned data dir — where the Worker writes telemetry/, which
+    # write_run copies into the run dir and _cadence_block reads directly.
     worker_data_dir = _worker_data_dir()
     # Phase 6 / 6.5: manifest override for LR5-d synthetic bisection.
     # When JUSTSEARCH_MANIFEST_OVERRIDE is set AND the
@@ -524,7 +527,6 @@ def execute_run(
             eval_protocol=METRIC_CONTRACT,
             state_snapshots=state_snapshots,
             workflow_run_id=os.environ.get("JUSTSEARCH_WORKFLOW_RUN_ID"),
-            envelope_data_dir=envelope_data_dir,
             corpus_identity=_get_corpus_identity(dataset_name, meta, qrels, base_dir),
         )
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
@@ -540,6 +542,9 @@ def execute_run(
     # Tempdoc 885 item 19: cadence counters are always emitted (null when the Worker does
     # not publish them) so the arm-comparison table has its columns on every run.
     summary["cadence"] = _cadence_block(first_search_probe)
+    # Tempdoc 930 §18.1 row 7: absolute per-encoder ONNX latency, always emitted
+    # (empty `encoders` when the Worker published no `encoder.ort_run` spans).
+    summary["encoder_latency"] = _encoder_latency_block()
 
     # 5. Write artifacts + append history
     if output_dir:
@@ -551,7 +556,6 @@ def execute_run(
 
         history_dir = history_db or Path(output_dir)
         run_manifest_hash = run_manifest.get("manifest_hash") if isinstance(run_manifest, dict) else None
-        envelope = run_manifest.get("non_determinism_envelope") if isinstance(run_manifest, dict) else None
         # Perf families trended alongside quality (tempdoc 640 R3): per-run throughput + the derived
         # resident footprint are run-level; CE-stage p50 is per-mode (from aggregate_metrics).
         _run_metrics = summary.get("run_metrics") or {}
@@ -567,7 +571,6 @@ def execute_run(
                 context_hit_rate=(mr.get("context_coverage") or {}).get(
                     "mean_best_term_coverage"),
                 manifest_hash=run_manifest_hash,
-                envelope=envelope,
                 perf_metrics={
                     "ce_p50_ms": (mr["aggregate_metrics"] or {}).get("ce_p50_ms"),
                     "primary_docs_s": _run_metrics.get("primary_docs_s"),

@@ -43,7 +43,9 @@
       "recentDocsPerSec" : [ ],
       "pendingBytes" : 0,
       "pendingUnknownSizeJobs" : 0,
-      "searchableDocuments" : 0
+      "searchableDocuments" : 0,
+      "indexMaxDoc" : 0,
+      "indexNumDocs" : 0
     },
     "failure" : {
       "failedJobs" : 0,
@@ -111,7 +113,11 @@
         "chunkEmbeddingPendingCount" : 0,
         "chunkEmbeddingFailedCount" : 0,
         "chunkVectorCoveragePercent" : 0.0,
-        "chunkVectorsReady" : false
+        "chunkVectorsReady" : false,
+        "chunkSpladeEnabled" : false,
+        "chunkSpladeCompletedCount" : 0,
+        "chunkSpladePendingCount" : 0,
+        "chunkSpladeCoveragePercent" : 0.0
       },
       "embeddingDocCount" : 0,
       "embeddingCompletedCount" : 0,

@@ -19,12 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from jseval.agent_utility_inspect import (
+pytest.importorskip("inspect_ai")
+
+from jseval.agent_utility_inspect import (  # noqa: E402
     _delivered_fields,
     _delivered_tier,
     _tool_result_digest_entry,
 )
-from jseval.utility_evidence import sanitize_observation
+from jseval.utility_evidence import sanitize_observation  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "recorded"
 

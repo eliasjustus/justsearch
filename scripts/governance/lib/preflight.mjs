@@ -70,7 +70,7 @@ function gateMatchesPaths(gate, changedPaths) {
     if (hits.length > 0) reasons.push(`${hits.length} source file(s) match include globs`);
   }
 
-  // Specific config-paths (npm-audit report, ui-bundle dist).
+  // Specific config-paths (a gate's produced report, or a dist dir it measures).
   for (const k of ['reportPath', 'distDir']) {
     const cfgPath = gate.config?.[k];
     if (cfgPath && changedPaths.some(p => p === cfgPath || p.startsWith(cfgPath + '/'))) {

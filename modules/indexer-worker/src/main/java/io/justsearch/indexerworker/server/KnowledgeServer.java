@@ -2500,7 +2500,18 @@ public final class KnowledgeServer implements Closeable {
             indexBasePath,
             activeIndexPath,
             JSON,
+            KnowledgeServer::chunkSpladeEnabled,
             log));
+  }
+
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8), read from the LIVE {@link ConfigStore}
+   * rather than a boot-time copy. Absent config reads as the flag's own default (false).
+   */
+  private static boolean chunkSpladeEnabled() {
+    ConfigStore cs = ConfigStore.globalOrNull();
+    ResolvedConfig rc = cs == null ? null : cs.get();
+    return rc != null && rc.rag() != null && rc.rag().chunkSpladeEnabled();
   }
 
   private void startMigrationEnumeratorBestEffort(ResolvedConfig rc) {

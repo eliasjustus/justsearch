@@ -1,8 +1,8 @@
 {
   "$schema": "https://ssot.justsearch/v1/schemas/route-manifest.json",
-  "count": 243,
+  "count": 242,
   "namespace": "meta-routes",
-  "routeDigest": "sha256:19ce45ab68f79176ba3a1704a083d6a4c12050ea32c77723fcf44424d5d7391f",
+  "routeDigest": "sha256:20af51cd50396b09a92152e45daf256c39d1b891968fbbb1847c074802592043",
   "routes": [
     {
       "method": "GET",
@@ -1275,20 +1275,6 @@
       "method": "GET",
       "path": "/api/debug/worker-log",
       "cohort": "debug",
-      "owningModule": null,
-      "requiredCapabilities": [],
-      "responseSchema": null,
-      "stability": null,
-      "sdkOperationId": null,
-      "requestSchema": null,
-      "queryParameters": null,
-      "responseSchemas": null,
-      "lifecycle": null
-    },
-    {
-      "method": "GET",
-      "path": "/api/governance/state",
-      "cohort": "governance",
       "owningModule": null,
       "requiredCapabilities": [],
       "responseSchema": null,

@@ -704,7 +704,13 @@ message CoreStatus {
   // (the whole non-chunk index) because Health/jseval/sandbox evidence describe the index itself;
   // this is the number a user-facing "Searching N documents" string may honestly use.
   int64 searchable_doc_count = 20;
-  // Next available field number: 21
+  // Tempdoc 931 §E item 8 — the ACTIVE (search-serving) reader's raw Lucene document counters, so
+  // an evaluator can record merge state. index_max_doc counts live PLUS deleted-but-unmerged docs;
+  // index_num_docs counts live only. Their difference is the deleted backlog no merge has reclaimed
+  // yet — the signal that separates "the corpus shrank" from "the index has not merged yet".
+  int64 index_max_doc = 21;
+  int64 index_num_docs = 22;
+  // Next available field number: 23
 }
 
 // Failure tracking and search quality signals.
@@ -802,7 +808,17 @@ message ChunkCoverage {
   int64 failed_count = 4;
   double coverage_percent = 5;
   bool vectors_ready = 6;             // True when coverage >= 95% (RAG hybrid threshold)
-  // Next available field number: 7
+  // Tempdoc 931 §E item 8 — the chunk-SPLADE stage, reported over CHUNK documents only. The
+  // whole-doc `splade` FeatureCoverage above counts parents (IS_CHUNK MUST_NOT), so before this
+  // nothing on the status surface described the population the chunk-SPLADE retrieval leg scores
+  // against. splade_enabled is rag.chunk_splade.enabled read from the Worker's resolved config;
+  // with it off the counts are legitimately zero (no chunk carries splade_status at all), which is
+  // why a consumer must read the flag before reading the coverage.
+  bool splade_enabled = 7;
+  int64 splade_completed_count = 8;
+  int64 splade_pending_count = 9;
+  double splade_coverage_percent = 10;
+  // Next available field number: 11
 }
 
 // Map-based accumulated per-batch timing for enrichment phases (354).
