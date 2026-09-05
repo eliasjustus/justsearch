@@ -69,11 +69,9 @@ public final class WritePathOps {
    * Core single-document write. Caller is responsible for guards and queue-depth accounting.
    *
    * @param fields the document fields (already validated)
+   * @param droppedVectors accumulator for vector fields dropped by the mapper (tempdoc 931 §C.3),
+   *     or null when the caller does not count them
    */
-  void indexDocument(Map<String, Object> fields) {
-    indexDocument(fields, null);
-  }
-
   void indexDocument(Map<String, Object> fields, FieldMapper.DroppedVectorReport droppedVectors) {
     try {
       LifecycleSnapshot snap = session.snapshot;

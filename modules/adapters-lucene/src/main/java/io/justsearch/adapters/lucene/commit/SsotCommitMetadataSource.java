@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -158,24 +157,16 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
   }
 
   /**
-   * Assembles the {@link IndexFingerprint} inputs and computes the digest, or empty when a
-   * configured model's digest is unresolvable.
+   * The assembled {@link IndexFingerprint.Inputs} — the one assembly from which BOTH the digest
+   * ({@link IndexFingerprint#compute}) and the canonical inputs JSON are rendered: two call sites
+   * that each built their own would be free to disagree, and the whole value of the inputs key is
+   * that it is the exact rendering the digest hashes.
    *
    * <p>The catalog is projected to its <em>physical</em> shape here rather than hashed as a file:
    * {@code rmwPolicy} is dropped because it cannot describe a stored or doc-values field (see
    * {@code FieldMapper.validateRmwPolicies}), so it never changes what is written. That single
    * exclusion is what the old {@code index_schema_fp} lacked, and why three annotation-only catalog
    * edits each falsely demanded a reindex (tempdoc 804).
-   */
-  Optional<String> indexFingerprint() throws IOException {
-    return IndexFingerprint.compute(fingerprintInputs());
-  }
-
-  /**
-   * The assembled {@link IndexFingerprint.Inputs}. Split out from {@link #indexFingerprint()} so the
-   * digest and the canonical inputs JSON are rendered from ONE assembly: two call sites that each
-   * built their own would be free to disagree, and the whole value of the inputs key is that it is
-   * the exact rendering the digest hashes.
    */
   IndexFingerprint.Inputs fingerprintInputs() throws IOException {
     JsonNode catalog = M.readTree(file("SSOT/catalogs/fields.v1.json"));

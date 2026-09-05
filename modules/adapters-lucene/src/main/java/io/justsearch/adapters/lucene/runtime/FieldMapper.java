@@ -60,8 +60,7 @@ public final class FieldMapper {
     final boolean docValues;
     final List<String> roles;
     final Integer vectorDim; // nullable
-    final String vectorSimilarity; // nullable
-    final FieldType vectorFieldType; // nullable
+    final FieldType vectorFieldType; // nullable; carries the parsed similarity
     final String analyzerKey; // nullable
     final boolean multiValued;
     final String rmwPolicy; // nullable (tempdoc 711)
@@ -83,7 +82,6 @@ public final class FieldMapper {
       this.docValues = docValues;
       this.roles = roles;
       this.vectorDim = vectorDim;
-      this.vectorSimilarity = vectorSimilarity;
       this.vectorFieldType =
           "vector".equals(type) && vectorDim != null
               ? KnnFloatVectorField.createFieldType(
@@ -160,10 +158,6 @@ public final class FieldMapper {
     this.primaryKeyField = resolvePrimaryKey(byId);
     this.docUidField = resolveDocUid(byId);
     this.statusWitnessFields = deriveStatusWitnessFields(byId);
-  }
-
-  Document toDocument(Map<String, Object> fields) {
-    return toDocument(fields, null);
   }
 
   /**
