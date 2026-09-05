@@ -679,6 +679,38 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-059: lane D PR-C2 (unstored chunk/entity text) is byte-exact and storage-real — legal stored fields −75.8 % (21.03 → 5.09 MB) with 4,122/4,122 chunk vectors intact — but the wave-3 campaign found two masked enrichment defects on the way (a non-converging flag-off chunk-SPLADE loop, and `rag.chunk_splade.enabled` honoured by one lane of three); with the flag made truly OFF, legal hybrid is 0.5776 = the 832 scorecard, and the −0.012 vs a same-day control is race-encoded chunk postings plus tombstone-inflated BM25 statistics, not C2 (2026-09-05, tempdoc 931 §D findings 5/5b/6, §E 8-11)
+
+- **What C2 does.** `chunk_content` stays analyzed/indexed but `stored:false`; every consumer
+  re-derives the text from the stored parent `content` plus chunk offsets (`ChunkSplitter`'s
+  offset law). Direct Lucene inspection of a fresh legal index: 7,781,026 chars of stored chunk
+  text on the pre-C2 arm = 7,781,026 chars re-derived on C2, 0 mismatches / blanks / out-of-range.
+- **Storage (legal, on disk, by Lucene file type).** `fdt` 21.03 MB → 5.09 MB is the C2 effect.
+  Totals (74.66 MB vs 25.74 MB) are NOT comparable: the control carried 2,629 tombstoned docs in
+  142 un-merged files vs 222 in 58 — `vec`/`pos`/`doc`/`cfs` differ for that reason, and both
+  indexes hold 4,122 chunk vectors and 199 parent vectors (counted, not inferred).
+- **Finding 5 (fixed, `58c3c344`).** With `rag.chunk_splade.enabled` off (the default) C2's
+  combined backfill escalated every PENDING chunk through the SPLADE retry seam each cycle; a
+  retry bump is not stage progress, so the 5 s budget tripped 231 times, embeddings/NER starved
+  for ~25 min on 198 docs, and every chunk ended terminal-FAILED. Readiness 1,793 s → 235 s.
+- **Finding 6 (fixed, `286a97bc`).** `SpladeBackfillOps`/`BgeM3BackfillOps` selected
+  `splade_status=PENDING` with no chunk filter while `ChunkDocumentWriter` stamps PENDING on every
+  chunk, so chunk SPLADE postings were produced by whichever lane won a race — the 832 scorecard
+  and every hybrid baseline on a chunked corpus were measured on that race. Now every lane honours
+  the flag. **Owner decision (tempdoc 712):** the query-side chunk-SPLADE leg still runs off
+  `pipeline.spladeEnabled`; "default OFF" now means no chunk postings at all.
+- **Quality (legal, paired, same machine).** Flag truly off: C2 hybrid **0.5776** / P@1 0.360 /
+  R@10 0.805 vs control 0.5900 (settled re-query) — Δ −0.0125, inside the F-057 2σ line; vector-
+  only 0.6215 vs 0.6148 (R@10 0.83 vs 0.82); lexical 0.6858 vs 0.6873. The C2 number equals the
+  scorecard's 0.578. Verdict: no regression attributable to C2.
+- **Two measurement lessons (routed, 931 §E 9-10).** (i) jseval `--pipeline` readiness counts
+  parents only, so on chunked corpora the query phase can overlap chunk-lane encoding — the same
+  index moved +0.011 in ten minutes; re-query before trusting a fresh hybrid delta ≤ ~0.015.
+  (ii) Paired arms need equal merge state — tombstones inflate BM25 collection statistics
+  (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts 3–4 % with no code cause.
+- **Not measured.** C1 (quantization) quality/recall campaign — still owed before the C2+C1 draft
+  can undraft (915 §P3.F, 931 §B 3d).
+
 ### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
 
 - **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
@@ -3476,8 +3508,8 @@ query-time stages search against.
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
 | 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
-| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
-| 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
+| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes the multi-valued keyword fields `entity_persons_raw`, `entity_organizations_raw`, and `entity_locations_raw` for filters, facets, and NER-membership evidence selection; the redundant analyzed entity-text duplicates were retired in 915 PR-C2 |
+| 8   | **HNSW Vector Indexing** | `JustSearchCodecV2`            | M=16, efConstruction=200; restart-safe per-field Int8 default, explicit Float32 opt-out        |
 | 9   | **Commit**               | `CommitOps`                    | On time (>10 s), size (>1,000 docs), or shutdown; NRT refresh                                 |
 
 ---

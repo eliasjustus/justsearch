@@ -1,7 +1,7 @@
 ---
 title: "Wave 3: lane D hardening, lane E landing, and record repair after the Codex continuation"
 type: tempdocs
-status: "IN PROGRESS — planned and designed 2026-09-05; implementation running"
+status: "IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
 created: 2026-09-05
 updated: 2026-09-05
 lane: D/E/F (decision re-examination programme, wave 3)
@@ -74,19 +74,20 @@ benchmark or eval that would take longer than **2 hours** is skipped and recorde
 | 0b | Rebuild the lane D stack on `origin/main` by cherry-pick (`worktree-wave3-d`) | orchestrator | done | A `7a2aa3b8` → C0 `1adca15d` → C2 `8db980c9` → C1 `3de10e34` → B `98cefd18`; conflicts: `EnvRegistry` lifecycle-stage arg (×2), `module-filter.yml` deleted upstream (#641), config matrix regenerated |
 | 0c | Restore the lane-D2 §P2/§P3 passes into 915 as an append-only appendix | orchestrator | done | `4556b3d5` |
 | 0d | Commit tempdoc 917 as-is | orchestrator | trivial | in the D branch |
-| 1a | Chunk RMW revision guard (audit finding 1) | subagent A (adapters-lucene) | code | see §C.1 |
-| 1b | Boot identity import: skip when already imported, stream in batches, do not kill the Worker on a legacy parent (finding 2) | subagent B (indexer-worker) | code | see §C.2 |
-| 1c | Zero/non-finite embedding: drop the vector field for that document, keep the document, count it (finding 3) | subagent A | code | see §C.3 |
-| 1d | Make the PR-B rebuild claim testable at the wire (finding 4) | subagent C | code | see §C.4 |
-| 1e | Fingerprint: compare the determinate inputs when a model digest is indeterminate | subagent C | code | see §C.5 |
+| 1a | Chunk RMW revision guard (audit finding 1) | subagent A (adapters-lucene) | code | **done** `4d5275a1` → draft #648 (§C.1, §D) |
+| 1b | Boot identity import: skip when already imported, stream in batches, do not kill the Worker on a legacy parent (finding 2) | subagent B (indexer-worker) | code | **done** `f04b985b` → #645 (§C.2, §D) |
+| 1c | Zero/non-finite embedding: drop the vector field for that document, keep the document, count it (finding 3) | subagent A | code | **done** `4d5275a1` → #648 (§C.3) |
+| 1d | Make the PR-B rebuild claim testable at the wire (finding 4) | subagent C | code | **done** `f8ed7549` (1d half) → #647 (§C.4) |
+| 1e | Fingerprint: compare the determinate inputs when a model digest is indeterminate | subagent C | code | **done** `f8ed7549` + `bc968416` (symmetric) → #648 (§C.5) |
+| 1g | *(found by 3c)* C2 combined-backfill loop on flag-off chunks; `rag.chunk_splade.enabled` honoured by one lane of three (findings 5, 6) | subagent (opus) | code | **done** `58c3c344` + `286a97bc` → #648 (§D, F-059) |
 | 1f | Identity vs content revision (path-slot semantics) | — | design only | §C.6; not implemented this wave (Head+Worker contract, needs owner decision on feedback scoping) |
 | 2a | Lane E: diagnose the 105 OHR reconciliation mismatches | subagent D (read-only over artifacts) | ≤30 min | §C.7 |
 | 2b | Enron replicate set for 384/25 | — | ~1.5 h | **skipped with reason**: the pre-registered rule uses `max(σ, 0.0068)`, so extra replicates cannot lower the +2σ line below 0.0136 and 384/25's +0.0061 cannot clear it; only an owner amendment of the rule would change the verdict |
-| 3a | C0 six-corpus check (C5b): per-language dense-skip rate | orchestrator, live | ~35 min (index-only, no enrichment wait) | run if the eval machine is free; skip rate is a planner decision that needs only the `content` index |
-| 3b | C0 quality no-regression on the two cheapest fully-enriched corpora (legal, miracl-de) | orchestrator, live | ~25 min | run after 3a |
-| 3c | C2 storage measurement (index bytes, one corpus) | orchestrator, live | ~10 min, rides on 3b's legal build | compare against the lane E sweep's pre-C2 legal index (56.65 MB at 500/50) |
-| 3d | C1 quality/recall campaign | — | 3-4 h (tempdoc 915 §P3.F) | **skipped**; C1 stays bundled with C2 in a draft PR |
-| 4 | Publication: PRs off `origin/main` | orchestrator | — | (i) lane E closeout replaces #622; (ii) lane D PR-A + 1b; (iii) PR-C0 + 3a/3b evidence; (iv) draft: C2 + C1 + 1a + 1c + 1e; (v) PR-B + 1d. No merge without an explicit go-ahead |
+| 3a | C0 six-corpus check (C5b): per-language dense-skip rate | orchestrator, live | ~35 min (index-only, no enrichment wait) | **done, 17 min**: legal 2.0 %, five corpora 0.0 %; comparable per language (§D, F-058) |
+| 3b | C0 quality no-regression on the two cheapest fully-enriched corpora (legal, miracl-de) | orchestrator, live | ~25 min | **done, paired vs PR-A control**: legal +0.0075 (inside 2σ), miracl-de identical — **C0 passes C5b** (§D, F-058) |
+| 3c | C2 storage measurement (index bytes, one corpus) | orchestrator, live | ~10 min, rides on 3b's legal build | **done**: legal `fdt` 21.03 → 5.09 MB (−75.8 %); totals not comparable across merge states (§D, F-059). Found findings 5 and 6 on the way (row 1g) |
+| 3d | C1 quality/recall campaign | — | 3-4 h (tempdoc 915 §P3.F) | **skipped**; C1 stays bundled with C2 in draft #648 |
+| 4 | Publication: PRs off `origin/main` | orchestrator | — | **done**: (i) #643 lane E (replaces #622); (ii) #645 A+1b; (iii) #646 C0 + evidence + record; (v) #647 B+1d; (iv) #648 draft C2+C1+1a/1c/1e+1g. Stacked #645 ← #646 ← #647 ← #648; all CI green (#647 via manual dispatch, its PR event never fired). **None merged — awaiting an explicit go-ahead** |
 | 5 | Lane F | — | — | untouched beyond committing 917; derisk and go/no-go remain gated on all of D landing plus owner confirmation |
 
 Register obligations: `/search-quality` loaded before this wave; rows added for 3a-3c evidence (or
@@ -422,6 +423,139 @@ to either a projection fix (if the population differs) or an F-057 caveat.
   arm's 29.11 MB (`fdt` 5.02 MB, `vec` 12.67 MB) is only meaningful on `fdt` (stored fields,
   −76 %, the C2 target) until the finding-5 fix restores chunk vectors; final 3c number after the
   re-measurement.
+- 2026-09-05 **PR #646 (PR-C0) opened**, base `worktree-wave3-pa` (#645), head `worktree-wave3-c0`
+  `d52a26e6`: C0 `48d91deb` + C5b instrument `7fd30198` + matrix regen `9b26290d` + the flake fix +
+  the wave-3 record (931, 917, register F-058 + both skill mirrors). Not merged. Register: F-058
+  added (newest-first, above F-056; F-057 is lane E's on #643, so the number is reserved rather
+  than reused); the `.agents` copy is *manually maintained* (no generated markers) — F-058 inserted
+  by hand at the same position, `check-codex-agent-parity` OK. `check-tempdoc-numbers` fails on
+  this machine with a **#930 collision** between other agents' worktrees (`930-evidence` in
+  `930-oss-stop`/`agent-*` vs `930-replace-bounded-areas-with-maintained-oss.md`) — not this
+  branch's number, not reproducible in a single checkout (CI); routed here for the 930 owner, no
+  action taken.
+- 2026-09-05 **PR #647 (PR-B) opened**, base `worktree-wave3-c0` (#646), head `worktree-wave3-b`
+  `9cab5966`: PR-B `aba26cc8` + the 1d wire test `dd72d8a9` + matrix regen + flake fix.
+  `build -x test` BUILD SUCCESSFUL; app-services 2,541 / indexer-worker 367 — 0 failures (result
+  XML). Not merged. Stack as published: #645 (A) ← #646 (C0) ← #647 (B) ← draft (C2+C1+1a/1c/1e,
+  blocked on §E 6).
+- 2026-09-05 **#646 first CI: `Public claims` red on the always-loaded budget ratchet** —
+  `CLAUDE.md` 22,615 B > ceiling 22,589 B by 26 B, from C0's pre-merge-table row growing
+  ("adapter/Worker search paths … + word-list scanner self-test"). Fixed by wording, not by
+  ratcheting up (`c734b521`: same two checks named, −28 B); `check-always-loaded-budget` and
+  `check-premerge-table` pass; propagated to b/draft/d. Both #646 and #647 re-running.
+- 2026-09-05 **Finding 5 fixed** (subagent, opus; `58c3c344` on `worktree-wave3-draft`,
+  cherry-picked clean to `wave3-c2` as `3e163740` and to `wave3-d` as `a40083ad`). Root cause
+  chain, verified at source: `ChunkDocumentWriter.java:210` stamps `splade_status=PENDING` on every
+  chunk unconditionally (pre-existing); the combined lane's SPLADE-pending selection
+  (`queryDocIdsByField(SPLADE_STATUS, PENDING)`) never excluded chunks, so ~4,122 chunk ids competed
+  with 199 parents for 100 batch slots; C2's `IS_CHUNK` routing sent them into the chunk branch and
+  its new flag-off `else if` bumped `splade_retry_count` (max 3, `SchemaFields.java:202`) every
+  cycle; a retry bump is not progress for `CombinedOutcome`
+  (`CombinedEnrichmentBackfillOps.java:1198-1210`), so `BackfillScheduler.java:265/299` tripped the
+  budget 231 times. `rag.chunk_splade.enabled` default `false` (`ResolvedConfigBuilder.java:1694`).
+  Fix: new `DocumentFieldOps.queryNonChunkDocIdsByField` (same term query, `MUST_NOT is_chunk`),
+  used for the SPLADE-pending selection when the flag is off; the flag-off escalation arm removed —
+  a flag-off chunk is not a SPLADE candidate at all and its `PENDING` stands (reversible; a
+  `COMPLETED_EMPTY` would be the F-032 status lie and terminal); the same gate added to the
+  blank-content chunk arm; a stale `BackfillContext` comment corrected. Three falsifications
+  recorded; worker-services 1,174 / adapters-lucene 690 — 0 failures; `build -x test` green.
+  Hypotheses for the quality delta: (a) chunks in terminal SPLADE FAILED carry no postings for the
+  query-side chunk-SPLADE leg, which `SearchExecutor.java:653` runs off `pipeline.spladeEnabled`,
+  not the write-side flag — LIVE, leading; (b) reconstruction — negative (`ChunkSplitter.java:826`
+  offset law + `DocumentFieldOpsChunkSliceTest`); (c) `SearchResponseBuilder` — negative
+  (entity text feeds excerpt spans only). Re-measurement on `wave3-c2` @ `3e163740` running.
+  Routed (§E 8): the individual SPLADE/BGE-M3 lanes are flag-unaware and encode chunk SPLADE
+  regardless, so the write-side flag only decides which lane wins a race; 712's "default stays OFF"
+  verdict overstates what the flag turns off.
+- 2026-09-05 **Finding 5 re-measured (`wave3-c2` @ `3e163740`, legal, fresh, `--pipeline`)**: the
+  loop is gone — readiness **235 s** (was 1,793), no loop WARNs, no terminal-FAILED chunks. The
+  quality gap is **not** gone: nDCG@10 **0.5751** / P@1 0.355 / R@10 0.805 vs control 0.5914 /
+  0.365 / 0.830 (Δ −0.0163, beyond 2σ) and C0 arm 0.5989; Σ hits **12,004** vs 12,322 (−318);
+  28 queries down / 14 up vs control. So hypothesis (a) was the loop's *symptom*, not the ranking
+  cause. New clue from the on-disk index: C2+fix legal `vec` **13.29 MB** (60 files) vs control
+  **30.49 MB** (142 files) with 4,122 chunk docs on both, while jseval reported "Chunk vectors
+  100 %" and `ann_proof PASS` on both — 4,122 × 1024 × 4 B ≈ 16.9 MB, about the missing amount.
+  Working hypothesis (finding 5b): chunk vectors absent with `chunk_embedding_status` COMPLETED —
+  the F-032 class (711), most likely C2's `rederive-parent-slice` RMW dropping `chunk_vector` on a
+  later write. Two probes running: (i) subagent — direct Lucene inspection of both index dirs
+  (chunk docs / chunk docs with a KNN value / COMPLETED statuses), then root cause + fix on the
+  draft; (ii) orchestrator — `--modes vector,lexical,hybrid --skip-ingest` re-query of both
+  existing indexes to localise the loss by leg. C2's `fdt` 5.10 MB vs control 21.03 MB (−76 %)
+  stands as the storage effect once the vector question is settled. `wave3-c2` = C2 + fix, no C1,
+  no RMW revision guard (4702642f is on the draft only).
+- 2026-09-05 #646 second CI red: `skills-sync --check` (the `.claude` search-quality mirror was two
+  lines stale on that branch — its register header differs from `wave3-d`'s); regenerated on the
+  branch (`10030799`); b/draft/d already in sync.
+- 2026-09-05 **Finding 5b per-leg re-query** (same two legal indexes, no clean, `--skip-ingest`,
+  `--modes vector,lexical,hybrid`, minutes after the fresh runs, all arms `comparable=True`):
+
+  | arm | vector nDCG@10 / R@10 / Σhits | lexical | hybrid |
+  |---|---|---|---|
+  | control (`wave3-pa`) | 0.6148 / 0.820 / 13,269 | 0.6873 / 0.855 / 11,257 | 0.5900 / 0.830 / 12,341 |
+  | C2+fix (`wave3-c2`) | 0.6215 / 0.830 / 12,762 | 0.6858 / 0.855 / 11,245 | 0.5861 / 0.815 / 12,006 |
+
+  Readings. (1) Vector-only quality on C2 is equal-or-better, so "chunk vectors missing" is
+  refuted by behaviour; the `vec` byte gap is best explained by dead bytes in the control's
+  un-merged 142-file segment set (deleted-but-unmerged docs keep their vectors on disk).
+  (2) The settled hybrid gap is **−0.004** (inside σ); the fresh-run −0.016 was measured while the
+  flag-unaware individual SPLADE lane was still encoding 4,122 chunks after parent-only readiness
+  (readiness counts parents, `IndexCountOps.querySpladeFeatureCounts`) — C2 hybrid on the same
+  index moved 0.5751 → 0.5861 in ten minutes with hits unchanged (12,004 → 12,006), the control
+  0.5914 → 0.5900. **Measurement lesson:** on a chunked corpus, `--pipeline` readiness is not
+  "enrichment finished"; query only after the chunk lanes are idle (§E 9). (3) What is real on
+  every run: C2 returns fewer hits — vector −507 (−3.8 %), hybrid −335, lexical ≈ equal — with
+  R@10 unchanged or higher. Subagent redirected to explain that (chunk candidate count / collapse /
+  `totalHits` semantics in C2's `ChunkSearchOps` change) rather than to a vector-preservation fix.
+- 2026-09-05 **Finding 5b settled (subagent, direct Lucene counts on both index dirs, read-only).**
+  Chunk docs 4,122 / with `chunk_vector` 4,122 / `chunk_embedding_status` COMPLETED 4,122 on BOTH
+  arms; parents 199/199/199. No F-032 shape. `maxDoc/numDocs` 6,950/4,321 (2,629 tombstones) on
+  the control vs 4,543/4,321 (222) on C2 — the `vec` byte gap is dead weight in the control's
+  un-merged segments. Reconstruction byte-exact: 7,781,026 chars of stored `chunk_content` on the
+  control = 7,781,026 chars re-derived on C2, 0 mismatches. Hit-count residual: no C2 code path
+  removes hits (`ChunkSearchOps.buildChunkHits` still returns every pending hit,
+  `ChunkSearchOps.java:405`; lexical identical on 103/200 full lists; HNSW probe k=50…400 returns
+  exactly k on both, distinct parents within 0.5 %); the loss is diffuse (177 queries, −2…−9 each)
+  and tracks BM25 collection statistics inflated by tombstones (`chunk_content` docCount 6,734 vs
+  4,344; `court` df 4,613 vs 2,972). **Verdict: not a C2 regression** — vector-only nDCG is higher
+  on C2 at equal R@10; treat ±0.01 between arms with different merge state as tombstone noise, or
+  force-merge before comparing (§E 10).
+- 2026-09-05 **Finding 6 (new, real, fixed): `rag.chunk_splade.enabled` was honoured by 1 of 3
+  lanes.** `SpladeBackfillOps.java:58` and `BgeM3BackfillOps.java:66` selected `splade_status=
+  PENDING` with no chunk filter while `ChunkDocumentWriter.java:210` stamps PENDING on every chunk;
+  masked before the loop fix because the combined lane drove every chunk to FAILED first. Index
+  counts: control chunk `splade_status` FAILED=4,122 / postings on 216 docs; C2+loop-fix
+  PENDING=2,222 / COMPLETED=2,099 / postings on 2,149 docs — ~1,900 chunks encoded by the
+  flag-unaware lanes *after* parent-only readiness released the eval, i.e. a retrieval leg
+  populated by however far backfill got before the harness queried (the 5b confound, now with a
+  mechanism). Fix `286a97bc` (draft) / `4a02db77` (`wave3-c2`) / `db156f85` (`wave3-d`): both lanes
+  take `chunkSpladeEnabled` and use `queryNonChunkDocIdsByField` when off; `BackfillScheduler`
+  wires four sites; the outstanding-work gate moves to new `IndexCountOps.countNonChunkByField`
+  (without it a parked chunk population pins `backfillDidWork` true forever). Three falsifications;
+  worker-services 1,176 / adapters-lucene 691 — 0 failures; `build -x test` green on both.
+  **Product consequence for the owner:** with the flag now meaning OFF on every lane, a default
+  install writes **no** chunk SPLADE postings, while the query-side chunk-SPLADE leg
+  (`SearchExecutor.java:653`) still runs off `pipeline.spladeEnabled`; the 832 scorecard was
+  measured on the race (some chunks encoded). Re-measuring legal on `wave3-c2` @ `4a02db77` to
+  put a number on "flag truly off" vs the control. §E 8 → closed by this fix except for the
+  query-side flag question, which stays open there.
+- 2026-09-05 **Final C2 legal (`wave3-c2` @ `4a02db77`, both fixes, fresh, `--pipeline`)**:
+  readiness **215 s**, Worker log clean (two model-precision notices only), every leg observed,
+  `comparable=True`; hybrid nDCG@10 **0.5776** / P@1 0.360 / R@10 0.805; Σ hits 12,001. Vs the
+  control's settled 0.5900: **−0.0125**, inside the F-057 2σ line (0.0136); 27 queries down / 16
+  up. The number equals the 832 scorecard's legal hybrid (0.578, F-058 context), which is the
+  reading: with chunk SPLADE **truly off** the engine scores what the scorecard recorded, and the
+  control's +0.012 came from postings the flag-unaware lanes encoded on the race (finding 6), plus
+  tombstone-inflated BM25 statistics (5b). **3b/3c verdict for C2: no regression attributable to
+  C2** — the storage change is byte-exact on reconstruction and the ranking difference has a
+  named, non-C2 mechanism; what the owner has to decide is the chunk-SPLADE flag (712), which
+  wave 3 made honest rather than silently half-on.
+- 2026-09-05 **3c final (legal, on disk after the run, by Lucene file type)**: C2 **25.74 MB /
+  58 files** vs control **74.66 MB / 142 files**. Attributable to C2: stored fields `fdt`
+  **5.09 MB vs 21.03 MB (−75.8 %)** — `chunk_content` and `entity_*_text` no longer stored. Not
+  attributable: `vec` 12.11 vs 30.49, `pos` 3.33 vs 7.40, `doc` 1.53 vs 3.48, `cfs` 1.84 vs 7.85 —
+  the control carries 2,629 tombstoned docs in un-merged segments (§E 10); the same count of live
+  vectors exists on both. Lane E's pre-C2 56.65 MB (500/50, 916) is a different merge state and
+  is not used as the reference. Register F-059.
 
 ## §E Open items
 
@@ -455,3 +589,29 @@ to either a projection fix (if the population differs) or an F-057 caveat.
 7. Pre-existing, both arms: 39 legal chunks reach terminal SPLADE FAILED with reason
    `blank-content` (C0 arm) / `blank-chunk-content` (C2 relabel) — a chunk whose content read is
    blank at backfill time. Not caused by this wave; owner: tempdoc 717 (chunk content invariant).
+8. **`rag.chunk_splade.enabled` is write-side only and lane-inconsistent** (from the finding-5
+   diagnosis): `SpladeBackfillOps.java:58` and `BgeM3BackfillOps.java:66` select
+   `SPLADE_STATUS=PENDING` with no `is_chunk` filter and no flag check, so chunk SPLADE gets encoded
+   whenever one of those lanes wins the race, while the combined lane honours the flag; the
+   query-side chunk-SPLADE leg (`SearchExecutor.java:653`) runs off `pipeline.spladeEnabled`
+   regardless. Tempdoc 712's F-036 "default stays OFF" reads as "feature off"; it is not. Left
+   as-is in this wave because it is the pre-C2 behaviour the C0 baseline was measured under.
+   Owner decision: make the flag mean one thing on every lane (and `ChunkDocumentWriter.java:210`
+   should not stamp `PENDING` for a stage the configuration may never run). Owner: tempdoc 712.
+9. **jseval `--pipeline` readiness is parent-only on chunked corpora** (§D 5b): `spladeCoveragePercent`
+   counts whole documents (`IndexCountOps.querySpladeFeatureCounts`), so the query phase can start
+   while the individual SPLADE lane is still encoding thousands of chunk docs; a legal hybrid number
+   moved +0.011 between "readiness passed" and ten minutes later on the same index. Fix shape: gate
+   readiness (or add a `chunk_splade` coverage term when the query-side chunk-SPLADE leg is on) and
+   record the lane-idle time in `summary.json`. Owner: jseval (tempdoc 782 readiness contract).
+   Until then, treat fresh-run hybrid deltas ≤ ~0.015 on chunked corpora as unsettled and re-query.
+10. **Paired-arm comparisons need equal merge state** (§D 5b settled): two fresh indexes of the
+    same corpus differed 2,629 vs 222 tombstones, which inflates BM25 collection statistics on one
+    arm (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts by 3–4 % with no code
+    cause. Fix shape: jseval force-merges (or the Worker exposes a "settle" call) before the query
+    phase when a run is claim-bearing, and records `maxDoc/numDocs` per index in `summary.json`.
+    Owner: jseval.
+11. Status of 6/8 after `286a97bc`: **6 closed** (loop converges in one cycle, readiness 235 s,
+    quality gap attributed to 5b/10, not C2); **8 closed on the write side** (every lane honours
+    the flag) — the query-side leg still runs regardless of the flag; owner decision remains
+    (tempdoc 712).
