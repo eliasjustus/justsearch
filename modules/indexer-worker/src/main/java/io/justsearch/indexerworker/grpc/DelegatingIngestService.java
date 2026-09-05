@@ -35,6 +35,8 @@ import io.justsearch.ipc.QueryPendingVduRequest;
 import io.justsearch.ipc.QueryPendingVduResponse;
 import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
+import io.justsearch.ipc.SettleIndexRequest;
+import io.justsearch.ipc.SettleIndexResponse;
 import io.justsearch.ipc.StatusRequest;
 import io.justsearch.ipc.StatusResponse;
 import io.justsearch.ipc.SyncDirectoryRequest;
@@ -167,6 +169,11 @@ public final class DelegatingIngestService extends IngestServiceGrpc.IngestServi
   @Override
   public void runIndexGc(IndexGcRequest req, StreamObserver<IndexGcResponse> obs) {
     delegate.runIndexGc(req, obs);
+  }
+
+  @Override
+  public void settleIndex(SettleIndexRequest req, StreamObserver<SettleIndexResponse> obs) {
+    delegate.settleIndex(req, obs);
   }
 
   @Override
