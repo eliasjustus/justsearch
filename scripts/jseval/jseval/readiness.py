@@ -217,6 +217,19 @@ def _check_pipeline_complete_conditions(
         if chunk_doc_count > 0 and snapshot.get("chunkVectorCoveragePercent", 0) < 99.9:
             reasons.append("chunk_vectors_not_complete")
 
+    # Chunk SPLADE: parallel to chunk vectors above, but gated on its own
+    # ``chunkSpladeEnabled`` flag rather than embedding_enabled — chunk-level
+    # sparse encoding is a separate stage from dense embedding (tempdoc 931
+    # §E item 9). Older backends that don't publish the flag default to
+    # False here (unlike embedding/splade/ner above, which default to True) —
+    # the whole point is that an older backend must behave exactly as today
+    # when the field is absent, not gate on a coverage percent it never
+    # populates.
+    if snapshot.get("chunkSpladeEnabled", False):
+        chunk_splade_doc_count = snapshot.get("chunkDocCount", 0)
+        if chunk_splade_doc_count > 0 and snapshot.get("chunkSpladeCoveragePercent", 0) < 99.9:
+            reasons.append("chunk_splade_not_complete")
+
     if ner_enabled:
         ner_done = snapshot.get("completedNerCount", 0)
         ner_pending = snapshot.get("pendingNerCount", 0)
@@ -254,6 +267,7 @@ def _poll_until_stable(
         "embed": not emit_stage_completions,
         "splade": not emit_stage_completions,
         "chunk": not emit_stage_completions,
+        "chunk_splade": not emit_stage_completions,
         "ner": not emit_stage_completions,
     }
 
@@ -415,6 +429,7 @@ def _check_stage_completions(
         ("embed", "embeddingCoveragePercent", 99.9, "Embedding"),
         ("splade", "spladeCoveragePercent", 99.9, "SPLADE"),
         ("chunk", "chunkVectorCoveragePercent", 99.9, "Chunk vectors"),
+        ("chunk_splade", "chunkSpladeCoveragePercent", 99.9, "Chunk SPLADE"),
     ]
     for key, field, threshold, label in checks:
         if not logged[key] and snapshot.get(field, 0) >= threshold:
@@ -474,6 +489,15 @@ def _check_search_conditions(
         if s.get("spladeDocCount", 0) <= 0 or s.get("spladePendingCount", 0) > 0 or \
            s.get("spladeFailedCount", 0) > 0 or s.get("spladeCoveragePercent", 0) < 99.9:
             reasons.append("splade_requested_but_splade_features_not_ready")
+
+    # Chunk SPLADE: a backend-published flag, checked regardless of the caller's
+    # `splade`/`dense` request — parallel to the pipeline-completion gate in
+    # _check_pipeline_complete_conditions (tempdoc 931 §E item 9). Absent/false
+    # (older backend) adds nothing.
+    if s.get("chunkSpladeEnabled", False):
+        chunk_splade_doc_count = s.get("chunkDocCount", 0)
+        if chunk_splade_doc_count > 0 and s.get("chunkSpladeCoveragePercent", 0) < 99.9:
+            reasons.append("chunk_splade_not_complete")
 
     if lambdamart:
         if not _check_lambdamart_active(base_url):

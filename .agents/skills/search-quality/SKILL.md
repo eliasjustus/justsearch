@@ -109,19 +109,16 @@ time. `cc` — CC fusion weights. `mode` — jseval mode. `legs` — retrieval
 legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
 tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
 
-**Cross-run noise vs signal** — before flagging a nDCG@10 change as a
-regression, consult the cohort envelope: `scripts/jseval/tmp/
-cohort_baselines/<hash>/envelope.json` — the jseval-owned data root where
-calibration state is filed since tempdoc 716 (readers fall back to a
-pre-716 backend data dir with a WARN) — gives σ per metric (tempdoc 400
-LR1-b). Deltas
-inside ±2σ are noise. For encoder-level latency distribution drift
-(different question — "did ORT session.run() durations shift even
-without a nDCG change?"), use `jseval calibrate-drift-baseline` + the
-nightly `jseval gate`: PSI > 0.2 on any `encoder.ort_run` duration
-distribution flags a drift signal independent of aggregate quality.
-See `docs/explanation/08-observability.md` §Contract Tiers + §Run
-Manifest and `docs/how-to/triage-psi-drift.md`.
+**Cross-run noise vs signal** — there is no calibrated cohort envelope; the
+`jseval calibrate` machinery that was supposed to supply σ per metric never
+produced a baseline on any machine and was removed (tempdoc 930 §18.1 row 7).
+Judge a nDCG@10 change against the runs themselves: re-run the arm and compare
+the spread, and read each run's own `summary.json` — `latency_stats` for query
+latency and `encoder_latency.encoders.<name>` for absolute per-encoder ONNX
+p50/p95. For the "did ORT session.run() durations shift even without a nDCG
+change?" question, compare that `encoder_latency` block across runs and read
+the `cpu_fallback_counts` projection alongside it. See
+`docs/explanation/08-observability.md` §Contract Tiers + §Run Manifest.
 
 <!-- manually maintained Codex snapshot of the release scorecard -->
 
@@ -1258,8 +1255,9 @@ above)*
   intra-fusion attribution stays deferred (only-if-warranted).
 - **Guard ACTIVE + cross-corpus profile (2026-06-24 follow-up, 636 §guard-activated):** the leak-gate is now
   **pinned** (`leak-gate-baselines.v1.json`, measured-derived via `leak-gate-derive`: needle 0.100 /
-  courtlistener 0.070 / scifact 0.013 / enron-qa 0.047, tol 0.05) and **wired** into the `search-engine-hint`
-  hook as the third engine ratchet (relevance + perf + leak). Across **four diverse corpora** (synthetic/legal/
+  courtlistener 0.070 / scifact 0.013 / enron-qa 0.047, tol 0.05) and **wired** in as the third
+  standing engine-quality ratchet (relevance + perf + leak; see `jseval leak-gate` above). Across
+  **four diverse corpora** (synthetic/legal/
   academic/email, 0 reconciliation mismatches each) the instrument distinguishes regimes — legal is
   **leg-recall-bound** (leg_miss 0.28), academic + email are **judge-rank-bound** (judge_low 0.25, legs find it
   ≥0.89) — and the regime-blind headline is decisive: **cascade-leak is small everywhere (0.013–0.100, mean
@@ -2322,6 +2320,16 @@ above)*
 - **Decision:** default **OFF**; the flag is a corpus-specific lever for a future sparse-dominant
   workload. The 712 foundation (the flag + the fix for chunk docs being silently marked
   splade-COMPLETED without encoding) shipped in #145 regardless of the default.
+- **Scope correction (2026-09-05, tempdoc 931 §E item 8):** `rag.chunk_splade.enabled` is now ONE
+  switch over the whole chunk-SPLADE stage, not a producer-side-only flag. It gates the query-side
+  leg too (`SearchExecutor.chunkSpladeLegEnabled` → `ChunkSearchOps.searchChunksSplade`), and
+  `ChunkDocumentWriter` no longer stamps `splade_status=PENDING` on chunks written while it is off.
+  Before this, a flag-off engine still ran the chunk-SPLADE leg against whatever partial chunk
+  `splade` population an earlier flag-on window had left on disk — so a flag-off A/B arm was not
+  measuring a leg-off engine. Any future re-run of the A/B below is therefore a cleaner comparison
+  than the ones recorded here. **Consequence to know:** chunks written while the flag is off carry
+  no `splade_status`, so flipping the flag on does NOT retro-enrol them (the lanes select by status
+  VALUE); a rebuild of those parents does.
 - **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
   anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
   offline result is F-033; this is its live-tier resolution.
@@ -2543,8 +2551,8 @@ above)*
   does not *raise* `leak_rate` — it can lower it). Tempdoc 701 added **`jseval union-recall-gate`**: the
   floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
   same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
-  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
-  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** standing
+  engine-quality ratchet. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
   like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
   golden/needle-burial-v1 1.0** (tol 0.05).
   Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
@@ -3177,15 +3185,15 @@ picking up items here over inventing new experiments.
 - **Disposition (2026-08-14, owner decision via tempdoc 832):** presented with the three tiers
   (CI-blocking on engine paths / nightly scheduled run / keep agent-invoked) after the 803
   re-baseline plan made the floors trustworthy again, the owner chose **keep agent-invoked** —
-  the ratchets stay nudged by the `search-engine-hint` hook, with no CI wiring added. The
+  the ratchets require a manual `jseval` run, with no CI wiring added. The
   stagnation-asymmetry argument stands recorded; revisit only on a new owner decision or a
   measured recurrence of silent regression.
 - **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
 - **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
-- **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
+- **Prior art:** `jseval gate` exists but is manual-CI-only. It used to be paired with `calibrate-drift-baseline` and a cohort `envelope.json` (±2σ); both were removed in tempdoc 930 §18.1 row 7 having never produced a baseline, so a noise/signal separation is now part of what this question would have to build, not prior art. The missing pieces are wiring, baseline-pinning, a tolerance source, and the asymmetry argument.
 - **Status:** Named in tempdoc 580 §4c; deliberately NOT built. **§4a (2026-06-13) resolved the trigger negatively** — HEAD hybrid nDCG@10=0.758 is on-baseline (vs 0.754), no silent regression found, so there is no proof-by-example endorsement. Q-010 now rests only on the stagnation+asymmetry argument; awaits a user decision rather than self-endorsing.
 - **Partially operationalized (2026-06-24, 636 §IMPLEMENTED / D-005):** the nDCG-mean ratchet question is now *complemented* by a recall-survival ratchet — **`jseval leak-gate`** fails a build when a corpus's pinned `leak_rate` ceiling (from the Staged Recall Accounting projection) is exceeded. It is the engine-quality "fail loudly" gate Q-010 asked for, on a **leak** metric rather than nDCG mean (and on the cross-mode projection, not the per-mode envelope). Pinning per-corpus ceilings is the deliberate governance step that still awaits a user decision (like the nDCG ratchet — un-pinned corpora do not gate).
-- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
+- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance hand-pinned per corpus (`relevance_gate`'s `tolerance_abs` / `tolerance_default_abs`), since there is no calibrated envelope to derive it from.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
 
@@ -3205,8 +3213,8 @@ above)*
 - **Why it matters:** The cross-encoder is ~82% of query latency (tempdoc 640 §C-2) and the default-on 636 levers feed its candidate pool, so a latency regression there is plausible *and currently unguarded*. For a local-first desktop product latency/footprint are co-equal with relevance.
 - **Prior art:** `relevance_gate.py` (the mirrored gate pattern), `diff_gate.compare_ratio` (the lower/higher-is-better ratio primitive), `calibrate.py` (the within-machine envelope that measured the perf-metric CVs).
 - **Status — IMPLEMENTED (2026-06-24, tempdoc 640):** shipped as **`jseval perf-gate`**, the perf-metric-family sibling of `relevance-gate`. A **relative** ratchet (ratio bands via `diff_gate.compare_ratio`, **no absolute SLO** — the no-users rule). Gate-able metrics, chosen by their measured within-machine CV (640 §confidence pass): **cross-encoder STAGE p50** latency (CV 1–10%; the dominant cost), **primary + enrichment throughput**, and **resident model footprint incl. the LLM** (best-effort — reads the active gguf named in the captured non-hashed `inference_status_snapshot`; ONNX-only on AI-offline runs). Deliberately **excluded as too noisy**: total latency p50 (CV 35–112%, cold-start), `index_size_bytes` (CV 11–62%).
-- **Now a first-class metric family in the canonical record** (a `metric_families` registry — the single source of truth; per-mode CE latency in `aggregate_metrics`, per-run throughput/footprint in `run_metrics`), so the floor **projects from the canonical release** (`perf_gate.project_release_to_perf_baselines`), closing the per-run fork the v1 baseline had. The noise floor is **envelope-aware** (a data-driven `1±k·CV` band from the `calibrate` envelope, with a graceful fixed-band fallback), perf is **trended** in the history DB (`jseval trend --metric`, direction-aware), and rendered in the published benchmark + register scorecard. **Source-class distinction:** per-mode and per-run families live *in* the record; **leak** (Q/D-005) is a cross-mode **projection** metric — registered in the same registry to unify the family concept, but kept projection-sourced, *not* migrated. **Advisory tier:** the `search-engine-hint` hook nudges it (with relevance + leak), not CI-blocking — inherits the relevance ratchet's tier. Conforms to the canonical-record + governed-projection seam (623).
-- **Reach — now BUILT (2026-06-24, tempdoc 640 reach + residuals):** the former reach shipped. (a) The per-run **fork is fully closed** — `release.v1.json` recomposed from a 5-corpus cohort (`scifact` + `courtlistener-200` + `enron-qa` + `miracl-de-2k` + `miracl-fr-2k`) at one commit; the perf baseline is now a `current_release` pointer, so floors project from the same canonical release relevance uses. (b) The **shared ratchet kernel** (`jseval/ratchet_kernel.py`) unifies the relevance / perf / leak / llm-gen gate orchestration. (c) The combined **engine-quality scorecard** (`scripts/docs/gen-scorecard.mjs` → `docs/reference/benchmarks/scorecard.md`) co-locates all axes as one delta-vs-guard table. (d) The **LLM-generation-latency** sibling axis shipped as a `bench`-sourced `llm-gen` family + `jseval llm-gate` (TTFT / e2e / **tokens-sec**, the last now captured — see the inference-runtime register's llm-gen finding) — the inference-path subject, nudged by `search-engine-hint`. **Reconciled (realized vs designed):** footprint is the **resident-during-eval** metric (ONNX during retrieval eval; configured-stack-incl-LLM deferred); the noise floor is the **fixed ratio band + envelope fallback** (the measured CE-stage CV superseded "median ± envelope"). **Still deferred:** 625's *generalized* projection-provenance framework (its own tempdoc).
+- **Now a first-class metric family in the canonical record** (a `metric_families` registry — the single source of truth; per-mode CE latency in `aggregate_metrics`, per-run throughput/footprint in `run_metrics`), so the floor **projects from the canonical release** (`perf_gate.project_release_to_perf_baselines`), closing the per-run fork the v1 baseline had. The noise floor is **envelope-aware** (a data-driven `1±k·CV` band from the `calibrate` envelope, with a graceful fixed-band fallback), perf is **trended** in the history DB (`jseval trend --metric`, direction-aware), and rendered in the published benchmark + register scorecard. **Source-class distinction:** per-mode and per-run families live *in* the record; **leak** (Q/D-005) is a cross-mode **projection** metric — registered in the same registry to unify the family concept, but kept projection-sourced, *not* migrated. **Advisory tier:** run alongside relevance + leak, not CI-blocking — inherits the relevance ratchet's tier. Conforms to the canonical-record + governed-projection seam (623).
+- **Reach — now BUILT (2026-06-24, tempdoc 640 reach + residuals):** the former reach shipped. (a) The per-run **fork is fully closed** — `release.v1.json` recomposed from a 5-corpus cohort (`scifact` + `courtlistener-200` + `enron-qa` + `miracl-de-2k` + `miracl-fr-2k`) at one commit; the perf baseline is now a `current_release` pointer, so floors project from the same canonical release relevance uses. (b) The **shared ratchet kernel** (`jseval/ratchet_kernel.py`) unifies the relevance / perf / leak / llm-gen gate orchestration. (c) The combined **engine-quality scorecard** (`scripts/docs/gen-scorecard.mjs` → `docs/reference/benchmarks/scorecard.md`) co-locates all axes as one delta-vs-guard table. (d) The **LLM-generation-latency** sibling axis shipped as a `bench`-sourced `llm-gen` family + `jseval llm-gate` (TTFT / e2e / **tokens-sec**, the last now captured — see the inference-runtime register's llm-gen finding) — the inference-path subject, run alongside the same advisory ratchet set. **Reconciled (realized vs designed):** footprint is the **resident-during-eval** metric (ONNX during retrieval eval; configured-stack-incl-LLM deferred); the noise floor is the **fixed ratio band + envelope fallback** (the measured CE-stage CV superseded "median ± envelope"). **Still deferred:** 625's *generalized* projection-provenance framework (its own tempdoc).
 
 ### Q-013: Candidate-set integrity (639) — extend Staged Recall Accounting, or fork a parallel recall instrument?
 

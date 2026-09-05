@@ -89,7 +89,10 @@ python -m jseval relevance-gate --dataset beir/scifact
 
 Dataset slugs: `beir/scifact`, `mixed/enron-qa`, `mixed/legal-clerc-200`, `mixed/miracl-de-2k`,
 `mixed/miracl-fr-2k`. Corpora are fetched from their canonical sources (pointer + checksum), not
-redistributed here. A third party on equivalent hardware should land within the cohort's ±2σ envelope.
+redistributed here. Run-to-run variation is reported per run; no envelope calibration is required —
+each run's `summary.json` carries its own `per_mode.<mode>.latency_stats` (p50/p95/p99/max over that
+run's queries) and `encoder_latency.encoders.<name>` (per-encoder ONNX p50/p95), so a third party
+compares their run's spread against the published one directly.
 
 ## See also
 - `scripts/jseval/release.v1.json` — the canonical release object (the source of truth for every number above).

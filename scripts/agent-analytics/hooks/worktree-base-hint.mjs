@@ -3,7 +3,7 @@
 /**
  * PostToolUse hook for EnterWorktree.
  *
- * Mechanizes `verify-worktree-base` (tier-register.md row 35, previously prose-only).
+ * Mechanizes `verify-worktree-base` (.claude/rules/branch-safety.md, previously prose-only).
  * `worktree.baseRef: "head"` (.claude/settings.json) should make a new worktree's HEAD
  * equal the main checkout's HEAD by construction, but a harness-version quirk or a
  * manual `git worktree add` can silently violate that (tempdoc 618 §1 — local main can
@@ -30,7 +30,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { hooksDisabled } from '../lib/hook-base.mjs';
 
-// Same repoRoot-resolution pattern as ui-shot-hint.mjs: the script's own location is
+// repoRoot resolution: the script's own location is
 // always under the MAIN checkout's scripts/ dir regardless of the session's current
 // worktree cwd, so this reliably resolves to main even when invoked from a worktree.
 const SCRIPT_DIR = path.dirname(new URL(import.meta.url).pathname);

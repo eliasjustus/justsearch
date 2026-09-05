@@ -397,9 +397,10 @@
     {
       "id": "adr-0042-live-witness-checked",
       "adr": "0042",
-      "premise": "Consumer presence is checked over the LIVE ContributionRegistry, not only the static snapshot.",
-      "kind": "gate",
-      "script": "scripts/ci/check-live-witness.mjs"
+      "premise": "Consumer presence is checked over the LIVE ContributionRegistry, not only the static snapshot, and that live check reuses the build-tier consumer merge rather than forking it. Tempdoc 930 (2026-09-05) retired the live-witness register and its offline wiring check; the enforcing test is the sole authority, so this probe points at it directly.",
+      "kind": "test",
+      "file": "modules/app-services/src/test/java/io/justsearch/app/services/registry/snapshot/LiveWitnessTest.java",
+      "test": "io.justsearch.app.services.registry.snapshot.LiveWitnessTest#witnessReusesTheBuildTierConsumerMergeForOperations"
     },
     {
       "id": "adr-0043-no-per-language-levers",

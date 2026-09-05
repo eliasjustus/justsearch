@@ -875,7 +875,8 @@ public final class KnowledgeServer implements Closeable {
       // Import from the serving generation (Blue during migration) before the first possible
       // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
       this.documentIdentityStore =
-          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(dbPath);
+          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(
+              dbPath, rc.index().identityDeletionGraceMs());
       importDocumentIdentitiesFromActiveIndex(layout.activeGenerationId());
 
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
@@ -2500,7 +2501,18 @@ public final class KnowledgeServer implements Closeable {
             indexBasePath,
             activeIndexPath,
             JSON,
+            KnowledgeServer::chunkSpladeEnabled,
             log));
+  }
+
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8), read from the LIVE {@link ConfigStore}
+   * rather than a boot-time copy. Absent config reads as the flag's own default (false).
+   */
+  private static boolean chunkSpladeEnabled() {
+    ConfigStore cs = ConfigStore.globalOrNull();
+    ResolvedConfig rc = cs == null ? null : cs.get();
+    return rc != null && rc.rag() != null && rc.rag().chunkSpladeEnabled();
   }
 
   private void startMigrationEnumeratorBestEffort(ResolvedConfig rc) {

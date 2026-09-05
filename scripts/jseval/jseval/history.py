@@ -5,9 +5,6 @@ Tempdoc 400 LR4-h extensions (Phase 3, 2026-04-22):
 - ``manifest_hash`` column on ``runs`` — cohort identity from
   ``jseval.manifest.compute_manifest``. Populated on insert and used
   by :func:`check_trend` for cohort-aware windowing.
-- ``envelope_metrics`` table — normalized one-row-per-(run, mode, metric)
-  shape for non-determinism-envelope σ values. Replaces the original
-  tempdoc 400 spec's single-metric flat column (see §26.6 Decision 3).
 
 Schema evolution is **additive + idempotent**: new columns + tables
 materialize on first connect; pre-Phase-3 databases keep their rows
@@ -24,25 +21,6 @@ import statistics
 from pathlib import Path
 
 log = logging.getLogger(__name__)
-
-_ENVELOPE_METRICS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS envelope_metrics (
-    run_id INTEGER NOT NULL,
-    cohort_hash TEXT NOT NULL,
-    mode TEXT NOT NULL,
-    metric TEXT NOT NULL,
-    mean REAL NOT NULL,
-    stdev REAL NOT NULL,
-    n INTEGER NOT NULL,
-    calibrated_at TEXT NOT NULL,
-    PRIMARY KEY (run_id, mode, metric),
-    FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_envelope_cohort
-    ON envelope_metrics(cohort_hash);
-CREATE INDEX IF NOT EXISTS idx_envelope_metric
-    ON envelope_metrics(metric, mode);
-"""
 
 _RUNS_TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -100,20 +78,11 @@ def append_run(
     mean_latency_ms: float | None = None,
     context_hit_rate: float | None = None,
     manifest_hash: str | None = None,
-    envelope: dict | None = None,
     perf_metrics: dict | None = None,
 ) -> int:
     """Append a run summary to the SQLite history database.
 
-    Returns the newly inserted run's ``id`` (SQLite lastrowid), which
-    callers can use to cross-reference :func:`envelope_metrics` rows.
-
-    When ``envelope`` is provided, one row per (mode, metric) is also
-    written into ``envelope_metrics`` sourced from
-    ``envelope['metrics'][mode]``. The envelope document must follow
-    the schema produced by :func:`jseval.calibrate.compute_envelope`
-    (schema_version 1): ``{cohort_hash, metrics: {mode: {metric:
-    {mean, stdev, n}}}, calibrated_at, ...}``.
+    Returns the newly inserted run's ``id`` (SQLite lastrowid).
     """
     db_path = _db_path(output_dir)
     with _connect(db_path) as conn:
@@ -149,85 +118,7 @@ def append_run(
                 manifest_hash,
             ),
         )
-        run_id = cursor.lastrowid
-        inserted, skipped = _insert_envelope_metrics(conn, run_id, mode, envelope)
-        if inserted or skipped:
-            # Phase 6 / 6.11: log the envelope-metrics write outcome so
-            # operators can see when rows were dropped due to incomplete
-            # envelope shape (previously silent).
-            log.debug(
-                "envelope_metrics: run_id=%d mode=%s inserted=%d skipped=%d",
-                run_id, mode, inserted, skipped,
-            )
-        return run_id
-
-
-def _insert_envelope_metrics(
-    conn: sqlite3.Connection,
-    run_id: int,
-    mode: str,
-    envelope: dict | None,
-) -> tuple[int, int]:
-    """Populate envelope_metrics rows for ``(run_id, mode, *)``.
-
-    Returns ``(inserted, skipped)`` — how many metric rows landed
-    in the table vs how many were dropped because mean/stdev/n were
-    missing or the envelope shape was incomplete. Phase 6 / 6.11
-    replaces the prior silent-drop behavior so callers can log the
-    discrepancy.
-
-    Silent-skip conditions:
-
-    - ``envelope`` is None or not a dict → ``(0, 0)``.
-    - ``envelope['metrics'][mode]`` is missing (cohort not calibrated
-      in this mode) → ``(0, 0)``.
-    - ``cohort_hash`` or ``calibrated_at`` missing → ``(0, 0)``.
-    - individual metric rows with missing mean/stdev/n → counted as
-      skipped.
-
-    Uses ``INSERT OR REPLACE`` for idempotence: re-ingesting an
-    identical envelope produces the same row set.
-
-    Phase 6 / 6.11: ``run_id`` is now written as INTEGER (schema type
-    matches ``runs.id INTEGER``). SQLite loose-typing makes legacy
-    TEXT values still JOIN when cast explicitly; new writes are
-    properly typed.
-    """
-    if not isinstance(envelope, dict):
-        return 0, 0
-    cohort_hash = envelope.get("cohort_hash")
-    metrics_block = envelope.get("metrics") or {}
-    calibrated_at = envelope.get("calibrated_at")
-    if not cohort_hash or not calibrated_at:
-        return 0, 0
-    per_mode = metrics_block.get(mode)
-    if not isinstance(per_mode, dict):
-        return 0, 0
-    rows: list[tuple] = []
-    skipped = 0
-    for metric_name, stats in per_mode.items():
-        if not isinstance(stats, dict):
-            skipped += 1
-            continue
-        mean = stats.get("mean")
-        stdev = stats.get("stdev")
-        n = stats.get("n")
-        if mean is None or stdev is None or n is None:
-            skipped += 1
-            continue
-        rows.append((
-            int(run_id), cohort_hash, mode, metric_name,
-            float(mean), float(stdev), int(n), calibrated_at,
-        ))
-    if not rows:
-        return 0, skipped
-    conn.executemany(
-        """INSERT OR REPLACE INTO envelope_metrics
-           (run_id, cohort_hash, mode, metric, mean, stdev, n, calibrated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        rows,
-    )
-    return len(rows), skipped
+        return cursor.lastrowid
 
 
 def get_history(
@@ -265,48 +156,6 @@ def get_history(
     sql += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
 
-    with _connect(db_path) as conn:
-        cursor = conn.execute(sql, params)
-        columns = [desc[0] for desc in cursor.description]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-
-def get_envelope_metrics(
-    output_dir: Path,
-    *,
-    cohort_hash: str | None = None,
-    metric: str | None = None,
-    mode: str | None = None,
-    limit: int = 100,
-) -> list[dict]:
-    """Return rows from ``envelope_metrics`` with optional filters.
-
-    Useful for LR4-b bootstrap CI / LR4-g drift projections that want
-    to weight results against the current cohort's calibrated σ.
-    """
-    db_path = _db_path(output_dir)
-    if not db_path.exists():
-        return []
-
-    clauses: list[str] = []
-    params: list = []
-    if cohort_hash is not None:
-        clauses.append("cohort_hash = ?")
-        params.append(cohort_hash)
-    if metric is not None:
-        clauses.append("metric = ?")
-        params.append(metric)
-    if mode is not None:
-        clauses.append("mode = ?")
-        params.append(mode)
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(limit)
-
-    sql = (
-        "SELECT run_id, cohort_hash, mode, metric, mean, stdev, n, "
-        "calibrated_at FROM envelope_metrics"
-        f"{where} ORDER BY calibrated_at DESC LIMIT ?"
-    )
     with _connect(db_path) as conn:
         cursor = conn.execute(sql, params)
         columns = [desc[0] for desc in cursor.description]
@@ -434,9 +283,8 @@ def _db_path(output_dir: Path) -> Path:
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    # Phase 6 / 6.11: enable foreign-key enforcement. SQLite ships with
-    # FKs off by default — they must be turned on per-connection for
-    # ON DELETE CASCADE on envelope_metrics.run_id to fire.
+    # SQLite ships with foreign-key enforcement off; turn it on per-connection so
+    # any FK declared on a `runs` child row is enforced rather than silently ignored.
     conn.execute("PRAGMA foreign_keys = ON")
     # Table first (no-op on pre-existing), ALTER next (legacy DBs gain
     # manifest_hash), indexes last (idx_runs_manifest_hash needs the
@@ -445,7 +293,6 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     _migrate_runs_manifest_hash(conn)
     _migrate_runs_perf_columns(conn)
     conn.executescript(_RUNS_INDEXES_SCHEMA)
-    conn.executescript(_ENVELOPE_METRICS_SCHEMA)
     return conn
 
 

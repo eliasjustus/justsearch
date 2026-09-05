@@ -161,10 +161,12 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
     expect(parts.join(' · ')).not.toContain('LEGACY_INDEX_NO_FINGERPRINT');
   });
 
-  // The FE half of the search-degradation-reason-codes correspondence (602 R6): every
-  // SearchReasonCode member that can populate a user-tier degradation field is worded.
-  // The 11 chunk-merge codes are declared noWordingExempt in the gate register; this
-  // list is the FE backstop the check-search-degradation-reason-codes gate mechanizes.
+  // The FE half of the degradation-wording correspondence (602 R6): every SearchReasonCode
+  // member that can populate a user-tier degradation field is worded. The chunk-merge codes
+  // never reach these fields and stay unworded. This list is a hand-kept mirror of the Worker
+  // enum — the generated wire schema types the reason fields as plain `string`, so no typed
+  // source binds it. The offline check that scraped the Java file was retired in tempdoc 930;
+  // this assertion is the surviving authority for both directions.
   const DEGRADATION_WORDED_CODES = [
     'INITIALIZING',
     'NO_EMBEDDING_MODEL',
@@ -235,7 +237,7 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
     );
 
     // A deterministic, by-design skip is NOT a degradation — it must not nag the user line.
-    // (These codes are declared `noWordingExempt` in the gate register.)
+    // (These are the `CrossEncoderSkipReason.isDrop() == false` members.)
     for (const reason of [
       'NAVIGATIONAL_QUERY',
       'DISABLED',
@@ -273,8 +275,9 @@ describe('searchTraceExplain strategy (549 D1 + 577 Phase 3 altitude cut)', () =
   });
 
   // The FE half of the cross-encoder vocabulary correspondence. The Java producer is
-  // `CrossEncoderSkipReason`; the gate (check-search-degradation-reason-codes) enforces that
-  // every non-exempt member is worded here and that no worded key is dead.
+  // `CrossEncoderSkipReason`, whose exhaustive `isDrop()` switch is the exempt/worded split;
+  // this list mirrors its drop members. The assertion below holds both directions (nothing
+  // mirrored goes unworded, no worded key is dead).
   const CROSS_ENCODER_WORDED_CODES = [
     'DEADLINE_EXCEEDED',
     'RPC_FAILED',

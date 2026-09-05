@@ -88,7 +88,7 @@ function removeJunctions(dir) {
   }
 }
 
-/** Synchronous sleep without shelling out to `sleep` (blocked by bash-guard). */
+/** Synchronous sleep without shelling out to `sleep`. */
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

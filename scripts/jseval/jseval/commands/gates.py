@@ -16,22 +16,17 @@ log = logging.getLogger(__name__)
 @click.command("gate")
 @click.option("--data-dir", default=lambda: str(DEFAULT_JSEVAL_DATA_DIR),
               show_default="scripts/jseval/tmp", type=click.Path(resolve_path=True),
-              help="Data dir containing cohort_baselines/ + eval-results/.")
-@click.option("--baseline-stdev", required=True, type=float,
-              help="Reference stdev(nDCG@10) from B2 calibration (gate threshold).")
-@click.option("--tolerance-pct", required=True, type=float,
-              help="Drift tolerance band as a percent of the baseline stdev.")
+              help="Data dir containing eval-results/.")
 @click.option("--report-out", type=click.Path(), default=None,
               help="Write the full gate decision JSON to this path.")
 @click.pass_context
-def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
+def cmd_gate(ctx, data_dir, report_out):
     """Phase 3 observability nightly gate (Phase 6 / 6.13).
 
-    Validates the calibrated envelope + latest eval-results run matches
-    the expected drift band and that required LR4 projections all
-    produced outputs. Exit code 0 = pass, 1 = quality/layout drift,
-    2 = infra issue (no envelope / run dir). The nightly workflow
-    opens a GitHub issue on any non-zero exit.
+    Validates that the latest eval-results run has a readable manifest and
+    that the required LR4 projections all produced outputs. Exit code
+    0 = pass, 1 = layout drift, 2 = infra issue (no run dir). The nightly
+    workflow opens a GitHub issue on any non-zero exit.
 
     Moved from ``scripts/ci/phase3_observability_gate.py`` into the
     jseval package so operators get discovery via ``jseval --help``
@@ -39,9 +34,7 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
     """
     from .. import gate as _gate
 
-    report = _gate.evaluate(
-        Path(data_dir), baseline_stdev, tolerance_pct,
-    )
+    report = _gate.evaluate(Path(data_dir))
 
     if report_out:
         out_path = Path(report_out)
@@ -54,8 +47,6 @@ def cmd_gate(ctx, data_dir, baseline_stdev, tolerance_pct, report_out):
     # Legible stderr summary for CI logs (full JSON is in --report-out).
     summary = {
         "exit_code": report["exit_code"],
-        "measured_stdev": report.get("measured_stdev"),
-        "baseline_stdev": report["baseline_stdev"],
         "cohort_hash": report.get("cohort_hash"),
         "checks": {c["name"]: c["status"] for c in report["checks"]},
     }

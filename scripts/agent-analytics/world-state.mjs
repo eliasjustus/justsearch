@@ -37,7 +37,8 @@
  * Usage: node scripts/agent-analytics/world-state.mjs [--json]
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -223,6 +224,35 @@ function gitOrNull(args, opts = {}) {
   }
 }
 
+const execFileAsync = promisify(execFile);
+
+/** Async twin of {@link gitOrNull} — same degrade-to-null contract, non-blocking so probes overlap. */
+async function gitOrNullAsync(args) {
+  try {
+    const { stdout } = await execFileAsync('git', args, {
+      encoding: 'utf8',
+      timeout: 5000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Run `fn` over `items` with at most `limit` in flight, preserving input order in the result. */
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) {
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 function listWorktreePaths() {
   const out = gitOrNull(['worktree', 'list', '--porcelain']);
   if (!out) return [process.cwd()];
@@ -243,18 +273,29 @@ function mainCheckoutRoot() {
   return abs.replace(/[\\/]\.git[\\/]?$/, '');
 }
 
-function gatherWorktreeRow(wtPath, mainRoot) {
+async function gatherWorktreeRow(wtPath, mainRoot) {
   const name = wtPath.replace(/\\/g, '/').split('/').pop();
   const isMain = mainRoot != null && path.resolve(wtPath) === path.resolve(mainRoot);
-  const branch = gitOrNull(['-C', wtPath, 'branch', '--show-current']) || gitOrNull(['-C', wtPath, 'rev-parse', '--short', 'HEAD']) || null;
+  const branch =
+    (await gitOrNullAsync(['-C', wtPath, 'branch', '--show-current'])) ||
+    (await gitOrNullAsync(['-C', wtPath, 'rev-parse', '--short', 'HEAD'])) ||
+    null;
 
-  const statusOut = gitOrNull(['-C', wtPath, 'status', '--porcelain']);
+  // The remaining four probes are independent of each other; only `pushed` needed the branch.
+  const [statusOut, leftRight, pushedRef, ts] = await Promise.all([
+    gitOrNullAsync(['-C', wtPath, 'status', '--porcelain']),
+    gitOrNullAsync(['-C', wtPath, 'rev-list', '--left-right', '--count', 'origin/main...HEAD']),
+    branch
+      ? gitOrNullAsync(['-C', wtPath, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`])
+      : Promise.resolve(null),
+    gitOrNullAsync(['-C', wtPath, 'log', '-1', '--format=%ct']),
+  ]);
+
   const dirty = statusOut === null ? null : statusOut.length > 0;
   const dirtyCount = statusOut === null ? null : statusOut.length === 0 ? 0 : statusOut.split('\n').filter(Boolean).length;
 
   let aheadCount = null;
   let behindCount = null;
-  const leftRight = gitOrNull(['-C', wtPath, 'rev-list', '--left-right', '--count', 'origin/main...HEAD']);
   if (leftRight) {
     const [left, right] = leftRight.split(/\s+/);
     if (left != null && right != null && left !== '' && right !== '') {
@@ -263,13 +304,9 @@ function gatherWorktreeRow(wtPath, mainRoot) {
     }
   }
 
-  let pushed = null;
-  if (branch) {
-    pushed = gitOrNull(['-C', wtPath, 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]) !== null;
-  }
+  const pushed = branch ? pushedRef !== null : null;
 
   let lastCommitAgeDays = null;
-  const ts = gitOrNull(['-C', wtPath, 'log', '-1', '--format=%ct']);
   if (ts) {
     const seconds = Number(ts);
     if (Number.isFinite(seconds)) lastCommitAgeDays = (Date.now() / 1000 - seconds) / 86400;
@@ -279,9 +316,19 @@ function gatherWorktreeRow(wtPath, mainRoot) {
   return { ...row, verdict: computeVerdict(row) };
 }
 
-function gatherWorktrees() {
+/**
+ * Probe every registered worktree. Tempdoc 930: this was serial — five blocking `git` spawns per
+ * worktree, one worktree at a time — which on a checkout carrying dozens of worktrees dominated the
+ * whole run (measured 31.5s over 61 worktrees, 19.0s of it `git status --porcelain`) and pushed the
+ * CLI past its 10s budget under ordinary parallel-agent load. Each worktree has its own git index,
+ * so the probes do not contend; running them with bounded concurrency is the fix. The bound keeps a
+ * 60-worktree checkout from spawning 60 gits at once.
+ */
+const WORKTREE_PROBE_CONCURRENCY = 8;
+
+async function gatherWorktrees() {
   const mainRoot = mainCheckoutRoot();
-  return listWorktreePaths().map((p) => gatherWorktreeRow(p, mainRoot));
+  return mapLimit(listWorktreePaths(), WORKTREE_PROBE_CONCURRENCY, (p) => gatherWorktreeRow(p, mainRoot));
 }
 
 function gatherSessions() {
@@ -412,7 +459,7 @@ async function gatherAgentSpawns() {
 export async function buildReport() {
   return {
     generatedAt: new Date().toISOString(),
-    worktrees: gatherWorktrees(),
+    worktrees: await gatherWorktrees(),
     sessions: gatherSessions(),
     tempdocNumbers: gatherTempdocNumbers(),
     stack: gatherStack(),

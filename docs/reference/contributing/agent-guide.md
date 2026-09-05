@@ -306,7 +306,6 @@ When editing files under `modules/ui-web/src/`, use `jseval ui-shot` for targete
 - **Step discovery**: `jseval ui-shot --list` shows all available steps (chain and isolated) with their dependency relationships.
 - **Affected steps**: `jseval ui-shot --affected <file>` finds which steps exercise a given source file. Works with full Windows paths.
 - **Measurement companion (615 §6.2)**: every capture also writes a `<step>.measure.json` (accessibility tree + axe violations + element geometry/overflow + console errors) and prints a one-line fact summary. Judge correctness from the **facts** (cheaper + more reliable than the PNG); read the PNG for gestalt. The harness drives the **live Lit `shell-v0`** — there is no mock-data demo mode, so data/AI steps need the dev stack running (AI also needs `ai_activate`).
-- **Auto-hint**: The `ui-shot-hint` PostToolUse hook automatically suggests relevant steps after edits to `.ts` files under `modules/ui-web/src/`. The hint is lightweight (<50ms, no process spawning) and the agent decides whether to capture.
 - **Full reference**: Load the `/ui-check` skill for the complete step registry, file-to-step index, and worktree-aware auto-serve details.
 
 ### 3.5. CI signal model
@@ -373,9 +372,11 @@ gate:
 - `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
 
 After changes to query orchestration, fusion weights, reranking, or anything
-that could shift σ(nDCG@10), run the drift gate manually (no workflow
-wraps it): `docs/how-to/recalibrate-phase3-baseline.md` has the
-`jseval calibrate` / `jseval gate` sequence.
+that could shift nDCG@10, re-run the arm and compare (no workflow wraps it):
+`python -m jseval run --start-backend --dataset <slug> --modes full`, then
+`python -m jseval relevance-gate --dataset <slug>` against its pinned floor.
+There is no calibrated σ to compare against — tempdoc 930 §18.1 row 7 removed
+the cohort-envelope machinery, which never produced a baseline.
 
 The `agent-live-eval-nightly.yml`, `rr219-resilience-governance-nightly.yml`,
 `rr219-resilience-soak-weekly.yml`, `track-g-report-win.yml`, and
@@ -385,7 +386,8 @@ deleted by commit `a9c484f59` (2026-03-16); jseval covers the substance
 (`scripts/jseval/` — `agent-eval`, `retrieval-eval`, `rag-eval`,
 `bench-concurrency`, etc.). `phase-3-observability-nightly.yml` was likewise
 retired (2026-07-07) — it never ran automatically in its history (ADR-0026);
-its manual `jseval calibrate`/`jseval gate` capability is unaffected.
+its manual `jseval gate` capability is unaffected (tempdoc 930 §18.1 row 7
+narrowed that gate to a projection-presence check).
 
 **How to trigger and inspect:**
 
@@ -521,9 +523,9 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   you know checks exist for the right commit.
 - **Waiting on a PR's CI completion** fits `node scripts/dev/run-gh.mjs
   checks-wait <N>` (backgrounded) better than a hand-rolled poll loop — the
-  latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs
-  hundreds of loop iterations and GitHub API calls on a multi-minute job, and
-  can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
+  latter costs hundreds of loop iterations and GitHub API calls on a
+  multi-minute job, and can outlast the Bash tool's own command timeout.
+  `checks-wait` pre-polls
   until checks register on the branch, then decodes `gh pr checks`'s
   documented 0=pass/1=fail/8=pending bitwise exit contract instead of
   guessing at it (tempdoc 743 P-K). For a specific landed commit, use
@@ -601,11 +603,6 @@ directions" section to a tempdoc is working history, not a project-history unit.
 Landing it as its own PR (`docs(644): … (#16)`) is exactly the axis-2 miss —
 tidy under axis 1, but a standalone public commit for archaeology. It should have
 ridden along with the next substantive PR or batched.
-
-The `docs-granularity-hint` hook reminds you of this at `git push` if a branch's
-whole diff is working-history-only; it never blocks (granularity is judgment, not
-something a gate can adjudicate). Canonical-doc-only and docs+code branches don't
-trigger it.
 
 ### 3.8. A tempdoc that changes a governed decision updates its ADR in the same PR
 

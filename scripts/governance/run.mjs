@@ -36,7 +36,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { emitSarif } from './lib/sarif-emitter.mjs';
 import { isShallowRepository, resolveBaselineRef } from './lib/git-utils.mjs';
 import { assertTruthTableShape } from './lib/truth-table-runner.mjs';
-import { appendRunRecord } from './lib/history.mjs';
 import {
   evaluateGateInputs,
   requiredInputsToProduce,
@@ -442,9 +441,6 @@ async function main() {
   const outPath = resolve(repoRoot, args.out);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(sarif, null, 2) + '\n');
-
-  // Layer 3 §3.7a: append run-history for dashboard generation.
-  try { appendRunRecord({ repoRoot, runs, verdicts }); } catch { /* history append is best-effort */ }
 
   // Aggregate gate decision.
   const anyFail = verdicts.some(v => v.verdict === 'fail');

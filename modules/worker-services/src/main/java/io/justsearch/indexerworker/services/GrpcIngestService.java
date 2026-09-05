@@ -214,7 +214,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         ingestLifecycle != null ? ingestLifecycle.pruneOps() : null,
         ingestLifecycle != null ? ingestLifecycle.commitOps() : null,
         jobQueue,
-        this.indexingPacing);
+        this.indexingPacing,
+        // Read through a supplier: the identity store is wired by setDocumentIdentityStore AFTER
+        // this constructor runs, so capturing the field here would capture the UNAVAILABLE sentinel.
+        new ConfirmedDeletionMarker(() -> this.documentIdentityStore));
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
   }
@@ -403,6 +406,20 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void setResolvedConfigSupplier(
       Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier) {
     statusOps.setResolvedConfigSupplier(supplier);
+    this.resolvedConfigSupplier = supplier;
+  }
+
+  // Tempdoc 931 §E item 8: kept here too (not only forwarded to statusOps) so the VDU chunk
+  // regeneration path can read rag.chunk_splade.enabled from the LIVE config on every write.
+  private volatile Supplier<io.justsearch.configuration.resolved.ResolvedConfig>
+      resolvedConfigSupplier;
+
+  /** {@code rag.chunk_splade.enabled}; absent config reads as the flag's own default (false). */
+  private boolean chunkSpladeEnabled() {
+    Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier = resolvedConfigSupplier;
+    io.justsearch.configuration.resolved.ResolvedConfig config =
+        supplier == null ? null : supplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
   }
 
   private <T> boolean replyIfIndexRuntimeUnavailable(
@@ -756,6 +773,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // Overwrite content, language, embedding status; regenerate chunks
         String preview = contentPreview(extractedContent);
         updates.put(SchemaFields.CONTENT, extractedContent);
+        // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+        updates.put(
+            SchemaFields.CONTENT_SHA256,
+            io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
         updates.put(SchemaFields.CONTENT_PREVIEW, preview);
         updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
         updates.put(SchemaFields.VDU_PROCESSED, "true");
@@ -804,6 +825,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           if (!extractedContent.isBlank()) {
             String preview = contentPreview(extractedContent);
             updates.put(SchemaFields.CONTENT, extractedContent);
+            // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+            updates.put(
+                SchemaFields.CONTENT_SHA256,
+                io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
             updates.put(SchemaFields.CONTENT_PREVIEW, preview);
             updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
             updates.put(SchemaFields.EXTRACTION_METHOD, SchemaFields.EXTRACTION_METHOD_VDU);
@@ -900,7 +925,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       return 0;
     }
     return ChunkDocumentWriter.regenerateChunksFromExistingParent(
-        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId, content);
+        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId,
+        content, chunkSpladeEnabled());
   }
 
   @Override

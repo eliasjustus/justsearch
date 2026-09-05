@@ -90,16 +90,14 @@ jobs:
         run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
 
       - name: Test release composition (Python)
-        # tempdoc 802. `scripts/jseval/tests/` (132 files) runs in CI NOWHERE — the same
-        # orphaned-layer class as the ~26 node files D6 wired above, and the reason a test
-        # added alongside a fix here would have been a claim rather than a guarantee.
-        # Scoped deliberately to the ONE file guarding release composition rather than the
-        # whole suite: the rest has never been run under CI's locked env, so enabling it
-        # wholesale would turn `main` red on failures this change does not own. The broader
-        # gap is logged for its own pass.
-        # pytest/hypothesis are not in requirements.lock.txt, so `-c` leaves them unpinned;
-        # that is why this installs the `dev` extra separately instead of widening the
-        # canonical install above (which the lock-drift guard keys on).
+        # tempdoc 802. Kept in THIS lane, alongside the claim checks it protects, so a
+        # release-composition break fails the check named "Public claims" rather than only
+        # the separate suite job. The rest of `scripts/jseval/tests/` now runs in the
+        # `jseval-suite` job below (tempdoc 930 §18.1 row 7 closed the "runs in CI
+        # NOWHERE" gap this comment used to record).
+        # pytest is not in requirements.lock.txt, so `-c` leaves it unpinned; that is why
+        # this installs it separately instead of widening the canonical install above
+        # (which the lock-drift guard keys on).
         run: |
           python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0"
           python -m pytest scripts/jseval/tests/test_release.py -q
@@ -224,14 +222,6 @@ jobs:
       - name: ui-web gate runner parses the whole recipe
         run: node scripts/ci/run-ui-web-gates.test.mjs
 
-      # Tempdoc 872: expected-state pins are dated exceptions with exits. Checked here: every
-      # pin declares an exit (exitProbe and/or reviewBy) and none is past its reviewBy — so
-      # the known-state-hint cannot deliver a claim nobody has re-affirmed. exitProbes are
-      # `slow:` and run only locally (`--slow`); a pin past reviewBy turns this step red for
-      # every PR by design — re-affirm it with evidence or delete it.
-      - name: expected-state pins declare an exit and are not expired
-        run: node scripts/agent-analytics/expected-state-probe.mjs --gate
-
       # Tempdoc 872: the observations inbox is retired; a shard from a session still on the
       # old brief would otherwise land unread. Fail legibly, with the routing remedy.
       - name: no observations shards (inbox retired)
@@ -292,16 +282,21 @@ jobs:
       # accumulated behind it. The inputs are cheap -- measured locally at 0.2s (module-deps),
       # 2.7s (knip) and 4.5s (the original npm audit) -- so the reason they were missing was wiring,
       # not budget. Tempdoc 921 later replaced that unreliable POST with bounded GitHub advisory GETs.
-      # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
-      # builds it rather than here.
-      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
-      # the base and classified (census: tempdoc 918 §D). These 14 are green on `main` AND hermetic
+      # Tempdoc 918 item 2, closing 913 open item 1. Each unwired gate was run bare on
+      # the base and classified (census: tempdoc 918 §D). These 11 are green on `main` AND hermetic
       # -- they read checked-in registers, catalogs and source text, and need no produced artifact,
       # no Gradle output, no protoc and no dev stack. The step sits DELIBERATELY above the
       # `npm ci --prefix modules/ui-web` below, so the job itself demonstrates the claim rather
       # than asserting it: if one of these ever starts needing an install, it fails here.
       #
-      # Six of the 20 are NOT in this step:
+      # Tempdoc 930 chunk F removed three ids from this list by deleting their gates, not by
+      # unwiring them: `todo-fixme` is now ESLint `no-warning-comments` (ui-web) + the PMD
+      # `CommentContent` rule (Java), `test-to-code` was dropped, and `prose-tier-register`
+      # retired with docs/reference/contributing/tier-register.md. `ts-any` (ESLint
+      # `no-explicit-any` + eslint-suppressions.json) went the same way. `npm-audit` did NOT --
+      # it is still a registered, baselined gate and still runs in the built-inputs step below.
+      #
+      # Four gates are still NOT in this step:
       #   - consumer-presence, host-owns-truth, runtime-witness
       #                  all three read tmp/consumer-presence/registry-snapshot.json, a Gradle
       #                  artifact (RegistrySnapshotExporterTest), and SOFT-FAIL to `pass` when it
@@ -309,18 +304,24 @@ jobs:
       #                  have inspected nothing -- the first version of this step did exactly that
       #                  and logged three `snapshot-missing` warnings as part of a green. They now
       #                  run in the unit-tests app-ui lane, after the task that builds the snapshot.
-      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
-      #                  (countAny scores the English word "any"); wiring a known red would make
-      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
       #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
       #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
       #                  Wiring it here would add a step that can only ever report a vacuous green.
       #                  It belongs in a lane that produces the report.
-      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
-      #                  it is a PASS, which is worse than being unwired.
-      - name: Hermetic kernel gates (14, no produced inputs, no install)
+      #   - wire         has its own step below, with the buf CLI installed ahead of it.
+      - name: Hermetic kernel gates (11, no produced inputs, no install)
         run: |
-          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
+          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --mode gate
+
+      # Tempdoc 930 chunk F. Seven `check-*-regen.mjs` wrappers were one property each -- "a
+      # generated file matches its source" -- with seven CI steps. `regen-all` is that set; the
+      # `notices` entry needs the license reports, so it runs in the license-and-notices job that
+      # builds them (`--only notices`) rather than being skipped here.
+      - name: Generated files match their sources (regen set)
+        run: node scripts/ci/regen-all.mjs --check --except notices
+
+      - name: Test the regen set runner
+        run: node scripts/ci/regen-all.test.mjs
 
       - name: Build kernel gate inputs
         env:
@@ -332,11 +333,25 @@ jobs:
           node scripts/ci/report-github-advisories.mjs
           npm --prefix modules/ui-web run knip:report
 
+      # `npm-audit` is NOT one of the six gates tempdoc 930 chunk F retired -- it stays registered,
+      # baselined and wired here. Chunk F first swapped it for plain `npm audit --audit-level=high`
+      # over both lockfiles; that step was red on the base for 17 pre-existing high advisories
+      # (11 root, 6 ui-web) that no PR introduced, which is the same objection the comment above
+      # raises against wiring a known red. The commodity command has no accepted-advisory baseline,
+      # so it cannot distinguish "new advisory" from "advisory we already carry" -- which is the
+      # one thing this ratchet exists to do. Swapping it is a real option, but it has to land with
+      # the upgrades that clear the existing advisories, not before them.
       - name: Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
         run: |
           node scripts/governance/run.mjs \
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
+
+      # Tempdoc 930 chunk F: the `ts-any` and `todo-fixme` gates became ESLint rules, and ESLint
+      # ran in no workflow -- so the rules would have been unenforced the moment the gates went.
+      # `eslint-suppressions.json` carries the pre-existing violations; a NEW one fails here.
+      - name: Frontend lint (ts-any + todo-fixme successors)
+        run: npm --prefix modules/ui-web run lint
 
       # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
       # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
@@ -362,16 +377,15 @@ jobs:
       #
       # These three are input-free (they read the register JSONs + walk the source tree, no
       # produced artifact), so they cost nothing to run here. Scoped to the register family
-      # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
-      # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
-      # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
+      # implicated by D1 rather than "the rest of the kernel": `wire` is environment-sensitive
+      # (it needs the buf CLI installed, so it has its own step with that install), so a blanket
+      # full-kernel step would land CI red for reasons unrelated to the fix.
       #
-      # Census (corrected by review of #617 -- the first count missed the six kernel gates the
+      # Census (corrected by review of #617 -- the first count missed the kernel gates the
       # "ui-web pre-merge gate set" step above runs via run-ui-web-gates.mjs, which expands the
-      # `ui-web-gates` recipe: ambient-purity, style-literal-ratchet, atom-fork-ratchet,
-      # modality-contract, transient-arbitration, modal-arbitration). Of 35 registered gates,
-      # 12 ran in CI before this step and 15 do with it -- so 20 remain unwired, tracked in
-      # tempdoc 913 open items with the full list.
+      # `ui-web-gates` recipe: ambient-purity, atom-fork-ratchet, modality-contract,
+      # transient-arbitration, modal-arbitration). Tempdoc 930 chunk F took the registry from 35
+      # gates to 29; the remaining unwired set is tracked in tempdoc 913 open items.
       - name: Register-family gates (operation-surface, execution-surface, guard resolution)
         run: |
           node scripts/governance/run.mjs \
@@ -379,17 +393,24 @@ jobs:
             --mode gate
 
       # The `wire` gate (protobuf breaking-change detection) ran in NO workflow and no job covers
-      # `contracts/**` either, so a breaking .proto change had nothing to stop it. It is wired with
-      # its install rather than without, because `buf` absent is not a failure in this gate -- it
-      # emits `contract-governance/buf-cli-missing` and still returns verdict `pass`
-      # (expected-state pin `wire-gate-buf-cli-missing` documents exactly this fail-open). A step
-      # that ran the gate without installing buf would be a permanent green that inspects nothing.
-      # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
+      # `contracts/**` either, so a breaking .proto change had nothing to stop it.
+      #
+      # Tempdoc 930 §19.3 F7 removed the assertion that used to follow this step -- a `node -e`
+      # grep of the SARIF for `buf-cli-missing`, which existed only because the gate returned
+      # verdict `pass` when the CLI was absent. That fail-open is now fixed in the gate itself
+      # (`gates/wire/enforcer.mjs`: any `contract-governance/*` runner error fails the gate), so
+      # the assertion had nothing left to catch and its absence no longer hides anything.
+      #
+      # The install stays and is load-bearing: the gate resolves the binary from
+      # `scripts/wire-contract/node_modules/@bufbuild/...` by path, NOT from PATH
+      # (gates/wire/protobuf-buf-breaking.mjs:22-33 -- the npm .bin launcher is a JS shim that
+      # execFileSync cannot run on Windows without shell:true). `bufbuild/buf-setup-action` puts
+      # buf on PATH, which this resolver would not see; a 2-package `npm ci` against a committed
+      # lockfile (~1s) is both the pinned version and the path the gate actually looks in.
       - name: Wire contract gate (protobuf breaking changes)
         run: |
           npm ci --prefix scripts/wire-contract --audit=false
           node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
-          node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
       # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
       # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
@@ -523,9 +544,11 @@ jobs:
       # The shape-handler live oracle compared eventSchema entries — objects — with `===`, so it
       # reported drift for every shape while printing byte-identical live/fixture lines and could
       # never pass. Only the comparator is unit-testable without a backend, and that is exactly the
-      # part that was wrong; the `--live` leg itself still needs a running stack.
-      - name: Test the shape-handler regen live comparator
-        run: node scripts/ci/check-shape-handler-regen.test.mjs
+      # part that was wrong; the oracle itself still needs a running stack. Tempdoc 930 chunk F
+      # split the script: its static `gen-shape-handlers --check` half is now an entry of the
+      # regen set, and what is left (this file's subject) is the live-only oracle.
+      - name: Test the shape-handler live comparator
+        run: node scripts/ci/check-shape-handler-live.test.mjs
 
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
@@ -558,6 +581,66 @@ jobs:
           name: governance-health-${{ github.run_id }}-${{ github.run_attempt }}
           path: tmp/governance-history.ndjson
           if-no-files-found: warn
+
+  jseval-suite:
+    name: jseval Python suite
+    # tempdoc 930 §18.1 row 7. `scripts/jseval/tests/` is ~47k lines that ran in CI
+    # NOWHERE — a measurement harness behind public claims whose own tests were a claim
+    # rather than a guarantee. The suite is pure-CPU and fully mocked (nothing here
+    # starts a backend, and `run.py`'s three socket-opening helpers are stubbed by
+    # `tests/test_run.py::_offline_backend`), so it runs on a hosted Linux runner.
+    #
+    # Optional-dependency behaviour: `inspect_ai` (agent extra), `playwright` (ui extra)
+    # and `Pillow` (scan extra) are reached only through `pytest.importorskip`, so those
+    # tests SKIP rather than error and the ~80 transitive deps of the agent extra stay out
+    # of this lane. That guard was MISSING in four places — the three modules importing
+    # `jseval.agent_utility_inspect` at module scope (`test_agent_behavioral_789.py`,
+    # `test_delivery_tier_735.py`, `test_partial_usage_capture_757.py`) and the
+    # `_graded_logs` helper in `test_utility_comparison.py` — and was added to match
+    # their already-guarded siblings. The first run of this job caught the module-scope
+    # three as `Interrupted: 3 errors during collection`, which aborted the WHOLE suite.
+    # All four went unnoticed precisely because nothing ran the suite on a machine
+    # without the agent extra installed. `hypothesis` and `jsonschema` are NOT guarded
+    # (`tests/test_suite_stats_properties.py:10`), which is why the `dev` extra is
+    # installed in full below.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        # Only for the lock-drift guard below; no npm install happens in this job.
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        # Same fail-fast as the claims lane: if pyproject.toml and the committed lock
+        # disagree, the install below would resolve versions nobody reviewed.
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval
+        # Mirrors the claims lane's install: constraint-installed against the dependency
+        # lock (tempdoc 792 §6) so the suite resolves the same versions every run.
+        run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
+
+      - name: Install test dependencies
+        # The `dev` extra's four packages are absent from requirements.lock.txt, so `-c`
+        # leaves them unpinned and installing them through the canonical command above
+        # would trip the lock-drift guard. Named explicitly (rather than `[dev]`) so this
+        # step's resolution set is visible in the diff.
+        run: python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0" "hypothesis>=6.0" "jsonschema>=4.0"
+
+      - name: Run jseval test suite
+        # `-p no:cacheprovider`: a fresh runner has no cache to reuse and the plugin
+        # would only write .pytest_cache into the checkout.
+        run: python -m pytest scripts/jseval/tests -q -p no:cacheprovider
 
   license-and-notices:
     name: License and notices
@@ -607,8 +690,10 @@ jobs:
           cd modules\ui-web
           npx --yes license-checker --production --json --relativeOnly > ..\..\build\npm-licenses.json
 
+      # The one regen-set entry that needs produced inputs (the license reports dumped above), so
+      # it runs here rather than in the hermetic regen step in `Public claims`. Tempdoc 930 chunk F.
       - name: NOTICE / THIRD_PARTY_NOTICES are in sync
-        run: node scripts/ci/check-notices-regen.mjs
+        run: node scripts/ci/regen-all.mjs --check --only notices
 
   build:
     name: Build (no model blobs)
@@ -656,8 +741,11 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
 
-      - name: Reference-client API projections are reproducible
-        run: node scripts/ci/check-api-client-regen.mjs
+      # `gen-api-client --check` is an entry of the regen set (run in `Public claims`); the
+      # classified OpenAPI snapshot's check shells out to Gradle, so it stays its own step and
+      # belongs in this job, which has already assembled. Tempdoc 930 chunk F.
+      - name: Reference-client OpenAPI projection is reproducible
+        run: node scripts/ci/check-reference-client-openapi-regen.mjs
 
       - name: Upload build attribution
         if: always()
@@ -700,7 +788,7 @@ jobs:
             # This lane runs :modules:app-services:test, which IS RegistrySnapshotExporterTest --
             # the producer of tmp/consumer-presence/registry-snapshot.json. The three gates that
             # read that snapshot therefore run here (tempdoc 918 B1), same pattern as
-            # run_dead_code_jvm on the platform-contracts lane. None of the three resolves a git
+            # run_snapshot_gates, but for the app-ui lane. None of the three resolves a git
             # baseline (registry: diffStrategy "none" / no baseline), so depth 1 is enough.
             run_snapshot_gates: "true"
             gradle_tasks: >-
@@ -733,11 +821,14 @@ jobs:
             os: ubuntu-latest
             artifact: unit-test-attribution-platform-contracts
             runner_label: ubuntu-latest/platform-contracts
-            # This lane already runs :modules:dead-code-audit:test, which IS the dead-code-jvm
-            # gate's declared producer, so the gate runs here (884 §F row 9). Its baseline needs
-            # git history; see the checkout step.
+            # :modules:dead-code-audit:test carries the whole-program dead-class ratchet as an
+            # ArchUnit FreezingArchRule (tempdoc 930 chunk F retired the `dead-code-jvm` kernel
+            # gate that used to read its JSON report from a separate step). The store is a
+            # checked-in file, not a git-base diff, so this lane no longer needs full history for
+            # THAT reason -- but the depth stays 0 until something measures that nothing else in
+            # the lane wants history, because a silent shallow-clone regression is exactly the
+            # class the checkout comment below is about.
             fetch_depth: 0
-            run_dead_code_jvm: "true"
             gradle_tasks: >-
               :modules:ai-backend:test
               :modules:api-contract-projection-java:test
@@ -758,9 +849,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # platform-contracts alone needs real history: it runs the dead-code-jvm kernel gate
-          # below, whose baseline strategy is git-base, and the kernel fails CLOSED on a shallow
-          # clone rather than reporting a false green. The other two lanes stay on depth 1.
+          # platform-contracts alone takes real history (see its matrix comment). The other two
+          # lanes stay on depth 1.
           #
           # Every lane declares this explicitly. `matrix.fetch_depth || 1` would have been wrong:
           # GitHub expressions treat 0 as FALSY, so the one lane that needs full history would have
@@ -785,13 +875,6 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
           "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
-
-      # 884 §F row 9: dead-code-jvm was registered, baselined and unable to notice anything,
-      # because its input is a Gradle run no gate-running job performed. The task above IS that
-      # producer, so the gate is evaluated here rather than nowhere.
-      - name: JVM dead-code gate (input built by the tasks above)
-        if: matrix.run_dead_code_jvm == 'true'
-        run: node scripts/governance/run.mjs --gate dead-code-jvm --mode gate
 
       # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
       # snapshot exported below, and each returns verdict `pass` with a `snapshot-missing` WARNING

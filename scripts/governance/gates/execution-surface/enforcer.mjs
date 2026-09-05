@@ -3,7 +3,7 @@
  *
  * The keystone of the canonical-search-execution-record design: it makes "every surface that
  * describes what the pipeline did is a DECLARED projection of the one record" a build-time
- * invariant. It is a META-COORDINATOR (cf. prose-tier-register), not a re-implementation of
+ * invariant. It is a META-COORDINATOR, not a re-implementation of
  * conformance — field/vocabulary conformance stays in the guards the register names
  * (gate:stage-completeness, gate:wire, test:KnowledgeWireContractConformanceTest). See the sibling
  * truth-table.mjs for the full check set (Checks 1-7) and the honest scope limit (553 §5).
@@ -226,4 +226,4 @@ function scanTs(root, scan) {
 }
 
 // walk / parseGuards / loadGateIds / testFileExists now live in ../../lib/guard-resolver.mjs
-// (tempdoc 576 §3.1) — shared with prose-tier-register and the register-guard-resolution gate.
+// (tempdoc 576 §3.1) — shared with the register-guard-resolution gate.

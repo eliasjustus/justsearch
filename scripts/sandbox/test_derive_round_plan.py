@@ -455,11 +455,11 @@ class RenderPlanStructureTests(unittest.TestCase):
     def test_covered_elsewhere_and_exempt_listed_as_informational(self):
         manifest = _manifest(
             covered_elsewhere=[{"kind": "surface", "id": "core.api-explorer-surface"}],
-            exempt=[{"kind": "surface", "id": "core.governance-surface"}],
+            exempt=[{"kind": "surface", "id": "core.search-v3-surface"}],
         )
         text = render_plan(manifest, "coverage-manifest.json")
         self.assertIn("coveredElsewhere (1): surface:core.api-explorer-surface", text)
-        self.assertIn("exempt (1): surface:core.governance-surface", text)
+        self.assertIn("exempt (1): surface:core.search-v3-surface", text)
 
     def test_generated_header_names_the_source_manifest_and_forbids_hand_edit(self):
         text = render_plan(_manifest(), "my-manifest.json")

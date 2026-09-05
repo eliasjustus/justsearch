@@ -112,7 +112,7 @@ def _mirror_telemetry(data_dir: Path, run_dir: Path) -> list[str]:
         return []
     copied: list[str] = []
     for name in _TELEMETRY_FILES_TO_MIRROR:
-        sources = _collect_rotated_siblings(telemetry_dir, name)
+        sources = collect_rotated_siblings(telemetry_dir, name)
         if not sources:
             continue
         dst = run_dir / name
@@ -124,7 +124,7 @@ def _mirror_telemetry(data_dir: Path, run_dir: Path) -> list[str]:
     return copied
 
 
-def _collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[Path]:
+def collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[Path]:
     """Return the list of files to mirror for a given canonical NDJSON
     file, in timestamp-sorted filename order (rotated-oldest-first,
     then active last). Rotated siblings match the NdjsonSpanExporter
@@ -132,8 +132,11 @@ def _collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[
 
     Active file is placed last so concatenation produces a
     chronologically-ordered stream — any span-time-based Layer-4
-    projection (rate_timeline, encoder_drift) sees the same ordering
-    it would have seen during live emission.
+    projection (rate_timeline) sees the same ordering it would have
+    seen during live emission. Also used by
+    :mod:`jseval.encoder_latency`, which reads the same rotated set
+    straight out of ``<data_dir>/telemetry/`` at summary-composition
+    time (before this mirror runs).
     """
     stem, _, ext = canonical_name.partition(".")
     if not ext:

@@ -129,10 +129,13 @@ const EXPANSION_SKIP_WORDING: Record<string, string> = {
  *
  * Covers every embedding-compat + routing code that can populate the three
  * fields. The chunk-merge codes (APPLIED / SKIPPED_*) feed the chunk-merge stage
- * (a diagnostic-tier stage reason), not these fields, and are declared
- * `noWordingExempt` in `governance/search-degradation-reason-codes.v1.json`. The
- * `check-search-degradation-reason-codes` gate enforces this map ↔ `SearchReasonCode`
- * correspondence so a new emittable code without wording fails the build.
+ * (a diagnostic-tier stage reason), not these fields, so they are deliberately unworded.
+ * The keys of this map are pinned against a declared code list in
+ * `searchTraceExplain.test.ts` (both directions: nothing declared goes unworded, no worded
+ * key is dead). That list is a hand-kept mirror of the Worker's `SearchReasonCode` — the
+ * generated wire schema types these fields as plain `string`, so nothing binds the mirror to
+ * the enum. The offline `search-degradation-reason-codes` register + check that used to
+ * scrape the Java file were retired in tempdoc 930 (they ran in no workflow).
  */
 export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   // embedding / index-model readiness
@@ -168,9 +171,9 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
  *
  * Keyed by `CrossEncoderSkipReason` (app-api) wire strings, drop class only — the by-design skips
  * (DISABLED / NAVIGATIONAL_QUERY / BELOW_MIN_THRESHOLD / DOCS_TOO_LONG / PIPELINE_NOT_ELIGIBLE /
- * MODEL_NOT_CONFIGURED / FUSION_CONFIDENT) are declared `noWordingExempt` in
- * `governance/search-degradation-reason-codes.v1.json` because they never reach this line. The
- * `check-search-degradation-reason-codes` gate holds the two halves in correspondence.
+ * MODEL_NOT_CONFIGURED / FUSION_CONFIDENT) are deliberately unworded because they never reach
+ * this line — `CrossEncoderSkipReason.isDrop()` is the producer-side split, an exhaustive switch.
+ * This map's keys are pinned against the drop list in `searchTraceExplain.test.ts`.
  *
  * Tone: state what did not run and what the ranking is instead. No alarm — the results are real.
  */

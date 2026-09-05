@@ -354,7 +354,7 @@ public class IndexingLoop implements Closeable {
         ingestionOutcomeCatalog == null
             ? IngestionOutcomeMetricCatalog.noop().outcomeWriteFailuresTotal
             : ingestionOutcomeCatalog.outcomeWriteFailuresTotal;
-    this.staleSourceHandler = new StaleSourceHandler(indexingCoordinator);
+    this.staleSourceHandler = new StaleSourceHandler(indexingCoordinator, this.documentIdentityStore);
     this.journal =
         new IngestionOutcomeJournal(
             jobQueue, metrics, outcomeWriteFailureCounter, () -> detailedTracing);
@@ -400,7 +400,8 @@ public class IndexingLoop implements Closeable {
             staleResolver,
             (long delta) -> indexedSinceCommit += delta,
             this::recordStageMs,
-            () -> detailedTracing);
+            () -> detailedTracing,
+            this::chunkSpladeEnabled);
     // Tempdoc 516 Slice 4a.3 (W5.2): construct the extractor. Holds its own per-batch
     // indexEmptyForBatch cache, the forcedPaths set (shared with the markForced public API),
     // and the running/signalBus pair so it can self-decide when to stop the per-job loop.
@@ -451,6 +452,16 @@ public class IndexingLoop implements Closeable {
   private ResolvedConfig.Ai.BackfillPacing pacing() {
     ResolvedConfig config = resolvedConfigSupplier.get();
     return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
+  }
+
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8) — read from the live resolved config on
+   * every chunk write, matching {@code BackfillScheduler#chunkSpladeEnabled}. Absent config reads as
+   * the flag's own default (false), never as "on".
+   */
+  private boolean chunkSpladeEnabled() {
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
   }
 
   /** Returns a real span when tracing is enabled, or a no-op singleton when disabled. */

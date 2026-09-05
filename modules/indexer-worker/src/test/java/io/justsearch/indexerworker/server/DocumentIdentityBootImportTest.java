@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.ManagedChannel;
@@ -296,6 +297,10 @@ final class DocumentIdentityBootImportTest {
             .setLimit(10)
             .addProjection(SchemaFields.PATH)
             .addProjection(SchemaFields.DOC_UID)
+            // Tempdoc 931 §C.6 — feedback keys on (uid, content revision), so the rebuild claim
+            // covers both. Head projects them together; a revision lost across the rebuild would
+            // age every surviving label into staleness just as silently as a re-minted uid.
+            .addProjection(SchemaFields.CONTENT_SHA256)
             .build();
     // A fresh boot over an index that already has segments opens DEFERRED: read-only first, with
     // the writer and the analyzers arriving on the background upgrade. So both "not ready yet"
@@ -336,6 +341,12 @@ final class DocumentIdentityBootImportTest {
           "the promoted generation must serve the uid Blue served: this is the exact value Head"
               + " keys feedback on, so a re-minted uid here silently orphans every label authored"
               + " before the rebuild");
+      String revision = hit.getFieldsMap().get(SchemaFields.CONTENT_SHA256);
+      assertNotNull(revision, "the promoted generation must serve the content revision too");
+      assertTrue(
+          revision.matches("[0-9a-f]{64}"),
+          "the wire revision must be lowercase SHA-256 hex, not a truncated or upper-cased form:"
+              + " " + revision);
     }
   }
 

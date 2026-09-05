@@ -93,14 +93,6 @@ class LegacyEndpointGuardTest {
   }
 
   @Test
-  @DisplayName("tempdoc 576 §15 — GovernanceRoutes registers GET /api/governance/state")
-  void governanceStateRouteIsRegistered() {
-    assertTrue(
-        registeredRoutes.contains("GET /api/governance/state"),
-        "GET /api/governance/state should be registered by GovernanceRoutes (tempdoc 576 §15)");
-  }
-
-  @Test
   @DisplayName("POST /api/search is absent (removed — use POST /api/knowledge/search)")
   void legacySearchPostIsAbsent() {
     assertFalse(
@@ -235,9 +227,5 @@ class LegacyEndpointGuardTest {
     // Tempdoc 541 §4.2: BootRoutes registers GET /api/boot/phases.
     io.justsearch.ui.api.routes.BootRoutes.register(
         app, mock(io.justsearch.app.services.HeadAssembly.class));
-    // Tempdoc 530 Layer 4 §4.2 / 576 §15: GovernanceStateController registers GET /api/governance/state
-    // inline in setupRoutes (mirrored here).
-    GovernanceStateController governanceStateController = new GovernanceStateController();
-    app.get("/api/governance/state", governanceStateController::handle);
   }
 }

@@ -101,7 +101,6 @@ def build_agent_manifest(
     eval_limits: dict | None = None,
     search_config_cohort_key: str | None = None,
     hardware: dict | None = None,
-    non_determinism_envelope: dict | None = None,
     run_id: str | None = None,
     timestamp: str | None = None,
     source_git_sha: str | None = None,
@@ -151,7 +150,6 @@ def build_agent_manifest(
         "search_config_cohort_key": search_config_cohort_key,
         # recorded context (projected, not hashed — mirrors 623 hardware handling)
         "hardware": hardware,
-        "non_determinism_envelope": non_determinism_envelope,
     }
     manifest["agent_cohort_key"] = agent_cohort_key(manifest)
     return manifest

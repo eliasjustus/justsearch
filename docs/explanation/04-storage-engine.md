@@ -51,6 +51,7 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `doc_id` | keyword | Primary Key (Normalized file path). |
 | `doc_uid` | keyword | Stable, content-independent identity plus the search-after tie-breaker. Parent UIDs survive reindex and supported renames; chunk UIDs derive from the parent UID and chunk ordinal. |
 | `content` | text | Main searchable text (tokenized). |
+| `content_sha256` | keyword (stored only) | SHA-256 of this parent document's stored `content` — its CONTENT REVISION. Not indexed, not DocValues. Same digest definition as `chunk_parent_content_sha256`, so parent and chunk revisions are directly comparable. |
 | `content_preview` | text | Small stored snippet source (first few KB) for fast results list rendering. |
 | `title` | text | Optional extracted title (stored). |
 | `path` | keyword | Normalized path (stored). |
@@ -116,6 +117,33 @@ feedback row rather than falling back to a path key. Pre-Phase-2 NDJSON rows omi
 remain readable and re-projectable with their legacy path keys; there is no path-to-UID backfill.
 The derived `real-feedback-triples.ndjson` file keeps the trainer-compatible JSON property name
 `doc_id`, whose value is the stable UID for new real-feedback labels.
+
+#### Identity versus content revision
+
+Identity answers *which document this is*; the content revision answers *which version of it*.
+Feedback captures the pair `(doc_uid, content_revision)`, where the revision is the parent's
+`content_sha256`. The Head injects both into the Worker projection for capture and strips them from
+the HTTP response unless the caller requested them by name; a chunk hit receives its parent's
+revision through the same parent-metadata enrichment that supplies the parent UID. Identity survives
+edits and verified moves, while the revision advances on every content change, so `LabelProjection`
+can tell a label that still describes the current text from one that does not: a disposition whose
+revision differs from the newest revision observed for that document is projected as STALE — kept,
+but written with its score multiplied by `STALE_LABEL_WEIGHT` (0.5) and a `stale: true` property, and
+counted in `LabelProjection.Result.staleTriples`. A null revision is UNKNOWN, never a mismatch, so
+rows written before the field and documents indexed before it are never down-weighted.
+
+#### Confirmed deletion and the identity grace window
+
+Identity rows are never dropped on deletion. Instead, the points where the Worker removed a document
+BECAUSE the file is verified absent — the periodic sync's orphan prune, the indexing loop's
+missing-source delete, and the filesystem watcher's DELETE event — set a nullable `deleted_at` on the
+row (schema V13). Every one of them re-verifies absence at the mark, so an unreadable file, a dead
+mount, or a cloud placeholder records nothing; removals that are policy rather than deletion (an
+un-watched root, a dropped collection, an exclude rule) never mark at all. `resolve` then reads the
+mark against `index.identity.deletion_grace_ms` (default 30 days): inside the window the mark is
+cleared and the uid is kept, because a file reappearing that soon is the same document returning;
+past it a new uid is minted onto the same row and `first_seen_at` resets, so a replacement file
+cannot inherit the previous document's feedback. A verified rename clears the mark outright.
 
 **Notes on new field groups:**
 

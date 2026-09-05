@@ -6,7 +6,7 @@ description: "The live-registry tier of tempdoc 560 §4b/§5: a delivered contri
 date: 2026-06-11
 probes:
   - adr-0042-live-witness-checked
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-05
 ---
 
 
@@ -134,3 +134,24 @@ runtime composition, per DR-A).
 - A real plugin/MCP ecosystem ships uncoordinated consumers (decision 2's deadline model reopens).
 - The §4b uniform-all-kinds witness (unioning the core substrate catalogs into one live witness surface)
   is scoped — model it as a tempdoc 575 projection, not a fork.
+
+## Amendment 2026-09-05: the register and the offline check are retired; the test is the sole authority
+
+Tempdoc 930 deleted `governance/live-witness.v1.json` and `scripts/ci/check-live-witness.mjs`. The
+script ran in no workflow, and it asserted only *wiring*: that the register's three paths existed and
+each contained a named symbol. It never evaluated consumer presence, which is the invariant — the
+Decision's "registered so it cannot be silently deleted" reasoning bought a copy of the file layout,
+not a guarantee about behaviour.
+
+What replaces them is the tier this ADR already named as the teeth. `LiveWitnessTest`
+(`modules/app-services/src/test/java/io/justsearch/app/services/registry/snapshot/LiveWitnessTest.java`)
+is now the sole authority, and the `adr-0042-live-witness-checked` probe is a `kind: test` probe
+pointing at it. The one property the register held that the test's existence did not imply — the
+**no-fork** reuse of `RegistrySnapshotExporter.operationConsumerIds`, previously checked by scraping
+the source for the symbol — is now asserted behaviourally by
+`LiveWitnessTest#witnessReusesTheBuildTierConsumerMergeForOperations`: over a fixture exercising both
+merge inputs (inline `ConsumerHook`s and executor-derived consumers), the witness must classify every
+delivered operation exactly as the build-tier merge does. A forked merge fails it.
+
+Unchanged: the Decision itself, the four §E.2.1 resolutions, and every "Future Agents Must Not" item —
+except that "the register guards this" now reads "the enforcing test guards this".

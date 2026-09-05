@@ -85,7 +85,7 @@ class TracingLocalExportTest {
     assertTrue(content.contains("\"encoder.seq_len\":\"512\""));
     // Tempdoc 400 §23.8 D-1: NdjsonSpanExporter emits duration_ms as a
     // structural field (nanosecond-sourced). Consumers that read span
-    // durations (LR4-g encoder_drift projection) depend on this field
+    // durations (jseval's encoder_latency summary block) depend on this field
     // being present without reconstruction from ISO start/end strings.
     assertTrue(
         content.contains("\"duration_ms\":"),

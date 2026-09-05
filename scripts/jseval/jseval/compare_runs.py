@@ -251,6 +251,56 @@ def compare_stage_decomposition(
     }
 
 
+def compare_index_state(
+    summary_a: dict,
+    summary_b: dict,
+    *,
+    tolerance_pct: float = 10.0,
+) -> dict:
+    """Paired-arm merge-state divergence check (tempdoc 931 §E item 10).
+
+    Two fresh indexes of the same corpus can carry very different tombstone (deleted-doc)
+    counts even with identical code -- a measured case moved 2,629 vs 222 -- which inflates
+    BM25 collection statistics on whichever arm has more tombstones and moves hit counts 3-4%
+    with no code cause. WARNs (``merge_state_diverged: true``) when the two runs'
+    ``index_state_at_query.deleted_docs`` differ by more than ``tolerance_pct`` percent of the
+    larger run's ``num_docs`` -- the caller should treat any metric delta between these two
+    runs as potentially confounded by merge state, not attributable to code alone.
+
+    Returns ``{}`` when either run lacks a usable ``index_state_at_query`` block (an older
+    summary.json, a ``--skip-readiness`` run, or a backend that never published the fields) --
+    no signal, no verdict, exactly like :func:`compare_pipeline_timing`'s empty-dict convention.
+    """
+    isa_a = summary_a.get("index_state_at_query") or {}
+    isa_b = summary_b.get("index_state_at_query") or {}
+    deleted_a = isa_a.get("deleted_docs")
+    deleted_b = isa_b.get("deleted_docs")
+    num_a = isa_a.get("num_docs")
+    num_b = isa_b.get("num_docs")
+    if not all(isinstance(v, (int, float)) for v in (deleted_a, deleted_b, num_a, num_b)):
+        return {}
+
+    delta = deleted_b - deleted_a
+    larger_num_docs = max(num_a, num_b)
+    threshold = tolerance_pct / 100.0 * larger_num_docs
+    merge_state_diverged = larger_num_docs > 0 and abs(delta) > threshold
+
+    return {
+        "deleted_docs_a": deleted_a,
+        "deleted_docs_b": deleted_b,
+        "delta": delta,
+        "tolerance_pct": tolerance_pct,
+        "threshold": round(threshold, 1),
+        "merge_state_diverged": merge_state_diverged,
+        "warning": (
+            f"index merge state differs by more than {tolerance_pct:g}% of num_docs between "
+            f"the two runs (deleted_docs {deleted_a} vs {deleted_b}) -- BM25 collection "
+            f"statistics differ between arms; a metric delta here is not attributable to "
+            f"code alone."
+        ) if merge_state_diverged else None,
+    }
+
+
 def _compare_field(
     result: dict,
     key: str,

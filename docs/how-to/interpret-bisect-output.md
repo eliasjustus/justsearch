@@ -10,7 +10,7 @@ description: "Reading the manifest-hash bisection report — single-axis, multi-
 `jseval bisect` (tempdoc 400 LR5-d) attributes a metric delta between
 two runs to the specific cohort-identity axis (or axes) that changed.
 It walks the manifest diff, synthesizes single-axis-swapped cohorts,
-and reports per-axis deltas against the envelope.
+and reports per-axis deltas against a fixed threshold.
 
 This guide covers how to read each of the possible report shapes.
 
@@ -42,12 +42,10 @@ This guide covers how to read each of the possible report shapes.
 ```
 
 **Meaning:** the two runs share the same manifest_hash; no bisection
-was possible. Any metric delta is within-cohort run-to-run noise
-(see `docs/how-to/recalibrate-phase3-baseline.md` — the non-
-determinism envelope quantifies it).
+was possible. Any metric delta is within-cohort run-to-run noise.
 
-**What to do:** check the cohort envelope; if the delta is inside
-±2σ, it's noise. Nothing to bisect.
+**What to do:** re-run the arm a couple of times and compare the
+spread against the observed delta. Nothing to bisect.
 
 ### 2. `status=single-axis`
 
@@ -58,12 +56,13 @@ determinism envelope quantifies it).
   "metric_a": 0.8056,
   "metric_b": 0.7821,
   "delta": -0.0235,
-  "sigma_multiplier": 10.8
+  "threshold": 0.02
 }
 ```
 
-**Meaning:** exactly one axis differs between A and B, and the delta
-exceeds `--sigma` multiples of the cohort envelope stdev.
+**Meaning:** exactly one axis differs between A and B, and the
+absolute delta exceeds `--threshold` (default
+`bisection.DEFAULT_THRESHOLD` = 0.02).
 
 **What to do:** that axis is the proximate cause. Read the manifest
 fields for both runs at the named axis to see the concrete change
@@ -102,16 +101,16 @@ partial deltas, the effect is compositional — see
   "status": "MULTI_AXIS_INTERACTION",
   "axes_diff": ["axis_a", "axis_b"],
   "axis_details": [
-    {"axis": "axis_a", "delta": -0.01, "sigma_multiplier": 0.9},
-    {"axis": "axis_b", "delta": -0.01, "sigma_multiplier": 0.9}
+    {"axis": "axis_a", "delta": -0.01, "threshold": 0.02},
+    {"axis": "axis_b", "delta": -0.01, "threshold": 0.02}
   ],
   "metric_a": 0.83, "metric_b": 0.79
 }
 ```
 
 **Meaning:** the tempdoc 400 §13.9 C2 documented limitation. Multiple
-axes differ, but no *single-axis-swap* reproduces the observed delta
-within envelope — the axes interact. The bisection algorithm cannot
+axes differ, but no *single-axis-swap* delta clears the threshold —
+the axes interact. The bisection algorithm cannot
 decompose them further (would require O(n²) 2-axis swaps).
 
 **What to do:** investigate manually by:
@@ -170,9 +169,9 @@ a normal `jseval run` (scifact full = ~4 min).
 
 `--synthesize` requires both `--dataset` + `--modes` and
 `JUSTSEARCH_DATA_DIR` set. Each spawned sub-run carries a forged
-manifest marked `"synthetic": true` so downstream consumers
-(envelopes, drift detection) can filter them out. Without that
-filter the synthetic cohort's metrics would mix with real runs.
+manifest marked `"synthetic": true` so downstream consumers can
+filter them out. Without that filter the synthetic cohort's metrics
+would mix with real runs.
 
 The `JUSTSEARCH_MANIFEST_OVERRIDE_DANGEROUS=1` safety gate exists
 because forging a manifest invalidates cohort identity. Never set
@@ -185,8 +184,6 @@ this in production.
 - Tempdoc 400 post-implementation critique C-1.5.1 — the
   cache-only-executor gap that Phase 6 / 6.5 closed via
   `--synthesize`.
-- `docs/how-to/calibrate-drift-baseline.md` — complementary cohort
-  baseline work.
 - `docs/reference/configuration/environment-variables.md` —
   `JUSTSEARCH_MANIFEST_OVERRIDE` + `_DANGEROUS` semantics.
 - `scripts/jseval/jseval/cli.py::cmd_bisect` — tool.

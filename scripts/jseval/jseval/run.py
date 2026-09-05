@@ -123,6 +123,15 @@ def _cadence_block(first_search: dict | None) -> dict:
     )
 
 
+def _encoder_latency_block() -> dict:
+    """Tempdoc 930 §18.1 row 7: absolute per-encoder ONNX p50/p95 from the same
+    ``<data_dir>/telemetry/`` stream the cadence block reads. Informational — no
+    threshold and no baseline (that is the point; see :mod:`jseval.encoder_latency`)."""
+    from . import encoder_latency as encoder_latency_mod
+
+    return encoder_latency_mod.build_block(_worker_data_dir())
+
+
 def _snapshot_search_config(base_url: str) -> dict | None:
     """Fetch active search config from /api/status at run start (343 item 0.4).
 
@@ -152,6 +161,35 @@ def _snapshot_search_config(base_url: str) -> dict | None:
     except Exception:
         log.debug("Failed to snapshot search config from /api/status")
         return None
+
+
+def _build_index_state_at_query(snapshot: dict, readiness_passed_at: str) -> dict:
+    """Merge/enrichment state at the moment the query phase starts (tempdoc 931 §E item 10).
+
+    Two fresh indexes of the same corpus can carry very different tombstone (deleted-doc)
+    counts -- a measured case moved 2,629 vs 222 -- which inflates BM25 collection statistics
+    on one arm and moves hit counts 3-4% with no code cause. Recording this block at query-phase
+    start lets a paired-arm comparison (see compare_runs.py) flag that divergence instead of
+    silently attributing it to the code under test. Every field degrades to ``None`` when the
+    backend snapshot doesn't publish it -- an older backend, or a ``skip_readiness`` run whose
+    ``snapshot`` is the ``ReadinessResult`` default empty dict.
+    """
+    max_doc = snapshot.get("indexMaxDoc")
+    num_docs = snapshot.get("indexNumDocs")
+    deleted_docs = (
+        max_doc - num_docs
+        if isinstance(max_doc, (int, float)) and isinstance(num_docs, (int, float))
+        else None
+    )
+    return {
+        "max_doc": max_doc,
+        "num_docs": num_docs,
+        "deleted_docs": deleted_docs,
+        "chunk_splade_coverage_percent": snapshot.get("chunkSpladeCoveragePercent"),
+        "splade_coverage_percent": snapshot.get("spladeCoveragePercent"),
+        "chunk_vector_coverage_percent": snapshot.get("chunkVectorCoveragePercent"),
+        "readiness_passed_at": readiness_passed_at,
+    }
 
 
 def execute_run(
@@ -229,6 +267,7 @@ def execute_run(
         if search_load:
             summary["search_load"] = search_load
         summary["cadence"] = _cadence_block(first_search_probe)
+        summary["encoder_latency"] = _encoder_latency_block()
         return summary
 
     # 1. Load dataset
@@ -260,6 +299,12 @@ def execute_run(
         )
         if not readiness_result.passed:
             log.warning("Readiness failed: %s", readiness_result.failure_reasons)
+
+    # tempdoc 931 §E item 10: snapshot merge/enrichment state right as the query
+    # phase starts (see _build_index_state_at_query).
+    index_state_at_query = _build_index_state_at_query(
+        readiness_result.snapshot, datetime.now(timezone.utc).isoformat(),
+    )
 
     # 3. For each mode: retrieve → score → provenance → ANN proof → comparability
     mode_results: dict[str, dict] = {}
@@ -369,15 +414,8 @@ def execute_run(
     # 4. Build summary + run manifest (tempdoc 400 LR1-a)
     search_config = _snapshot_search_config(base_url)
     state_snapshots = manifest_mod.capture_state_snapshots(base_url)
-    # Phase 2.2b: point compute_manifest at the envelope root so calibrated
-    # envelopes (written by `jseval calibrate`) are auto-embedded when the
-    # run's cohort_hash matches. Tempdoc 716: envelopes are filed under the
-    # jseval-owned data root (read_envelope falls back to the pre-716
-    # legacy roots, incl. env JUSTSEARCH_DATA_DIR, with a WARN). The worker
-    # data dir stays a separate concern — it is where the Worker writes
-    # telemetry/, which write_run copies into the run dir.
-    from ._paths import DEFAULT_JSEVAL_DATA_DIR
-    envelope_data_dir = DEFAULT_JSEVAL_DATA_DIR
+    # The Worker-owned data dir — where the Worker writes telemetry/, which
+    # write_run copies into the run dir and _cadence_block reads directly.
     worker_data_dir = _worker_data_dir()
     # Phase 6 / 6.5: manifest override for LR5-d synthetic bisection.
     # When JUSTSEARCH_MANIFEST_OVERRIDE is set AND the
@@ -414,7 +452,6 @@ def execute_run(
             eval_protocol=METRIC_CONTRACT,
             state_snapshots=state_snapshots,
             workflow_run_id=os.environ.get("JUSTSEARCH_WORKFLOW_RUN_ID"),
-            envelope_data_dir=envelope_data_dir,
             corpus_identity=_get_corpus_identity(dataset_name, meta, qrels, base_dir),
         )
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
@@ -422,13 +459,17 @@ def execute_run(
                              search_config, env_overrides, env_fingerprint,
                              run_manifest=run_manifest, base_dir=base_dir,
                              status_snapshot=state_snapshots.get("/api/status"),
-                             index_cache=index_cache, query_syntax=query_syntax)
+                             index_cache=index_cache, query_syntax=query_syntax,
+                             index_state_at_query=index_state_at_query)
     # Tempdoc 885: additive block from the background search-load thread (absent by default).
     if search_load:
         summary["search_load"] = search_load
     # Tempdoc 885 item 19: cadence counters are always emitted (null when the Worker does
     # not publish them) so the arm-comparison table has its columns on every run.
     summary["cadence"] = _cadence_block(first_search_probe)
+    # Tempdoc 930 §18.1 row 7: absolute per-encoder ONNX latency, always emitted
+    # (empty `encoders` when the Worker published no `encoder.ort_run` spans).
+    summary["encoder_latency"] = _encoder_latency_block()
 
     # 5. Write artifacts + append history
     if output_dir:
@@ -440,7 +481,6 @@ def execute_run(
 
         history_dir = history_db or Path(output_dir)
         run_manifest_hash = run_manifest.get("manifest_hash") if isinstance(run_manifest, dict) else None
-        envelope = run_manifest.get("non_determinism_envelope") if isinstance(run_manifest, dict) else None
         # Perf families trended alongside quality (tempdoc 640 R3): per-run throughput + the derived
         # resident footprint are run-level; CE-stage p50 is per-mode (from aggregate_metrics).
         _run_metrics = summary.get("run_metrics") or {}
@@ -456,7 +496,6 @@ def execute_run(
                 context_hit_rate=(mr.get("context_coverage") or {}).get(
                     "mean_best_term_coverage"),
                 manifest_hash=run_manifest_hash,
-                envelope=envelope,
                 perf_metrics={
                     "ce_p50_ms": (mr["aggregate_metrics"] or {}).get("ce_p50_ms"),
                     "primary_docs_s": _run_metrics.get("primary_docs_s"),
@@ -529,6 +568,7 @@ def _build_summary(
     status_snapshot: dict | None = None,
     index_cache: dict | None = None,
     query_syntax: str | None = None,
+    index_state_at_query: dict | None = None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -542,6 +582,10 @@ def _build_summary(
         # (nothing sent on the wire) is recorded as the Head's own default, "simple" —
         # see `docs/reference/api-contract-map.md` (Knowledge Search API, `querySyntax`).
         "query_syntax": query_syntax or "simple",
+        # tempdoc 931 §E item 10: merge-state snapshot at query-phase start, always present
+        # (like `cadence`) so a paired-arm comparison table always has the column, even when
+        # every field inside is null (skip_readiness / older backend).
+        "index_state_at_query": index_state_at_query or _build_index_state_at_query({}, None),
         "qrels_summary": _compute_qrels_summary(qrels),
         "corpus_identity": _get_corpus_identity(dataset_name, meta, qrels, base_dir),
         "per_mode": {

@@ -13,7 +13,8 @@ Validates that a candidate **public snapshot tree** applies the Option-C include
   artifacts, and the model `*.onnx` LFS blobs must not be present.
 - **CLOSURE** — the full agent/governance machinery dependency closure must be present (631 C1 — the narrower
   "hooks/-only" list ships broken machinery).
-- **SETTINGS** — `.claude/settings.json` must be the guards-only public template (no `permissions`/`env`; the
+- **SETTINGS** — `.claude/settings.json` must be the guards-only public template (`permissions` may carry
+  `deny` rules only — tempdoc 930 row 4 moved force-push protection to native deny; no `env`; the
   4 founder-analytics hooks excluded). Strict mode only.
 
 ```

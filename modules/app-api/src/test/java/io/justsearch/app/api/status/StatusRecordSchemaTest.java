@@ -269,7 +269,7 @@ final class StatusRecordSchemaTest {
               "COMPATIBLE", "", "fp-a", "fp-a", "fp-b", "fp-b", "COMPATIBLE", false, ""))
           .queueDb(new QueueDbStatusView(true, 0, 0, true, 0))
           .enrichment(EnrichmentProgressViewBuilder.builder()
-              .chunk(new ChunkCoverageView(42, 42, 0, 0, 100.0, true))
+              .chunk(new ChunkCoverageView(42, 42, 0, 0, 100.0, true, true, 42, 0, 100.0))
               .embeddingDocCount(42).embeddingCompletedCount(42).embeddingCoveragePercent(100.0)
               .spladeDocCount(42)
               .enrichmentCompleted(java.util.Map.of())
@@ -365,7 +365,7 @@ final class StatusRecordSchemaTest {
               "schema-fp-a", "schema-fp-b", "BLOCKED_LEGACY", true, "schema_mismatch"))
           .queueDb(new QueueDbStatusView(false, 1700000000000L, 1700000001000L, false, 1700000002000L))
           .enrichment(EnrichmentProgressViewBuilder.builder()
-              .chunk(new ChunkCoverageView(100, 95, 3, 2, 95.0, true))
+              .chunk(new ChunkCoverageView(100, 95, 3, 2, 95.0, true, true, 95, 3, 95.0))
               .embeddingDocCount(200).embeddingCompletedCount(180)
               .embeddingPendingCount(15).embeddingFailedCount(5).embeddingCoveragePercent(90.0)
               .spladeDocCount(200).spladeCompletedCount(150)
@@ -647,6 +647,7 @@ final class StatusRecordSchemaTest {
         "chunk_start_line",              // chunk geometry
         "chunk_total",                   // chunk geometry
         "content",                       // excluded by SearchResultFormatter (too large)
+        "content_sha256",                // tempdoc 931 §C.6 — feedback capture key, stripped before the HTTP response
         "created_at",                    // not displayed in search results
         "doc_id",                        // identity — carried as top-level Hit.id, not fields
         "doc_uid",                       // internal dedup key

@@ -58,7 +58,7 @@ final class ChunkParentRevisionGuardTest {
     indexParent(parentDocId, content);
     int written =
         ChunkDocumentWriter.regenerateChunksFromExistingParent(
-            runtime.documentFieldOps(), runtime.indexingCoordinator(), parentDocId, content);
+            runtime.documentFieldOps(), runtime.indexingCoordinator(), parentDocId, content, true);
     assertTrue(written > 1, "precondition: the fixture produces several chunks");
     commit();
 

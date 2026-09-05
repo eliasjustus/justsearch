@@ -22,7 +22,7 @@ node scripts/governance/run.mjs --gate wire --mode gate
 - **Frontend (TS/Zod)**: FE wire types are not emitted from proto. They come
   from the record→JSON-Schema→{TS,Zod} pipeline
   (`scripts/codegen/gen-wire-schema-types.mjs`), guarded by the
-  `check-wire-schema-types-regen` regen gate.
+  `regen-all --check` regen gate.
 - **Java**: emitted by the `com.google.protobuf` Gradle plugin in
   `modules/api-contract-projection-java` (`:wireGenerate` wraps
   `:modules:api-contract-projection-java:generateProto`). No buf CLI involved.

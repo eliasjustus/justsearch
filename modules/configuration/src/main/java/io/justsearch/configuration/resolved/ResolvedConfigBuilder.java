@@ -1578,7 +1578,13 @@ public final class ResolvedConfigBuilder {
         // The safety-net commit timer's period. Same channel and same reason as the three above:
         // CommitOps runs in the Worker, so a raw sysprop read there would never see a Head-side
         // value. The default reproduces the constant it replaces exactly.
-        resolveInt("index.commit.timer_interval_ms", 10_000));
+        resolveInt("index.commit.timer_interval_ms", 10_000),
+        // Tempdoc 931 §C.6 — the document-identity deletion grace. Same channel and same reason as
+        // the four above: the identity store lives in the Worker, so a raw sysprop read there would
+        // never see a Head-side value.
+        resolveLong(
+            "index.identity.deletion_grace_ms",
+            ResolvedConfig.Index.DEFAULT_IDENTITY_DELETION_GRACE_MS));
   }
 
   private ResolvedConfig.Collections buildCollections() {

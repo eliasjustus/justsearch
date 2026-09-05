@@ -277,13 +277,14 @@ function round3(n) {
   return Math.round(n * 1000) / 1000;
 }
 
-/** The suggested (not auto-written) remedy for a test that crossed the WARN threshold — a dated
- * expected-state pin with an exit (tempdoc 872: a flaky test on main is a defect to fix; the pin
- * only stops sessions re-discovering it meanwhile). Printed for a human/agent; never written here. */
+/** The suggested (not auto-written) remedy for a test that crossed the WARN threshold. Tempdoc 930
+ * retired the expected-state pin: remembering a flaky test made red-on-main cheaper to live with
+ * than to fix, so the remedy is the fix (or a quarantine that keeps the signal). Printed for a
+ * human/agent; never written here. */
 export function buildSuggestedObservationText(test, days) {
   const rate = test.runsWithData > 0 ? round3(test.occurrences / test.runsWithData) : 0;
   const description = `Flaky test ${test.classname}.${test.name} (lane ${test.lane}) flaked ${test.occurrences}/${test.runsWithData} runs (rate ${rate}) in the last ${days}d window`;
-  return `pin in scripts/agent-analytics/expected-state.v1.json (claim: "${description}"; exitProbe re-runs the test; reviewBy set) and track the fix in the owning tempdoc — source: scripts/ci/report-flake-trend.mjs`;
+  return `fix the flake — ${description}. If it cannot be fixed now, quarantine it in its own runner (so the suite stays a signal) and track the fix in the owning tempdoc — source: scripts/ci/report-flake-trend.mjs`;
 }
 
 /**

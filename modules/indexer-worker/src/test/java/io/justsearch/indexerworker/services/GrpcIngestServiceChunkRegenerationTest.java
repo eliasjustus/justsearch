@@ -167,6 +167,7 @@ final class GrpcIngestServiceChunkRegenerationTest {
             tempDir.resolve("indexBase"),
             tempDir.resolve("index"),
             new tools.jackson.databind.ObjectMapper(),
+            () -> true,
             LoggerFactory.getLogger(GrpcIngestServiceChunkRegenerationTest.class)));
     lifecycle.commitOps().maybeRefreshBlocking();
 

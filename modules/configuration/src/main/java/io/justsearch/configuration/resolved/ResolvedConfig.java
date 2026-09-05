@@ -678,6 +678,11 @@ public record ResolvedConfig(
    * @param commitTimerIntervalMs period of the safety-net commit timer that fires whenever
    *     {@code pendingDocs > 0} (default 10000 — unchanged behaviour). The ceiling on every other
    *     commit-cadence lever, which is why it is configurable at all (885's tracked item).
+   * @param identityDeletionGraceMs how long a confirmed-deleted path keeps its document identity
+   *     before a file reappearing there is treated as a NEW document (default 30 days, tempdoc 931
+   *     §C.6). Temporary absence — an unmounted drive, a sync client hiding a file — must not
+   *     permanently break identity, and a confirmed replacement must not inherit the old
+   *     document's feedback; the window is what separates the two.
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -712,7 +717,11 @@ public record ResolvedConfig(
       String nrtMode,
       int nrtBackgroundReopenMs,
       int nrtOnDemandMaxStaleMs,
-      int commitTimerIntervalMs) {
+      int commitTimerIntervalMs,
+      long identityDeletionGraceMs) {
+
+    /** Default deletion grace for document identity: 30 days in ms (tempdoc 931 §C.6). */
+    public static final long DEFAULT_IDENTITY_DELETION_GRACE_MS = 2_592_000_000L;
 
     /** Wire value of the default NRT reopen strategy (today's behaviour). */
     public static final String NRT_MODE_CONTINUOUS = "continuous";

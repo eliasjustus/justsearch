@@ -147,7 +147,12 @@ function renderSettings(manifest, currentSettings) {
  */
 function renderPublicTemplate(manifest) {
   const safeBase = { ...JSON.parse(readFileSync(PUBLIC_BASE, 'utf8')) };
-  delete safeBase.permissions; // never publish a permissions posture inherited from local config
+  // Publish the `deny` rules (tempdoc 930 row 4 moved force-push protection off a PreToolUse
+  // guard onto native permissions — dropping them at cutover would leave the retirement with a
+  // hole), but never an allow/ask posture inherited from local config.
+  const deny = safeBase.permissions?.deny;
+  if (Array.isArray(deny) && deny.length > 0) safeBase.permissions = { deny };
+  else delete safeBase.permissions;
   delete safeBase.env; // never publish founder-local env
   return JSON.stringify(
     { ...safeBase, hooks: renderHooksBlock(manifest, PUBLIC_EXCLUDED_HOOKS) }, null, 2) + '\n';
@@ -163,7 +168,7 @@ function renderPublicTemplate(manifest) {
 function renderLocalExample(manifest) {
   const base = { ...JSON.parse(readFileSync(PUBLIC_BASE, 'utf8')) };
   delete base.hooks; // regenerated below as the full set
-  base.permissions = base.permissions ?? { allow: [], deny: [], ask: [] };
+  base.permissions = { allow: [], deny: [], ask: [], ...(base.permissions ?? {}) };
   base.env = base.env ?? {};
   return JSON.stringify({ ...base, hooks: renderHooksBlock(manifest) }, null, 2) + '\n';
 }

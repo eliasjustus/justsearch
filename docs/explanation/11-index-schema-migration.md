@@ -445,6 +445,12 @@ identity table is non-empty. A promoted Green is a new generation, so its first 
 then records its own row; Green's parents are already in the store by then, so that pass imports
 nothing new and simply confirms the identity authority survived the cutover.
 
+A rebuild never marks a document deleted. The nullable `deleted_at` column added in schema V13 is
+set only where the Worker removed a document because its file is VERIFIED absent, and it starts the
+`index.identity.deletion_grace_ms` window described in
+[Storage engine → Document identity](04-storage-engine.md#document-identity). Existing rows migrate
+with NULL, which is the honest value: nothing observed their deletion, so nothing may claim it.
+
 Cutover is performed as a **`state.json` pointer swap + Worker restart** (restart-based cutover), which avoids in-process hot-swapping complexity and is easier to make crash-safe.
 
 ## Embedding readiness gate (`embeddingReadyLatch`)
