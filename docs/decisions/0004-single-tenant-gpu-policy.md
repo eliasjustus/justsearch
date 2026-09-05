@@ -1,5 +1,5 @@
 ---
-title: Single-Tenant GPU Policy
+title: "ADR-0004: Single-Tenant GPU Policy"
 type: decision
 status: superseded
 description: "Mutual exclusion between embedding and generative models for VRAM safety."

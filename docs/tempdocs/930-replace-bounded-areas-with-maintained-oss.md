@@ -697,7 +697,19 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
 5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
-7. `docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.
+7. ~~`docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.~~
+   **DONE 2026-09-05** (PR `docs(930): docs-validate exits 0 and runs on PRs`): `tags`/`aliases`
+   retired (1,626 warnings, no consumer reads either key and no doc carries one); the H1 counter
+   now skips fenced code blocks (the 92 "Multiple H1" hits were `#` comments in shell blocks);
+   the H1 rules are scoped to durable docs (`docs/tempdocs/**` H1s are read by nothing — 406
+   findings, zero consumers); 96 canonical/runbook docs repaired at the cause; 33 tempdoc
+   frontmatter blocks re-quoted so they parse; 743's U+FFFD restored to `ä`. Exit 0, and the
+   script now runs in the `Public claims` job, `public-ci-local-repro.v1.json`, `npm run
+   lint:docs` and the CLAUDE.md pre-merge table. One knock-on: chunk G's `check-tempdoc-size`
+   failed any PR that *touched* one of the 195 already-over-cap tempdocs, so a mechanical
+   frontmatter repair was unlandable without an unrelated content move. It now compares against
+   the base ref and fails only when an over-cap tempdoc GREW (crossing the cap still fails);
+   the cap's own rationale is unbounded growth, not any edit. Covered by 5 new tests.
 8. ~~`modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
    lint` has 24 pre-existing errors on `main`.~~ **CLOSED 2026-09-05** (same PR). Re-measured on
    `origin/main` after #661: 0 errors, 37 warnings — the 24 errors were already gone, so only the

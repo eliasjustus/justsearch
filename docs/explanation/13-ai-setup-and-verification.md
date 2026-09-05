@@ -5,7 +5,7 @@ status: stable
 description: "Current v1 setup, installer bundling, and verification workflows."
 ---
 
-# 13. AI Setup + Verification (Current State)
+# AI Setup + Verification (Current State)
 
 This document describes the **current production behavior** for JustSearch v2/v3 AI setup and how we verify it.
 It is intentionally descriptive: it explains **what the system does today** and how to prove it works.

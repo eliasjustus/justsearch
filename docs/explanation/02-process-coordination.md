@@ -5,7 +5,7 @@ status: stable
 description: 'MMF signaling, the "Suicide Pact", and the indexing duty cycle.'
 ---
 
-# 02. Process Coordination & The "Nervous System"
+# Process Coordination
 
 In a multi-process architecture, coordination is the hardest problem. JustSearch uses a custom "Nervous System" built on **Memory-Mapped Files (MMF)** and **gRPC** to ensure sub-millisecond coordination between the Main Process ("Head") and the Knowledge Server ("Body").
 

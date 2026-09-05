@@ -4,7 +4,7 @@ type: tempdocs
 status: "complete + MERGED (PR #124, squash 40138f7, 2026-07-10; sweep-hardening rider PR #128): corpus acquired + registered (mixed/realdocs-v1, 620 real files, pinned manifest), jseval raw-binary support shipped, TWO instrumented runs executed (run 1 partial/founder-stopped → heap verdict at the constant site; run 2 full-corpus post-706-engine → extraction 5× faster, real extraction_method distribution recorded, and a heap-exhaustion-induced native SPLADE-tokenizer crash found, root-caused, fixed in SpladeEncoder, and validated by resuming enrichment past the death zone). Remaining out-of-scope: the general raise-vs-bound heap decision (first instance answered: bound), and the chunk-embedding pacing cap (691's domain, inbox-logged)."
 created: 2026-07-07
 updated: 2026-07-10
-author: agent session 2026-07-07 (gap established empirically during 682 item 1: PDF search across F:\\JustSearch found 3 fixture PDFs; jseval mixed/ datasets verified to be corpus.jsonl text)
+author: "agent session 2026-07-07 (gap established empirically during 682 item 1: PDF search across F:\\\\JustSearch found 3 fixture PDFs; jseval mixed/ datasets verified to be corpus.jsonl text)"
 category: eval-corpora / measurement / indexing
 related:
   - 682-inherited-constants-stabilization-batch   # the heap measurement whose scope hole this closes (its §Item 1 follow-up)

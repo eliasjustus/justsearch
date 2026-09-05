@@ -1,5 +1,5 @@
 ---
-title: "Runbook: index.start-error"
+title: "Runbook: `index.start-error`"
 type: runbook
 status: stable
 description: "Operator response when the indexer fails to start (worker spawn failure)."

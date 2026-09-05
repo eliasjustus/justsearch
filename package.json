@@ -19,6 +19,7 @@
     "lint:ps1": "node scripts/ci/check-ps1-warning-comments.mjs",
     "test:lint-ps1": "node --test scripts/ci/check-ps1-warning-comments.test.mjs",
     "lint:md": "markdownlint docs/explanation/**/*.md docs/reference/**/*.md docs/how-to/**/*.md docs/decisions/**/*.md",
+    "lint:docs": "node scripts/docs/docs-validate.mjs",
     "check:llmstxt": "node scripts/docs/llmstxt-generate.mjs --check",
     "docs:anchor-audit": "node scripts/docs/anchor-audit.mjs --root docs",
     "docs:anchor-audit:write": "node scripts/docs/anchor-audit.mjs --root docs --fix-links"

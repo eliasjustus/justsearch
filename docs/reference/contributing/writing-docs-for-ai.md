@@ -5,7 +5,7 @@ status: stable
 description: "How to keep docs agent-friendly."
 ---
 
-# Documentation Guidelines for AI Agents
+# Writing Docs for AI
 
 **ATTENTION AI AGENTS:** JustSearch’s documentation is written to be **agent-friendly** by default.
 The canonical, must-not-drift docs live under:

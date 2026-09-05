@@ -5,7 +5,7 @@ status: stable
 description: "Telemetry, NDJSON logs, and Distributed Tracing."
 ---
 
-# 08. Observability: "Verify, Don't Guess"
+# Observability & Telemetry
 
 Because JustSearch runs locally on user machines, we cannot rely on cloud logging (Splunk/Datadog). Instead, we embed a "Black Box" recorder inside the application to allow for post-mortem debugging and real-time introspection.
 

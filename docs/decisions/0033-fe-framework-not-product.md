@@ -1,5 +1,5 @@
 ---
-title: "Frontend as a framework, not a product"
+title: "ADR-0033: Frontend as a framework, not a product"
 type: decision
 status: accepted
 description: "The frontend is a framework whose surfaces are projected from declarations, so users/plugins can author presentation without forking the shell."

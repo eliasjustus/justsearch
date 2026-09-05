@@ -5,7 +5,7 @@ status: stable
 description: "Lucene internals, schema (SSOT), and locking strategies."
 ---
 
-# 04. Storage Engine (Lucene)
+# Storage Engine
 
 JustSearch wraps **Apache Lucene 10** as its core storage engine. We do not use higher-level wrappers like Elasticsearch or Solr; we interact directly with the Lucene API (`IndexWriter`, `IndexSearcher`) for maximum performance and minimal footprint.
 

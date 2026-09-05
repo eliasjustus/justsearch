@@ -1,5 +1,5 @@
 ---
-title: "Frontend three primitives — Operation, Resource, Prompt"
+title: "ADR-0031: Frontend three primitives — Operation, Resource, Prompt"
 type: decision
 status: accepted
 description: "The frontend framework is built on three registry primitives — Operation (do), Resource (observe), Prompt (ask) — mirroring the MCP split. All UI affordances project from these."
