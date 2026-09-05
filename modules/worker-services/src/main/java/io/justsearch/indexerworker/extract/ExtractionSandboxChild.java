@@ -126,6 +126,9 @@ public final class ExtractionSandboxChild {
    * must run <b>this</b> orphan-prevention code, not a copy of it — a copied watchdog would make
    * the system-level "Worker shutdown leaves no orphan" assertion prove nothing about production.
    */
+  // Halting IS the contract here: a parser child whose parent died must not outlive it, and no
+  // orderly shutdown is available from a watchdog thread in a doomed process.
+  @SuppressWarnings("PMD.DoNotTerminateVM")
   public static void startParentWatchdog(String[] args) {
     long parentPid = parentPid(args);
     if (parentPid <= 0) {

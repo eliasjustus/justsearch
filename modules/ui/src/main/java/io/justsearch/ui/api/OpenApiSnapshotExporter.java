@@ -36,6 +36,9 @@ public final class OpenApiSnapshotExporter {
    * <p>The input is a captured route manifest. This command never reconstructs route registration and
    * never claims that an offline snapshot matches a current Head.
    */
+  // Offline CLI entry point invoked by a Gradle task, not a service path: stdout IS this tool's
+  // output, so routing it through SLF4J would hide it behind the logging config.
+  @SuppressWarnings("PMD.SystemPrintln")
   public static void main(String[] args) throws Exception {
     if (args.length < 2 || args.length > 3 || (args.length == 3 && !"--check".equals(args[2]))) {
       throw new IllegalArgumentException(

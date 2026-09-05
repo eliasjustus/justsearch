@@ -72,7 +72,7 @@ have caught: an integration conflict with something that landed while you waited
 ### PMD violation
 
 ```bash
-./gradlew.bat pmdMain pmdTest                     # reproduce
+./gradlew.bat pmdMain                             # reproduce (test sources: -Ppmd.includeTests=true)
 # Fix the code to satisfy the rule. Do NOT add @SuppressWarnings.
 # If rule is wrong for this case, check agent-guide §3.3 PMD table for exceptions.
 ```

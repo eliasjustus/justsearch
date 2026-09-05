@@ -102,7 +102,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private static final Logger log = LoggerFactory.getLogger(GrpcIngestService.class);
   /** Maximum chars stored in `content_preview` (result list snippet field). */
   private static final int CONTENT_PREVIEW_MAX_CHARS =
-      io.justsearch.indexerworker.rag.ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
+      ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
 
   /** Maximum files allowed in a single batch request. */
   private static final int MAX_BATCH_SIZE = 10_000;
@@ -123,7 +123,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private final JobQueue jobQueue;
   private final IndexingLoop indexingLoop;
-  private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: foreground-contention duty cycle for the prune / sync walks. */
   private final IndexingPacing indexingPacing;
   private final io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle;
@@ -175,7 +174,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       Runnable restartWorkerCallback) {
     this.jobQueue = jobQueue;
     this.indexingLoop = indexingLoop;
-    this.signalBus = signalBus;
     this.indexingPacing =
         java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.ingestLifecycle = ingestLifecycle;
@@ -256,7 +254,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private static void respondUpgrade(
       StreamObserver<UpgradeQuiescenceResponse> responseObserver,
-      java.util.function.Supplier<UpgradeQuiescenceResponse> action) {
+      Supplier<UpgradeQuiescenceResponse> action) {
     try {
       responseObserver.onNext(action.get());
       responseObserver.onCompleted();

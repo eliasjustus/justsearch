@@ -49,4 +49,11 @@
   <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
   <rule ref="category/java/bestpractices.xml/UnusedAssignment"/>
   <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+
+  <!-- Parked-marker ban — mirrors `ruleset.xml`; a CLI module is no more entitled to a TODO. -->
+  <rule ref="category/java/documentation.xml/CommentContent">
+    <properties>
+      <property name="forbiddenRegex" value="(?i)\b(todo|fixme|xxx)\b"/>
+    </properties>
+  </rule>
 </ruleset>

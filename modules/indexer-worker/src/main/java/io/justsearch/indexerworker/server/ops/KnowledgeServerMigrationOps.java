@@ -324,7 +324,7 @@ public final class KnowledgeServerMigrationOps {
    * index-fingerprint / embedding-fp rules can be unit-tested without a (sealed) {@link LuceneRuntime} double.
    */
   static boolean verifyGreenMetadata(
-      java.util.Map<String, String> ud, String expectedEmbeddingFp, Logger log) {
+      Map<String, String> ud, String expectedEmbeddingFp, Logger log) {
     String buildState = ud.get("build_state");
     if (!"COMPLETE".equalsIgnoreCase(buildState)) {
       log.warn("Green verification failed: build_state={} (expected COMPLETE)", buildState);

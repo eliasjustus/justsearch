@@ -226,11 +226,12 @@ final class InferenceHandlers {
     // benchmark-release hardware projection can publish it. The ORT *version* is captured
     // WORKER-side (where ORT is initialized) and surfaced via the health effective_config map
     // into /api/debug/state — NOT here, because the Head runs no ORT sessions. Best-effort.
-    String cudaVersion = null;
+    String cudaVersion;
     try {
       cudaVersion = io.justsearch.ort.OrtCudaHelper.CUDA_TOOLKIT_MAJOR;
     } catch (Exception ignored) {
       // constant lookup is informational only.
+      cudaVersion = null;
     }
 
     builder.gpu(new InferenceGpuView(

@@ -808,7 +808,7 @@ public class HeadlessApp {
       // before the condition substrate exists (the AI autostart seed writes chatEnabled on a fresh
       // profile), and a successful save clears the store's own record; the user was still reset
       // and must still be told.
-      final java.util.Optional<
+      final Optional<
               io.justsearch.app.services.settings.UiSettingsStore.RecoveredFromCorrupt>
           settingsRecovery = settingsStore.lastRecovery();
 
@@ -939,7 +939,7 @@ public class HeadlessApp {
       // manifest's mode.intent by the listener wiring.
       String modeIntent =
           io.justsearch.configuration.model.InstallIntent.fromConfig(
-                  io.justsearch.configuration.EnvRegistry.MODE.get().orElse(null))
+                  EnvRegistry.MODE.get().orElse(null))
               .id();
       // Tempdoc 825 review F3: the supplier falls back to the boot-time instance. The worker
       // listener fires on the READY transition, which happens INSIDE a recovery attempt — before
@@ -1079,7 +1079,7 @@ public class HeadlessApp {
       io.justsearch.telemetry.TracingBootstrap tracing,
       Telemetry telemetry,
       AppInstanceLock appInstanceLock) {
-    java.util.List<String> errors = new java.util.ArrayList<>();
+    List<String> errors = new java.util.ArrayList<>();
     String workerOutcome = "GRACEFUL";
     try {
       if (manifestPublisher != null) manifestPublisher.close();

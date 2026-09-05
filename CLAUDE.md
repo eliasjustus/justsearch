@@ -147,7 +147,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 | Hot-reload after edit | `reload` (requires `hotReload: true` on dev-stack start) |
 | Pre-merge gate | `./gradlew.bat build -x test` from main before merge |
 
-`spotlessCheck` checks whitespace; PMD is opt-in. `spotlessApply` fixes it but does **not** format Java.
+`spotlessCheck` and `pmdMain` run in `check`/`build`. `spotlessApply` fixes whitespace, **not** Java formatting.
 
 Public hosted `CI` runs on PRs, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted/specialty workflows remain manual. Local-first verification stays primary. For CI triage load `/ci-triage`; for profiling/live stack load `/jseval` and `/dev-stack`.
 
