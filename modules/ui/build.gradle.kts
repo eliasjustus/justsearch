@@ -436,7 +436,7 @@ val onnxNoticeFile = layout.buildDirectory.file("onnx-models/NOTICE-MODELS.txt")
 // forks the registry (it silently omitted the Qwen chat model). It is now PROJECTED from
 // ai/model-registry.v2.json's `license` field by scripts/codegen/gen-notices.mjs into the committed
 // packaging/runtime/NOTICE-MODELS.txt; this task simply stages that file into the bundle. The
-// check-notices-regen CI gate fails the build if the committed file drifts from the registry.
+// regen-all --check CI gate fails the build if the committed file drifts from the registry.
 val generateOnnxNotice by tasks.registering {
   group = "distribution"
   description = "Stage the registry-projected model attribution notice (gen-notices.mjs; tempdoc 632)"

@@ -95,7 +95,16 @@ export default defineConfig([
       'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
+      // Tempdoc 930 chunk F — replaces the `ts-any` kernel gate. The gate counted `any` with a
+      // regex over raw file text, so it scored the English word "any" in prose comments (the
+      // `ts-any-gate-counts-english-prose` red). The lint rule parses, so it cannot. The existing
+      // violations are carried in `eslint-suppressions.json` (ESLint bulk suppressions), which is
+      // the ratchet: a NEW `any` fails, and removing one and re-running `--prune-suppressions`
+      // lowers the count. That is the same ratchet shape with none of the kernel bookkeeping.
+      '@typescript-eslint/no-explicit-any': 'error',
+      // Tempdoc 930 chunk F — replaces the `todo-fixme` kernel gate (TypeScript half; the Java
+      // half is the PMD `CommentContent` rule in config/pmd/ruleset.xml).
+      'no-warning-comments': ['error', { terms: ['todo', 'fixme', 'xxx'], location: 'anywhere' }],
     },
   },
 

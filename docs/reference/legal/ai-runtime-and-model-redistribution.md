@@ -75,7 +75,7 @@ Important: shipping `llama.cpp` / `llama-server.exe` does **not** automatically 
 
 License is now a first-class field on every package in `modules/configuration/src/main/resources/ai/model-registry.v2.json`
 (the `license` field, added in tempdoc 632). The committed `NOTICE` / `THIRD_PARTY_NOTICES` PROJECT from it via
-`scripts/codegen/gen-notices.mjs` (guarded by `check-notices-regen`), so this doc and the notices cannot drift from
+`scripts/codegen/gen-notices.mjs` (guarded by `regen-all --check`), so this doc and the notices cannot drift from
 the registry. Current chat model: `Qwen/Qwen3.5-9B` (Apache-2.0). The five ONNX/SPLADE packages are Apache-2.0
 except the Davlan NER model (**AFL-3.0**); the `cuda-runtime` package is `LicenseRef-NVIDIA-CUDA-EULA`.
 
@@ -170,7 +170,7 @@ Some `llama-server.exe` builds (including CUDA-capable variants) may depend on t
 
 JustSearch bundles models for embedding, SPLADE, reranking, citation scoring, NER, and chat. The table below is
 **projected from `ai/model-registry.v2.json`** (the license SSOT) by `scripts/codegen/gen-notices.mjs` and guarded
-by `check-notices-regen` — it cannot drift from the registry, and editing it by hand is overwritten on regen.
+by `regen-all --check` — it cannot drift from the registry, and editing it by hand is overwritten on regen.
 
 <!-- GENERATED:MODEL_LICENSES:BEGIN — do not edit; run: node scripts/codegen/gen-notices.mjs -->
 | Model | License | Source |
@@ -193,7 +193,7 @@ ONNX weights for cross-encoder models are obtained from the [Xenova](https://hug
   by `scripts/codegen/gen-notices.mjs` as a projection of **all five shipped trees**: the JVM dependency report
   (jk1), the frontend npm license dump, the **Rust/Cargo dependency dump** (the Tauri desktop shell's statically
   linked crates — `cargo metadata`), the model registry's `license` field, and the native-binary manifests
-  (llama.cpp, Tesseract + its 56 bundled DLLs, NVIDIA CUDA/cuDNN). `check-notices-regen` fails the build on drift,
+  (llama.cpp, Tesseract + its 56 bundled DLLs, NVIDIA CUDA/cuDNN). `regen-all --check` fails the build on drift,
   and its presence check also guards against a strong-copyleft (GPL/AGPL/SSPL) or UNKNOWN license in the npm/Cargo
   trees (which the JVM-only jk1 `checkLicense` gate does not cover). This closes the former 374 G12 gap. (The
   per-component installer notices — `NOTICE-MODELS.txt`, `NOTICE-TESSERACT.txt`, `NOTICE-NVIDIA-CUDA.txt` — continue

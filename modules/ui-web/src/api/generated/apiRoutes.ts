@@ -75,7 +75,6 @@ export const API_ROUTES = {
   "GET /api/diagnostics/ingestion/summary": { method: "GET", path: "/api/diagnostics/ingestion/summary", cohort: "observability", requiredCapabilities: [] },
   "GET /api/diagnostics/traces": { method: "GET", path: "/api/diagnostics/traces", cohort: "observability", requiredCapabilities: [] },
   "GET /api/feedback/capture": { method: "GET", path: "/api/feedback/capture", cohort: "interaction", requiredCapabilities: [] },
-  "GET /api/governance/state": { method: "GET", path: "/api/governance/state", cohort: "governance", requiredCapabilities: [] },
   "GET /api/gpu/capabilities": { method: "GET", path: "/api/gpu/capabilities", cohort: "inference", requiredCapabilities: [] },
   "GET /api/health": { method: "GET", path: "/api/health", cohort: "observability", requiredCapabilities: [] },
   "GET /api/health/events/stream": { method: "GET", path: "/api/health/events/stream", cohort: "observability", requiredCapabilities: [] },

@@ -85,7 +85,7 @@ export function repinRuleDescription(rulePrefix, suffix = REPIN_RULE_SUFFIX) {
  *
  * `direction` names which way a pin has to move to accommodate a measured value: `growth` for a
  * ceiling (dead code, `any`-casts, TODOs, config keys, deps, advisories — the pin must rise),
- * `regression` for a floor (test-to-code ratio, mutation strength — the pin must fall). Getting
+ * `regression` for a floor (mutation test-strength — the pin must fall). Getting
  * this wrong would print "advance the pin" at an author who has to lower it.
  */
 function pinMovementClause(livePin, priorPin, direction) {

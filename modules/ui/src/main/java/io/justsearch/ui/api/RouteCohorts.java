@@ -61,7 +61,6 @@ final class RouteCohorts {
           Map.entry("/api/plugins", "plugins"),
           Map.entry("/api/policy", "config"),
           Map.entry("/api/settings", "config"),
-          Map.entry("/api/governance", "governance"),
           Map.entry("/api/mcp", "mcp"),
           Map.entry("/mcp", "mcp"),
           Map.entry("/v1", "openai-compat"),

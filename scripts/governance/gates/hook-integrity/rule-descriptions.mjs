@@ -30,9 +30,6 @@ export const HOOK_INTEGRITY_RULE_DESCRIPTIONS = {
   'hook-integrity/blocking-hook-no-bite-spec':
     'A role:blocking hook declares no `bite` spec, so its rung-2 claim is unverified.',
   'hook-integrity/blocking-hook-has-bite-spec': 'A blocking hook declares a bite spec (pass).',
-  'hook-integrity/tier-register-hook-unresolved':
-    'A `hook:` marker in docs/reference/contributing/tier-register.md does not resolve to a manifest.hooks entry.',
-  'hook-integrity/tier-register-hook-resolves': 'A tier-register hook marker resolves (pass).',
   'hook-integrity/orphan-hook-file':
     'A hook file exists on disk (scripts/agent-analytics/hooks/) but is absent from the manifest catalog, ' +
     'so it can never be wired or gate-checked — the ui-shot-cleanup.mjs defect (tempdoc 861 §3c).',

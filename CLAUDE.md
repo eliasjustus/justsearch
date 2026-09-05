@@ -162,6 +162,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | `contracts/**` | `--gate wire` |
 | `docs/decisions/**` | `--gate adr-coverage` |
 | new `<dataDir>/runtime/` file | `check-runtime-manifest-closure` |
+| generated files (regen set) | `regen-all --check` |
 | NSIS hooks · tauri bundle resources · sidecar staging | `check-update-preserves-models` |
 | `SSOT/catalogs/**` · analyzers schema · `adapters-lucene/**` | `check-language-agnostic-analysis` |
 | `docs/tempdocs/**` | `check-tempdoc-numbers` · `check-tempdoc-size` |

@@ -5,8 +5,8 @@
  * marker — declared but NOT actually guarded).
  *
  * This lifts the previously-duplicated parsing/resolution out of the execution-surface enforcer
- * (guard-string grammar + gate/test resolution) and the prose-tier-register enforcer (the
- * archunit/test class-file resolver), so both gates AND the new `register-guard-resolution`
+ * (guard-string grammar + gate/test resolution) and the since-retired prose-tier-register enforcer
+ * (the archunit/test class-file resolver), so the surface gates AND the `register-guard-resolution`
  * meta-pass resolve guards through ONE implementation.
  */
 

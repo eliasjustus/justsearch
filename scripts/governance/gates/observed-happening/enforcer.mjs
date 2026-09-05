@@ -145,7 +145,7 @@ export async function enforceObservedHappening(options) {
   // (9) liveness-window-coherent — RETIRED (tempdoc 575 §17 Face A). The window's coherence is no
   // longer DETECTED here: the worker + FE constants are now GENERATED from this register
   // (scripts/codegen/gen-liveness-constants.mjs), which validates the ordering law at generation and
-  // throws on an incoherent window. The `check-liveness-constants-regen` gate (runs the generator
+  // throws on an incoherent window. The `regen-all --check` gate (runs the generator
   // --check) is the replacement teeth — drift is impossible by construction, not caught after the fact.
 
   push(verdictForUnresolvedContributors({ violations: unique(unresolved).sort() }), registerRel);
