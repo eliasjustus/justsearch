@@ -25,5 +25,5 @@ if (!fs.existsSync(DIR)) {
 const files = fs.readdirSync(DIR);
 console.log(`check-no-observations-shards: FAIL — docs/observations.d/ exists (${files.length} file(s)); the inbox was retired in tempdoc 872.`);
 for (const f of files) console.log(`  ${f}`);
-console.log('Route each `- [ ]` note per CLAUDE.md `rule:log-pre-existing-issues` (fix in place / expected-state pin / rules / owning tempdoc), then `git rm -r docs/observations.d`.');
+console.log('Route each `- [ ]` note per CLAUDE.md `rule:log-pre-existing-issues` (fix in place / rules / owning tempdoc), then `git rm -r docs/observations.d`.');
 process.exit(1);

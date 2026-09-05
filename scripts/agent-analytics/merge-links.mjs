@@ -232,8 +232,8 @@ export const MECHANISM_LANDED = '2026-08-19T20:30:51Z';
  *
  * This floor exists because the metric shipped without one and immediately read
  * **1/1 = 100%**, i.e. already "satisfying" a condition that gates deleting a
- * fallback writer. The same effort added `insufficient` floors to analyze-trends
- * and context-attribution, and the instrument it retired carried a derived
+ * fallback writer. The same effort added `insufficient` floors to
+ * context-attribution, and the instrument it retired carried a derived
  * 44-pair floor — the floor was the one thing not ported. Reporting a conclusion
  * from n=1 is the failure this lane keeps finding elsewhere.
  */
@@ -289,7 +289,7 @@ export function summarizeCoverage(commits, {
       : Math.round((declared.length / prCommits.length) * 1000) / 10,
     minDenominator,
     // The percentage is still reported when insufficient — the numbers stay
-    // visible, only the CONCLUSION is withheld. Same shape as analyze-trends and
+    // visible, only the CONCLUSION is withheld. Same shape as
     // context-attribution: refusing to draw a verdict is not refusing to show data.
     insufficient: prCommits.length < minDenominator,
     distinctSessions: sessions.size,

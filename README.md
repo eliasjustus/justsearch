@@ -69,8 +69,8 @@ build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how
 JustSearch exposes its retrieval over MCP at `POST /mcp` — **in-process Streamable HTTP** on the loopback API
 (no separate process, no Node.js). The desktop app listens on **`http://127.0.0.1:8080`** by default; if 8080
 is already taken it falls back to a random free port. To pin a port, set the `JUSTSEARCH_API_PORT` environment
-variable before launching; the actual port in use is always written to
-`%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. Details + a 2-minute Claude Desktop walkthrough:
+variable before launching; the actual port in use is always written as `head.apiPort` in
+`%APPDATA%\io.justsearch.shell\runtime\manifest.json`. Details + a 2-minute Claude Desktop walkthrough:
 [`docs/reference/mcp-production-server.md`](docs/reference/mcp-production-server.md). Connect your agent:
 
 - **Claude Code:** `claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp`

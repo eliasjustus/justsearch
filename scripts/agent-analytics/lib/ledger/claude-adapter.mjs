@@ -258,10 +258,10 @@ function collectJsonlFiles(dir, out, depth = 0) {
 
 /**
  * Parse ONE Claude Code transcript file (main or subagent) into `{calls,
- * toolEvents}`, for a caller that already knows which file it wants (886 §12
- * PR 4's `spawn-cost-hint.mjs`: it has already joined a PostToolUse `Agent`
- * call to one `subagents/agent-*.jsonl` file via `tool_use_id`/`agentId` and
- * needs that ONE file's calls, not `listClaudeCalls`' whole-corpus scan).
+ * toolEvents}`, for a caller that already knows which file it wants — one that
+ * has already joined an `Agent` call to a single `subagents/agent-*.jsonl` file
+ * via `tool_use_id`/`agentId` and needs that ONE file's calls, not
+ * `listClaudeCalls`' whole-corpus scan.
  * Thin export of the module-private `processClaudeTranscript` — no second
  * parse implementation. `sessionId` defaults to the file's own basename
  * (mirrors `listClaudeCalls`' subagent id convention); `lineage` defaults to
