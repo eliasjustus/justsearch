@@ -726,7 +726,7 @@ final class AgentSession {
     return approvalGates.values().stream()
         .sorted(java.util.Comparator.comparingLong(PendingGate::sinceEpochMs))
         .map(PendingGate::detail)
-        .filter(java.util.Objects::nonNull)
+        .filter(Objects::nonNull)
         .toList();
   }
 
@@ -981,16 +981,20 @@ final class AgentSession {
     // read back as ABSENT — say-nothing — and rendered as ordinary evidence. Deletion is the
     // stronger removal of the two, and it is recorded at the writer rather than inferred at the
     // reader, which is how the two halves diverged in the first place.
+    boolean droppedACarrier = false;
     for (Map<String, Object> message : messages.subList(start, dropEnd)) {
       if ("tool".equals(message.get("role"))
           && message.get("tool_call_id") instanceof String id
           && !id.isBlank()) {
         carriersWithTextRemoved.add(id);
-        // A compaction that dropped a carrier IS an observation about the prompt. Arming here means
-        // the producer's silence is a statement about evidence rather than an artefact of which
-        // passes happened to run.
-        compressionObserved = true;
+        droppedACarrier = true;
       }
+    }
+    if (droppedACarrier) {
+      // A compaction that dropped a carrier IS an observation about the prompt. Arming here means
+      // the producer's silence is a statement about evidence rather than an artefact of which
+      // passes happened to run.
+      compressionObserved = true;
     }
     messages.subList(start, dropEnd).clear();
     return dropped;

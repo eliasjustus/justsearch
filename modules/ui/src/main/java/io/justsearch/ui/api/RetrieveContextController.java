@@ -182,7 +182,7 @@ public class RetrieveContextController {
         modifiedAt, false, pathPrefix, fileKind,
         autoEntityExtract, format,
         metaSource, metaAuthor, metaCategory, metaPublishedAt, returnFullDocuments,
-        java.util.List.of(), collection);
+        List.of(), collection);
 
     try {
       ContextResult result = documentService()

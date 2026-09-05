@@ -301,7 +301,7 @@ final class ConversationApiAssembly {
                     continue;
                   }
                   String shapeId = c.get("shapeId") == null ? null : c.get("shapeId").toString();
-                  if (c.get("messages") instanceof java.util.List<?> list) {
+                  if (c.get("messages") instanceof List<?> list) {
                     for (var msg : list) {
                       if (msg instanceof java.util.Map<?, ?> raw) {
                         var typed = new java.util.LinkedHashMap<String, Object>();

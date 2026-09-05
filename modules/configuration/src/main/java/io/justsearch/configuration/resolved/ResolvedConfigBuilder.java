@@ -177,7 +177,7 @@ public final class ResolvedConfigBuilder {
    * Only populated when {@link #buildPhaseActive} is true (during {@code build*()}).
    * Exposed via {@link #resolvedKeys()} for architectural tests (tempdoc 347 D7).
    */
-  private final java.util.Set<String> resolvedKeys = new java.util.LinkedHashSet<>();
+  private final Set<String> resolvedKeys = new java.util.LinkedHashSet<>();
 
   /** True during the build*() phase of {@link #build()}. Guards resolvedKeys population. */
   private boolean buildPhaseActive;
@@ -585,7 +585,7 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_delivery.budget_bytes",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
     // 789 Phase 2: the three agent-delivery framings — probe substrate, ALL default OFF. Nothing
     // in the delivered response changes until an arm turns one on.
@@ -609,7 +609,7 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_framing.thin_result_floor_bytes",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_THIN_RESULT_FLOOR_BYTES));
     // 771 item (b): entity carriage — default OFF, so an unconfigured process delivers exactly the
     // pre-771 response.
@@ -625,14 +625,14 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_delivery.entity_carriage_max_chars",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
     putYamlDouble(
         "search.mcp_framing.weak_score_floor", searchRoot, "mcp_framing.weak_score_floor");
     putDefault(
         "search.mcp_framing.weak_score_floor",
         Double.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
+            ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -909,7 +909,7 @@ public final class ResolvedConfigBuilder {
    *
    * @return unmodifiable set of resolved keys (empty before {@code build()} is called)
    */
-  public java.util.Set<String> resolvedKeys() {
+  public Set<String> resolvedKeys() {
     return java.util.Collections.unmodifiableSet(resolvedKeys);
   }
 

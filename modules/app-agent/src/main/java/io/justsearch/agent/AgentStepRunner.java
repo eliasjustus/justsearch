@@ -336,8 +336,7 @@ final class AgentStepRunner {
             sink.accept(new AgentEvent.ContextGatePending(pressureTokens, contextWindow));
             checkpointer.checkpoint(
                 sessionId, session, "WAITING_CONTEXT", "Context pressure — awaiting decision");
-            AgentSession.ContextGateDecision ctxDecision =
-                AgentSession.ContextGateDecision.CONTINUE;
+            AgentSession.ContextGateDecision ctxDecision;
             boolean gateWentUnanswered = false;
             try {
               ctxDecision = contextGateFuture.get(AgentTimeouts.contextGateMs(), TimeUnit.MILLISECONDS);
@@ -1340,8 +1339,8 @@ final class AgentStepRunner {
 
     AgentSession.VirtualToolResult vtr;
     try {
-      vtr = future.get(AgentTimeouts.virtualToolMs(), java.util.concurrent.TimeUnit.MILLISECONDS);
-    } catch (java.util.concurrent.TimeoutException te) {
+      vtr = future.get(AgentTimeouts.virtualToolMs(), TimeUnit.MILLISECONDS);
+    } catch (TimeoutException te) {
       vtr = AgentSession.VirtualToolResult.failure(
           "virtual tool '" + call.toolName() + "' timed out after "
               + TimeUnit.MILLISECONDS.toSeconds(AgentTimeouts.virtualToolMs())

@@ -1065,9 +1065,9 @@ public final class KnowledgeServer implements Closeable {
    */
   static boolean isSchemaMismatch(Throwable t) {
     for (Throwable c = t; c != null; c = c.getCause()) {
-      if (c instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
+      if (c instanceof IndexRuntimeIOException ire
           && ire.reason()
-              == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason
+              == IndexRuntimeIOException.Reason
                   .SCHEMA_MISMATCH) {
         return true;
       }
@@ -1081,8 +1081,8 @@ public final class KnowledgeServer implements Closeable {
   /** True if a startup failure was caused by an unrecoverable corrupt Lucene index (628 Stage D-part2). */
   private static boolean isCorruptIndexCause(Throwable e) {
     for (Throwable t = e; t != null; t = t.getCause()) {
-      if (t instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
-          && ire.reason() == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason.CORRUPT_INDEX) {
+      if (t instanceof IndexRuntimeIOException ire
+          && ire.reason() == IndexRuntimeIOException.Reason.CORRUPT_INDEX) {
         return true;
       }
     }
@@ -1845,10 +1845,10 @@ public final class KnowledgeServer implements Closeable {
    * The metadata this runtime would commit — the "expected" side of every parity comparison. One
    * builder, so the pre-open check, the open-time guard and the commit itself cannot disagree.
    */
-  private java.util.Map<String, Object> expectedCommitMetadata(
+  private Map<String, Object> expectedCommitMetadata(
       java.util.function.Supplier<java.util.Optional<String>> fingerprintSupplier) {
     return new EmbeddingMetadataOverlay(
-            new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource(),
+            new SsotCommitMetadataSource(),
             fingerprintSupplier,
             SpladeFingerprint::get)
         .build();

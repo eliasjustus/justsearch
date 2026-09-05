@@ -465,7 +465,7 @@ public final class SearchResponseBuilder {
 
     // Tempdoc 775 step 1: flag-gated answer-bearing EvidenceSpan selection for the delivery excerpt.
     // Default off → the IDF-only computeExcerptRegions path below runs unchanged (byte-for-byte).
-    io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig =
+    ResolvedConfig resolvedConfig =
         resolvedConfigSupplier != null ? resolvedConfigSupplier.get() : null;
     EvidenceSpanSelector evidenceSelector =
         buildEvidenceSelector(resolvedConfig, includeExcerpts, analyzer);
@@ -688,7 +688,7 @@ public final class SearchResponseBuilder {
    * treats a comma-joined value as one whole unit: coarser budget accounting, never a cut name.
    */
   private Map<String, Map<String, String>> resolveChunkParentEntities(
-      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      ResolvedConfig resolvedConfig,
       List<LuceneRuntimeTypes.SearchHit> hits) {
     if (resolvedConfig == null
         || resolvedConfig.search().mcpEntityCarriage() == null
@@ -742,7 +742,7 @@ public final class SearchResponseBuilder {
    * which case the delivery excerpt falls back to the byte-for-byte IDF-only path.
    */
   private EvidenceSpanSelector buildEvidenceSelector(
-      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      ResolvedConfig resolvedConfig,
       boolean includeExcerpts,
       Analyzer analyzer) {
     if (resolvedConfig == null || !includeExcerpts || analyzer == null) return null;

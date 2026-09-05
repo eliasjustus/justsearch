@@ -158,7 +158,7 @@ final class AgentLlmCaller {
    * saying so would be noise on every search-only run — which is most of them.
    */
   private static String openedInventory(AgentSession session) {
-    java.util.List<String> opened = session.openedDocumentPaths();
+    List<String> opened = session.openedDocumentPaths();
     if (opened.isEmpty()) {
       return "";
     }
@@ -555,7 +555,7 @@ final class AgentLlmCaller {
      * {@code object} included, arrives as the raw string; no observed leak has carried one, and
      * inventing a parse for an unobserved shape is how a recovery layer starts guessing.
      */
-    String argumentsJson(String name, java.util.LinkedHashMap<String, String> rawValues) {
+    String argumentsJson(String name, LinkedHashMap<String, String> rawValues) {
       Map<String, String> declared = parameterTypes.getOrDefault(name, Map.of());
       var node = MAPPER.createObjectNode();
       for (Map.Entry<String, String> e : rawValues.entrySet()) {

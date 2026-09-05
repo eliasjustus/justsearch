@@ -359,7 +359,7 @@ public interface IndexingService {
    * Lists FAILED jobs under a watched-root path prefix (tempdoc 599 §16/B1) — the per-folder
    * "failed files" drill-down. Returns empty when the Worker is unavailable.
    */
-  default List<FailedJobInfo> listFailedJobsByPathPrefix(java.nio.file.Path pathPrefix, int limit) {
+  default List<FailedJobInfo> listFailedJobsByPathPrefix(Path pathPrefix, int limit) {
     return List.of();
   }
 

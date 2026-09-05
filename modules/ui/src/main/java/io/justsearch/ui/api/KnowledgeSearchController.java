@@ -148,7 +148,7 @@ public class KnowledgeSearchController {
    * {@code USER_CITATION_CLICK} — a USER clicking a citation in a chat answer, distinct from the
    * LLM's own {@code AGENT_CITATION} harvest. Both land in the same canonical stream.
    */
-  public void handleDisposition(io.javalin.http.Context ctx) {
+  public void handleDisposition(Context ctx) {
     try {
       @SuppressWarnings("unchecked")
       Map<String, Object> body = (Map<String, Object>) ctx.bodyAsClass(Map.class);

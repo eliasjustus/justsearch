@@ -313,7 +313,10 @@ public final class EncoderBatchSweepBench {
           try (var lease = sessions.acquire()) {
             lastLeaseIsCpu = lease.isCpu();
             long t0 = System.nanoTime();
-            try (OrtSession.Result result = lease.session().run(inputs, lease.runOptions())) {
+            OrtSession.Result result = lease.session().run(inputs, lease.runOptions());
+            // The bench measures the run, not the outputs; the resource block exists only to free
+            // the native tensors before the next iteration.
+            try (result) {
               long elapsed = System.nanoTime() - t0;
               if (i >= warmup) {
                 timingsNs.add(elapsed);

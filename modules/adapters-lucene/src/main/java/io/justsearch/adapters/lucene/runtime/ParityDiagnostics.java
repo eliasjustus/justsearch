@@ -259,7 +259,7 @@ public final class ParityDiagnostics {
    */
   private static List<Diff> determinateInputDiff(
       Map<String, String> stored, Map<String, Object> expected) {
-    java.util.Set<String> ignored =
+    Set<String> ignored =
         new java.util.TreeSet<>(
             io.justsearch.adapters.lucene.commit.IndexFingerprint.indeterminateModelInputs());
     String storedInputs = storedInputsJson(stored);

@@ -84,7 +84,7 @@ public record OperationResult(
    * unchanged. Applied once at the dispatch seam — the single authoritative stamp.
    */
   public OperationResult withLineage(OutputLineage lineage) {
-    java.util.Map<String, Object> merged = new java.util.HashMap<>(structuredData);
+    Map<String, Object> merged = new java.util.HashMap<>(structuredData);
     merged.put(LINEAGE_KEY, lineage.wireToken());
     return new OperationResult(
         success, message, executionId, merged, errorCode, errorDetails, retryable);
@@ -136,7 +136,7 @@ public record OperationResult(
       item.put("acquisition", s.acquisition());
       wire.add(Map.copyOf(item));
     }
-    java.util.Map<String, Object> merged = new java.util.HashMap<>(structuredData);
+    Map<String, Object> merged = new java.util.HashMap<>(structuredData);
     merged.put(GROUNDING_KEY, java.util.List.copyOf(wire));
     return new OperationResult(
         success, message, executionId, merged, errorCode, errorDetails, retryable);

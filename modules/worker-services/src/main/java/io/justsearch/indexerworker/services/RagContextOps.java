@@ -311,7 +311,7 @@ final class RagContextOps {
     // Tempdoc 610 §J.3 — the whole-doc fallback can't honour chunk-level exclusion, so drop any parent
     // doc whose chunks the user hid; otherwise excluding all of a scoped doc's chunks would silently
     // re-inject its full text here. (The Head's own fetchBatchFallback is filtered the same way.)
-    java.util.Set<String> fallbackDocIds =
+    Set<String> fallbackDocIds =
         ChunkExclusionQuery.dropExcludedParents(effectiveDocIds, request.getExcludedChunksList());
     return buildFallbackWithVirtualChunks(
         question, fallbackDocIds, topK, chunksFoundInSearch, fallbackReason, "FULLTEXT_FALLBACK",
@@ -1687,7 +1687,7 @@ final class RagContextOps {
   private static <T> Set<T> intersectSets(Set<T> a, Set<T> b) {
     Set<T> smaller = a.size() <= b.size() ? a : b;
     Set<T> larger = a.size() <= b.size() ? b : a;
-    Set<T> result = new java.util.LinkedHashSet<>();
+    Set<T> result = new LinkedHashSet<>();
     for (T item : smaller) {
       if (larger.contains(item)) result.add(item);
     }

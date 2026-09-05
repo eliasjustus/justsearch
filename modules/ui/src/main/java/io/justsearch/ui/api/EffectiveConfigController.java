@@ -147,7 +147,7 @@ public final class EffectiveConfigController {
     // -------------------------------------------------------------------------
     // AI knobs
     // -------------------------------------------------------------------------
-    keys.add(keyContextSize(runtimeInfo, envInference));
+    keys.add(keyContextSize(envInference));
     keys.add(keyGpuLayers(runtimeInfo, envInference, policy));
     keys.add(keyAiDisabled());
 
@@ -534,9 +534,7 @@ public final class EffectiveConfigController {
    * {@code source: "runtime"} with the resolved value as a conflict: after a ladder step-down the
    * resolver holds the PLANNED rung and only {@code /props} knows the real one.
    */
-  private Map<String, Object> keyContextSize(
-      OnlineAiRuntimeIntrospection.RuntimeInfo runtimeInfo,
-      InferenceConfig envInference) {
+  private Map<String, Object> keyContextSize(InferenceConfig envInference) {
     ConfigResolution resolution =
         configStore != null ? configStore.get().resolution("justsearch.context.size") : null;
     Integer resolved =
