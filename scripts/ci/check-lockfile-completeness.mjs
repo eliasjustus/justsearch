@@ -17,9 +17,12 @@
  * It is pure file reading — no network, no install, no resolver — so it is cheap enough
  * to run on every lockfile change.
  *
- * Not checked here: whether the resolved version satisfies the declared range. `overrides`
- * deliberately violate ranges (that is what they are for), so range satisfaction is not a
- * drift signal. Presence is.
+ * Two things this deliberately does NOT check, so a green is not read as more than it is.
+ * Whether the resolved version satisfies the declared range: `overrides` violate ranges by
+ * design, so range satisfaction is not a drift signal here — presence is. And edges other
+ * than `dependencies`: an `optionalDependencies` entry that does not apply to the host is
+ * legitimately absent, and an optional peer likewise, so scanning those would fire on every
+ * platform-specific tree. The observed failure class lives in `dependencies`.
  */
 
 import fs from 'node:fs';
