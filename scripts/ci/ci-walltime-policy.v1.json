@@ -36,7 +36,7 @@
       "requiredCheck": "Build (no model blobs)",
       "owner": "no-model assemble, web-bundle build and PMD static analysis",
       "hardTimeoutSeconds": 1500,
-      "notes": "Recent median 131s, observed max 498s. Tempdoc 930 §22.2 follow-up 2 added the pmdMain step on top of the completed assemble; measured at ~23s wall locally, so the advisory budget is unchanged and should be re-read against the next observed median.",
+      "notes": "Recent median 131s, observed max 498s. Tempdoc 930 §22.2 follow-up 2 added the pmdMain step on top of the completed assemble: 49s of a 352s job on hosted run 33958691983 (predicted ~23-30s locally with classes already compiled). The advisory budget is unchanged; re-read it against the next observed median.",
       "advisoryBudgets": { "maxWallSeconds": 600 }
     },
     {
