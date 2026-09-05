@@ -1,7 +1,7 @@
 ---
 title: "Replace bounded areas with maintained open source: whole-project analysis (product + agentic system + tooling) of where a polished, regularly-updated upstream can absorb bespoke code, ranked by maintainer effort saved"
 type: tempdocs
-status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (npm-audit → dependency-review-action, PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
+status: "PUBLISHED (2026-09-05) — §18.1 rows 1-10 landed on main as nine squash PRs #649-#652, #654-#656, #661 and the closeout PR (§22 table, each with a green exact-SHA main run). Deviations per chunk in §21 and per PR in §22.1; tracked follow-ups in §22.2 (follow-up 1 done 2026-09-05: all 37 accepted advisory identities cleared by upgrade, dependency-review-action not adopted; remaining — PMD wiring, jseval-suite as required check, measured axe on PRs, row 11 updater lane). VDU skipped by founder decision."
 created: 2026-09-05
 updated: 2026-09-05
 lane: maintainer-effort / dependency strategy
@@ -680,8 +680,25 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 
 ### 22.2 Tracked follow-ups (owner actions; not scheduled here)
 
-1. `npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
-   retire the kernel gate.
+1. ~~`npm-audit`: adopt `actions/dependency-review-action` per ADR-0044's replacement clause, then
+   retire the kernel gate.~~ **DONE (2026-09-05)** — the upgrade half landed and the review half
+   resolved to "do not adopt". All 37 accepted high identities (22 root, 15 `ui-web` as measured
+   by the gate's own producer; the "17 / 11 root, 6 ui-web" figures above came from
+   `npm audit --audit-level=high`, which counts vulnerable *package nodes* — dependents such as
+   `markdownlint-cli` included — not advisory identities, re-run on `origin/main`'s lockfiles to
+   confirm) had a
+   published fix, so every one was cleared by upgrade and the baseline is now empty for all five
+   targets. `actions/dependency-review-action` was rejected as both a replacement and an
+   additional lane: it scores a revision diff via the dependency graph, not the checked-out
+   lockfile, and its `allow-ghsas` would be a second, un-gated acceptance authority. Evidence and
+   the two conditions that *do* hold (fails closed on 404/403; no GHAS needed) are in ADR-0044's
+   2026-09-05 amendment. Surfaced en route and fixed in the same PR: `npm install --package-lock-only`
+   under npm 11.6.2/win32-x64 prunes the transitive edges of optional `cpu: ["wasm32"]` packages,
+   producing a lockfile the runner's npm refuses (`Missing: @emnapi/core@… from lock file`) while a
+   local `npm ci` passes — three required jobs red on a condition nothing local reported. New gate
+   `scripts/ci/check-lockfile-completeness.mjs` (+ test, `ci.yml`, pre-merge table, local-repro
+   inventory) walks every declared edge offline and fails on a missing entry; the only reliable
+   repair is regenerating that lockfile from scratch, since incremental re-runs re-prune.
 2. ~~PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
    wire `pmdMain`, or accept dormancy explicitly.~~ **Done (follow-up 2, 2026-09-05.)** The real
    count was 130 across 9 modules (109 `UnnecessaryFullyQualifiedName`, 6 `UnusedAssignment`,
@@ -713,7 +730,19 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    `UnusedAssignment`, 16 `EmptyCatchBlock`, 10 `UnusedFormalParameter`, 6 `UnusedPrivateMethod`,
    1 `UnusedPrivateField`) — but zero `CommentContent`, so no marker is parked there today either.
 4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
-5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
+5. ~~`ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on
+   PRs.~~ **DONE 2026-09-05** — it does now, as the advisory `Measured axe` job in `ci.yml`.
+   Feasibility: the gate needs no backend at all (`--fixtures` route-mocks `/api/*` inside
+   Playwright, `ui_fixtures.py::install_fixtures`; `ui-shot` starts its own Vite,
+   `ui_shot.py::_start_vite_server`), so it is Node + Python + headless Chromium on
+   `ubuntu-latest`. Measured 350s / 20 surfaces locally, exit 0, identical `axe_new` across
+   two consecutive runs; first hosted run (#672, run 33958715012) exit 0 in 168s with rows
+   identical to Windows. Advisory (absent from `requiredStatusChecks` and from
+   `public-ci-local-repro.v1.json`) because a hosted Linux Chromium renders differently from
+   the Windows machine the register's `knownRules` were captured on; promotion needs
+   stability evidence from this lane first, the same path follow-up 4 walked. Recorded as the
+   ADR-0026 amendment 2026-09-05. `ui-proportion-gate` deliberately stays local-only — its
+   baseline is pixel geometry, far more runner-dependent than an axe rule id.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
 7. ~~`docs-validate.mjs` still exits 1 on pre-existing `[heading]`/`[tags]`/`[aliases]` findings.~~
    **DONE 2026-09-05** (PR `docs(930): docs-validate exits 0 and runs on PRs`): `tags`/`aliases`

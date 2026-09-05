@@ -143,7 +143,8 @@ def cmd_ui_a11y_gate(ctx, ui_url, output_dir, timeout_ms):
     Captures every surface in governance/ui-a11y-baseline.v1.json in the deterministic
     --fixtures state and compares its axe violations to the surface's accepted
     knownRules. Exit 0 = clean, 1 = a NEW (non-baselined) violation, 2 = capture error.
-    Local-first (ADR-0026): a runnable gate, not CI-wired.
+    Also runs on PRs as the advisory `Measured axe` job in ci.yml (ADR-0026 amendment
+    2026-09-05); that lane is not a required check, so run this locally too.
     """
     from .. import ui_a11y_gate, ui_shot
 
