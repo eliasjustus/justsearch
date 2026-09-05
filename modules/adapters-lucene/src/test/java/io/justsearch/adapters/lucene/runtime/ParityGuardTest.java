@@ -119,17 +119,21 @@ class ParityGuardTest {
   @Test
   void anEmptyIndexWithoutAFingerprintIsNotAMigrationCandidate() {
     assertFalse(
-        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", 0L),
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", null, 0L),
         "an empty index has no content that could have been written under the wrong shape");
     assertFalse(
-        ParityDiagnostics.isIndexWithoutRecordedFingerprint(null, 0L),
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint(null, null, 0L),
         "absent and blank are the same absence");
     assertTrue(
-        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", 1L),
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", null, 1L),
         "an index already holding documents of unrecorded shape needs the one-time rebuild");
     assertFalse(
-        ParityDiagnostics.isIndexWithoutRecordedFingerprint("recorded-shape", 1L),
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("recorded-shape", null, 1L),
         "a recorded shape is compared, not migrated blind");
+    assertFalse(
+        ParityDiagnostics.isIndexWithoutRecordedFingerprint("", "{\"vector_format\":\"int8_sq\"}", 1L),
+        "tempdoc 931 §C.5: a commit made while a model digest was unresolvable recorded its shape"
+            + " as inputs. That shape is compared, not charged a full rebuild");
   }
 
   /**

@@ -93,30 +93,45 @@ it against an index that was physically still perfectly compatible (tempdoc 804)
   answer" would switch the parity check off on every one of them.
 - **An uncomputable digest is not an uncomputable comparison** (`index_fingerprint_inputs`, 2026-09-05).
   The canonical inputs the digest hashes are stamped beside it, under `index_fingerprint_inputs`, on
-  every commit — including the ones where no digest could be computed. When the **expected** digest
-  is blank and both commits carry that rendering, `ParityDiagnostics.diff()` drops the unresolved
-  model keys (named by `IndexFingerprint.indeterminateModelInputs()`, because `INDETERMINATE` and
-  `NOT_CONFIGURED` both render as `null` and the JSON alone cannot tell them apart) from **both**
-  sides and compares the rest. A difference in any remaining input — vector dimension or similarity,
-  field shape, analyzer fingerprint, vector format, HNSW build params, chunking, `preview.max_chars`,
-  the analysis library versions — is reported as an `index_fingerprint` diff, so it takes the same
-  `SCHEMA_MISMATCH`, the same policy branch and the same rebuild brake as a digest mismatch. There is
-  no separate reason code: it is the same fact, established a different way. Before this, an
-  unreadable NER model file switched off the vector-dimension check it has nothing to do with.
-  Two cases keep the older behaviour of declining outright: a commit written before the inputs key
-  existed (nothing to compare against), and an index holding no documents. `IndexMetadataParityGuard`
-  logs a WARN once per boot either way, and the two WARNs differ — "checked WITHOUT the model
-  digests" vs "NOT being checked" — so a check that is not running never looks like a check that
-  passed, and a check that IS running does not look like one that was skipped.
-- **Legacy indexes migrate once, by design.** Every index built before this key existed has a blank
+  every commit — including the ones where no digest could be computed. The fallback is **symmetric**:
+  whenever *either* side is missing its digest and both carry that rendering,
+  `ParityDiagnostics.diff()` compares the inputs. (Either side can be the one missing it — this
+  runtime may be unable to read a model *now*, or the commit may have been unable to read one *then*,
+  and nothing re-stamps a stored digest until the index is next written to, so a one-sided condition
+  left static indexes of the second kind permanently unchecked.) Ambiguous model keys are dropped
+  from **both** sides first: the ones this runtime cannot resolve
+  (`IndexFingerprint.indeterminateModelInputs()`) plus, when the *commit* recorded no digest, every
+  model key it wrote as `null` (`IndexFingerprint.nullModelInputs()`) — because `INDETERMINATE` and
+  `NOT_CONFIGURED` both render as `null` and the JSON alone cannot tell them apart. A difference in
+  any remaining input — vector dimension or similarity, field shape, analyzer fingerprint, vector
+  format, HNSW build params, chunking, `preview.max_chars`, the analysis library versions — is
+  reported as an `index_fingerprint` diff, so it takes the same `SCHEMA_MISMATCH`, the same policy
+  branch and the same rebuild brake as a digest mismatch. There is no separate reason code: it is the
+  same fact, established a different way. Before this, an unreadable NER model file switched off the
+  vector-dimension check it has nothing to do with. When **both** digests are present the digest is
+  the answer and the fallback does not run — it is the stronger comparison, and running both would
+  report one shape change twice. **Honest limit:** because the stored side's `null` model keys are
+  dropped, a model *added* since a digest-less commit is not detected by the fallback; the next
+  commit records a digest and restores the full check. Two cases still decline outright: a commit
+  written before the inputs key existed (nothing to compare against), and an index holding no
+  documents. `IndexMetadataParityGuard` logs a WARN once per boot in every degraded case, and the
+  wordings differ — "checked WITHOUT the model digests" (naming which side could not answer) vs "NOT
+  being checked" — so a check that is not running never looks like a check that passed, and a check
+  that IS running does not look like one that was skipped.
+- **Legacy indexes migrate once, by design.** An index built before this key existed has a blank
   *stored* fingerprint, and it always will. Skipping that case would leave the guard permanently
-  inert on exactly the installs it exists to protect, so a blank stored value on a rebuild-requiring
-  key **is** a mismatch: the diff carries the `legacy-index-without-fingerprint` hint, and under the
-  production `BLUE_GREEN_MIGRATE` default the Worker rebuilds once, beside the live index, while
-  search keeps serving. This is the deliberate one-time upgrade rebuild the wave-2 release is built
-  around — existing installs pay for it once, and afterwards their shape is recorded. A blank stored
-  value on the *benign* key (`boosts_fp`) is still skipped: an unverifiable scoring descriptor is not
-  worth reporting, let alone acting on.
+  inert on exactly the installs it exists to protect, so a stored side with **no recorded shape at
+  all** — neither `index_fingerprint` nor `index_fingerprint_inputs`
+  (`ParityDiagnostics.isIndexWithoutRecordedFingerprint`) — **is** a mismatch: the diff carries the
+  `legacy-index-without-fingerprint` hint, and under the production `BLUE_GREEN_MIGRATE` default the
+  Worker rebuilds once, beside the live index, while search keeps serving. This is the deliberate
+  one-time upgrade rebuild the wave-2 release is built around — existing installs pay for it once,
+  and afterwards their shape is recorded. An index that recorded *inputs* but no digest is **not**
+  in this category: its shape was recorded, so it is compared (above), not charged a full reindex
+  because a model file was briefly unreadable during one commit. `IndexStatusOps.safeSchemaCompatState()`
+  reports through the same predicate and the same `diff()`, so the status banner cannot demand a
+  reindex the guard is not performing. A blank stored value on the *benign* key (`boosts_fp`) is
+  still skipped: an unverifiable scoring descriptor is not worth reporting, let alone acting on.
 - **Stamping:** on commit, the Worker writes `index_fingerprint` into Lucene commit user-data via
   `SsotCommitMetadataSource` (rendering version `IndexFingerprint.RENDERING_VERSION`), plus
   `index_fingerprint_inputs` — the canonical JSON the digest is the SHA-256 of, stamped verbatim and
@@ -286,11 +301,11 @@ anything for its whole prior life (tempdoc 804 §D1).
     `IndexRuntimeIOException(SCHEMA_MISMATCH)`, which `index.schema_mismatch.policy` acts on;
   - else (a `boosts_fp`-only diff — query-time config) throws `IllegalStateException`, marking the
     shard read-only until the config is realigned; this is never a reindex trigger.
-- When the expected `index_fingerprint` cannot be computed at all, the guard does **not** simply
-  stand down: it falls back to comparing `index_fingerprint_inputs` minus the unresolved model keys
-  and routes any difference as an `index_fingerprint` diff (see the tri-state bullets above).
-  `index_fingerprint_inputs` is deliberately not itself a `PARITY_KEYS` member — it is the same
-  statement as the digest, so comparing both would report one shape change twice.
+- When **either** side is missing its `index_fingerprint`, the guard does **not** simply stand down:
+  it falls back to comparing `index_fingerprint_inputs` minus the model keys neither side can state
+  unambiguously, and routes any difference as an `index_fingerprint` diff (see the tri-state bullets
+  above). `index_fingerprint_inputs` is deliberately not itself a `PARITY_KEYS` member — it is the
+  same statement as the digest, so comparing both would report one shape change twice.
 - `justsearch.index.parity.allow_mismatch` / `JUSTSEARCH_INDEX_PARITY_ALLOW_MISMATCH` now survives
   **only** as an explicit operator escape hatch — nothing sets it by default any more. An operator can
   still set it to open a known-divergent index read-only for diagnosis, and nothing else.

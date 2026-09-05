@@ -110,6 +110,15 @@ public final class IndexFingerprint {
   public static final String COMMIT_META_INPUTS_KEY = "index_fingerprint_inputs";
 
   /**
+   * The model-digest input names, in report order — the one place they are written. The canonical
+   * rendering, the "which input went unresolved" report and the parity fallback's ignore list all
+   * read them from here: three hand-typed copies of the same three strings is how one of them ends
+   * up spelled differently from the key that is actually hashed.
+   */
+  public static final List<String> MODEL_INPUT_KEYS =
+      List.of("embedding_model_sha256", "splade_model_sha256", "ner_model_sha256");
+
+  /**
    * Version of the {@link #compute} rendering itself. Bump it when the canonical JSON shape
    * changes in a way that must invalidate existing indexes even though every input is unchanged.
    */
@@ -230,17 +239,12 @@ public final class IndexFingerprint {
      * question went unanswered instead of just going quiet.
      */
     public List<String> indeterminateInputs() {
-      List<String> out = new ArrayList<>();
-      if (embeddingModel.state() == ModelState.INDETERMINATE) {
-        out.add("embedding_model_sha256");
-      }
-      if (spladeModel.state() == ModelState.INDETERMINATE) {
-        out.add("splade_model_sha256");
-      }
-      if (nerModel.state() == ModelState.INDETERMINATE) {
-        out.add("ner_model_sha256");
-      }
-      return List.copyOf(out);
+      return namedIndeterminate(orderedModels());
+    }
+
+    /** The three model fingerprints positionally aligned with {@link #MODEL_INPUT_KEYS}. */
+    List<ModelFingerprint> orderedModels() {
+      return List.of(embeddingModel, spladeModel, nerModel);
     }
   }
 
@@ -290,9 +294,10 @@ public final class IndexFingerprint {
     analysis.put("icu_version", inputs.analysis().icuVersion());
     root.put("analysis", analysis);
 
-    root.put("embedding_model_sha256", modelValue(inputs.embeddingModel()));
-    root.put("splade_model_sha256", modelValue(inputs.spladeModel()));
-    root.put("ner_model_sha256", modelValue(inputs.nerModel()));
+    List<ModelFingerprint> models = inputs.orderedModels();
+    for (int i = 0; i < MODEL_INPUT_KEYS.size(); i++) {
+      root.put(MODEL_INPUT_KEYS.get(i), modelValue(models.get(i)));
+    }
 
     List<FieldShape> sortedFields = new ArrayList<>(inputs.fields());
     sortedFields.sort((a, b) -> a.id().compareTo(b.id()));
@@ -553,15 +558,48 @@ public final class IndexFingerprint {
    * cause instead of silence.
    */
   public static List<String> indeterminateModelInputs() {
+    return namedIndeterminate(List.of(embeddingModel(), spladeModel(), nerModel()));
+  }
+
+  /** The {@link #MODEL_INPUT_KEYS} whose positionally-aligned fingerprint is INDETERMINATE. */
+  private static List<String> namedIndeterminate(List<ModelFingerprint> orderedModels) {
     List<String> out = new ArrayList<>();
-    if (embeddingModel().state() == ModelState.INDETERMINATE) {
-      out.add("embedding_model_sha256");
+    for (int i = 0; i < MODEL_INPUT_KEYS.size(); i++) {
+      if (orderedModels.get(i).state() == ModelState.INDETERMINATE) {
+        out.add(MODEL_INPUT_KEYS.get(i));
+      }
     }
-    if (spladeModel().state() == ModelState.INDETERMINATE) {
-      out.add("splade_model_sha256");
+    return List.copyOf(out);
+  }
+
+  /**
+   * The {@link #MODEL_INPUT_KEYS} that a stored canonical rendering records as JSON {@code null}.
+   *
+   * <p>Only meaningful when the commit recorded NO digest, and then it is the mirror image of
+   * {@link #indeterminateModelInputs()}: that names what THIS runtime cannot resolve, this names
+   * what the COMMIT could not resolve. A commit without a digest was written while at least one
+   * model was {@code INDETERMINATE}, but {@link #modelValue} renders {@code INDETERMINATE} and
+   * {@code NOT_CONFIGURED} identically as {@code null}, so the rendering cannot say which. Every
+   * null-valued model key is therefore ambiguous and must be dropped rather than reported as a
+   * difference against a digest this runtime can now read.
+   *
+   * <p><strong>Honest limit:</strong> because they are dropped, a model ADDED since such a commit
+   * (stored {@code null}, expected a real digest) is not caught by the fallback. That is a real
+   * miss, and it is still strictly better than the alternative it replaces — declining to compare
+   * anything at all, which missed the vector dimension too. It closes on the next commit, which
+   * records a digest.
+   */
+  public static List<String> nullModelInputs(String storedJson) {
+    JsonNode stored = storedJson == null ? null : parseOrNull(storedJson);
+    if (stored == null || !stored.isObject()) {
+      return List.of();
     }
-    if (nerModel().state() == ModelState.INDETERMINATE) {
-      out.add("ner_model_sha256");
+    List<String> out = new ArrayList<>();
+    for (String key : MODEL_INPUT_KEYS) {
+      JsonNode value = stored.path(key);
+      if (value.isMissingNode() || value.isNull()) {
+        out.add(key);
+      }
     }
     return List.copyOf(out);
   }

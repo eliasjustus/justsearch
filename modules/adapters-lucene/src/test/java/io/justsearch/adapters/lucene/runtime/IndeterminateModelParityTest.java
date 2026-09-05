@@ -213,6 +213,84 @@ final class IndeterminateModelParityTest {
   }
 
   /**
+   * The mirror of (i), and the gap the one-sided first cut left. The index was committed while a
+   * model file was unreadable, so it recorded inputs and no digest; this runtime can read
+   * everything, so it has a digest. Nothing re-stamps a stored digest until the next commit, so a
+   * static index in this state was never compared at all — the same bug-class as §C.5 itself,
+   * pointing the other way. It must be compared, and a changed vector dimension caught.
+   */
+  @Test
+  void anIndexCommittedWithoutADigestIsCheckedAgainstItsRecordedInputs() throws Exception {
+    Path dir = Files.createTempDirectory("parity-indet-stored-blank");
+    installUnreadableNerModel();
+    Map<String, String> stored = seed(dir, () -> new SsotCommitMetadataSource().build());
+    assertFalse(
+        stored.containsKey(IndexFingerprint.COMMIT_META_KEY),
+        "precondition: the commit recorded no digest");
+    assertTrue(
+        stored.containsKey(IndexFingerprint.COMMIT_META_INPUTS_KEY),
+        "precondition: but it did record the inputs");
+
+    // A later boot where every model resolves — and the vector dimension has moved underneath.
+    IndexFingerprint.resetModelFingerprintProviders();
+    IndexFingerprint.installEffectiveVectorDimension(() -> 1024);
+    Map<String, Object> expected = new SsotCommitMetadataSource().build();
+    assertTrue(
+        expected.containsKey(IndexFingerprint.COMMIT_META_KEY),
+        "precondition: this runtime CAN compute a digest, so the one-sided condition would have"
+            + " declined here");
+
+    var diffs = IndexMetadataParityGuard.inspectCommittedParity(dir, () -> expected);
+    assertEquals(1, diffs.size(), "one shape change, one diff: " + markers(diffs));
+    assertEquals(IndexFingerprint.COMMIT_META_KEY, diffs.getFirst().key());
+    assertTrue(
+        diffs.getFirst().marker().contains("fields[vector].vector.dimension"),
+        "the diagnostics must name the input that moved: " + diffs.getFirst().marker());
+    assertFalse(
+        diffs.getFirst().marker().contains(ParityDiagnostics.LEGACY_INDEX_HINT),
+        "and must NOT be filed as an index that recorded no shape — it recorded one");
+
+    var e =
+        assertThrows(
+            IndexRuntimeIOException.class,
+            () -> new IndexMetadataParityGuard(() -> dir, () -> expected).checkOnOpen());
+    assertEquals(IndexRuntimeIOException.Reason.SCHEMA_MISMATCH, e.reason());
+  }
+
+  /**
+   * The counter half of the mirror, and the reason the ignore list is a union. The stored side
+   * recorded {@code ner_model_sha256: null} — which could mean "indeterminate then" or "not
+   * configured then", indistinguishably — and this runtime now reads a real digest. Comparing those
+   * verbatim would report a difference that may not exist and rebuild the index for it. Nothing
+   * else moved, so nothing is reported, and the index is NOT charged the legacy one-time rebuild
+   * either.
+   */
+  @Test
+  void aStoredNullModelDigestIsNotAMismatchAgainstANowReadableOne() throws Exception {
+    Path dir = Files.createTempDirectory("parity-indet-stored-null-model");
+    installUnreadableNerModel();
+    Map<String, String> stored = seed(dir, () -> new SsotCommitMetadataSource().build());
+    assertTrue(
+        stored.get(IndexFingerprint.COMMIT_META_INPUTS_KEY).contains("\"ner_model_sha256\":null"),
+        "precondition: the commit recorded the NER digest as an ambiguous null");
+
+    IndexFingerprint.installModelFingerprintProviders(
+        IndexFingerprint.ModelFingerprint::notConfigured,
+        IndexFingerprint.ModelFingerprint::notConfigured,
+        () -> IndexFingerprint.ModelFingerprint.present("d".repeat(64)));
+    Map<String, Object> expected = new SsotCommitMetadataSource().build();
+
+    assertTrue(
+        ParityDiagnostics.determinateInputComparisonAvailable(stored, expected),
+        "the fallback must run — a green from skipping the comparison would prove nothing");
+    assertTrue(
+        IndexMetadataParityGuard.inspectCommittedParity(dir, () -> expected).isEmpty(),
+        "the only input that moved is one the stored side could not state unambiguously, so it is"
+            + " not a shape change — and the absent digest is not a legacy migration either");
+    new IndexMetadataParityGuard(() -> dir, () -> expected).checkOnOpen();
+  }
+
+  /**
    * (v) The inputs key is the SAME statement as the digest, so a shape change must be reported once.
    * A computable digest that differs is the digest's diff and nothing else — if the inputs had been
    * added to {@code PARITY_KEYS} this would report two.
@@ -220,7 +298,7 @@ final class IndeterminateModelParityTest {
   @Test
   void aComputableDigestMismatchIsReportedOnceNotTwice() throws Exception {
     Path dir = Files.createTempDirectory("parity-indet-nodouble");
-    seed(dir, () -> new SsotCommitMetadataSource().build());
+    Map<String, String> stored = seed(dir, () -> new SsotCommitMetadataSource().build());
 
     // Everything resolvable (so the digest IS computable), but a different physical shape.
     IndexFingerprint.installEffectiveVectorDimension(() -> 1024);
@@ -228,6 +306,10 @@ final class IndeterminateModelParityTest {
     assertTrue(
         expected.containsKey(IndexFingerprint.COMMIT_META_KEY),
         "precondition: this arm exercises the digest path, not the fallback");
+    assertFalse(
+        ParityDiagnostics.determinateInputComparisonAvailable(stored, expected),
+        "with BOTH digests present the digest is the answer — it covers the model inputs the"
+            + " fallback has to drop, so running the fallback too would only double-report");
 
     var diffs = IndexMetadataParityGuard.inspectCommittedParity(dir, () -> expected);
     assertEquals(1, diffs.size(), "one shape change, one diff: " + markers(diffs));
