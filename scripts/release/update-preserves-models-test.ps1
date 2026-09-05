@@ -105,6 +105,10 @@ $primaryUninstallKey = Join-Path -Path $uninstallRoot -ChildPath $ProductName
 
 $steps = New-Object System.Collections.Generic.List[object]
 $phases = New-Object System.Collections.Generic.List[object]
+# Initialized here, not at seeding time: every exit path runs the finally block, which publishes
+# this into the evidence file. Left unset, an early exit (missing installer) dies in the finally
+# under Set-StrictMode instead of writing the evidence explaining why it bailed.
+$script:seeds = New-Object System.Collections.Generic.List[object]
 $script:overallPass = $true
 
 function Record {
@@ -181,6 +185,36 @@ function Get-UninstallEntries {
   return $found
 }
 
+function Wait-ForRegistryState {
+  # A silent NSIS uninstall does NOT finish when the process you launched exits. The uninstaller
+  # copies itself to $TEMP and relaunches from there so it can delete its own directory; the
+  # ORIGINAL process returns 0 almost immediately. Sampling the filesystem at that moment reads a
+  # half-done uninstall -- and would score a VACUOUS PASS, because the seeded files "survive" an
+  # uninstaller that has not deleted anything yet. Poll for the observable completion signal (the
+  # Add/Remove Programs entry appearing or disappearing) instead of trusting the exit code.
+  param(
+    [Parameter(Mandatory = $true)][ValidateSet("absent", "version")][string]$Until,
+    [string]$ExpectedVersion = "",
+    [int]$TimeoutSec = 240
+  )
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $entries = @(Get-UninstallEntries)
+    $satisfied = if ($Until -eq "absent") {
+      $entries.Count -eq 0
+    } else {
+      ($entries.Count -eq 1) -and ($entries[0].displayVersion -eq $ExpectedVersion)
+    }
+    if ($satisfied) {
+      # Let the final batch of file operations drain before anything is hashed.
+      Start-Sleep -Seconds 5
+      return $true
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
 function New-SeedFile {
   # Instant large-file creation: write a random header (so the blob has a distinctive hash), then
   # SetLength to the target size. On NTFS this sets EOF without writing the tail, so a 256 MB
@@ -253,7 +287,11 @@ $evidence = [ordered]@{
     observationalLocal    = $dataRootLocal
     installDirCollidesWith = "observationalLocal"
   }
-  seeds            = @()
+  # Bound by reference, never reassigned. Assigning an ARRAY into an OrderedDictionary key throws
+  # System.ArgumentException ("Argument types do not match") because PowerShell reads it as a slice
+  # assignment against the dictionary's int indexer -- which previously destroyed the evidence file
+  # in the finally block. Populating the same List in place sidesteps the indexer entirely.
+  seeds            = $script:seeds
   phases           = $phases
   steps            = $steps
   verdict          = "UNKNOWN"
@@ -274,8 +312,14 @@ $evidence = [ordered]@{
   }
 }
 
+$script:published = $false
+
 function Write-EvidenceAndExit {
   param([int]$ExitCode)
+  # An early `exit` from inside the try re-enters the finally, which calls this again. Publish once
+  # so the log carries a single verdict.
+  if ($script:published) { exit $ExitCode }
+  $script:published = $true
   $evidence.overallPass = $script:overallPass
   $evidence.verdict = if ($script:overallPass) { "PASS" } else { "FAIL" }
   $evidence.steps = $steps
@@ -350,7 +394,6 @@ try {
   # -------------------------------------------------------------------------------------------
   # Phase 2 -- seed authored model state and record its exact identity.
   # -------------------------------------------------------------------------------------------
-  $script:seeds = New-Object System.Collections.Generic.List[object]
   foreach ($plan in $seedPlan) {
     $root = if ($plan.root -eq "appdata") { $dataRootAppData } else { $dataRootLocal }
     $abs = Join-Path -Path $root -ChildPath $plan.relative
@@ -383,6 +426,10 @@ try {
   $installCandPass = (-not $installCand.timedOut) -and ($installCand.exitCode -eq 0)
   Record -Name "install_candidate_over_base_silent" -Command "`"$CandidateInstaller`" /S" -ExitCode $installCand.exitCode -Pass $installCandPass `
     -Detail $(if ($installCand.timedOut) { $installCand.error } elseif ($installCand.error) { "Start-Process threw: $($installCand.error)" } else { "Exit code: $($installCand.exitCode)" })
+
+  $candSettled = Wait-ForRegistryState -Until "version" -ExpectedVersion $CandidateVersion -TimeoutSec $InstallTimeoutSec
+  Record -Name "await_upgrade_completion" -Command "poll HKCU DisplayVersion until '$CandidateVersion'" -Pass $candSettled `
+    -Detail $(if ($candSettled) { "Upgrade settled at DisplayVersion '$CandidateVersion'." } else { "Timed out waiting for DisplayVersion '$CandidateVersion'; the upgrade did not complete, so any survival result below would be vacuous." })
 
   $candEntries = @(Get-UninstallEntries)
   $candSingle = $candEntries.Count -eq 1
@@ -447,6 +494,12 @@ try {
     Record -Name "run_uninstaller_silent" -Command "`"$uninstallerPath`" /S" -ExitCode $uninstall.exitCode -Pass $uninstallPass `
       -Detail $(if ($uninstall.timedOut) { $uninstall.error } elseif ($uninstall.error) { "Start-Process threw: $($uninstall.error)" } else { "Exit code: $($uninstall.exitCode)" })
 
+    # Gating, and the reason the survival assertions below mean anything: the uninstall must be
+    # OBSERVED complete. Without this the seeds trivially "survive" an uninstaller still starting up.
+    $uninstallSettled = Wait-ForRegistryState -Until "absent" -TimeoutSec $UninstallTimeoutSec
+    Record -Name "await_uninstall_completion" -Command "poll HKCU Uninstall until the entry disappears" -Pass $uninstallSettled `
+      -Detail $(if ($uninstallSettled) { "Uninstall observed complete (Add/Remove Programs entry gone)." } else { "Timed out after ${UninstallTimeoutSec}s with the entry still present; the uninstall did not complete, so the survival result below would be vacuous." })
+
     # -----------------------------------------------------------------------------------------
     # Phase 6 -- ADR-0024: uninstall must preserve user data too, not just the upgrade.
     # -----------------------------------------------------------------------------------------
@@ -480,10 +533,13 @@ try {
       -Detail "Remaining entries: $($postEntries.Count)"
   }
 
-  $evidence.seeds = $seeds
 } catch {
   Record -Name "unexpected_exception" -Pass $false -Detail "$($_.Exception.GetType().FullName): $($_.Exception.Message)`n$($_.ScriptStackTrace)"
 } finally {
-  $evidence.seeds = @($script:seeds)
-  Write-EvidenceAndExit -ExitCode $(if ($script:overallPass) { 0 } else { 1 })
+  # Nothing here may throw: this is the only path that publishes the evidence file, and an
+  # exception raised in a finally replaces the real result with an unexplained stack trace.
+  # $evidence.seeds is bound to $script:seeds by reference at construction, so there is nothing
+  # to copy here.
+  $exitCode = if ($script:overallPass) { 0 } else { 1 }
+  Write-EvidenceAndExit -ExitCode $exitCode
 }
