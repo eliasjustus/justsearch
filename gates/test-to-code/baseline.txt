@@ -31,5 +31,5 @@ modules/system-tests 436 2026-09-03
 modules/telemetry 732 2026-09-03
 modules/test-support 385 2026-09-03
 modules/ui 912 2026-09-03
-modules/worker-core 632 2026-09-03
+modules/worker-core 631 2026-09-05
 modules/worker-services 990 2026-09-03
