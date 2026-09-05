@@ -180,6 +180,15 @@ subset is an approximation in one specific way — the hosted lane deliberately 
 `agent`, `ui`, and `scan` extras so their `pytest.importorskip` guards are exercised, while a
 developer workstation usually has them installed and therefore runs more tests, not fewer.
 
-Branch protection itself remains a repository setting outside this repo's diff, so the
-`main-merge-queue` ruleset is updated by a maintainer after this change lands;
-`scripts/ci/check-branch-protection.mjs` reports the gap in the interval.
+Promotion also makes the lane's wall-clock a measured quantity, which requires the advisory
+`ci-walltime` job to depend on it. `report-ci-walltime-attribution.mjs` drops any job that has
+no end time when the snapshot is taken, so a required lane missing from `ci-walltime`'s `needs:`
+would be absent from every attribution and would warn `missing-required-lane` forever. Adding a
+required lane therefore means adding it to that `needs:` list in the same change.
+
+`main`'s required status checks are a repository setting outside this repo's diff, held in
+classic branch protection (`repos/<owner>/<repo>/branches/main/protection`) rather than in the
+`main-merge-queue` ruleset, whose only rule is `merge_queue`. A maintainer updates that setting
+after this change lands; `scripts/ci/check-branch-protection.mjs` reports the declared-versus-
+live gap in the interval and is the only guard that can see it, because the default pull-request
+token cannot read branch-protection settings.
