@@ -1,0 +1,66 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+package io.justsearch.indexerworker.rag;
+
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
+import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
+import io.justsearch.core.util.TokenEstimation;
+import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkSplitter;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+@DisplayName("Chunk threshold characterization")
+final class ChunkThresholdCharacterizationTest {
+
+  @Test
+  @DisplayName("threshold is one default window under the canonical typical-prose estimate")
+  void thresholdIsOneCanonicalTypicalProseWindow() {
+    assertAll(
+        () -> assertEquals(2000, ChunkSplitter.CHUNK_THRESHOLD_CHARS),
+        () ->
+            assertEquals(
+                TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS),
+                ChunkSplitter.CHUNK_THRESHOLD_CHARS),
+        () ->
+            assertEquals(
+                ChunkSplitter.CHUNK_THRESHOLD_CHARS,
+                ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS));
+  }
+
+  @Test
+  @DisplayName("length prefilter plus a single splitter chunk emits no chunk documents")
+  void lengthPrefilterAndSingleChunkGuardBothSuppressWrites() {
+    DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
+    IndexingCoordinator indexingCoordinator = mock(IndexingCoordinator.class);
+
+    String belowThreshold = "x".repeat(ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS - 1);
+    assertEquals(
+        0,
+        ChunkDocumentWriter.regenerateChunks(
+            documentFieldOps, indexingCoordinator, "below", belowThreshold, null));
+
+    String oneEffectiveChunk =
+        "x".repeat(ChunkSplitter.DEFAULT_CHUNK_TOKENS)
+            + " ".repeat(
+                ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS
+                    - ChunkSplitter.DEFAULT_CHUNK_TOKENS);
+    assertEquals(ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS, oneEffectiveChunk.length());
+    assertEquals(1, ChunkSplitter.splitWithMetadata(oneEffectiveChunk).size());
+    assertEquals(
+        0,
+        ChunkDocumentWriter.regenerateChunks(
+            documentFieldOps, indexingCoordinator, "one-chunk", oneEffectiveChunk, null));
+
+    verify(indexingCoordinator, times(1)).deleteChunksForParentDocId("below");
+    verify(indexingCoordinator, times(1)).deleteChunksForParentDocId("one-chunk");
+    verify(indexingCoordinator, never()).indexSingle(any(IndexDocument.class));
+  }
+}

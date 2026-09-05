@@ -1,13 +1,13 @@
 ---
-title: "Lane E — search-quality re-derivation: chunking, small-to-big, parameter sweeps (Part 2 measured and REVERTED, Parts 1/3/4 designed)"
+title: "Lane E — search-quality re-derivation: chunking, small-to-big, parameter sweeps (Parts 1/2 closed; Part 3 parked; Part 4 delegated)"
 type: tempdocs
-status: "IN PROGRESS (2026-09-03) — Part 2 (aggregate-then-cut parent collapse) is CLOSED as REFUTED and fully REVERTED: audit finding 2 was measured at the set-membership level (sections G, I) and, after an independent review found the aggregate was a dead sort key, at the score-aggregation level (section J), across three index builds and two chunked corpora. No lambda passed the pre-registered rule; mechanism and both config keys are removed and the config-surface pin is back at 111/250. What ships is a characterization test suite that pins the collapse behaviour, including audit finding 2 as a measured-and-accepted limitation. Parts 1/3/4 have a pre-implementation pass and a campaign plan but are NOT executed; Part 3 is blocked on lane A."
+status: "CLOSED (2026-09-04) — Part 1 retains 500/50/100 after 32 clean, admissible runs and a formal early-stop proof; its unchanged 2000-character threshold is analytically characterized as a prefilter, not quality-optimized. Part 2 is REFUTED and fully REVERTED. Part 3 is operationally PARKED after an inadmissible legal A/B: the observed standard-profile record regressed gold-span visibility, but changing, unequal background enrichment prevents causal attribution. The landing branch reverts the candidate and a local safety branch preserves it for a terminal-index, anchor-aware rerun. Part 4 launches no Lane-E sweep: fusion/reranker work remains with 854, while the otherwise reachable BM25, efSearch and title-boost candidates lack a pre-registered hypothesis and held-out selection protocol. All residue is explicitly routed; no Lane-E benchmark remains."
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-04
 lane: E (decision re-examination programme, wave 2)
 model: opus (implementation)
 parent: 00-program-overview (decision re-examination programme, 2026-09-01 audit)
-coordination: "→ lane D waits on Part 1's chosen (chunk_tokens, overlap, threshold) plus a chunker version string for its fingerprint; Part 2 was measured, refuted and reverted, so it changes no index shape and needs nothing from D in either merge order. → tempdoc 854 (CHARTER, not started) owns the 854 W2-fix pool/limit coupling guard; this lane sweeps the fusion numbers in Part 4 only if 854 is still idle then. → Part 3 needs lane A's per-request ContextBudget merged."
+coordination: "→ lane D handoff is complete: retain 500/50/100, retain the analytically justified but not quality-optimized writer threshold at 2000, and keep algorithm version v1; main already fingerprints all five static inputs. → tempdoc 854 owns the W2 pool/limit coupling guard and clean reranker-window work, so Part 4 does not duplicate those experiments. → Lane A's per-request ContextBudget merged in ca1e75fa. Lane E's decision work is complete and Part 3/4 are not F-lane blockers; only normal Lane-E branch integration remains before F consumes it."
 related:
   - 774-passage-first-retrieval-program   # the chunk-branch levers this Part 2 lever sits beside
   - 854-fusion-residue-lane               # CHARTER; owns the W2-fix, not this
@@ -21,27 +21,51 @@ The 2026-09-01 audit found four decision clusters in the retrieval path that wer
 by weaker agents, and never re-derived. This tempdoc is lane E's contract. It restates the brief's
 items as a checklist (§A), records a source-verbatim verification of every `file:line` claim the
 brief makes (§B — the brief was written before wave 1 landed, so every citation is a hypothesis),
-plans the chunk-size campaign without executing it (§C), and implements and measures Part 2 (§D–§G).
+plans and executes the chunk-size campaign (§C, §K, §L), and implements and measures Part 2 (§D–§G).
 
 ---
 
 ## §A Scope checklist
 
-### Part 1 — chunk-size campaign (PENDING; lane D waits on its number)
+### Part 1 — target/overlap campaign and threshold follow-up CLOSED
 
 Prerequisite: none technical; it is deferred behind Part 2 only because Part 2 ships independently
-and Part 1 costs machine-days. Campaign plan in §C.
+and Part 1 costs machine-days. Preparation is logged in §K and the 2026-09-03/04 execution and
+decision are logged in §L.
 
-- [ ] Sweep `DEFAULT_CHUNK_TOKENS ∈ {128, 256, 384, 500} × overlap ∈ {0, 25, 50}` with
-      sentence-aligned boundaries, on the register's eval sets including the multilingual ones.
-- [ ] Metrics per arm: nDCG@10 + recall@50 for the chunk leg alone and fused; SPLADE truncation
-      rate; index size; indexing throughput.
-- [ ] RAG answer quality on the "845/881 question sets" — **see §B.11: these do not exist as
-      artefacts.** Replacement instrument named in §C.
-- [ ] Reconcile `OnnxEmbeddingEncoder.chunkOverlap` (128) with the splitter overlap (50) or
-      document why they differ.
-- [ ] Deliver `(chunk_tokens, overlap, threshold)` with σ-aware evidence, a PR touching only the
-      `ChunkSplitter` / `ChunkDocumentWriter` constants, and a chunker version string lane D reads.
+- [x] **Instrument built** — four TEMPORARY `EnvRegistry` keys at ordinal 400, resolved onto
+      `ResolvedConfig.Index` and reaching the Worker through the ordinal-450 snapshot, with
+      deletion committed in the changeset (§K.1). *Four, not §C.1's three: `min_tokens` is a
+      measured confounder, see §K.2.*
+- [x] **Doc-length distributions measured** (§C.3's open question, §K.3) — the two multilingual
+      corpora chunk 0.6% / 0.3% of their documents and are **controls, not arms**;
+      `ohr-bench-clean` is promoted from stretch goal to third arm corpus. 45 runs, not 72.
+- [x] **RAG question-set fixture built** — `scripts/jseval/916-corpora/rag-qa-v1/`, 150 qrel-derived
+      question/gold-doc/gold-span triples, no LLM, digests pinned (§K.4).
+- [x] **Campaign driver retained for evidence analysis** — `scripts/jseval/916_chunk_sweep.py`
+      remains resumable/admissibility-filtered for its original throwaway branch, but `run` now
+      refuses the shipping tree because the temporary Worker-bound keys are gone. It cannot silently
+      label default indexes as challenger arms.
+- [x] **Decision rule pre-registered BEFORE any arm runs** (§K.5).
+- [x] Reconcile `OnnxEmbeddingEncoder.chunkOverlap` (128) with the splitter overlap (50) or
+      document why they differ — **resolved as "document why", with a named invariant** (§K.2).
+- [x] Sweep `DEFAULT_CHUNK_TOKENS ∈ {128, 256, 384, 500} × overlap ∈ {0, 25, 50}` with
+      sentence-aligned boundaries: full legal and OHR matrices plus every Enron arm still capable
+      of adoption. Seven decision-inert Enron cells were pruned under §L.4's recorded deviation.
+- [x] Metrics per executed arm: nDCG@10 + R@10 and leg-union recall; SPLADE truncation rate; index
+      size; indexing throughput. `R@50` never existed in jseval; §K.5 records that correction.
+- [x] RAG answer quality disposition: not run. It can only veto a clause-1–5 survivor, and §L proves
+      there is none; running it cannot promote an arm.
+- [x] Deliver `(chunk_tokens, overlap, min_tokens) = (500, 50, 100)` with σ-aware evidence. No
+      production constant moves. The four campaign keys are deleted, and Lane D's merged
+      fingerprint already reads the static values plus `ALGORITHM_VERSION = "v1"`.
+- [x] **Threshold follow-up:** §C.2/§K.5's ambiguous post-selection method is superseded. The shipped
+      value is the canonical typical-prose conversion
+      `TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS) = 2000`: a cheap
+      one-typical-window writer prefilter. `ChunkSplitter` and the writer's one-chunk guard still
+      decide whether chunk documents exist. This is analytically derived and operationally
+      characterized, **not quality-optimized**; CJK can map 500 tokens to a different character
+      span, and no per-language threshold lever is introduced (§L.6).
 
 ### Part 2 — parent collapse fix (CLOSED — built, measured three times, REFUTED, REVERTED)
 
@@ -78,32 +102,176 @@ The proposal is therefore reverted, not shipped: this PR leaves production code 
       collapse, including audit finding 2 as an executable statement of the limitation, and the
       committed A/B driver `scripts/jseval/916_collapse_ab.py`.
 
-### Part 3 — small-to-big retrieval (BLOCKED on lane A)
+### Part 3 — small-to-big retrieval (DESIGN + RULE FROZEN; candidate PARKED)
 
-Prerequisite: lane A's per-request `ContextBudget` merged. Not started; no design here beyond the
-brief, because the budget's shape determines the window sizing.
+Lane A's per-request `ContextBudget` merged in `ca1e75fa` (#599). A source-level design pass and an
+independent refute-first review now agree on the smallest safe implementation. Retrieval and
+ranking continue to produce **anchor chunks**. Only after final ranking/diversification, Worker
+assembly may turn an anchor into one larger **context unit** consisting of that anchor followed by
+its immediate next persisted chunk. The next chunk is admitted only when it belongs to the same
+parent, has the exact same `(heading_level, heading_text)` tuple, is neither excluded nor another
+selected anchor, and has valid monotone absolute offsets whose overlap text agrees exactly. The
+context is anchor-first and the stored overlap is emitted once. Any missing or inconsistent
+metadata degrades to the anchor alone.
 
-- [ ] Separate retrieval unit from context unit in `RagContextOps` assembly.
-- [ ] Neighbouring-chunk or heading-bounded window sized by `ContextBudget`.
-- [ ] `--gate wire` if the `RetrieveContext` response shape changes.
+Forward-only is deliberate, not a quality claim. Both Worker and Head budgeters retain prefixes.
+Prepending a predecessor could therefore consume a partial-section budget before the cited anchor
+appears; protecting an anchor in the middle would require a wider offset contract through Worker,
+the app API and Head cutting. The shipped 50-token overlap already carries limited backward
+context. One immediate successor yields at most the natural two-chunk window without creating a
+radius/size setting. Synthetic/virtual chunk hits stay anchor-only.
+
+`RagContextOps` will represent `(anchor, context)` separately: sections contain the actual expanded
+context while `usedHits`, ranking scores, quality counts and citations retain the anchor. The
+existing positional invariant—section `i` ⇔ citation `i` ⇔ source-array entry `i`—must remain exact.
+Head will pass the same positive `ContextBudget.inputBudget()` for explicit-`docIds` retrieval as it
+already does for open retrieval, removing that conversation path's stale 200K-character opt-out;
+protocol callers that explicitly send zero keep the legacy character fallback. After Head applies
+its final cut, citation verification sources must carry the literal visible section text, because
+an ordinal lookup can recover only the anchor and not its appended neighbour. Inclusion status is
+measured against the anchor span: an intact anchor is `INCLUDED` even if an expanded suffix is cut;
+cutting inside the anchor is `PARTIAL`.
+
+No proto field, response array or configuration key is added. `ContextChunk` remains the cited
+anchor and `ContextSection.content` already carries the prompt-visible context unit, so the wire
+gate is not triggered. Exact neighbour lookup is batched under one Lucene searcher after ranking;
+the request `ContextBudget` remains the sole final cap.
+
+#### Part 3 bounded A/B rule — written before the baseline
+
+The overnight evidence window is intentionally bounded to the existing 50-query
+`mixed/legal-clerc-200` RAG fixture. It uses one retained-geometry index for both arms, `top_k=10`,
+`max_context_tokens=4096`, and the required `standard` chat profile. Baseline runs before production
+edits; the after arm uses the same materialized queries and index. Enron's roughly 38-minute rebuild
+is deferred as confirmation, not silently represented as completed.
+
+Primary measurement is deterministic **gold-span-in-visible-context rate**, newly reported by
+`tier2-eval`; it directly tests whether the added context exposes the fixture's answer span. The
+same record also reports answer `has_intersection`, errors, `context_truncated`, included context
+sections, context size and retrieval latency. It does **not** preserve included anchor identities or
+an anchor count; that post-run discovery makes this specific pair permanently incomplete for clause
+5. Commit `7e032ad9` subsequently makes canonical `tier2-eval` capture and validate ordered anchor
+identities/counts and produce a fail-closed paired comparison. Exact/substring answer scores remain
+diagnostic because the fixture answer is a passage span rather than a canonical short answer.
+
+The candidate earns a **GO** only if all of these hold:
+
+1. The structural tests prove anchor/citation identity, overlap de-duplication, heading/exclusion/
+   selected-neighbour guards, synthetic fallback, budget cutting and literal verification text.
+2. Gold-span-in-context does not regress and at least one baseline miss becomes visible. No newly
+   visible span means **PARK**: correct machinery without measured fixture utility is insufficient.
+3. `has_intersection` loses no more than one of 50 queries (the evaluator uses temperature 0.1),
+   after-arm errors do not exceed baseline, and paired wins/losses are disclosed.
+4. Average retrieval latency rises by no more than `max(25 ms, 25% of baseline)`. A breach is
+   **PARK** pending a deeper latency study rather than waived from a single run.
+5. `context_truncated` and included-anchor changes are reported, not optimized away. Any truncation
+   increase accompanied by anchor starvation or a quality loss fails clauses 2–3; the boolean alone
+   is not a rejection because both arms obey the same 4096-token cap.
+
+- [x] Separate retrieval unit from context unit in `RagContextOps` assembly in the parked candidate.
+- [x] Add forward immediate-neighbour expansion with the fail-soft guards above in the parked
+      candidate.
+- [x] Align scoped Head retrieval and literal citation verification with the one-budget contract in
+      the parked candidate.
+- [x] Run the frozen legal A/B without post-result threshold edits. The closest standard-profile
+      pair is inadmissible because enrichment changed differently during the arms; result:
+      **NO-VERDICT, operationally PARK** (§Part 3.1).
 - [ ] Re-evaluate the `parent_token_count` ramps once small-to-big exists; retire with a sweep if
       their reason is gone (coordinate with 854, which owns the branch-weight ramp).
-- [ ] Evidence: RAG answer quality + `context_truncated` rates before/after.
 
-### Part 4 — parameter sweep (PENDING; after Part 1's chunk size is chosen)
+#### Part 3.1 — implementation evidence, bounded A/B and PARK decision
 
-- [ ] `index.similarity.text.k1/.b` — **§B.6 overturns the brief's premise here**: they are already
-      settable from YAML. The item becomes "give them env/sysprop reach and defaults", not "wire a
-      dead lever". Then grid `k1 ∈ {0.6, 0.9, 1.2, 1.5} × b ∈ {0.3, 0.4, 0.6, 0.75}` (no reindex).
-- [ ] Fusion numbers (`rrf_k`, `vector_rrf_weight`, `bm25_score_boost_weight`, candidate
-      multipliers, `candidate_limit_max`) — only if 854 is still idle; check before starting.
-- [ ] `efSearch ∈ {64, 100, 200}` (query-time, no reindex). `efConstruction` / `M` are fingerprint
-      inputs → recommend to lane D only, do not change.
-- [ ] `title_boost ∈ {1, 2, 3, 5}`; reranker `top_k ∈ {20, 40}`; chunk-tier `top_k ∈ {10, 20}`
-      against the register's latency budget. **Caveat from F-055: `JUSTSEARCH_RERANK_TOP_K` is not
-      a pure window knob** — it also moves the worker `searchLimit` for every mode.
-- [ ] One results table, updated baselines/scorecard, and tempdoc 235's "No sweep" items closed
-      explicitly in the register.
+**Structural implementation and review.** The candidate kept ranked/cited anchors separate from
+prompt-visible context units, batched exact successor lookup under one Worker searcher, admitted
+only a same-parent immediate successor with identical heading metadata and exact overlap, and made
+Head citation verification use the literal post-cut visible section. Focused verification passed:
+`RAGContextTest`, `RemoteDocumentServiceCitationLookupPolicyTest`,
+`RagContextOpsSmallToBigTest`, `GrpcSearchServiceRetrieveContextTest` and
+`ChunkSearchIntegrationTest`, followed by the locked full `build -x test` (251 tasks, 42 seconds).
+After the final malformed-int64 regression was added, the focused Worker pair passed again (55
+tasks, 15 seconds). Independent refute-first review found and closed three P1/P2 defects before the
+live run: dropped-section lookup, non-additive estimator overflow, and expansion across another
+selected anchor. The final implementation review reported no remaining P0/P1. These candidate-only
+tests and code are preserved together at `6aa99a37`; the landing branch intentionally reverts them.
+
+**Why the first attempts are not evidence.** A foreign registered eval interrupted the first fresh
+baseline at query 3; its partial output was discarded. Direct standard-profile startup then left
+the 12 GB GPU with insufficient headroom: one retrieval succeeded and eight consecutive requests
+hit the backend's 15-second deadline, while generated answers repeatedly hit the evaluator's
+120-second retry limit. Compact-profile retrieval completed, but background enrichment advanced
+and diverged during the two arms (baseline 23/50 gold spans, candidate 19/50; four apparent wins,
+eight losses), so that pair is diagnostic only. No partial or failed output is used below.
+
+**Closest production-profile pair.** The supported runtime sequence was compact startup to let the
+Worker allocate its ONNX sessions, followed by switching to the required `standard` profile before
+the first measured request. Both arms began from SHA-256-identical copies of the same retained
+index (131 files, 37,357,250 bytes), used the same 50-query materialization, `top_k=10`,
+`max_context_tokens=4096`, query order and Qwen 3.5 9B model, and completed 50/50 with zero errors.
+Raw records:
+
+- baseline: `scripts/jseval/tmp/916-part3-rag/baseline-standard-warm-v1/tier2-eval.json`, SHA-256
+  `5B132C1B2A5031940EC2FC9213EE23760B24FF285A25C8368486EED6D6E6F125`;
+- candidate: `scripts/jseval/tmp/916-part3-rag/candidate-standard-warm-v1/tier2-eval.json`, SHA-256
+  `8C5F664D7D3C820C68119AC0638AD1F38D13E7F58139F6B8CA9AAEAC2A156FCC`.
+
+| frozen signal | baseline | candidate | paired/change | admissible reading |
+|---|---:|---:|---:|---|
+| gold span in visible context | 31/50 (62%) | 25/50 (50%) | 1 miss→hit, 7 hit→miss | would FAIL clause 2 |
+| answer `has_intersection` | 2/50 (4%) | 2/50 (4%) | 0 wins, 0 losses | passes clause 3 |
+| errors | 0 | 0 | unchanged | passes clause 3 |
+| `context_truncated` | 49/50 | 50/50 | one false→true | report; no independent veto |
+| mean retrieval latency | 2533.70 ms | 2587.04 ms | +53.34 ms (+2.11%) | passes 3167.13 ms ceiling |
+| `retrieval_chunks` | 448 total / 8.96 mean | 282 / 5.64 | lower on 49/50 | context-unit shape changed; **not an anchor count** |
+| approximate context tokens | 4071.36 mean | 4100.02 | +28.66 | both remained at the cap |
+
+**Admissibility failure.** The two byte-identical inputs did not remain the same logical index.
+Shortly before the first request, observed parent `(embedding, SPLADE, NER)` queue state was
+approximately `(22,106,5)` for baseline and `(30,202,5)` for candidate; it continued mutating to
+`(114,115,40)` and `(114,124,71)` respectively by arm end. Chunk embeddings stayed 2/4124.
+Additional enrichment can add a gold anchor or add competitors that displace it, so it is not a
+monotone favourable bias and can plausibly reverse a six-query net difference. The saved evaluator
+records omit anchor ids and literal contexts, so none of the eight changed gold-span outcomes can
+be attributed between changed ranking input and neighbour expansion/budget cutting.
+
+**Verdict: NO-VERDICT; operationally PARK.** If admissible, the result would reject the candidate
+decisively on clause 2 and would show near-universal reduction in included sections. It is not
+admissible enough to claim a causal regression, but it cannot earn a GO. The landing branch removes
+the candidate in `0f95a8d6`; local branch
+`codex/lane-e-part3-parked-candidate-20260904` preserves it at `6aa99a37`. The evaluator-side
+prerequisite is closed in `7e032ad9`: new records retain ordered structured anchor identities,
+validate producer counts and decision-bearing response fields, fingerprint the evaluator protocol,
+and compare only evaluator-compatible records while explicitly leaving same-index and enrichment-
+stability admission checks external. Reopen only with (1) a terminal, non-changing retained index
+throughout both arms, (2) the same standard-profile/runtime sequence, and (3) the same pre-registered
+thresholds. Completing the 4,122 pending chunk embeddings was the hour-scale path explicitly skipped
+in this bounded window; no Enron confirmation or full SciFact ratchet is claimed.
+
+**Evaluator verification.** From `scripts/jseval`, the final focused command
+`python -m pytest tests/test_agent_retrieval_eval.py tests/test_compact_model_guard.py
+tests/test_tier2_context_truncated.py tests/test_tier2_anchor_comparison.py -q` passed 82 tests in
+0.57 seconds. `python -m compileall -q jseval`, `python -m jseval tier2-eval --help`, and
+`git diff --check` also passed. An independent refute-first review found five initial and two
+follow-up fail-closed/protocol-coupling defects; all received production-seam regressions, and the
+final re-review reported no P0/P1/P2 findings.
+
+### Part 4 — parameter sweep (CLOSED AS ROUTED; no Lane-E campaign)
+
+The original candidate list is dispositioned rather than silently left pending:
+
+- **854 owns fusion and reranker depth.** Its measured pool/window arms are already parked. Before
+  another A/B it requires the pool/limit splice coupling to be guarded or decoupled and canonical
+  `jseval` support for the clean `PipelineConfig.crossEncoderWindow` lever. Lane E does not duplicate
+  those cells or reinterpret their confounded results.
+- **BM25 `k1`/`b`, `efSearch`, and `title_boost` are reachable, but reachability is not a research
+  hypothesis.** This lane has no pre-registered target class, held-out selection protocol, or
+  interaction rule for them. Launching the old grids now would be post-hoc parameter fishing. Any
+  future campaign needs a new explicit charter and owner before a run.
+- **`efConstruction` and HNSW `M` remain Lane-D fingerprint inputs, not query-time Lane-E levers.**
+- **No Part-4 results table or baseline update is produced.** Tempdoc 235's historical “No sweep”
+  rows are not falsely marked calibrated; the reason they remain unresolved is now explicit.
+
+This is a terminal Lane-E disposition. Part 4 neither blocks Lane F nor authorizes background
+benchmarking while 854's structural prerequisites remain open.
 
 ---
 
@@ -313,11 +481,13 @@ Also verified: `mergeCollapsedChunkParentHit` (`:1074-1088`) keeps `winner.score
 is already "max per parent" — the brief's "first-wins/max" is accurate; what is absent is the rest
 of the evidence and the post-aggregation cut.
 
-### B.13 tempdoc 854 status — **verified**
+### B.13 tempdoc 854 status — **verified at pre-implementation time; now superseded**
 
 `docs/tempdocs/854-fusion-residue-lane.md:4` is present and reads
-`status: "CHARTER (2026-08-19) … not started."` Part 4's fusion sweep is therefore lane E's unless
-854 starts first; the 854 W2-fix (pool `top_n` / `limit` coupling guard) is **not** in this lane.
+`status: "CHARTER (2026-08-19) … not started."` The initial reading was that Part 4's fusion sweep
+would therefore be lane E's unless 854 started first; the 854 W2-fix (pool `top_n` / `limit`
+coupling guard) was **not** in this lane. The current disposition at §Part 4 supersedes that
+time-local branch: 854 did advance and retains ownership, so Lane E launches no fusion cells.
 
 ### B.14 Wave-1 facts re-checked
 
@@ -359,14 +529,22 @@ snapshot, not a raw `EnvRegistry` read in the Worker JVM — the mistake 885 [R1
 alignment is not a new knob: `ChunkSplitter` already has `SENTENCE_END` / `PARAGRAPH_END`
 (`:101,104`); the sweep uses them, it does not add them.
 
-### C.2 Arm matrix
+### C.2 Arm matrix — original threshold wording superseded by §L.6
 
 `{128, 256, 384, 500} × {0, 25, 50}` = **12 arms**, all sentence-aligned. Overlap 50 on a
 128-token chunk is a 39% overlap — kept deliberately, because the 500/50 incumbent is a 10% overlap
 and the interesting question is whether small chunks need *proportionally* more overlap or none.
-`CHUNK_THRESHOLD_CHARS` is **not** a third sweep axis: at 2000 chars ≈ 520 tokens it interacts with
-chunk size only by deciding which documents chunk at all, so it is derived after the fact (set it to
-≈ 4× the chosen chunk size in chars, and pin the choice with the short-corpus control).
+`CHUNK_THRESHOLD_CHARS` is **not** a third sweep axis: it was held at 2000 for every arm. The
+original instruction to derive it as “≈ 4× the chosen chunk size in chars” is superseded because it
+mixed up a token-to-character conversion with a count of chunks. The closed follow-up in §L.6
+instead identifies 2000 as
+`TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS)`: one 500-token window under
+the canonical typical-prose estimate of four characters per token. It is a cheap writer prefilter,
+not a promise that one or more chunk documents will be emitted; the content-aware splitter and the
+writer's `chunks.size() <= 1` guard make that final decision. This rationale is analytic and the
+unchanged value is operationally exercised, but it was not quality-optimized. CJK content can map
+500 tokens to a different number of characters inside `ChunkSplitter`; the threshold remains one
+locale-invariant global policy, not a per-language tuning lever.
 
 ### C.3 Eval sets
 
@@ -1226,6 +1404,849 @@ round" was the standing instruction and this is it.
 
 ---
 
+## §K Part 1 execution log — preparation window (2026-09-03, NO backend)
+
+Part 1 is a machine-days campaign. This section is the **preparation** it needs, done in a window
+with a hard "no dev stack, no eval backend, no LLM" limit: the instrument, the corpus profiling that
+decides what the arms even are, the question-set fixture, the driver, and the decision rule — all
+committed **before** any number is produced. Nothing here is a measurement of retrieval quality;
+every retrieval claim in this section would be a fabrication, and there are none.
+
+### K.1 The instrument — four temporary keys, and where they actually land
+
+`ChunkSplitter` and `ChunkDocumentWriter` are both non-instantiable static utilities
+(`ChunkSplitter.java:26` `private ChunkSplitter() {}`, `ChunkDocumentWriter.java:36`), so "consume
+the keys at construction" has no construction to hang off. The shape that fits what is actually
+there:
+
+- **`io.justsearch.indexing.chunking.ChunkingPolicy`** (new) — a pure value record
+  `(targetTokens, overlapTokens, minTokens, thresholdChars)` with `DEFAULT` = today's four numbers.
+  It lives in `modules/indexing`, which depends only on `modules:core`, so it carries no config
+  dependency.
+- **`ChunkSplitter.split(...)` / `splitWithMetadata(...)` policy overloads** — the pre-916 `int`
+  overloads now delegate to them with `MIN_CHUNK_TOKENS`, so there is one body, not two.
+- **`ResolvedConfig.Index`** gains four **nullable** `Integer` fields plus
+  `effectiveChunkTargetTokens()` / `...OverlapTokens()` / `...MinTokens()` / `...ThresholdChars()`,
+  mirroring the `effectiveVectorHnswM()` pattern already in that record. Nullable is load-bearing:
+  unset must be *indistinguishable* from today, so none of the four declares a `putDefault`.
+- **`ChunkDocumentWriter.activePolicy()`** resolves the policy from `ConfigStore.globalOrNull()` —
+  the established accessor for a static utility that needs resolved config
+  (`CommitOps.java:348-352`, `TextQueryOps.java:209`, and lane D's own
+  `SsotCommitMetadataSource.java:203` all use it). Not a raw `System.getProperty`, which would fail
+  `checkNoDirectJustsearchSysProp` **and** would be the 885 [R1] defect shape.
+
+**How they reach the Worker, verified rather than assumed.** Chunking runs in the Worker. The
+chain is: `ResolvedConfigBuilder.buildIndex()` resolves the four on the **Head** →
+`ResolvedConfig.toWorkerSnapshot()` writes every non-null resolution
+(`ResolvedConfig.java:118-124`) → `HeadlessApp.java:661-663` writes it and sets
+`justsearch.worker.config_snapshot` → `ResolvedConfigBuilder.loadWorkerSnapshotFromSysprop()`
+contributes it at ordinal 450 → `IndexerWorker.java:76` publishes it as the global `ConfigStore` →
+`activePolicy()` reads it. `ChunkSizeSweepKeysTest.armValuesCrossTheWorkerBoundary` asserts that
+crossing end-to-end, including that an **unset** key is not materialized into the snapshot.
+
+**Publication model — owner decision 2026-09-03, and it changes what "deletion" means here.**
+This branch (**PR #622**) is a **DRAFT campaign branch and is not intended to merge**. The final
+Part 1 PR carries only the *chosen* constants, the chunker version string lane D asked for, the
+fixture, the driver and the register/scorecard updates. Consequence: **the four temporary keys never
+reach `main` at all**, so there is nothing on `main` to delete afterwards and the `config-surface`
+baseline on `main` is never moved. The changeset and the baseline advance in this commit exist so
+the campaign branch is self-consistent and auditable — the gate is satisfied *here*, not deferred —
+but the permanent config surface is untouched by construction rather than by a promise. That is
+strictly stronger than 916 Part 2's "authorised on condition of deletion" shape, because it removes
+the window in which a parked key could be forgotten.
+
+---
+
+### K.2 The wrong-gate check (§E.2's missing leg: what does the NEXT stage read?)
+
+§E.2's lesson is that tracing *inputs into* a computation is not enough — the question is what the
+next stage consumes. Applied here, by reading the consumers rather than trusting the symbol:
+
+| consumer | reads chunk boundaries how? | verdict |
+| :--- | :--- | :--- |
+| chunk documents (`chunk_index`, `chunk_start_char`, `chunk_end_char`, `chunk_total`) | written from the `ChunkSplitter.Chunk` list the arm's policy produced, `ChunkDocumentWriter.java:151,170-176` | **carries the arm** |
+| chunk vectors (BGE-M3 backfill) | reads `SchemaFields.CHUNK_CONTENT` off the index, `BgeM3BackfillOps.java:101` | **carries the arm** — no re-split |
+| chunk SPLADE | reads `CHUNK_CONTENT` off the index, `CombinedEnrichmentBackfillOps.java:458,537,577` | **carries the arm** — no re-split |
+| `parent_token_count` | SPLADE token count of the **whole parent**, or `chars/3`, `IndexingDocumentOps.java:427-451` | **independent of chunk boundaries** — see the coupling below |
+| indexing-loop threshold pre-check | `IndexingDocumentOps.java:405` — **was** a private copy of the constant | **FIXED**: now `ChunkDocumentWriter.activePolicy().thresholdChars()` |
+| `chunk_min_chars` published to off-process oracles | `IndexStatusOps.java:747` — **was** the constant | **FIXED**: now the active threshold. jseval's `chunk_completeness` divides the corpus on this number, so an arm publishing 2000 while chunking at another value would have mis-scored every arm silently |
+| RAG virtual chunking of a chunkless outlier | `RagContextOps.java:850,854` — **was** `ChunkSplitter.split(content)` at the shipped defaults | **FIXED**: now the active policy. Otherwise one answer's context could mix two granularities |
+| RAG virtual chunking, second site | `RagContextOps.java:1055` — same defect, a second call | **FIXED**: found only by re-grepping every `ChunkSplitter.split` call site after the first fix, not by reading the first one |
+| Head-side `topK` affordability | `RAGContext.java:851` — `budget.inputBudget() / ChunkSplitter.DEFAULT_CHUNK_TOKENS` | **FIXED**: reads the resolved value via `ConfigStore`. This one runs on the HEAD, so it cannot call `activePolicy()`; under a 128-token arm it would divide by 500 and under-fill the context ~4×, corrupting precisely the RAG-quality secondary this campaign uses that path for |
+| NER windowing | `NerService.java:91,164` — `ChunkSplitter.split(content, NER_CHUNK_TOKENS, NER_OVERLAP_TOKENS)` | **independent by design, left alone** — NER windows a document for a sequence model with its own constants; it writes no chunk document and must not follow the sweep |
+
+Five stale-constant consumers were found and fixed, and this is exactly the §E.2 failure re-run:
+the symbol was reachable, the value was resolved, and a stage downstream still read a constant.
+Two of the five (`RagContextOps.java:1055`, `RAGContext.java:851`) were found only on a **second**
+sweep — after fixing the first virtual-chunking site, re-grepping every `ChunkSplitter.split` and
+`DEFAULT_CHUNK_TOKENS` reference in production code rather than assuming the first fix was the
+class. The Head-side one is the sharpest: it is in a different process from every other row here,
+so no amount of tracing the Worker path would have surfaced it.
+
+**`OnnxEmbeddingEncoder.chunkOverlap = 128` is NOT a second document splitter** — §B.3's reading is
+confirmed, and this closes §A's "reconcile or document why they differ" item. `createChunks`
+(`OnnxEmbeddingEncoder.java:942-976`) is a **model-token sliding window** over the tokenizer ids of
+whatever single text it was handed, with `chunkSize = min(512, maxSeqLen)` and stride
+`chunkSize - 128` (`:113-114`, `:944`). It exists so a text longer than the encoder's sequence limit
+can be mean-pooled instead of truncated. It never sees a document boundary, never writes a chunk
+document, and its input is either a stored `CHUNK_CONTENT` (already cut by `ChunkSplitter`) or a
+whole parent for the doc-level vector. The two "overlaps" are in different unit domains — model
+tokens inside one encode versus estimated tokens between two stored chunks — and reconciling the
+numbers would be a category error. **The item resolves to documentation plus a named invariant, and
+the invariant is: `ChunkSplitter` decides what a chunk IS; `OnnxEmbeddingEncoder` decides how a
+chunk is READ by a fixed-window model. Nothing may make the encoder's stride a function of the
+splitter's overlap.** (916 open item 3 asked for a second opinion on this reading before acting;
+this is a second reading of the same code reaching the same conclusion, not an independent
+reviewer — flagging that honestly.)
+
+**A fallback compatibility bound the sweep must respect (new, found here).**
+`IndexingDocumentOps.estimateTokenCount` divides by 3 rather than 4 so that a document at the
+shipped 2000-character threshold receives a fallback estimate of about 666 tokens, above the
+512-token corpus-profile boundary (`IndexingDocumentOps.java:468-488`, tempdoc 717 review Finding
+2). The formerly stated “≥1536-character corpus-profile floor” is too broad: 1536 is only the
+arithmetic lower bound at which this **fallback** estimator returns 512. It is not a measured corpus
+property, a threshold-quality result, or a guarantee about an exact SPLADE token count. Corpus
+routing also depends on aggregate token-data coverage, the median bucket and chunk rate. Holding
+the threshold at 2000 during the sweep preserved the fallback's compatibility margin; §L.6 closes
+the later threshold rationale without turning 1536 into an optimization constraint.
+
+**The `min_tokens` distortion (the reason there are four keys, not three).** `ChunkSplitter`
+advances by `max(chunkLength − overlapChars, minChars)` (`ChunkSplitter.java`, the
+`splitWithMetadata` loop). Measured on a 14 k-char Latin fixture, mean delivered overlap in chars
+and chunk count:
+
+| target / overlap | `min_tokens=100` (shipped) | `min_tokens=target/5` | delivered overlap |
+| :--- | ---: | ---: | :--- |
+| 128 / 50 | 133.3 chars, 57 chunks | 190.0 chars, 79 chunks | **70% of what the arm asked for** |
+| 128 / 25 | 91.1 chars, 50 chunks | 94.5 chars, 53 chunks | 96% |
+| 256 / 50 | 190.0 chars, 27 chunks | 190.0 chars, 27 chunks | inert |
+| 384 / 50 | 189.2 chars, 19 chunks | 189.2 chars, 19 chunks | inert |
+| 500 / 50 | 189.2 chars, 13 chunks | 189.2 chars, 13 chunks | inert (`500/5 == 100`) |
+
+The floor binds **only at the small-target arms and only at high overlap** — an asymmetric
+distortion that would have looked exactly like a real effect of chunk size. `min_tokens = target/5`
+removes it and reproduces the incumbent exactly at 500. Pinned by
+`ChunkingPolicyTest.minTokensCapsOverlapAtSmallTargets`.
+
+### K.3 Doc-length distributions — which corpora are arms and which are controls
+
+916 §C.3's open question, answered. Measured offline from `corpus.jsonl` (BEIR via the shared
+`ir_datasets` cache) with `scripts/jseval/916_doc_length_profile.py`; JSON under
+`scripts/jseval/tmp/916-part1/doc-length-profile.json` (gitignored — this table is the durable
+record). Token estimates use `ChunkSplitter`'s own rule: 3.846 chars/token unless a document is
+CJK-dominant (>50% of non-whitespace chars in a CJK block), in which case 1.0. That keys on the
+document's character set, not on a declared language, so it introduces no per-language lever
+(invariant 6). Only `ohr-bench-clean` has any CJK-dominant documents: **16 of 1000**.
+
+| corpus | docs | chars p50 | p90 | p99 | max | est. tokens p50 | docs ≥ 2000 chars | share | est. chunks @500/50 | @128/50 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `beir/scifact` | 5183 | 1426 | 2124 | 3144 | 10127 | 371 | 748 | **14.4%** | 1534 | 6063 |
+| `mixed/enron-qa` | 5485 | 2150 | 10073 | 63718 | 89556 | 559 | 2925 | **53.3%** | 17340 | 92368 |
+| `mixed/legal-clerc-200` | 198 | 27852 | 70347 | 121342 | 129915 | 7324 | 194 | **98.0%** | 4130 | 23397 |
+| `mixed/miracl-de-2k` | 3103 | 387 | 920 | 1746 | 3908 | 101 | 19 | **0.6%** | 39 | 162 |
+| `mixed/miracl-fr-2k` | 5407 | 284 | 770 | 1534 | 4225 | 74 | 17 | **0.3%** | 36 | 147 |
+| `mixed/ohr-bench-clean` | 1000 | 2536 | 5281 | 10541 | 22313 | 666 | 628 | **62.8%** | 1814 | 8887 |
+
+Chunk counts are **estimates** from the splitter's advance recurrence
+(`advance = max(targetChars − overlapChars, minChars)`), not from running the splitter: its
+boundary search shifts each cut by up to ±200 chars to land on a sentence or paragraph, which moves
+spans but not counts materially. Labelled as estimates wherever they appear.
+
+**Decisions this forces.**
+
+1. **The two multilingual corpora are CONTROLS, not arms.** `miracl-de-2k` chunks 19 documents and
+   `miracl-fr-2k` chunks 17. Twelve arms there would be measuring 19 documents' worth of chunking
+   at a cost of ~2.2 machine-hours. Under ADR-0043 they are still **mandatory** — but as a
+   *no-regression check*, which needs the incumbent and the winning arm, not the whole matrix. That
+   is 2 runs each instead of 12: **−20 runs.**
+2. **`scifact` is a control, and §J's "scifact is chunk-free" needs a caveat.** 14.4% of scifact
+   documents exceed the threshold and would produce ~1534 chunk documents at the incumbent — so it
+   is not chunk-*free* at the writer. §J's claim is about the corpus-profile gate (median 371
+   estimated tokens is far below the 512 short/long boundary, so `CorpusProfile` classifies scifact
+   "short" and the chunk-merge leg is skipped at *search* time). Both statements can be true and
+   they are about different stages; recording the tension rather than asserting §J was wrong,
+   because confirming the profile gate needs a live run. Either way scifact's role is unchanged:
+   the collateral-damage control.
+3. **`ohr-bench-clean` is promoted from stretch goal to third arm corpus.** 62.8% above threshold,
+   1000 docs, ~1814 chunks at the incumbent — it is genuinely chunked, it is multi-domain
+   extractive, and at 1000 documents it is the *cheapest* of the three arm corpora, not a doubling.
+   §C.3 called it a stretch goal on a 962-query cost estimate made without the length profile.
+4. **Total arm count: 3 arm corpora × 12 arms = 36 reindex runs**, plus 3 control-replicate runs on
+   the incumbent for σ, plus 4 no-regression runs (2 multilingual × {incumbent, winner}) and 2
+   scifact runs ({incumbent, winner}) at the end. **36 + 3 + 6 = 45 runs**, versus 72 for the naive
+   "12 arms × 6 corpora".
+
+### K.4 The RAG question-set fixture
+
+`scripts/jseval/916-corpora/rag-qa-v1/` — `recipe.json`, `README.md`, `generate.py`. **No corpus
+text is committed**, matching the stated convention of every other real-external-dataset member
+(`789-corpora/enron-qa-answers/recipe.json` says so outright) and `.gitignore`'s wholesale exclusion
+of `datasets/`. The materialized fixture lands in gitignored `scripts/jseval/tmp/916-part1/`.
+
+50 triples per corpus, derived **deterministically from existing qrels** — no LLM, no sampling, no
+seed (the fixture is the first 50 eligible qrel ids in sorted order, so the recipe reproduces it;
+two runs to different directories produced identical digests).
+
+| corpus | question shape | n | gold docs | qrels skipped (gold < 2000 chars) | `query_gold_sha256` |
+| :--- | :--- | ---: | ---: | ---: | :--- |
+| `mixed/enron-qa` | natural question | 50 | 50 | 13 | `ca75031b89bc6406…` |
+| `mixed/legal-clerc-200` | citation-retrieval passage | 50 | 50 | 1 | `10fb979f1fd27eb3…` |
+| `beir/scifact` | claim to verify | 50 | 43 | 133 | `a0181d6524d85035…` |
+
+**Gold spans are a projection, not a fork.** The span sidecar uses schema `evidence-offsets.v1`
+(`corpus_inject.py:488-526`) and computes offsets with `jseval.evidence_offset.locate_offset`
+(tempdoc 783 §B.1) — the same primitive the injection writer and `offset_recall.py` use. Inventing a
+second span representation was the obvious wrong move here and was checked for first.
+
+**There is no gold ANSWER anywhere, and the fixture says so.** Every `legal-clerc-200`
+`queries.json` `answer` field is empty; `enron-qa` and BEIR carry no answer field. The gold **span**
+therefore fills the `answer` slot of the MultiHop-RAG shape, which makes `correct_exact` and
+`correct_substring` meaningless by construction. Only `correct_has_intersection` and the judge tier
+are readable.
+
+**Instrument named.** `python -m jseval tier2-eval --queries <…>/queries.json --base-url … --llm-url
+… --top-k 10 --max-context-tokens 4096 --output-dir …`
+(`scripts/jseval/jseval/commands/eval_cmds.py:154-202` → `agent_retrieval_eval.py:832-885`). It is
+the only instrument that takes an arbitrary question file with a gold-doc field.
+**`python -m jseval rag-eval` cannot be used**: it is a Gradle wrapper around `RagQualityEvalTest`
+whose question set is a baked-in Java resource (`rag-eval-truth.v1.json`), not a CLI argument — and
+its `--profile` flag is inert, because `modules/system-tests/build.gradle.kts` never reads
+`ragEvalProfile`.
+
+**Judge tier and chat profile.** Tier 4 — AI Judge (Semantic Eval),
+`docs/explanation/09-testing-strategy.md`: agent-driven, on demand, not an automated pipeline.
+Profile must be **`standard`**, not the dev-default `compact`: `tier2-eval` refuses a compact model
+outright (`CompactModelNotAllowedError`, `agent_retrieval_eval.py:879-885`, markers at `:57`), which
+independently corroborates CLAUDE.md's `use-every-verification-tier` rule. Do **not** pass
+`--allow-compact-model` for a number that will be cited.
+
+**Known limit that must be closed in the first sweep window.** `tier2-eval` binds a gold document by
+matching `evidence_list[].title` against the retrieved `parent_doc_id` **path**
+(`_doc_id_matches_title`). The fixture writes the corpus id into `title` on the expectation that it
+is the ingested filename stem. That expectation is **not verifiable offline**. Index one arm, run
+one query, confirm the returned `parent_doc_id` contains the gold id — before any retrieval-recall
+figure from this fixture is cited.
+
+### K.5 Pre-registered decision rule for Part 1 — COMMITTED BEFORE ANY ARM RUNS
+
+Written and committed in this PR, before a single sweep arm exists. The Part 2 precedent (§D.7,
+§I.3, §J.3) is that a rule written after the numbers are visible is worthless.
+
+**Primary metric.** Fused (`hybrid`) **nDCG@10** and **R@10** on the three arm corpora
+(`mixed/enron-qa`, `mixed/legal-clerc-200`, `mixed/ohr-bench-clean`), with `leg_union_recall` from
+`staged_recall_accounting` as the deeper-recall reading.
+
+> **Deviation from the brief and from §C.4, named rather than quietly substituted: `R@50` is not
+> available.** jseval's emitted metric set is `nDCG@10, AP@10, RR@10, R@10, P@1`
+> (`scripts/jseval/jseval/scoring.py:9`; the same five at `metric_families.py:63`; a repo-wide grep
+> for `R@50` under `scripts/jseval/jseval/` returns nothing), and the retriever asks for
+> `limit = top_k` with `top_k = 10` by default (`retriever.py:105,197`). A true R@50 means
+> retrieving 50 per query on every arm — a different pipeline shape from every baseline and
+> envelope in the register, and a materially slower one. Substituting R@10 while *calling* it R@50
+> would be exactly the kind of reporting failure this lane already had to correct once, so the
+> clause is stated as what it is: **R@10** (which is in the calibrated `QUALITY` family,
+> `metric_families.py:59-67`) plus `leg_union_recall`, which reads recall over the union of the
+> legs' candidate pools and is therefore the deeper-recall signal R@50 was wanted for. If the owner
+> wants a literal R@50 it is a separate decision: add `R@50` to `DEFAULT_METRICS` and run every arm
+> at `--top-k 50`, roughly doubling the query cost and invalidating comparison with every existing
+> baseline.
+
+**σ, and why it cannot be borrowed.** Per `docs/how-to/envelope-staleness-policy.md` the cohort
+envelope at `scripts/jseval/tmp/cohort_baselines/<hash>/envelope.json` rotates on cohort-identity
+change — and chunk size changes the index, hence the identity, hence the envelope. **Part 1
+therefore establishes its own σ**: n=3 replicate reindexes of the **incumbent arm (500/50/100)** on
+`mixed/legal-clerc-200`, run FIRST, before any non-incumbent arm. σ is the sample standard deviation
+of nDCG@10 and of R@10 across those three, and the effective noise band is `max(σ, --floor)`.
+Note §J's warning that σ(R@10) was 0 on clean arms while σ(nDCG@10) was not — so on the recall
+axis the ±2σ band may collapse onto the floor; quote the metric's own σ, never the other one's.
+Where a replicate set is n=1, the run-level noise floor is used instead and the row is marked.
+
+**Admissibility, checked before any number is read.** An arm counts only if
+`ce_coverage.verdict == "ok"` AND `per_mode.hybrid.comparable is true`. A void arm is re-run, never
+cited, never averaged in. F-056 finding 4 is why this is a hard filter: above the 2% `ce_coverage`
+tolerance on `legal-clerc-200` a degraded arm is biased **upward**.
+
+**ADOPT a non-incumbent triple only if ALL of:**
+
+1. It beats the incumbent by **> 2σ on nDCG@10 on at least two of the three arm corpora**, and is
+   **not worse than −2σ on the third**. (Two-of-three rather than three-of-three because
+   `ohr-bench-clean` is extractive-OCR and `legal-clerc-200` is citation retrieval; demanding
+   unanimity across three genuinely different tasks would make the rule unsatisfiable by
+   construction, which is a rule that cannot lose rather than a rule that can.)
+2. **R@10 does not regress beyond −2σ on any arm corpus, and `leg_union_recall` does not fall.**
+   Recall is the property chunking is supposed to buy; an nDCG gain paid for in recall is not the
+   trade this campaign is looking for, and `leg_union_recall` is the clause that notices a loss
+   deeper in the candidate pool than R@10 can see.
+3. **The multilingual check passes (ADR-0043):** `miracl-de-2k` and `miracl-fr-2k` are within ±2σ on
+   nDCG@10 and R@10. These are a **check, not a tuning target** — no per-language chunk size may be
+   proposed whatever they show, and their near-zero chunk share (§K.3) means a *large* movement here
+   is evidence of a bug, not of a language effect.
+4. **`beir/scifact` (collateral control) is within ±2σ** on both metrics.
+5. **Primary-indexing throughput does not regress by more than 10%** versus the incumbent.
+6. **Costs are recorded and bounded**: SPLADE truncation rate and index size on disk are reported
+   for every arm. They are *not* veto conditions on their own — but an arm that wins on quality
+   while more than doubling index size is escalated to the owner rather than adopted silently.
+
+**Ties and near-ties resolve to the incumbent.** If two arms both satisfy every clause, prefer the
+one closest to today's `(500, 50)` in `(target, overlap)` — smaller `|Δtarget| + 4·|Δoverlap|`,
+overlap weighted because it costs index size linearly. If the winner is the incumbent, Part 1's
+answer is "500/50 was right", the four keys are deleted, and that is a result, not a failure.
+
+**What is NOT in the rule, deliberately.** RAG answer quality (K.4) is a **secondary** reading. It
+is reported for the incumbent and for every arm that survives clauses 1-5, and it can *veto* an
+adoption (an arm that wins retrieval while measurably degrading answer groundedness is not adopted)
+but it cannot *cause* one. Reason: the fixture is new, its gold-doc binding is unverified (K.4), and
+the judge tier is agent-driven rather than a calibrated instrument. Promoting an uncalibrated
+instrument to primary is how a campaign measures its own instrument instead of its subject.
+
+**`threshold_chars` is out of scope for this quality-adoption rule.** It is held at 2000 for all
+arms. Section L.6 closes its separate follow-up analytically: 2000 is one canonical typical-prose
+500-token window and preserves K.2's fallback-estimator compatibility margin. It is not a measured
+quality optimum, and K.2's 1536 arithmetic is not a corpus-profile floor.
+
+### K.6 Machine-time plan
+
+Per-arm wall clock scaled from the only measurement on record — 885's scifact full pipeline at
+112.6 docs/s primary indexing, 45.9 s for 5168 docs, all enrichment stages complete at 231-275 s
+(`885:499-505`) — adjusted for document length and estimated chunk count, since chunk embedding and
+chunk SPLADE dominate the tail on a chunked corpus. **These are estimates, not measurements**, and
+the first three incumbent replicates are also the calibration that replaces them.
+
+| corpus | docs | est. chunks @500/50 | est. per arm | arms | subtotal |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `mixed/enron-qa` | 5485 | 17 340 | ~12 min | 12 | ~2.4 h |
+| `mixed/legal-clerc-200` | 198 | 4 130 | ~6 min | 12 | ~1.2 h |
+| `mixed/ohr-bench-clean` | 1000 | 1 814 | ~5 min | 12 | ~1.0 h |
+| incumbent replicates for σ (legal, n=3) | | | ~6 min | 3 | ~0.3 h |
+| multilingual no-regression (de + fr × {incumbent, winner}) | | | ~5 min | 4 | ~0.3 h |
+| scifact collateral control × {incumbent, winner} | | | ~5 min | 2 | ~0.2 h |
+| **retrieval subtotal** | | | | **45** | **≈ 5.4 h** |
+| RAG secondary (`tier2-eval`, 50 q, surviving arms only — assume ≤ 6) | | | ~10 min | ~6 | ~1.0 h |
+| **total** | | | | | **≈ 6.5 h** |
+
+Smaller-target arms cost more (128/50 is ~5× the chunk count of 500/50 on enron), so the per-arm
+figure is a mean across the twelve; the 128-token arms should be expected to run roughly double.
+A realistic overnight budget is **8-9 h**, matching §C.5's independent estimate by a different route.
+
+**Order (this is part of the pre-registration, not an implementation detail):**
+
+1. **Incumbent replicates first** — 3× `mixed/legal-clerc-200` at `(500, 50, 100)`. Without σ, no
+   later number can be read. If the three replicates do not agree to within the F-055 method's
+   expectations, stop and diagnose rather than proceeding.
+2. **`mixed/legal-clerc-200`, 12 arms** — 198 documents, so the cheapest full matrix, and the most
+   chunk-dominated corpus (98% above threshold). If chunk size does nothing here it does nothing.
+3. **`mixed/ohr-bench-clean`, 12 arms.**
+4. **`mixed/enron-qa`, 12 arms** — most expensive, run last so a driver failure costs the least.
+5. **Controls last**, after a candidate exists: `miracl-de-2k`, `miracl-fr-2k`, `beir/scifact` at
+   incumbent + winner only.
+6. **RAG secondary** on the surviving arms, with `ai_activate {chatProfile:"standard"}`.
+
+**Driver invocation** (detached, per `agent-lessons.md`'s ~60-minute background-task kill and 885's
+method — a tracked background task will not survive this campaign):
+
+```powershell
+Start-Process -FilePath "python" -ArgumentList @(
+  "916_chunk_sweep.py","run",
+  "--out","tmp/916-part1/sweep-<YYYYMMDD>",
+  "--corpora","mixed/legal-clerc-200,mixed/ohr-bench-clean,mixed/enron-qa",
+  "--reps","1"
+) -WorkingDirectory "F:\justsearch-public\.claude\worktrees\lane-E\scripts\jseval" -WindowStyle Hidden
+```
+
+with `JSEVAL_HEALTH_TIMEOUT_SEC=300` (open item 7: the 120 s default is below a ~150 s cold worktree
+backend boot and cost three arms in a previous campaign). The driver is resumable per arm via an
+`ARM.done` marker, so a killed run is restarted with the same command rather than from scratch, and
+writes `RUN.done` at the end for the poll to key on.
+
+### K.7 Falsification record (§F discipline, Part 1)
+
+Every new test was broken once at its production site, observed failing, and restored by
+copy-aside (`shutil.copy2`, never `git checkout --` — postmortem #29). Harnesses committed under
+`scripts/jseval/tmp/916-part1/` are gitignored; the record is here.
+
+| # | test | mutation | observed |
+| ---: | :--- | :--- | :--- |
+| 1 | `ChunkingPolicyTest.defaultMatchesShippedConstants` | `DEFAULT_THRESHOLD_CHARS` 2000→2048 | FAILED |
+| 2 | `…defaultPolicyReproducesPre916` | int overload passes `targetTokens / 2` | FAILED |
+| 3 | `…nullPolicyFallsBack` | null policy → `(128,0,26,2000)` instead of `DEFAULT` | FAILED |
+| 4 | `…smallerTargetChunksMore` | splitter ignores `policy.targetTokens()` | FAILED |
+| 5 | `…minTokensCapsOverlapAtSmallTargets` | same mutation | FAILED |
+| 6 | `…clamping` | `Math.max(0, …)` → `Math.max(-9, …)` on the policy floor | FAILED |
+| 7 | `ChunkSizeSweepKeysTest.unsetReproducesShippedConstants` | `DEFAULT_CHUNK_TARGET_TOKENS` 500→512 | FAILED |
+| 8 | `…armValuesResolve` | builder passes `null` for `target_tokens` | FAILED |
+| 9 | `…armValuesCrossTheWorkerBoundary` | same mutation | FAILED |
+| 10 | `…garbageFallsBack` | `resolveNullableInt` returns 0 on parse error | FAILED |
+| 11 | `…declaredWithoutDefaults` | give `CHUNKING_SWEEP_TARGET_TOKENS` a `"500"` default | FAILED |
+| 12 | `ChunkingPolicyResolutionTest.mirroredDefaultsDoNotDrift` | `DEFAULT_CHUNK_TARGET_TOKENS` 500→512 | FAILED |
+| 13 | `…noConfigStoreIsTheShippedPolicy` | `activePolicy()` returns `(1,1,1,1)` | FAILED |
+| 14 | `…defaultConfigStoreIsTheShippedPolicy` | same mutation | FAILED |
+| 15 | `…armReachesTheWriter` | `activePolicy()` ignores the resolved index | FAILED |
+| 16 | `…armChangesTheEmittedBoundaries` | same mutation | FAILED |
+| 17 | `…thresholdDecidesChunkingAtAll` | same mutation | FAILED |
+| 18 | `test_recipe_schema` | `recipe.llm_used` → true | FAILED |
+| 19 | `test_recipe_per_corpus_entries_are_complete_and_self_consistent` | `questions` 50→49 | FAILED |
+| 20 | `test_the_two_digests_of_a_corpus_differ` | copy one digest into the other slot | FAILED |
+| 21 | `test_span_rule_is_deterministic_and_prefers_overlap` | argmax → argmin | FAILED |
+| 22 | `test_span_rule_returns_none_rather_than_a_silent_first_sentence` | unresolved → first 80 chars | FAILED |
+| 23 | `test_sqrt_denominator_stops_a_long_sentence_winning_on_length_alone` | drop the `sqrt` denominator | FAILED |
+| 24-25 | `test_regenerating_reproduces_the_pinned_digests[enron, legal]` | qrel iteration order reversed | FAILED |
+
+**Five mutations initially did NOT bite, and each exposed a real defect rather than a bad
+mutation.** (a) `min_tokens * 2` on the int overload changed nothing, because at target 500 the
+floor is inert — which is itself the K.2 finding, and the mutation was replaced with a behavioural
+one. (b) A self-assignment clamp mutation was rejected by error-prone at compile time, so it proved
+nothing; replaced. (c) `noConfigStoreIsTheShippedPolicy` **published an all-defaults store and then
+claimed to test the no-store branch** — the name lied. Fixed: the test now clears the global,
+asserts the precondition, and a second test covers the all-defaults case. (d) The span rule's
+argmax→argmin mutation survived because the test fixture had only ONE overlapping sentence, so
+"best" and "only" were indistinguishable; a second overlapping sentence was added. (e) Dropping the
+`sqrt` denominator survived because the two candidate sentences did not tie on raw overlap; the
+fixture now makes them tie so only the normalization can separate them. Three test-precision
+defects and two inert mutations, all found by falsification and none by review — which is the
+argument for §F.
+
+**And one PRODUCTION defect that falsification surfaced sideways.** Chasing (b) revealed that the
+policy record's original `Math.max(1, targetTokens)` floor was NOT a no-op for the pre-916 int
+overloads: `tokensToChars` maps every non-positive token count to 1 char, so clamping a caller's
+`0` up to `1` widened the window from 1 char to 3 and made the "pure delegation" claim false for
+degenerate inputs (the `modules/indexing` jqwik property tests generate exactly those). The floor
+is now 0, and `clamping` asserts four degenerate `(target, overlap)` pairs route identically through
+both entry points.
+
+**And one defect the FULL SUITE caught that no module-level run could.** The first version of
+`ChunkingPolicyResolutionTest`'s fixture stored the store it had just published as `previous` when
+there had been no prior global, so `@AfterEach` re-installed its own store instead of clearing —
+leaking an all-defaults `ConfigStore` into every later test class in the same Gradle fork. It turned
+`EnrichmentCompletenessProjectionTest.perStageArithmeticAndTierDeclarations` red with
+`IndexRuntimeIOException: status_without_artifact`, because the Lucene runtime resolves its
+validation mode through `ConfigStore.globalOrNull()` (`RuntimeSession.java:459`) and the leaked
+store flipped a deliberately-invalid fixture write into a hard failure. Green per module, red in the
+suite — `subset-isnt-the-suite`, worked. Fixed with an explicit `published` flag so "there was no
+global" is restored as *no global*; the whole-suite run is green after it.
+
+**A second self-inflicted red, recorded because the lesson is cheap and the failure was alarming.**
+An earlier full-suite run reported ~30 `NoClassDefFoundError` failures across `worker-services`.
+None of them were real: a `:modules:indexing:test` invocation had been started in the same worktree
+while the suite was running, rewriting the `indexing` jar under a live classpath. That is the
+"one Gradle build at a time" convention, and the failure it produces looks exactly like a broad
+regression. Re-run serially before believing a wave of `NoClassDefFoundError`.
+
+### K.9 Smoke arms — the driver's first live run (owner-released, 2026-09-03)
+
+Two real arms on `mixed/legal-clerc-200` through `916_chunk_sweep.run_arm`, to check that the keys
+reach the writer **live** rather than only through the unit chain, and that `arm-metrics.json`
+populates. Both exited 0. Wall clock: **500/50 in 334.6 s (5.6 min)**, **256/50 in 406.9 s
+(6.8 min)** — §K.6 estimated ~6 min for this corpus, so the estimate holds and the smaller-target
+arms are ~20% slower, as expected.
+
+| | 500/50 (incumbent) | 256/50 |
+| :--- | ---: | ---: |
+| index size | 56.65 MB | **113.07 MB** |
+| nDCG@10 | 0.5789 | 0.6207 |
+| R@10 | 0.805 | 0.825 |
+| `leg_union_recall` | 0.925 | 0.915 |
+| `leak_rate` | 0.13 | 0.10 |
+| SPLADE truncation | *(not captured — see below)* | 0.6101 |
+| docs/s | 0.9 (`ingest.docs_per_sec`) | 8.4 (`run_metrics.primary_docs_s`) |
+| `ce_coverage` | `ok` | **`degraded-ce`** |
+| admissible | YES | **NO — VOID** |
+| chunk branch ran | yes | yes |
+
+**The keys reach the writer live: the index doubled.** 56.65 MB → 113.07 MB for the same 199
+documents is exactly what halving the target chunk size does, and nothing else in the two runs
+differed. That is the end-to-end proof the unit chain could not give — Head resolution → ordinal-450
+snapshot → Worker `ConfigStore` → `ChunkDocumentWriter.activePolicy()` → chunk documents on disk.
+
+**The 256 arm's numbers must NOT be read as a quality result.** It is `degraded-ce` and therefore
+**VOID** by the pre-registered admissibility filter, and F-056 finding 4 says a degraded arm on
+`legal-clerc-200` is biased **upward** — which is exactly the direction its nDCG moved. The filter
+did its job on the first live arm it was given. Quoting +0.042 nDCG here would have been the whole
+failure mode this lane documented.
+
+**And that void is a campaign-blocking finding, not bad luck.** The cause is visible per query: the
+256 arm hit `DEADLINE_EXCEEDED` on **21 of 200** queries against 1 of 200 for the incumbent. Halving
+the chunk size roughly doubles the passages the cross-encoder must rerank, so the CE deadline is
+reached more often, coverage degrades, and the arm voids. **A campaign that voids most of its
+small-chunk arms measures nothing.** The sweep window must decide this before launching: either
+raise the CE deadline to a fixed, arm-invariant value large enough for the smallest arm (and record
+it as a campaign constant), or accept re-runs and budget for them. It cannot be left to chance, and
+it cannot be tuned per arm — an arm-varying deadline is a second lever inside the experiment.
+
+**Three driver defects the smoke found, all fixed:**
+
+1. **SPLADE evidence path was relative.** `trunc_available: false` on the first arm with the key
+   correctly forwarded — the path is resolved inside the **Worker**, whose working directory is not
+   jseval's, so nothing was written anywhere the driver looked. Now absolute; the second arm
+   reported `truncation_rate = 0.6101`.
+2. **`pipeline_summary.primary_indexing` is not emitted on every run shape.** It was absent on the
+   500 arm (which has only a `stages` phase-completion block) and present on the 256 arm — so a
+   single-source read silently reports `null` for some arms and a number for others. `arm-metrics`
+   now records `docs_s` plus **`docs_s_source`**, because a 10%-throughput clause comparing two
+   different quantities across arms is worse than no clause.
+3. **A tri-state conflation I wrote an hour earlier.** The first version of the chunk-branch check
+   counted per-query `chunkMergeApplied` truthiness and reported `applied: 0` for **both** arms —
+   i.e. "the chunk branch never fired", which would have invalidated the entire campaign premise.
+   It is `None` on every row (`artifacts.py:248` copies it from a search response that does not
+   carry it in this mode), and the authoritative signal is
+   `per_mode.<mode>.pipeline_tracking.observed`, which contains `chunk_merge` on both arms. Absent
+   read as false. Now an explicit three-state (`ran: true | false | null`) with its evidence named.
+   Four new tests cover it; the "did not run" fixture deliberately contains `branch_fusion` without
+   `chunk_merge`, because the first version of that test could not tell the two stages apart and
+   survived the mutation that swapped them.
+
+**Still unverified, and not claimed: the `tier2-eval` title binding.** Confirming it needs the
+`tier2-eval` path with a standard-profile LLM, which this window did not run. There is an
+*indirect* positive signal — jseval's own run artifacts return bare corpus ids (`10515350`), the
+same form the fixture writes into `evidence_list[].title` — but `tier2-eval` matches against
+`parent_doc_id` **paths** via `_doc_id_matches_title`, which is a different surface, so the signal
+does not settle it. The check stays first-action for the sweep window: index one arm, run one
+`tier2-eval` query, confirm the returned `parent_doc_id` contains the gold id.
+
+Backend stopped; no listener on 33221 (`netstat` shows only `TIME_WAIT` client sockets).
+
+---
+
+### K.8 What this window did NOT do
+
+No dev stack, no eval backend, no LLM, per the window's hard limit. Consequently: **no retrieval
+number, no RAG number, no throughput number and no index-size number exists yet for any arm**, and
+none is claimed. The sweep driver has never driven a real arm; its roll-up math is tested against
+synthetic records only. The fixture's gold-doc binding to `parent_doc_id` is unverified (K.4). The
+per-arm wall-clock figures in K.6 are scaled estimates from one 885 measurement of a different
+corpus. Every one of these is a task for the sweep window, not a gap in this one.
+
+---
+
+### K.10 Sweep-window decisions — RECORDED BEFORE THE FIRST ARM RAN (2026-09-03)
+
+Owner decisions taken into the sweep window, plus the two measurements the window itself had to
+make before any of them could be applied. Everything in this subsection was written and committed
+**before** the first campaign arm started; §L holds the results.
+
+#### K.10.1 The CE deadline is an arm-invariant campaign constant, and it reaches both legs
+
+**Decision.** Every arm — including the incumbent replicates — runs with
+`JUSTSEARCH_RERANK_DEADLINE_MS=2000`. This closes open item 9b: §K.9's 256/50 smoke arm voided on
+`degraded-ce` from 21/200 `DEADLINE_EXCEEDED` against the incumbent's 1/200, and a campaign whose
+small-chunk arms mostly void measures nothing. The value is F-054's measured-harmless arm (2000 ms:
+0 drops, nDCG unchanged). It is a **constant, not an axis** — a per-arm deadline would put a second
+lever inside the experiment. `916_chunk_sweep.arm_yaml` therefore writes the key on **every** arm,
+pinned by `test_every_arm_carries_the_constant_including_the_incumbent`: a constant written on only
+some arms is an axis wearing a constant's name.
+
+**One extra control**, so the campaign can show the deadline change is itself neutral on this
+cohort rather than citing F-054's different one: the incumbent constants at the **shipped 200 ms**
+(`--deadline-ms 200`). It gets its own arm tag (`t500-o50-d200-r0`) so it cannot collide with the
+campaign-constant incumbent (`t500-o50-r0`).
+
+**Consequence, stated plainly:** every number this campaign produces is **campaign-internal**. The
+register's shipped-deadline baseline rows were measured at 200 ms and are **not** directly
+comparable to any campaign arm. F-057 says so, and the driver's `analyze` footer says so on every
+table it prints.
+
+**The chain was verified live, not assumed** (`916_binding_probe.py`, run before the first arm).
+The brief's expectation was that the key reaches the Worker at ordinal 450. It does — *and* that is
+not the only leg, so both were checked:
+
+| leg | mechanism | evidence |
+| :--- | :--- | :--- |
+| Head resolution | `ResolvedConfigBuilder.java:1351` `resolveInt("justsearch.rerank.deadline_ms", 200)` | `/api/debug/effective-config`: `{"key":"justsearch.rerank.deadline_ms","value":"2000","source":"env_var","ordinal":400,"detail":"JUSTSEARCH_RERANK_DEADLINE_MS"}`, with `default 200` demoted to a losing candidate |
+| Head → Worker, on the wire | `SearchRpcOps.java:390` `setDeadlineMs(...)` from `rerankConfig.deadlineBudgetMs()` (`KnowledgeSearchEngine.java:994`), read at `GrpcSearchService.java:484` (`deadlineMs > 0 ? deadlineMs : 200`) | this is the leg that actually governs the CE call |
+| Head → Worker, config snapshot | `ResolvedConfig.toWorkerSnapshot()` → ordinal 450 | `worker.log`: `Config: justsearch.rerank.deadline_ms=2000 (worker_snapshot:…\worker-config-snapshot.json, ordinal=450)` |
+
+**A pre-check the campaign needed before trusting the fix.** F-054's third bullet is that
+`DEADLINE_EXCEEDED` is stamped on *any* CE skip, including BFCArena OOM — in the W2 arms 199/200
+"deadline misses" were OOM, and no deadline value would have fixed them. If the smoke arm's 21 drops
+were OOM, raising the deadline would change nothing and every small-chunk arm would still void. They
+are not: the smoke arm's `arm.log` and the Worker log carry **zero** `BFCArena` / "smaller than
+requested" / `OrtException` occurrences, and every `Combined backfill` line reports
+`arenaOomWindowed=0`. The drops are genuine CPU-side pre-check misses, which is the class 2000 ms
+addresses.
+
+#### K.10.2 Quiet-machine gate: WAIT, not void — and the threshold this machine forced
+
+**Decision.** Before each arm the driver blocks until the machine is quiet; an arm whose window was
+dirty is moved aside (`<armdir>.dirty<n>`, never deleted) and re-run, not counted. `ARM.done` is
+written only for a clean attempt, so a dirty arm that exhausts its retries stays resumable instead
+of being skipped-and-counted by a resumed driver. Three witnesses, not one: the pre signature, a
+mid-arm monitor thread sampling every 30 s (a pre/post pair cannot see a game that starts and exits
+inside a twelve-minute arm), and the post signature.
+
+**Deviation 1 — the GPU threshold, with the measurement that forced it.** The brief specifies
+"GPU util < 10 % for 30 s". Measured on this box with no game, no backend and no arm in flight,
+utilization oscillates **9-15 %** and memory sits at **1107 MiB**, driven by `explorer.exe`,
+`msedgewebview2.exe`, `SearchHost.exe` and PowerToys (`nvidia-smi --query-compute-apps`). A 10 %
+ceiling is **below this machine's floor**: the gate could never open and the campaign would have
+spent its whole window waiting while measuring nothing. The ceiling is raised to **25 %** (above the
+observed 15 % peak of desktop noise, far below a game client, which pins 60-100 %) and a **VRAM
+ceiling of 3000 MiB** is added, because memory is the sharper discriminator — a game holds GB, the
+idle desktop holds ~1.1 GB. The exact, non-threshold discriminator remains the process check.
+
+**Deviation 2 — two Riot processes are observed but do not block.** The first launch of the gate
+blocked immediately on `RiotClientCrashHandler` + `RiotClientServices`. These are Riot's launcher
+**back-end services**: they run from boot and idle for days with no game. Measured with exactly those
+two up and nothing else: GPU **17 % / 1161 MiB** (this machine's baseline) and working sets of
+148 MB / 8 MB — they render nothing. Blocking on them is a gate that never opens. They are therefore
+**recorded in every signature** (`games`) but excluded from the blocking set (`games_blocking`);
+`RiotClientUx`, the launcher *window*, is deliberately **not** excluded, because it renders and its
+presence means someone is at the launcher. `TFT` was added to the pattern per the brief. Pinned by
+`test_riot_launcher_helpers_are_observed_but_do_not_block`,
+`test_a_real_game_alongside_the_helpers_still_blocks` and `test_the_launcher_window_is_not_excluded`
+— the middle one is the one that matters, because an exclusion that swallowed a real game sharing
+the launcher would be exactly the failure this gate exists to prevent.
+
+An unreadable probe is **dirty, not clean**: "we could not tell" and "nothing is running" are
+different states and only one of them is a green light for an eight-hour campaign.
+
+**Deviation 3, made MID-CAMPAIGN at 14:45 and recorded as such: the utilization ceiling was raised
+25 % → 45 % for the remaining phases.** The first 23 arms (every legal arm, the three σ replicates,
+the shipped-deadline control, and eleven of twelve `ohr-bench-clean` arms) ran under the **25 %**
+ceiling; only `ohr-bench-clean` 500/50 and the `enron-qa` arms ran under 45 %. The trigger: the gate
+blocked for **455 s** on one legal arm and then for **23 continuous minutes** before
+`ohr-bench-clean` 500/50, at `gpu_util` 29-38 % with `gpu_mem` 1327-1372 MiB. Diagnosed rather than
+assumed: **no backend was running** (no listener on 33221, only two idle Gradle daemons), VRAM was
+at this machine's baseline, and `nvidia-smi --query-compute-apps` named the holders — `explorer`,
+`msedgewebview2`, `SearchHost`, PowerToys and `thorium.exe`, a Chromium browser opened on the
+desktop during the campaign. Desktop compositing, not a competing compute workload.
+
+Why raising it is defensible rather than a gate weakened to make a delay disappear: **F-054 already
+measured this exact question.** Under a *saturating* synthetic GPU load (30.8 TFLOP/s, util pinned
+100 %) the CE stage p50 went 201 → 406 ms and coverage drops went to **zero** — GPU contention is a
+latency effect, not a quality effect, and quality is what clause 1 and 2 read. The two criteria that
+actually discriminate a game are untouched: the process check (exact) and the 3000 MiB VRAM ceiling
+(a game holds GB; the observed baseline held 1.36 GB throughout). And nothing about arm
+**admissibility** depends on this parameter at all — admissibility is `ce_coverage.verdict == "ok"`
+AND `per_mode.hybrid.comparable`, both read from the run.
+
+Stated plainly as a limitation: the `docs/s` and index-size **cost** columns of the `enron-qa` arms
+were collected under a marginally noisier desktop than the `legal-clerc-200` arms. Both columns are
+already reported with campaign-measured noise that dwarfs this (σ(docs/s) = 13.9 %, σ(index MB) =
+47 % — §L.1), so the change cannot be read as improving or degrading a cost comparison.
+
+#### K.10.3 §K.4's instrument attribution was WRONG, and the binding check is cheaper than stated
+
+§K.4 recorded the fixture's known limit as: "`tier2-eval` binds a gold document by matching
+`evidence_list[].title` against the retrieved `parent_doc_id` path (`_doc_id_matches_title`)". That
+is **not what `tier2-eval` does.** Read at source: `run_tier2_eval`
+(`scripts/jseval/jseval/agent_retrieval_eval.py:832-1060`) reads only `q["query"]` and `q["answer"]`
+— it posts the query to `/api/knowledge/retrieve-context`, sends the context to the LLM, and scores
+the answer with `_score_tier2`. It never touches `evidence_list`. A repo-wide grep puts every
+`_doc_id_matches_title` call in **`retrieval-eval` (Tier 1)** (`:502`, `:509`) and in
+`rag_reachability_probe` (`:400`).
+
+Consequences: (a) the gold-id binding needs **no LLM** and was verified before any arm; (b) the RAG
+secondary that `tier2-eval` supplies is answer-quality only, which is consistent with §K.4's own
+finding that the fixture has no gold answer, so only `correct_has_intersection` and the judge tier
+are readable there; (c) §K.4's sentence is corrected here rather than edited in place, per
+`tempdocs-are-dated-history`.
+
+**The binding check, run and passed** (`916_binding_probe.py`, 10 legal queries against a live
+backend on the persisted legal index):
+
+- `parent_doc_id` shape is
+  `f:\…\scripts\jseval\tmp\eval-corpora\mixed\legal-clerc-200\3673789.txt`; the fixture writes
+  `3673789` into `evidence_list[].title`. `_doc_id_matches_title` takes the filename stem, lowercases
+  both, and matches — **exactly**, not by the 60-char prefix fallback.
+- **9 of 10** sampled queries retrieved their gold document inside top-10 chunks. The one miss is a
+  retrieval outcome, not a binding failure: the shape check (`shape_would_match_own_stem`) is `true`
+  for every observed `parent_doc_id`.
+- Verdict: the fixture's gold ids resolve against what the matcher matches. No fixture or driver
+  change was needed.
+
+#### K.10.4 What the driver records per arm, and the campaign-stop it enforces
+
+Added for this window on top of §K.9's three fixes: `rerank_deadline_ms` (the driver's intent) and
+`env_deadline_ms` (read back from the run's **own** `summary.env_overrides`, `run.py:222` — so a
+constant that failed to reach an arm is visible in that arm's metrics rather than assumed);
+`machine_dirty`; `P@1`; `ce_coverage_frac` / `ce_silent_drops` / `ce_eligible` (the pair
+`degraded-ce` is computed from, which is what the deadline control is *about*); and `chunk_docs` /
+`chunk_parents_expected` from the run's `chunk_completeness` block.
+
+`decision_bearing_nulls()` names the columns the pre-registered rule reads
+(`ndcg, r10, p1, leak, union, index_bytes, docs_s, trunc_rate, chunk_docs`). Per the brief this is
+checked after the first sweep arm, and a null there is a **campaign stop**, not a footnote: the
+roll-up would print `-` for a clause the rule reads, and a rule evaluated over `-` is not the rule
+that was pre-registered.
+
+#### K.10.5 Execution shape
+
+The campaign is several `run` invocations into **one** `--out` tree, in §K.6's order, each launched
+detached via `916_launch_phase.ps1` (a `Start-Process` under `scripts/dev/run-watcher.mjs`, per
+`agent-lessons.md`'s ~60-minute tracked-task kill) and supervised with `run-watcher.mjs check` plus
+self-terminating condition polls. `--arms` selects the subset for a phase; `--phase` prefixes the
+`CORPUS.done` / `RUN.done` markers, because a single `RUN.done` at the root would be written by the
+first phase and read by the watcher as "the campaign finished". Per-arm `ARM.done` resumability is
+unchanged.
+
+---
+
+## §L Part 1 result — incumbent retained; threshold rationale closed analytically (2026-09-03/04)
+
+### L.1 Evidence admitted to the decision
+
+The campaign produced **32 admissible completed arms**: 15 on `mixed/legal-clerc-200`
+(the 12-cell matrix, two additional incumbent reindexes, and one shipped-deadline control), 12 on
+`mixed/ohr-bench-clean`, and five on `mixed/enron-qa`. Every admitted arm has
+`ce_coverage.verdict == "ok"`, `per_mode.hybrid.comparable == true`, a complete non-null
+decision record, and `machine_dirty == false`. All matrix arms used the arm-invariant **2000 ms**
+cross-encoder deadline selected in §K.9. That is campaign instrumentation, not a production-default
+proposal.
+
+One earlier Enron 256/50 smoke left an `arm-metrics.json` without an admissible result after its CE
+coverage failure; it is not one of the 32. A later resume began Enron 128/0 but was stopped before
+the arm produced metrics or `ARM.done`; its directory contains only setup/log material and is not
+evidence. No mean or threshold below incorporates either attempt.
+
+The three legal incumbent reindexes establish the required calibration:
+
+| run | nDCG@10 | R@10 | leg-union recall |
+| :--- | ---: | ---: | ---: |
+| `20260903T085832_mixed_legal-clerc-200` | 0.581629 | 0.810 | 0.925 |
+| `20260903T090447_mixed_legal-clerc-200` | 0.592372 | 0.835 | 0.925 |
+| `20260903T091138_mixed_legal-clerc-200` | 0.580665 | 0.815 | 0.925 |
+| **mean / sample σ** | **0.584888 / 0.006499** | **0.820 / 0.013229** | **0.925 / 0** |
+
+For legal nDCG the pre-registered `max(observed σ, 0.0068)` rule therefore applies the 0.0068
+floor, making the strict +2σ win line **0.598488**. For OHR and Enron, where the incumbent has one
+replicate, the explicitly marked run-level floor applies: ±2σ = **0.0136**.
+
+### L.2 What the two full matrices establish
+
+All 12 legal arms and all 12 OHR arms completed. On OHR, the incumbent itself is the matrix maximum
+at **0.957099 nDCG@10** (`20260903T125636_mixed_ohr-bench-clean`); the next arm is 256/50 at
+0.957090. No challenger can clear the OHR +2σ line of **0.970699**.
+
+On legal, eight challengers are eliminated before Enron: either they do not clear 0.598488 or their
+leg-union recall falls below the incumbent's 0.925, violating clause 2. Exactly four challengers
+remain capable of winning legal without that recall loss:
+
+| target / overlap | legal nDCG@10 | legal R@10 | legal union | legal run |
+| :--- | ---: | ---: | ---: | :--- |
+| 128 / 25 | 0.634915 | 0.840 | 0.925 | `20260903T093157_mixed_legal-clerc-200` |
+| 256 / 0 | 0.629296 | 0.835 | 0.930 | `20260903T095341_mixed_legal-clerc-200` |
+| 384 / 0 | 0.621148 | 0.845 | 0.925 | `20260903T102630_mixed_legal-clerc-200` |
+| 384 / 25 | 0.609067 | 0.835 | 0.925 | `20260903T103256_mixed_legal-clerc-200` |
+
+This is a complete logical partition, not a top-four convenience: the other seven non-incumbents
+cannot satisfy clauses 1 and 2 on legal, and no challenger can win OHR.
+
+### L.3 The decisive Enron proof
+
+Because no challenger wins OHR, a challenger can meet clause 1's “at least two of three” rule only
+by winning **both legal and Enron**. The four and only four legal-capable challengers were therefore
+run on Enron alongside the incumbent:
+
+| target / overlap | Enron nDCG@10 | Δ vs incumbent | R@10 | union | Enron run |
+| :--- | ---: | ---: | ---: | ---: | :--- |
+| **500 / 50 incumbent** | **0.792402** | — | 0.910 | 0.960 | `20260903T133806_mixed_enron-qa` |
+| 128 / 25 | 0.760281 | −0.032121 | 0.907 | 0.957 | `20260903T171519_mixed_enron-qa` |
+| 256 / 0 | 0.787604 | −0.004798 | 0.917 | 0.953 | `20260903T155614_mixed_enron-qa` |
+| 384 / 0 | 0.793542 | +0.001140 | 0.897 | 0.963 | `20260903T150903_mixed_enron-qa` |
+| 384 / 25 | 0.798495 | +0.006093 | 0.920 | 0.963 | `20260903T142710_mixed_enron-qa` |
+
+The strict Enron +2σ line is **0.806002**. None reaches it; the closest arm, 384/25, improves by
+only 0.006093 against the required >0.0136. Therefore every non-incumbent fails clause 1 regardless
+of any later control or RAG result. Some also fail the no-union-loss or no-R@10-regression clause,
+but those additional failures are not needed for the verdict.
+
+### L.4 Early stopping — useful, but an explicit execution deviation
+
+Section K.6 pre-registered a full 12-arm Enron matrix followed by controls and RAG. It did **not**
+pre-register a pruning or early-stop clause. Execution departed from that order once the proof in
+L.2–L.3 was independently reconstructed from the completed per-arm records:
+
+- the seven Enron challengers already incapable of winning legal were not run to completion;
+- multilingual and scifact controls were not run because those checks can only validate a proposed
+  winner, and no proposed winner exists;
+- the RAG fixture was not judged because §K.5 makes RAG secondary/veto-only—it cannot promote an arm
+  that fails retrieval clause 1.
+
+This is not represented as if the full matrix ran. It is an **unplanned but decision-preserving
+early stop**: every skipped result is downstream of a necessary condition that is already false.
+The retained incumbent is also the pre-registered tie/near-tie outcome, so skipped controls cannot
+cause a different selection.
+
+### L.5 Runner defect found during the attempted resume
+
+The resume exposed a fail-open orchestration defect: an arm's non-zero return was ignored by
+`do_run`, decision-bearing nulls were diagnosed but never enforced there, and the generated chain
+used PowerShell `Continue` semantics without checking `$LASTEXITCODE`. Consequently phase/run
+markers could describe launcher exit rather than successful evidence. The campaign verdict does
+not rely on those aggregate markers: it was recomputed from each admitted arm's own
+`arm-metrics.json`, admissibility fields, run id and completion marker.
+
+The retained driver now fails closed at both boundaries. On the shipping tree, `run` refuses to
+start because the four temporary Worker-bound keys are absent; only `analyze` is available for the
+archived evidence. On a deliberate throwaway branch where all four bindings exist, an `ARM.done`
+is reusable only with a structured completion record binding target, overlap, minimum, threshold,
+deadline, run id and source SHA. Completion also requires a clean machine window and known
+chunk-branch execution (true on an arm corpus). Non-zero/null/inadmissible or identity-mismatched
+arms cannot earn corpus/run completion, and generated chains stop on a non-zero Python exit.
+Regression tests cover these failure and stale-resume shapes. The stopped 128/0 attempt is left out
+precisely because it never acquired valid per-arm evidence.
+
+### L.6 Deadline control, costs, and threshold follow-up closure
+
+The matrix deadline was 2000 ms so small chunks did not become inadmissible merely by creating more
+rerank candidates. The production default remains 200 ms. A clean incumbent control at the shipped
+deadline (`20260903T091800_mixed_legal-clerc-200`) scored 0.581146 nDCG@10, 0.810 R@10 and 0.925
+union recall—inside the incumbent calibration band. Campaign-internal scores therefore do not
+repin a release baseline.
+
+Every admitted arm records SPLADE truncation, index bytes and primary docs/s. Those measurements
+remain useful cost evidence, but clauses 3–6 are not evaluated as if they could rescue an arm after
+clause 1 fails. In particular, noisy single-run throughput or index-size variation is not promoted
+to a selection rationale.
+
+`CHUNK_THRESHOLD_CHARS = 2000` was **held fixed**, not swept, so this campaign supplies no empirical
+threshold comparison. The earlier §C.2 wording “four times the chosen chunk size in chars” is
+ambiguous and is superseded: it conflated a four-characters-per-token estimate with four chunk
+windows. The exact analytic relationship is:
+
+```java
+TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS) == 2000
+```
+
+`TokenEstimation` owns the canonical optimistic typical-prose conversion of four characters per
+token. Therefore 2000 is a cheap **one-typical-window prefilter** for the selected 500-token target,
+not four chunks and not a boundary oracle. The writer first rejects raw content shorter than 2000;
+content that passes is then processed by `ChunkSplitter`, and `ChunkDocumentWriter` still emits no
+chunk documents when the splitter returns zero or one chunk. Fast characterization tests bind both
+the constant relationship and that threshold-plus-single-chunk behavior.
+
+The splitter's own content-aware conversion remains authoritative for actual boundaries: Latin text
+maps near 3.85 characters per token, while CJK-dominant text can map near one character per token.
+That difference does not create a per-language threshold. The single 2000-character prefilter is
+locale-invariant, and the splitter handles content shape after the gate in accordance with
+ADR-0043's no-per-language-lever rule.
+
+The old “≥1536-character corpus-profile floor” is also qualified. It is only the arithmetic point
+where `IndexingDocumentOps`'s `/3` **fallback** estimate reaches 512 tokens. The shipped 2000 retains
+margin above that compatibility bound, but exact SPLADE counts and corpus-level median/chunk-rate
+routing are separate. Neither 1536 nor 2000 is established here as a retrieval-quality optimum.
+
+Disposition: the unchanged threshold is **analytically derived, operationally exercised, and not
+quality-optimized**. That explicit classification closes the promised follow-up without another
+multi-hour corpus sweep and without changing production behavior or `ALGORITHM_VERSION = "v1"`.
+
+### L.7 Shipping decision
+
+Retain the selected static chunk geometry:
+
+`(target_tokens, overlap_tokens, min_tokens) = (500, 50, 100)`.
+
+The separate `threshold_chars` remains 2000 under §L.6's analytic and operational rationale; it is
+not claimed as a quality-optimized result.
+
+No production chunking behavior changes. The four temporary environment/system-property keys,
+their nullable resolved-config representation, dynamic Worker consumers, tests and config-surface
+growth are removed in the closeout. Lane D already fingerprints the four static values plus
+`ChunkSplitter.ALGORITHM_VERSION`; because neither boundaries nor values change,
+`ALGORITHM_VERSION` correctly remains **`"v1"`**. A version bump would cause an unnecessary reindex
+for byte-identical chunking.
+
+---
+
 ## §H Register updates made
 
 - **`F-056`** added to `docs/reference/search-quality-register.md`: **audit finding 2 measured and
@@ -1243,22 +2264,57 @@ round" was the standing instruction and this is it.
   there: a different aggregation shape, or a corpus whose evidence is genuinely spread over many
   mid-ranked passages — not another λ point.
 - Skill mirror regenerated with `node scripts/docs/skills-sync.mjs`.
+- **`F-057`** records Part 1's 32 admissible runs, calibration, decision-preserving early stop and
+  retained 500/50/100 geometry. It explicitly distinguishes the campaign's 2000 ms deadline from
+  the shipped 200 ms default. It also records the separate threshold disposition: the unchanged
+  2000-character prefilter is analytically tied to one canonical typical-prose 500-token window,
+  operationally exercised, and not quality-optimized.
 
 ---
 
 ## Cross-lane requests
 
-- **Lane D (index identity + migration).** (1) Part 1 will hand you a chosen
+**Current resolution (2026-09-04).** Lane D merged before this closeout and main fingerprints
+target, overlap, minimum, threshold and `ALGORITHM_VERSION` directly from `ChunkSplitter`. Part 1
+retains 500/50/100 and `v1`; the shipped 2000-character threshold is now explicitly characterized
+as an analytic one-typical-window prefilter rather than a quality optimum, so the historical request
+below is superseded and no cross-lane edit remains. Tempdoc 854 retains ownership of the W2
+pool/limit and clean reranker-window work; Part 4 will not duplicate it.
+
+- **HISTORICAL, SUPERSEDED — Lane D request as recorded before Lane D merged.**
+  `SsotCommitMetadataSource.java:179-185` on `origin/worktree-lane-D` builds
+  `IndexFingerprint.Chunking` from **five bare static reads** — `ChunkSplitter.DEFAULT_CHUNK_TOKENS`,
+  `DEFAULT_OVERLAP_TOKENS`, `MIN_CHUNK_TOKENS`, `CHUNK_THRESHOLD_CHARS`, `ALGORITHM_VERSION` —
+  while the HNSW block three lines above it (`:172-178`) correctly resolves through
+  `rc.index().effectiveVectorHnswM()`. As written, an index built by a lane-E sweep arm would be
+  fingerprinted with the SHIPPED chunk parameters, i.e. the fingerprint would say 500/50/100/2000
+  for an index actually chunked at 128/25/26/2000 — silently mixable, which is the exact failure
+  your fingerprint exists to prevent. **Requested change, four lines, mirroring your own HNSW
+  pattern:** read `rc.index().effectiveChunkTargetTokens()` / `…OverlapTokens()` / `…MinTokens()` /
+  `…ThresholdChars()` (these accessors exist on lane E's branch and fall back to the same
+  `ChunkSplitter` constants when unset, so your `rc == null` guard still works and an un-swept build
+  fingerprints identically to today). **Which base was verified:** the accessors were built and
+  tested on lane E's base `305bb039`, where **no chunking fingerprint exists at all** — the reads
+  are entirely lane D's unmerged addition (`git show 305bb039:…SsotCommitMetadataSource.java`
+  contains no `ChunkSplitter` reference). So lane E cannot make this change without editing lane D's
+  file, and programme rule 4 says lane E hands lane D numbers, not diffs.
+  **DECIDED by the owner 2026-09-03, and this is an explicit, recorded exception to programme rule
+  4:** the four-line change is **authorised as an orchestrator-approved cross-lane edit made in lane
+  E's final Part 1 PR**, after #620 merges and lane E rebases onto it. Lane D's tempdoc carries the
+  mirror note. Until then the sweep is unaffected — every arm is a `--clean` rebuild and the
+  fingerprint is never read *across* arms, so a fingerprint that records the shipped constants
+  cannot mislead a comparison that never consults it.
+  (1) Part 1 will hand you a chosen
   `(chunk_tokens, overlap, threshold)`; it is not ready yet and Part 2 does not block on it.
   (2) Please accept or amend a **chunker version string** as a fingerprint input —
   proposal `ChunkSplitter.CHUNKER_VERSION = "v2-<tokens>-<overlap>-<mode>"`, derived from the three
   constants so it cannot drift from them. Lane E will not edit the fingerprint (programme rule 4).
   (3) Part 2 changes **no** index shape and needs no rebuild — it is query-time only, so it can merge
   in either order relative to D.
-- **Tempdoc 854 (fusion residue, CHARTER).** Part 4's fusion-number sweep is lane E's only if 854 is
-  still idle when Part 1 finishes; lane E will re-check status first. The 854 W2-fix (pool `top_n` /
-  `limit` splice coupling guard) is **not** taken here. Note for 854: §D.4 records that the branch
-  fusion min-max normalizes each branch, so this PR's aggregate cannot leak scale into the blend.
+- **Tempdoc 854 (fusion residue).** W1/W2 are partly merged, but the W2 pool/limit coupling and clean
+  reranker-window work remain owned there. Part 4 therefore does not re-sweep global rerank top-k or
+  start fusion cells. A bounded efSearch experiment is technically separable, but Part 4 lacks a
+  pre-registered hypothesis and held-out selection protocol, so Lane E closes without launching it.
 - **Owner — all three decisions ANSWERED, recorded here so Part 1 inherits them.**
   (1) §C.4's RAG question-set fixture: **yes, but as Part 1 step 0**, not as part of Part 2.
   (2) §C.1's temporary `EnvRegistry` keys for the chunk-size campaign: **acceptable**, on the
@@ -1271,22 +2327,47 @@ round" was the standing instruction and this is it.
 
 ## Open items
 
-1. **Part 1, Part 3, Part 4 are not executed.** Part 3 is blocked on lane A; Parts 1 and 4 are
-   machine-time, planned in §C.
-2. **Doc-length distributions per corpus are unmeasured** (§C.3). First action of Part 1.
-3. **The `OnnxEmbeddingEncoder.chunkOverlap` reconciliation** (§B.3) is a Part 1 item and, on the
-   reading recorded there, resolves to documentation plus a named invariant rather than a number
-   change — but that reading needs a second opinion before it is acted on.
-4. **Two private copies of `CHUNK_THRESHOLD_CHARS = 2000`** in `modules/system-tests` (§B.2) must be
-   swept by Part 1's PR or they become false authority.
+1. **Parts 1 and 2 are CLOSED; Part 3 is PARKED; Part 4 is CLOSED AS ROUTED.** The 32
+   admitted runs and pruning proof retain 500/50/100
+   (§L). The threshold follow-up is also closed without a sweep: 2000 is the canonical
+   four-chars-per-token conversion of the selected 500-token target, used only as a cheap
+   one-typical-window prefilter; actual emission still requires the content-aware splitter to return
+   more than one chunk. It is analytically derived, operationally exercised and not
+   quality-optimized (§L.6). Part 3's window policy, explicit-docIds semantics and candidate were
+   implemented and structurally reviewed, but its live A/B is inadmissible because enrichment did
+   not remain fixed (§Part 3.1). The candidate is removed from the landing branch and preserved only
+   in a local parked checkpoint pending a terminal-index rerun with anchor-aware evidence. Part 4
+   launches no campaign: 854 owns fusion/reranker depth, and other candidates require a new charter
+   with a pre-registered hypothesis and held-out protocol.
+2. **CLOSED by §K.3** — doc-length distributions are measured for all six corpora, and they
+   reassign three of them: `miracl-de-2k` (0.6% chunked) and `miracl-fr-2k` (0.3%) become
+   no-regression controls rather than arms, and `ohr-bench-clean` (62.8%) becomes the third arm
+   corpus. Note the tension recorded there with §J's "scifact is chunk-free": 14.4% of scifact
+   documents DO exceed the writer threshold, so that claim is about the corpus-profile gate at
+   search time, not about the writer.
+3. **ANSWERED by §K.2, second opinion still owed.** The encoder's 128 is a model-token window
+   stride inside one encode, not a document splitter; `createChunks` never sees a document
+   boundary and its input is either a stored `CHUNK_CONTENT` or a whole parent. Resolved to
+   documentation plus the named invariant in §K.2. This is a second *reading*, not an independent
+   *reviewer* — an independent confirmation is still the honest requirement.
+4. **CLOSED** — the two private copies in `modules/system-tests`
+   (`PassageRetrievalVectorGenerator`, `PassageRetrievalIntegrationTest`) now derive from
+   `ChunkSplitter`'s static constants instead of restating three literals.
 5. **Commit/reopen cadence numbers recorded in §G are not acted on** — the floor is
    `BackfillScheduler.CYCLE_BUDGET_MS`, chartered as 912 open items 8/9.
-6. **`prepare-worktree.cjs` does not make `datasets/` available in a worktree** (lane 0's file, so
-   not edited here). `jseval` resolves `<repo-root>/datasets/mixed/<name>/corpus.jsonl`, which only
+6. **Still open, and partially worked around.** A `datasets/` junction exists in the lane-E
+   worktree, so `mixed/*` resolves; BEIR does not, because `beir/scifact` lives in the shared
+   `ir_datasets` cache under the MAIN checkout and `dataset_cache.apply_ir_datasets_home()`
+   resolves to the worktree's own empty cache root. `916_doc_length_profile.py` and the fixture
+   generator both fall back to the main checkout's cache root explicitly; that fallback is a
+   workaround in two scripts, not a fix. **`prepare-worktree.cjs` does not make `datasets/`
+   available in a worktree** (lane 0's file, so not edited here). `jseval` resolves `<repo-root>/datasets/mixed/<name>/corpus.jsonl`, which only
    exists in the main checkout, so every `mixed/*` corpus fails in a worktree. Fix: seed a junction
    the way models and the cuda runtime already are (`node scripts/dev/prepare-worktree.cjs` already
    resolves both from the main checkout — this is the same pattern, one more path).
-7. **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
+7. **Worked around in the driver, not fixed at source.** `916_chunk_sweep.py` sets
+   `JSEVAL_HEALTH_TIMEOUT_SEC=300` in its child environment. The underlying defect stands:
+   **`JSEVAL_HEALTH_TIMEOUT_SEC` defaults to 120 s**, below a cold worktree backend boot (~150 s
    observed). The first campaign attempt lost three arms to it before the cause was clear. Either
    raise the default or have `backend.py` distinguish "still starting" from "failed".
 8. **CLOSED by §J.4 — Part 2 is finished, not parked.** §I swept the λ axis but, per the §J
@@ -1296,6 +2377,13 @@ round" was the standing instruction and this is it.
    shape — the §D.4 pool floor is why low-λ arithmetic cannot reach the parents this was meant to
    rescue — or a corpus whose evidence really is spread over many mid-ranked passages, which neither
    chunked corpus in the register turns out to be.
+9b. **CE deadline is a campaign gate, decided BEFORE the sweep (§K.9).** The 256/50 smoke arm
+   voided on `degraded-ce` from 21/200 `DEADLINE_EXCEEDED` (incumbent: 1/200) — halving the chunk
+   size roughly doubles the passages the cross-encoder reranks. If most small-chunk arms void, the
+   sweep measures nothing. Fix a single arm-invariant CE deadline large enough for the 128-token
+   arm and record it as a campaign constant, or budget re-runs; do not tune it per arm, which would
+   put a second lever inside the experiment.
+
 9. **`ce_coverage` degradation on legal is an UPWARD bias above the 2% tolerance, not noise** (§I.6,
    F-056 finding 4). Four of four legal void arms beat their clean comparators at drop rates
    4.5–20.5%, and F-055 supplies the mechanism. Below the tolerance the sign reverses and the effect
@@ -1308,8 +2396,71 @@ round" was the standing instruction and this is it.
    `agent-postmortems.md` currently covers wrong *gates/flags*; this case is a wrong *output field*
    with the same shape. Lane E did not edit that file, being outside its scope.
 
+11. **CLOSED — `scripts/jseval/tests/test_run.py::test_execute_run_always_emits_a_cadence_block`
+   had gone red on main.** It asserted `summary["cadence"]` equals an exact four-key dict
+   (`test_run.py:1004`) while the emitter also writes `commit_by_reason` and
+   `commit_by_reason_total` (`jseval/cadence.py:197-198`, shipped in `33ffc3bb`, which did not
+   update the test). Verified pre-existing by removing every 916 Part 1 file and re-running the
+   test alone. Routed by **extending the existing `jseval-pytest-missing-optional-deps-local-env`
+   pin** rather than adding a second one: `known-state-hint.test.mjs` requires every pin's
+   `exitProbe` to route back to exactly one pin, and the existing pin already matches every
+   `python -m pytest` invocation, so a second entry is ambiguous by construction. The extended
+   claim distinguishes the two reds by SHAPE (collection error = missing optional deps; assertion
+   inside a collected test = this one) **with the fix tracked here**, per `log-pre-existing-issues`:
+   The expected dict now includes the two `commit_by_reason` keys; the targeted closeout test is the
+   verification. Main being red was a defect, not a fact to remember.
+
+12. **`R@50` does not exist in jseval and the campaign cannot report it** (§K.5's deviation note).
+   Emitted metrics are `nDCG@10, AP@10, RR@10, R@10, P@1` (`scripts/jseval/jseval/scoring.py:9`)
+   and the retriever's default depth is 10 (`retriever.py:105,197`). The decision rule uses R@10 +
+   `leg_union_recall` instead. Making R@50 real is an owner decision with a real cost (every arm at
+   `--top-k 50`, no comparability with existing baselines) and is recorded here rather than
+   silently substituted.
+
+13. **CLOSED by §K.9 and §L — the driver ran the campaign and now fails closed.** It confirmed that
+   the temporary keys reached the writer and captured 32 admitted arms. The attempted resume exposed
+   the marker-propagation defects in §L.5; non-zero arms and decision-bearing nulls now prevent
+   corpus/run completion, and generated chains stop on non-zero child exits. §K.10.3 also corrects
+   the original Tier-2 premise: Tier 2 does not use the title matcher, while Tier-1 binding was
+   verified without an LLM. Superseded text:
+   **The sweep driver had never driven a real arm.** `916_chunk_sweep.py`'s roll-up math is tested
+   against synthetic run trees only; its `--start-backend --clean --pipeline` path, the SPLADE
+   evidence sidecar wiring (`JUSTSEARCH_SPLADE_EVIDENCE_PATH`, default null) and the index-size /
+   docs-per-second keys it reads are all unexercised against a live run. First action of the sweep
+   window: one throwaway arm on the cheapest corpus, read `arm-metrics.json`, confirm every field
+   is populated — before launching an overnight batch that would otherwise produce 45 rows of
+   `null`.
+
+14. **Part 3 rerun requirement is explicit, not an invitation to repeat the same contaminated
+    pair.** The evaluator prerequisite is CLOSED in `7e032ad9`: `tier2-eval` now retains ordered
+    anchor identities/counts, fingerprints its protocol/config, fails closed on malformed evidence,
+    and attaches an evaluator-compatible paired comparison through `--baseline-results`. The
+    comparator does not claim experimental admissibility: it emits `external-check-required` for
+    same-index identity and enrichment stability. The remaining prerequisite is a terminal index
+    whose enrichment counters do not move for either 50-query arm. The standard 9B
+    profile is required during measurement. A compact-start → standard-switch may allocate the
+    Worker models safely on a 12 GB GPU, but its pre-measurement enrichment must also be identical.
+    The hour-scale completion of 4,122 pending chunk embeddings was deliberately not run in this
+    bounded window.
+
 ## Report-back
 
+- **Part 1 target/overlap verdict: RETAIN 500/50/100.** Thirty-two clean, admissible runs establish the
+  incumbent noise band, the full legal and OHR matrices, and every Enron cell still capable of
+  satisfying the two-of-three adoption rule. The best surviving Enron delta is +0.006093 against a
+  required >0.0136; no challenger can be adopted (§L).
+- **Execution deviation:** seven decision-inert Enron cells, downstream controls and RAG judging
+  were skipped only after the necessary-condition proof was reconstructed. This early stop was not
+  pre-registered and is disclosed as such. The 2000 ms CE deadline was campaign-only; the shipped
+  200 ms control remained inside the incumbent band. No release baseline or production constant
+  changes.
+- **Part 1 landing shape:** the temporary four-key override path and its config-surface growth are
+  removed. The static policy remains fingerprinted by Lane D with algorithm version `v1`. The
+  qrel-derived RAG fixture, historical evidence analyzer, guarded runner and evidence record remain.
+  The fixed 2000-character threshold stays shipped as the canonical typical-prose conversion of one
+  500-token window and as a prefilter only; characterization pins the writer's additional
+  single-chunk guard. This closes the threshold follow-up analytically and operationally, not as a
+  quality optimization.
 - **PR:** one, open, **not merged** — retitled
   `test(916): characterize the chunk-collapse and close audit finding 2 as refuted (lane E part 2)`.
   It contains **no production-code change**: `git diff origin/main -- 'modules/*/src/main'` is empty.
@@ -1318,13 +2469,26 @@ round" was the standing instruction and this is it.
   (`ce_coverage: ok` + `comparable` on every one), replicate spread 0.0000 on R@10, 24 clean machine
   signatures. No λ beats the noise floor on both chunked corpora, and `leak_rate` worsens on at least
   one corpus at **every** λ tested — condition 2 fails outright, independently of the R@10 clause.
+- **Part 3 verdict: NO-VERDICT; operationally PARK and remove from the landing branch.** Both
+  standard-profile arms completed 50/50 with zero errors, but enrichment changed differently during
+  the serial runs. The observed record would fail the frozen rule (gold span 31/50→25/50, one paired
+  win/seven losses; truncation 49/50→50/50; included sections 8.96→5.64), while generated-answer
+  intersection stayed 2/50 and retrieval latency rose only 53.34 ms. Those numbers are evidence
+  against a GO, not causal evidence of a regression. §Part 3.1 records hashes and the exact rerun
+  admission conditions.
 - **What three campaigns actually established.** §G and §I measured whether a wider collapse scan
   changes set membership: it does not help. The §J review then found the aggregate was a dead sort
   key, so §J re-measured whether score aggregation helps: it does not either, and it costs leak. The
   answer to the 2026-09-01 audit's finding 2 is therefore **negative at both levels**, on two chunked
   corpora across three independent index builds — not "unknown", and not "parked pending evidence".
-- **Items:** Part 2 **14/14 done** (12 + the owner-authorised λ sweep + the review round). Parts
-  1/3/4 **not started** (Part 3 blocked on lane A; Parts 1 and 4 are machine-time, planned in §C).
+- **Items:** Parts 1 and 2, including Part 1's threshold follow-up, are closed. Part 3's Lane-A
+  dependency is merged; its anchor-first immediate-successor candidate is structurally complete but
+  parked and removed from the landing branch after an inadmissible A/B. It is not an F-lane blocker.
+  The evaluator-side rerun prerequisite is closed in `7e032ad9`; the comparison proves evaluator
+  compatibility only. A terminal retained index plus externally verified enrichment stability is
+  still required to revisit the parked decision.
+  Part 4 is closed as routed: 854 owns fusion/reranker depth and no other sweep was sufficiently
+  specified to launch.
   Three implementation deviations are recorded in §D with their reasons; all three are moot now that
   the mechanism is reverted. One brief premise was **wrong**: over-fetching the chunk *hits* already
   existed at ×10 (§B.12); the starved stage was the collapse scan.
@@ -1345,11 +2509,9 @@ round" was the standing instruction and this is it.
   (BL-2, three builds, appeared once); "legal identical to four decimals at every λ" was wrong at
   λ0.05 (BL-3, −0.0017 nDCG); "σ is 0" is an **R@10** claim and does not extend to nDCG@10, where
   sub-tolerance CE drops move the fifth decimal (BL-4); and the void-arm count was 3, not 5 (§I.6).
-- **Cross-lane requests:** lane D — chunker version string + the Part 1 triple (neither ready;
-  **Part 2 now changes nothing at all**, so D is unblocked in either merge order); 854 — Part 4's
-  fusion sweep is lane E's only if 854 is still idle, and §D.4's finding that branch fusion min-max
-  normalizes each branch (pool floor exactly 0.0) is a durable constraint 854 should have. Owner —
-  all three decisions answered and recorded in Cross-lane requests so Part 1 inherits them.
+- **Cross-lane status:** Lane D is resolved—main fingerprints the retained static tuple and `v1`.
+  Tempdoc 854 continues to own the impure pool/limit and reranker-window work; §D.4's finding that
+  branch fusion min-max normalizes each branch (pool floor exactly 0.0) remains a durable constraint.
 - **Residue found outside scope and where it was routed:**
   1. **`prepare-worktree.cjs` does not provide `datasets/`** — every `mixed/*` corpus lives only in
      the main checkout, so any worktree running jseval fails with `FileNotFoundError: corpus.jsonl
@@ -1369,3 +2531,25 @@ round" was the standing instruction and this is it.
   change — use it; (e) **verify that the quantity you compute is the quantity the next stage
   consumes.** Two full campaigns here measured the wrong question because the aggregate was emitted
   as a sort key while branch fusion blends scores.
+
+## M. Post-closeout `review-changes` pass (2026-09-04)
+
+The independent refute-first review returned **NEEDS-FIXES** on three evaluator surfaces and found
+no security or privacy defect. All three findings are resolved without restarting a benchmark:
+
+1. The default console now exposes the decision-bearing rates and paired anchor transitions; the
+   evidence is no longer visible only in JSON or an output directory.
+2. `--baseline-results` is parsed and structurally validated before the candidate run starts.
+   Canonical CLI paired runs also require a non-empty served-model identity and preflight exact
+   config/protocol/query-sequence compatibility before creating the retrieval client.
+3. Paired-comparison schema v2 replaces the ambiguous `compatible` claim with
+   `evaluator_compatible` and an explicit `experimental_admissibility: external-check-required`
+   record. Logical index identity and equal, stable enrichment remain run-admission evidence outside
+   this offline comparator.
+
+Post-fix verification: the focused jseval suite passed **85/85**; `compileall`, `tier2-eval --help`,
+`git diff --check`, and the full docs-maintenance check sequence passed. The already-fresh
+`ChunkThresholdCharacterizationTest` Gradle target remained green and no Java production path changed
+in this fix. A second read-only review returned **GO**, with no remaining P0/P1/P2 finding in the fix
+set. No benchmark or dev stack was started. The Part 3 verdict does not change: its candidate remains
+parked until a terminal-index, standard-profile rerun can meet those external admission checks.

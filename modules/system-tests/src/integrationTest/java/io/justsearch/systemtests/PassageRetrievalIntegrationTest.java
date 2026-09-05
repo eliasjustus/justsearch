@@ -52,9 +52,11 @@ import org.junit.jupiter.api.io.TempDir;
 class PassageRetrievalIntegrationTest {
 
   private static final int VECTOR_DIM = 768;
-  private static final int CHUNK_TARGET_TOKENS = 500;
-  private static final int CHUNK_OVERLAP_TOKENS = 50;
-  private static final int CHUNK_THRESHOLD_CHARS = 2000;
+  // Tempdoc 916 Part 1 (open item 4): these were three hand-copied literals of the production
+  // constants — false authority the moment the production numbers move. They now derive.
+  private static final int CHUNK_TARGET_TOKENS = ChunkSplitter.DEFAULT_CHUNK_TOKENS;
+  private static final int CHUNK_OVERLAP_TOKENS = ChunkSplitter.DEFAULT_OVERLAP_TOKENS;
+  private static final int CHUNK_THRESHOLD_CHARS = ChunkSplitter.CHUNK_THRESHOLD_CHARS;
   private static final int RECALL_K = 3;
 
   private RunningRuntime runtime;
