@@ -19,7 +19,7 @@ function run(label, fn) {
 
 const ENTRIES = [
   { id: 'typecheck-pin', match: ['npm .*typecheck'], claim: 'typecheck is red (TS5101)' },
-  { id: 'gate-pin', match: ['check-theme-token-closure'], claim: 'gate red on main' },
+  { id: 'gate-pin', match: ['check-contrast-matrix'], claim: 'gate red on main' },
   { id: 'pytest-pin', match: ['pytest\\b'], claim: 'two known-red tests' },
   { id: 'broken-regex-pin', match: ['[unclosed'], claim: 'must not crash the matcher' },
 ];
@@ -31,8 +31,8 @@ run('fires on npm run typecheck', () => {
 run('fires on npm --prefix modules/ui-web run typecheck', () => {
   assert.equal(matchExpectedState('npm --prefix modules/ui-web run typecheck', ENTRIES)[0].id, 'typecheck-pin');
 });
-run('fires on node scripts/ci/check-theme-token-closure.mjs', () => {
-  assert.equal(matchExpectedState('node scripts/ci/check-theme-token-closure.mjs', ENTRIES)[0].id, 'gate-pin');
+run('fires on node scripts/ci/check-contrast-matrix.mjs', () => {
+  assert.equal(matchExpectedState('node scripts/ci/check-contrast-matrix.mjs', ENTRIES)[0].id, 'gate-pin');
 });
 run('fires on the agent-analytics suite and a single *.test.mjs (886 PR 5b: CI runs run-all-tests.mjs)', () => {
   const suiteEntries = [{ id: 'suite-pin', match: ['run-all-tests\\.mjs', '861-w5-agent-spawn-sweep'] }];

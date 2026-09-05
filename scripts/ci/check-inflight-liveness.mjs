@@ -17,7 +17,7 @@
  * HONEST SCOPE (tempdoc 565 §12.10 — register + DISCIPLINE, not a hard gate): this catches a raw
  * `'PROCESSING' → 'running'` assertion. A re-model that computes the state name, maps a DIFFERENT literal,
  * or hand-rolls a spinner from a count is import-invisible and slips — the same ceiling as
- * check-run-renderers / check-controls-a11y. Early-warning that forces review on a declared second
+ * check-run-renderers. Early-warning that forces review on a declared second
  * in-flight renderer, not absolute prevention. Scoped to the indexing-job liveness (the 575
  * action-lifecycle stateful concept); the cross-domain generalization is 559/565.
  */
