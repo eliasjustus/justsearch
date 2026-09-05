@@ -20,7 +20,7 @@ The all-attempt seam retains `attempts`, `first_error`, and excluded cells, so t
 report no longer maintains a second permissive log reader.
 
 Usage (from `scripts/jseval/`):
-    python scale_matrix_report.py --log-dir 624-run-2026-07-07-pilot/logs
+    python scale_matrix_report.py --log-dir runs/<campaign>/logs
     python scale_matrix_report.py --log-dir logs-en --log-dir logs-de --json
     python scale_matrix_report.py some-parent-dir   # auto-discovers leaf log dirs
 """
