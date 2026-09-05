@@ -17,7 +17,7 @@
 //   - INVESTIGATION:  doc shape is "Scope for Agent" / "Findings" /
 //                 "Research" — an investigation that produced
 //                 findings; safe to mark `done` (terminal by nature)
-//   - ABANDONED:  TODO list with old dates, no closure, no successor —
+//   - ABANDONED:  unfinished checklist with old dates, no closure, no successor —
 //                 mark `done` with a note that scope was deferred
 //   - AMBIGUOUS:  needs human judgment (recent references / unclear)
 //
@@ -113,7 +113,7 @@ function classify(file, raw) {
     return { file, ageDays, status: statusRaw, klass: 'INVESTIGATION' };
   }
 
-  // ABANDONED: contains TODO list and stale, no closure, no successor
+  // ABANDONED: contains an unfinished checklist and is stale, no closure, no successor
   // We use a soft signal: stale > 60 days + status `open` + no recent edits.
   if (base === 'open' && ageDays > 60) {
     return { file, ageDays, status: statusRaw, klass: 'ABANDONED' };

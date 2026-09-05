@@ -44,7 +44,6 @@ export async function installDeepLinkBridge(router: IntentRouter): Promise<() =>
       if (typeof url !== 'string') return;
       const address = parseUrl(url);
       if (!address) {
-        // eslint-disable-next-line no-console
         console.warn(`[tauriBridge] received un-parseable deep-link URL: ${url}`);
         return;
       }
@@ -55,7 +54,6 @@ export async function installDeepLinkBridge(router: IntentRouter): Promise<() =>
     });
     return unlisten;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('[tauriBridge] failed to subscribe to Tauri event:', err);
     return () => {
       /* no-op */

@@ -77,7 +77,6 @@ export function resolveSurfaceStateSchema(raw: RawSurfaceStateSchema): ResolvedS
       // Surface declares a binding to a storeId the FE doesn't have yet —
       // log once and drop. The surface keeps activating; the missing binding
       // just won't participate in URL projection/hydration.
-      // eslint-disable-next-line no-console
       console.warn(
         `[surfaceSchemas] no registered store for storeId="${b.storeId}" ` +
           `(binding schemaPath="${b.schemaPath}"); dropping`,

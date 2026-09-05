@@ -8,7 +8,7 @@
     "dev:all": "node scripts/dev-all.cjs",
     "build": "vite build",
     "build:analyze": "node -e \"process.env.ANALYZE='true';require('child_process').execSync('npx vite build',{stdio:'inherit',env:{...process.env,ANALYZE:'true'}})\"",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit",
     "preview": "vite preview",

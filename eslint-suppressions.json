@@ -1,0 +1,7 @@
+{
+  "scripts/ci/url-grammar-fixtures/generate.mjs": {
+    "no-warning-comments": {
+      "count": 1
+    }
+  }
+}

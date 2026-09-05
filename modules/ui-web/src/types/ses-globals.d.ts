@@ -35,7 +35,6 @@ declare global {
    * Each Compartment is a separate JavaScript realm with its own
    * globalThis; the host explicitly endows what the plugin sees.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Compartment: typeof SesCompartment;
 }
 

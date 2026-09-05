@@ -98,7 +98,6 @@ export function mountShellDemo(host: HTMLElement): Shell {
       operationId: string;
       risk: string;
     };
-    // eslint-disable-next-line no-console
     console.log('[demo] action-invoke fired', detail);
   });
   shell.addPane({
@@ -171,7 +170,6 @@ export function mountShellDemo(host: HTMLElement): Shell {
   controls.querySelector('#demo-restore')?.addEventListener('click', () => {
     const stored = localStorage.getItem('jf-shell-demo-layout');
     if (!stored) {
-      // eslint-disable-next-line no-alert
       alert('No saved layout. Click Save first.');
       return;
     }

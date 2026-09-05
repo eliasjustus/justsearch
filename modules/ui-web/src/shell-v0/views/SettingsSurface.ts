@@ -3320,7 +3320,6 @@ export class SettingsSurface extends JfElement {
     try {
       await activateProfile(id);
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn(`[SettingsSurface] activateProfile('${id}') failed`, err);
     }
   }

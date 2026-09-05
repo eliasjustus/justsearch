@@ -143,7 +143,6 @@ async function tryFetchAndPopulate(
     }
 
     if (!response.ok) {
-      // eslint-disable-next-line no-console
       console.debug(
         `[ConversationShapeCatalogClient] /api/registry/shapes returned ${response.status}`,
       );
@@ -154,7 +153,6 @@ async function tryFetchAndPopulate(
     try {
       body = (await response.json()) as ConversationShapeCatalog;
     } catch (parseErr) {
-      // eslint-disable-next-line no-console
       console.debug(
         '[ConversationShapeCatalogClient] response body parse failed',
         parseErr,
@@ -162,7 +160,6 @@ async function tryFetchAndPopulate(
       return false;
     }
     if (!body || !Array.isArray(body.entries)) {
-      // eslint-disable-next-line no-console
       console.debug(
         '[ConversationShapeCatalogClient] response missing `entries` array; cached catalog retained',
       );
@@ -173,7 +170,6 @@ async function tryFetchAndPopulate(
     rebuildIndex(body);
     return entriesById.size > 0;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.debug(
       '[ConversationShapeCatalogClient] /api/registry/shapes fetch failed',
       err,
