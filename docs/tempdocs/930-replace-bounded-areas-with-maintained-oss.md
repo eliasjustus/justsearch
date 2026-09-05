@@ -628,7 +628,7 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
 | 6 | #656 `hooks(930): retire bash-guard and hint hooks; native deny` | E1+E2 | `a42d039a` | green |
 | 7 | #654 `jseval(930): retire drift envelopes; run pytest in CI` | D | `18e2833f` | green |
 | 8 | #661 `governance(930): commodity ratchets replace six gates` | F + decision list | `534aaf50` | green |
-| 9 | PENDING `governance(930): drop three unwired invariants; closeout` | PR 10 | PENDING | PENDING |
+| 9 | #663 `governance(930): drop three unwired invariants; closeout` | PR 10 | this PR | see PR checks |
 
 ### 22.1 What the re-based PRs changed against §21
 
