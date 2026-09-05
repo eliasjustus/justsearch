@@ -508,10 +508,11 @@ changes visible at its final preflight or exact read-back. GitHub comment
 updates have no compare-and-swap precondition, so the authenticated comment
 owner must be the sole writer from dry-run through read-back; do not manually
 edit the managed comment concurrently. Run `pr-review-record.mjs check --pr <N>` and
-`preview-squash-message.mjs --pr <N>` after the final push and review edit.
-Fix every finding before enqueue. The first command verifies the rich record;
-the second rejects review structure, template residue, provider prose, task
-boxes, and operational state from the public commit.
+`preview-squash-message.mjs --pr <N>` after the final push and review edit so
+findings can be corrected. The validated enqueue gateway repeats both live checks
+immediately before its queue request. The first command verifies the rich record;
+the second rejects review structure, template residue, provider prose, task boxes,
+and operational state from the public commit.
 
 Check summaries and artifacts may hold reproducible detail, but the managed
 comment is the stable index. Do not use a check summary as the only durable
@@ -548,13 +549,6 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   mitigation; see the registration-race bullet in Batch-publishing below and
   the `/publish` skill's CI-wait pattern for the never-chain-with-merge half
   of this sequence.
-- **`gh pr merge <N> --squash --delete-branch` can report `failed to run
-  git: fatal: 'main' is already used by worktree` even when the remote merge
-  succeeded.** That's `gh`'s local post-merge branch-sync step failing
-  because `main` is checked out in another worktree of this repo — not a
-  failed merge. Confirm with `gh pr view <N> --json
-  state,mergedAt,mergeCommit` instead of retrying the merge.
-
 **Publishing goes through the live GitHub merge queue (tempdoc 829 R4, executed
 2026-08-14).** The repo transferred to an organization, ruleset `main-merge-queue`
 gates `main` (SQUASH method, `merge_group` wired into `ci.yml`, validated end-to-end
@@ -575,8 +569,12 @@ longer applies once a PR is enqueued). Practical sequence:
   `--list` shows which contexts have a deterministic local subset and which are
   honestly hosted-only; `--run` executes the local subsets. Hosted-only never
   waives the corresponding GitHub check.
-- **Enqueue with `gh pr merge <N>` — no strategy flag.** Under the queue this does
-  not merge directly; it adds the PR to the queue. The queue runs its own
+- **Enqueue with `node scripts/dev/run-gh.mjs enqueue <N>`.** The repository-owned
+  gateway checks the live `PR_TITLE` / `PR_BODY` squash projection and exact managed
+  review record, then issues the ordinary strategy-free queue request. Direct
+  `gh pr merge` and the generic `run-gh.mjs pr merge` passthrough bypass that proof
+  and are blocked by the shared agent hook. Under the queue the accepted request
+  does not merge directly; it adds the PR to the queue. The queue runs its own
   `merge-group` CI pass against the PR merged with the latest `main` and merges
   (squash) autonomously on success.
 - **A queue rejection is a real signal, not a flake to blind-retry.** If the entry
@@ -585,8 +583,9 @@ longer applies once a PR is enqueued). Practical sequence:
   investigate before re-enqueuing.
 - **The review-record check and squash preview are the pre-publication
   checkpoints.** The queue merges unattended, so there is no second human look
-  at the comment freshness or title/body before publication. Run both and fix
-  every finding before enqueuing — not after.
+  at the comment freshness or title/body before publication. The enqueue gateway
+  runs both and refuses the queue request on any finding. Its checks and queue
+  request remain a short sole-writer window rather than an atomic GitHub transaction.
 - **Confirm the merge landed before any cleanup** — use `node
   scripts/dev/run-gh.mjs merge-wait <N>`. It performs the bounded queue poll,
   emits only state transitions, and returns the landed SHA on `MERGED`.

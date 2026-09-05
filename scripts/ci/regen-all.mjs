@@ -47,7 +47,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const GENERATORS = [
   {
     id: 'agent-hooks-wiring',
-    script: 'scripts/codegen/gen-agent-hooks-wiring.mjs',
+    script: 'scripts/codegen/gen-agent-hooks.mjs',
     args: [],
     source: 'governance/agent-hooks.v1.json',
     tempdoc: 592,

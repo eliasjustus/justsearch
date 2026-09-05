@@ -84,6 +84,15 @@ for (const [snippet, errorId] of [
   ['WIP: not ready', 'public-process-marker'],
   ['Stack: a -> b', 'public-stack-base-log'],
   ['Generated with Claude Code', 'public-provider-banner'],
+  ['🤖 Generated with [Claude Code](https://claude.com/claude-code)', 'public-provider-banner'],
+  ['Created by Claude Code', 'public-provider-banner'],
+  ['Provider details: [automation](https://claude.com/claude-code)', 'public-provider-banner'],
+  ['Session: https://claude.ai/code/session/abc123', 'public-provider-banner'],
+  ['<div>Generated with Claude Code</div>', 'public-provider-banner'],
+  ['<p>Generated with <strong>Claude Code</strong></p>', 'public-provider-banner'],
+  ['<div>Generated with Claude&nbsp;Code</div>', 'public-provider-banner'],
+  ['<a href="https://claude.com/claude-code">automation</a>', 'public-provider-banner'],
+  ['<div>Session: https://claude.ai/code/session/abc123</div>', 'public-provider-banner'],
   ['## Review record\n\nAuthorship: agent', 'public-review-residue'],
   ['## Testing\n\nNode tests passed.', 'public-review-residue'],
   ['## Test plan\n\nNode tests passed.', 'public-review-residue'],
@@ -106,6 +115,24 @@ for (const opaqueReviewText of [
   const pullRequest = pr({ body });
   const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
   assert(!ids(result.errors).includes('public-review-residue'), `${JSON.stringify(opaqueReviewText)} is not top-level review structure`);
+}
+
+for (const opaqueProviderText of [
+  '```markdown\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n```',
+  '> 🤖 Generated with [Claude Code](https://claude.com/claude-code)',
+  '`Generated with Claude Code` is the legacy footer shape.',
+  '<pre>Generated with Claude Code</pre>',
+  '<code>Generated with Claude Code</code>',
+  '<pre>Generated with Claude Code',
+  '<script>Generated with Claude Code',
+  '<style>Generated with Claude Code',
+  '<template>Generated with Claude Code',
+  '<div data-ref="https://claude.com/claude-code">Durable</div>',
+]) {
+  const body = `Durable example.\n\n${opaqueProviderText}\n\nSession-Id: ${SESSION}`;
+  const pullRequest = pr({ body });
+  const result = buildSquashMessageProjection({ pr: pullRequest, reviewComment: comment(pullRequest) });
+  assert(!ids(result.errors).includes('public-provider-banner'), `${JSON.stringify(opaqueProviderText)} is opaque provider text`);
 }
 
 {

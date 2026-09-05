@@ -8,7 +8,9 @@ probes:
   - adr-0045-history-policy-checked
   - adr-0045-review-record-separated
   - adr-0045-review-record-regression-invoked
-last_reviewed: 2026-09-04
+  - adr-0045-agent-enqueue-validated
+  - adr-0045-direct-agent-merge-guarded
+last_reviewed: 2026-09-05
 ---
 
 # ADR-0045: Public main history publication
@@ -161,3 +163,26 @@ and deletes them ten days later. A future check may project freshness and link
 to the comment, but only after its pull-request and merge-group event behavior
 is proven. See GitHub's documentation for [issue comments](https://docs.github.com/en/rest/issues/comments)
 and [check retention](https://docs.github.com/en/pull-requests/reference/status-checks#retention-of-checks).
+
+## Amendment: validate the agent merge effect — 2026-09-05
+
+Repository-owned agent CLI publication now enters the merge queue through
+`scripts/dev/run-gh.mjs enqueue <PR>`. The gateway runs the squash preview and
+managed-review check against live GitHub state and refuses to invoke `gh pr merge`
+when either check or its process boundary fails. A shared pre-tool hook blocks the
+ordinary direct `gh pr merge` and generic `run-gh.mjs pr merge` spellings so the
+documented Claude and Codex paths converge on the gateway.
+
+This is a last-mile agent guard, not a claim of universal GitHub enforcement. The
+GitHub UI, ad-hoc API mutations, and deliberately obfuscated shell commands remain
+maintainer-controlled bypass surfaces. The check-to-enqueue interval also is not
+atomic: GitHub exposes no compare-and-swap precondition for PR metadata or issue
+comments, so the authenticated owner must avoid concurrent edits during that short
+window.
+
+A hosted required check remains deferred. `issue_comment` and
+`pull_request_target` workflows run at the default-branch SHA, while a merge-queue
+required check must also report on the synthetic `merge_group` SHA. GitHub does not
+document a complete PR-membership list in the merge-group event. Do not create a
+write-capable Checks projection until metadata refresh and every grouped PR can be
+bound to those SHAs without relying on queue-ref naming conventions.

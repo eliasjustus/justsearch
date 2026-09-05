@@ -61,10 +61,13 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const POLL_INTERVAL_MS = 15_000;
 const DEFAULT_TIMEOUT_SEC = 1800;
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PREVIEW_SCRIPT = path.resolve(SCRIPT_DIR, '..', 'ci', 'preview-squash-message.mjs');
+const REVIEW_RECORD_SCRIPT = path.resolve(SCRIPT_DIR, '..', 'ci', 'pr-review-record.mjs');
 
 /** Resolve the `gh` binary: scoop's `current` symlink if present, else plain `gh` on PATH. */
 export function resolveGhBin(env = process.env) {
@@ -320,6 +323,70 @@ export function parseValueFlag(args, name, fallback = null) {
   return { value: candidate, rest: [...args.slice(0, index), ...args.slice(index + 2)] };
 }
 
+export function parseEnqueueArgs(args) {
+  const prToken = args[0];
+  if (typeof prToken !== 'string' || !/^[1-9]\d*$/.test(prToken)) {
+    throw new Error('enqueue requires a positive <pr-number>.');
+  }
+  const prNumber = Number(prToken);
+  if (!Number.isSafeInteger(prNumber)) throw new Error('enqueue <pr-number> exceeds JavaScript safe-integer range.');
+  let repo = null;
+  for (let index = 1; index < args.length; index += 1) {
+    if (args[index] === '--repo' && args[index + 1] && !args[index + 1].startsWith('--') && repo == null) {
+      repo = args[++index];
+      continue;
+    }
+    throw new Error(`enqueue accepts only <pr-number> and optional --repo owner/repo; received ${JSON.stringify(args[index])}.`);
+  }
+  if (repo != null && !/^[^/\s]+\/[^/\s]+$/.test(repo)) throw new Error('enqueue --repo must be owner/repo.');
+  return { prNumber, repo };
+}
+
+function childFailure(label, result, writeError) {
+  if (result?.error) {
+    writeError(`run-gh enqueue: ${label} failed to spawn: ${result.error.message}\n`);
+    return 2;
+  }
+  if (result?.signal) {
+    writeError(`run-gh enqueue: ${label} terminated by ${result.signal}.\n`);
+    return 2;
+  }
+  if (!Number.isInteger(result?.status)) {
+    writeError(`run-gh enqueue: ${label} returned no exit status.\n`);
+    return 2;
+  }
+  if (result.status !== 0) {
+    writeError(`run-gh enqueue: ${label} refused publication (exit ${result.status}).\n`);
+    return result.status;
+  }
+  return 0;
+}
+
+export function enqueuePullRequest(bin, prNumber, repo = null, {
+  run = spawnSync,
+  nodeBin = process.execPath,
+  previewScript = PREVIEW_SCRIPT,
+  reviewRecordScript = REVIEW_RECORD_SCRIPT,
+  writeError = (message) => process.stderr.write(message),
+} = {}) {
+  const commonArgs = ['--pr', String(prNumber)];
+  if (repo) commonArgs.push('--repo', repo);
+  const steps = [
+    ['squash preview', nodeBin, [previewScript, ...commonArgs]],
+    ['managed review-record check', nodeBin, [reviewRecordScript, 'check', ...commonArgs]],
+  ];
+  for (const [label, command, args] of steps) {
+    const result = run(command, args, { stdio: 'inherit', windowsHide: true });
+    const failure = childFailure(label, result, writeError);
+    if (failure !== 0) return failure;
+  }
+
+  const mergeArgs = ['pr', 'merge', String(prNumber)];
+  if (repo) mergeArgs.push('--repo', repo);
+  const result = run(bin, mergeArgs, { stdio: 'inherit', windowsHide: true });
+  return childFailure('merge-queue request', result, writeError);
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const bin = resolveGhBin();
@@ -361,6 +428,16 @@ async function main() {
       branch: branchFlag.value,
       event: eventFlag.value,
     }));
+  }
+
+  if (argv[0] === 'enqueue') {
+    try {
+      const { prNumber, repo } = parseEnqueueArgs(argv.slice(1));
+      process.exit(enqueuePullRequest(bin, prNumber, repo));
+    } catch (error) {
+      process.stderr.write(`run-gh enqueue: ${error.message}\n`);
+      process.exit(2);
+    }
   }
 
   const result = runGh(bin, argv);
