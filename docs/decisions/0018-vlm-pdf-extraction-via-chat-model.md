@@ -1,5 +1,5 @@
 ---
-title: "VLM PDF Extraction via Chat Model"
+title: "ADR-0018: VLM PDF Extraction via Chat Model"
 type: decision
 status: stable
 description: "Use existing chat model's vision capability (Qwen 3.5 VLM) for PDF layout extraction instead of adding Docling as a Python sidecar."

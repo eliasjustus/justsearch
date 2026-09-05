@@ -5,7 +5,7 @@ status: stable
 description: "Indexed reference cases (handle → paragraph) that lessons in CLAUDE.md and .claude/rules/agent-lessons.md cite. Principles live in those files; narratives live here so they don't bloat session context."
 ---
 
-# Agent Postmortems — Reference Cases
+# Agent Postmortems — Named Reference Cases
 
 Indexed reference cases that lessons in `CLAUDE.md` and `.claude/rules/agent-lessons.md` point to by handle. The principles live in those files; the narratives live here. New entries: keep each to one paragraph + one source citation.
 

@@ -5,7 +5,7 @@ status: stable
 description: "Blue/green migration mechanics and safety guarantees."
 ---
 
-# 11. Index Schema Migration (Blue/Green)
+# Index Schema Migration (Blue/Green)
 
 JustSearch needs to evolve the Lucene index schema over time (new fields, new DocValues roles, new analyzers, etc.).
 Lucene requires that a field’s schema remain consistent across segments, so schema drift must be handled explicitly.

@@ -4,7 +4,7 @@ type: tempdocs
 status: open
 created: 2026-06-09
 category: frontend / ux / search / competitive-research
-scope: THE SEARCH WINDOW ONLY. The query input, the results surface, the answer/RAG surface, the filter/facet model, result-item anatomy, keyboard model, zero/loading/empty states, and provenance display. Out of scope: settings, onboarding, billing, account, chrome unrelated to search.
+scope: "THE SEARCH WINDOW ONLY. The query input, the results surface, the answer/RAG surface, the filter/facet model, result-item anatomy, keyboard model, zero/loading/empty states, and provenance display. Out of scope: settings, onboarding, billing, account, chrome unrelated to search."
 related:
   - tempdoc 569 (the user-authored-frontend projection spine — the engine any future search-window redesign would project through)
   - tempdoc 561 (one-interaction-surface IA; modes-as-axis-points; "re-mount, never re-model" — directly relevant to the single-input-that-adapts pattern all three share)

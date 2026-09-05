@@ -5,6 +5,8 @@ status: stable
 description: "llama.cpp and model licensing considerations."
 ---
 
+# AI Runtime Redistribution
+
 ## AI runtime + model redistribution — legal considerations (living notes)
 
 **Purpose**: capture potential licensing / redistribution considerations for JustSearch Desktop AI assets (runtime + models). This is not legal advice.

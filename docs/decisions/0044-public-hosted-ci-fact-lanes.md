@@ -1,5 +1,5 @@
 ---
-title: "Public hosted CI fact lanes"
+title: "ADR-0044: Public hosted CI fact lanes"
 type: decision
 status: accepted
 description: "The public repository runs standard GitHub-hosted CI on push and pull requests, split into stable fact lanes; self-hosted and specialty workflows remain manually dispatched unless separately amended."
@@ -7,7 +7,7 @@ date: 2026-06-27
 probes:
   - adr-0044-fact-lane-triggers-checked
   - adr-0044-advisory-fact-lane-bounded
-last_reviewed: 2026-09-03
+last_reviewed: 2026-09-05
 ---
 
 # ADR-0044: Public hosted CI fact lanes
@@ -201,3 +201,40 @@ declared dependency edges through node resolution and fails on any edge with no 
 in milliseconds, before the first install. Same fact-lane rule as above, one layer earlier: the
 evidence a required lane consumes has to be checkable where it is produced, not only where it is
 installed.
+
+## Amendment: `jseval Python suite` becomes a required fact lane (2026-09-05)
+
+The `jseval Python suite` job added by tempdoc 930 chunk D runs `scripts/jseval/tests` on a
+hosted Linux runner. It landed advisory: the job reported on every push, pull request, and
+merge group, but it was absent from `scripts/ci/workflow-signal-policy.v1.json`, so nothing
+blocked a merge on it. A measurement harness that stands behind public claims is exactly the
+kind of fact a lane is for, and an advisory lane proves only that someone chose to read it.
+
+The lane is promoted to a required status check. The evidence for promotion is stability, not
+intent: across the 13 completed `main` push and `merge_group` runs from the lane's landing
+commit `18e2833f` (2026-09-05T06:46Z) through `3dc054e3` (2026-09-05T08:23Z) it passed 13 times
+and failed zero times, with a median wall-clock of 384s and an observed max of 432s under a
+20-minute job timeout. The one non-success observation is a whole-run concurrency cancellation
+of superseded push run `33952759665`, in which two other jobs were cancelled alongside it.
+Promotion converts any future flake into a merge blocker, so the zero-failure record is the
+precondition, not a nicety.
+
+Required-lane bookkeeping follows the same rule as every other lane: the check gains a
+`local-subset` entry in `scripts/ci/public-ci-local-repro.v1.json` and a lane in
+`scripts/ci/ci-walltime-policy.v1.json` with its hard timeout and measured budget. The local
+subset is an approximation in one specific way — the hosted lane deliberately runs without the
+`agent`, `ui`, and `scan` extras so their `pytest.importorskip` guards are exercised, while a
+developer workstation usually has them installed and therefore runs more tests, not fewer.
+
+Promotion also makes the lane's wall-clock a measured quantity, which requires the advisory
+`ci-walltime` job to depend on it. `report-ci-walltime-attribution.mjs` drops any job that has
+no end time when the snapshot is taken, so a required lane missing from `ci-walltime`'s `needs:`
+would be absent from every attribution and would warn `missing-required-lane` forever. Adding a
+required lane therefore means adding it to that `needs:` list in the same change.
+
+`main`'s required status checks are a repository setting outside this repo's diff, held in
+classic branch protection (`repos/<owner>/<repo>/branches/main/protection`) rather than in the
+`main-merge-queue` ruleset, whose only rule is `merge_queue`. A maintainer updates that setting
+after this change lands; `scripts/ci/check-branch-protection.mjs` reports the declared-versus-
+live gap in the interval and is the only guard that can see it, because the default pull-request
+token cannot read branch-protection settings.

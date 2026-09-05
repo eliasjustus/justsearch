@@ -5,7 +5,7 @@ status: deprecated
 description: "Historical AI bridge architecture; current inference ownership is split across app-inference, ai-backend, gpu-bridge, prompt-support, and Worker-side ORT encoders."
 ---
 
-# 17. AI Bridge Deep Dive
+# AI Bridge Deep Dive
 
 This page is retained as historical context. It no longer describes the live AI runtime architecture.
 

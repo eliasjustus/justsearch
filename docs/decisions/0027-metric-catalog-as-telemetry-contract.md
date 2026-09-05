@@ -1,5 +1,5 @@
 ---
-title: "MetricCatalog as the Telemetry Contract"
+title: "ADR-0027: MetricCatalog as the Telemetry Contract"
 type: decision
 status: stable
 description: "Every metric the JustSearch processes emit flows through a typed `MetricCatalog`. Callsites build `MetricDefinition`s at module load, register them with `LocalTelemetry` at boot, and emit through compile-checked `Counter/Histogram/Gauge/ObservableCounter` instruments. The legacy `Telemetry.counter/timer/histogram/gauge/meter` surface is retired."

@@ -6,12 +6,12 @@ note: "Phase 1 SHIPPED (2026-06-15) — the GPU capability completed as the refe
 created: 2026-06-15
 category: hardware / runtime / capability-detection / gpu / inference / single-authority / projection / provenance / confidence / process-lifecycle / design-theory
 related:
-  - tempdoc 571 (surface altitude/composition — the genre template + the central move this doc mirrors: "generalize ONE derivation the substrate already performs." There it is audience-from-authority lifted to an altitude axis; here it is effective-from-probes lifted to a capability axis)
-  - tempdoc 561 (the register/gate, one-authority-per-concept pattern; the `interaction-surface` gate is the enforcement template the capability-resolver foreclosure mirrors)
-  - tempdoc 553 / 564 (canonical record + projection-vs-fork discipline — a capability answer is a PROJECTION of its probes, never a second authority)
-  - tempdoc 575 (the observed-happening register — single-source + classify a set of streams; a capability catalog is the same register pattern one substrate over)
-  - tempdoc 554 / 555 (value-law verification + logic-seams — the merge/precedence/threshold logic is a pure law-bearing seam, testable without the host; this doc's testability invariant is that pattern)
-  - ADR-0026 (manual-CI) — relevant to where any future capability gate runs
+  - "tempdoc 571 (surface altitude/composition — the genre template + the central move this doc mirrors: \"generalize ONE derivation the substrate already performs.\" There it is audience-from-authority lifted to an altitude axis; here it is effective-from-probes lifted to a capability axis)"
+  - "tempdoc 561 (the register/gate, one-authority-per-concept pattern; the `interaction-surface` gate is the enforcement template the capability-resolver foreclosure mirrors)"
+  - "tempdoc 553 / 564 (canonical record + projection-vs-fork discipline — a capability answer is a PROJECTION of its probes, never a second authority)"
+  - "tempdoc 575 (the observed-happening register — single-source + classify a set of streams; a capability catalog is the same register pattern one substrate over)"
+  - "tempdoc 554 / 555 (value-law verification + logic-seams — the merge/precedence/threshold logic is a pure law-bearing seam, testable without the host; this doc's testability invariant is that pattern)"
+  - "ADR-0026 (manual-CI) — relevant to where any future capability gate runs"
 related-skills:
   - /inference-runtime (GPU detection, ORT sessions, the gpu-bridge + ort-common probes this doc unifies)
 verified-against-main:

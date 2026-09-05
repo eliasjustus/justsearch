@@ -16,6 +16,7 @@
     "test:dev-runner": "node scripts/dev/test-dev-runner-runtime-resolution.mjs",
     "test:resolve-jdk": "node scripts/dev/test-resolve-jdk.mjs",
     "lint:md": "markdownlint docs/explanation/**/*.md docs/reference/**/*.md docs/how-to/**/*.md docs/decisions/**/*.md",
+    "lint:docs": "node scripts/docs/docs-validate.mjs",
     "check:llmstxt": "node scripts/docs/llmstxt-generate.mjs --check",
     "docs:anchor-audit": "node scripts/docs/anchor-audit.mjs --root docs",
     "docs:anchor-audit:write": "node scripts/docs/anchor-audit.mjs --root docs --fix-links"

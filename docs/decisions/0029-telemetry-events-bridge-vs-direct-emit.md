@@ -1,5 +1,5 @@
 ---
-title: "TelemetryEvents Bridge vs Direct-Emit Façade for MetricCatalog Adoption"
+title: "ADR-0029: TelemetryEvents Bridge vs Direct-Emit Façade for MetricCatalog Adoption"
 type: decision
 status: accepted
 description: "Each MetricCatalog adoption picks between two consumption idioms — a TelemetryEvents bridge interface (decouples domain code from telemetry types; required when the domain module should not depend on the catalog package) or a direct-emit façade that wraps catalog instruments (cheaper when the domain module already depends on the catalog package). The choice is module-dep-driven, not preference-driven. Five shipped instances codify the criteria."

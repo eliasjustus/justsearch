@@ -1,5 +1,5 @@
 ---
-title: "Runbook: index.unavailable"
+title: "Runbook: `index.unavailable`"
 type: runbook
 status: stable
 description: "Operator response when the indexer reports unavailable; search and ingestion are paused."

@@ -1,5 +1,5 @@
 ---
-title: "Structured Metadata Fields as Filterable Facets"
+title: "ADR-0020: Structured Metadata Fields as Filterable Facets"
 type: decision
 status: stable
 description: "Extend entity faceting to structured metadata with meta_ prefix, typed proto fields, and two-stage chunk retrieval."
