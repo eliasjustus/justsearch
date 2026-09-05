@@ -4,12 +4,12 @@ created: 2026-09-01
 updated: 2026-09-02
 owner_session: unassigned (wave-1 orchestrator; on the critical path 0 → C → D → F)
 follows:
-  - 882-decision-review-lane0-hygiene.md (lane 0; moved MMF RESERVED1 start, raised the RPC deadline, left the breath-hold and per-RPC deadlines to C/F)
-  - 410 (extraction timeout + `ExtractionSandbox` seam, 2026-04-25)
-  - 326 (the eval escape hatch for breath-holding: throughput ~5 → ~1 doc/s under polling)
-  - 627 / 630 (supervision extraction; PID gate + energy slot)
-  - 430 / 445 / 662 (HealthEvent substrate; push jobs; SSE connection budget)
-  - 269 §A9 (RISK-002 SQLite queue throughput: "Monitor", never instrumented)
+  - "882-decision-review-lane0-hygiene.md (lane 0; moved MMF RESERVED1 start, raised the RPC deadline, left the breath-hold and per-RPC deadlines to C/F)"
+  - "410 (extraction timeout + `ExtractionSandbox` seam, 2026-04-25)"
+  - "326 (the eval escape hatch for breath-holding: throughput ~5 → ~1 doc/s under polling)"
+  - "627 / 630 (supervision extraction; PID gate + energy slot)"
+  - "430 / 445 / 662 (HealthEvent substrate; push jobs; SSE connection budget)"
+  - "269 §A9 (RISK-002 SQLite queue throughput: \"Monitor\", never instrumented)"
 ---
 
 # 885 — Decision review, lane C: runtime lifecycle and isolation

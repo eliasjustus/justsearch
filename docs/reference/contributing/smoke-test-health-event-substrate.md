@@ -5,7 +5,7 @@ status: stable
 description: "Manual + scripted verification procedure for the HealthEvent Resource substrate; runs verification gate items 3-10 + 7a from tempdoc 430."
 ---
 
-# Smoke test: HealthEvent Resource substrate
+# Smoke test: HealthEvent Resource substrate (slice 430)
 
 This procedure executes the `verification gate` items 3-10 + 7a deferred at slice 430's merge to `main`. It is the closure step for slice 1.1.a (HealthEvent Resource).
 

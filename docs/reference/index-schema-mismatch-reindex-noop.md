@@ -6,7 +6,7 @@ updated: 2026-09-03
 description: 'Diagnosing "reindex doesn''t run" due to schema mismatch.'
 ---
 
-# Troubleshooting: “Reindex doesn’t run” (schema mismatch)
+# Troubleshooting: Reindex doesn't run (schema mismatch)
 
 > **SUPERSEDED (2026-09-03, tempdoc 915).** This document's central claims — "the commit-metadata
 > parity guard never enforces" and "do not fix this by enabling the guard" — describe a state that no

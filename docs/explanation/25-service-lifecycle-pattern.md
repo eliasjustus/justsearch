@@ -5,7 +5,7 @@ status: stable
 description: "Canonical pattern for long-lived resource owners in JustSearch. Identity is held by the consumer; each open period is a single-shot phase value with a clean AutoCloseable lifecycle. Restart is a consumer pattern (build new value, swap holder field, close old) — not a method on the value. Two forms: phase-typed (Form A) when multiple operating modes warrant compile-time distinction, single-shot single-class (Form B) when there's only one mode."
 ---
 
-# 25. Service Lifecycle Pattern
+# Service Lifecycle Pattern
 
 JustSearch has roughly ten long-lived resource owners — Lucene runtime,
 ORT GPU sessions, embedding service, the inference manager, agent

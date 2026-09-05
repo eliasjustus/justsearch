@@ -1,5 +1,5 @@
 ---
-title: "Extraction isolation and indexing pacing"
+title: "ADR-0048: Extraction isolation and indexing pacing"
 type: decision
 status: stable
 description: "Untrusted parsing runs in a persistent child process pool rather than in the Worker JVM; foreground contention is answered with a duty cycle rather than a pause; Worker health is sampled internally rather than on the request thread; ingestion failures walk a bounded retry ladder to a visible terminal state; and NRT/commit cadence is decided by measurement, which rejected the first candidate."

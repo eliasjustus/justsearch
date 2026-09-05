@@ -5,6 +5,8 @@ status: draft
 description: "The release loop (build -> clean-Sandbox whole-product verification -> fix -> converge -> finalize), the hash-consistent asset set the build produces, and the per-release index. The single durable home for how a release is cut."
 ---
 
+# Cut a JustSearch release
+
 ## What this does
 
 Describes how a JustSearch release is produced and published. It is the durable "how";

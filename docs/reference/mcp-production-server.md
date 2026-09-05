@@ -5,7 +5,7 @@ status: stable
 description: "MCP server for connecting AI agents to a running JustSearch instance via Streamable HTTP."
 ---
 
-# Production MCP Server
+# Production MCP Server Reference
 
 JustSearch exposes an MCP server at `POST /mcp` on its local API.
 External AI tools (Claude Desktop, Cursor, VS Code Copilot, etc.)

@@ -5,7 +5,7 @@ status: stable
 description: "The 4-tier Test Pyramid, Chaos testing, and AI Judge."
 ---
 
-# 09. Testing Strategy: The "Test Pyramid"
+# Testing Strategy
 
 JustSearch employs a rigorous 4-tier testing strategy (`modules/system-tests`), crucial for a multi-process application where "Unit Tests" alone cannot catch deadlock or IPC bugs.
 

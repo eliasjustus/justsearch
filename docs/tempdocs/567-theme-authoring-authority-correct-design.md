@@ -3,8 +3,8 @@ title: "567 — Theme Authoring Authority: the correct producer-side design for 
 type: tempdocs
 status: open — §8 core SHIPPED; §9 (2026-06-15) ships ALL 4 remaining deferred items (import · rename · tinted foreground · surface-mode glass/solid). Only the 533/560 plugin-signing B-track stays out of scope (§7)
 created: 2026-06-05
-updated: 2026-06-15 (§9 — take-over: all 4 deferred items built + the 474/478 phantom-reference correction; surface-mode's blur-centralization prerequisite discovered AND resolved)
-extends: tempdoc 557 §2.C (Theme/token authority — consumer side), 558 §2 (semantic colour roles), 559 §3 (the projection kernel), 474 (Theme-as-DesignTokenTree manifest — NB §9.1: "474" is a phantom reference; the real DesignTokenTree work is 478 §4.E and neither doc exists in `docs/`, both are retired-421-draft numbers)
+updated: "2026-06-15 (§9 — take-over: all 4 deferred items built + the 474/478 phantom-reference correction; surface-mode's blur-centralization prerequisite discovered AND resolved)"
+extends: "tempdoc 557 §2.C (Theme/token authority — consumer side), 558 §2 (semantic colour roles), 559 §3 (the projection kernel), 474 (Theme-as-DesignTokenTree manifest — NB §9.1: \"474\" is a phantom reference; the real DesignTokenTree work is 478 §4.E and neither doc exists in `docs/`, both are retired-421-draft numbers)"
 cross-refs: tempdoc 560 §16–§26 (the token editor — the ad-hoc producer whose defects motivated this design); tempdoc 568 (the prior-art end-user-theming feasibility analysis that motivates this producer-side design)
 ---
 

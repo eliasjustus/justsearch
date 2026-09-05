@@ -1,5 +1,5 @@
 ---
-title: "Runbook: queue-db.unhealthy"
+title: "Runbook: `queue-db.unhealthy`"
 type: runbook
 status: stable
 description: "Operator response when the Worker queue database reports unhealthy state; ingestion is paused."

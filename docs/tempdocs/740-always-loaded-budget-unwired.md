@@ -1,7 +1,7 @@
 ---
 title: "740 — The always-loaded budget: a real ratchet, never wired, asserted as fact"
 type: tempdoc
-status: charter — investigated + measured, NOT implemented. One owner decision open (§5): wire it as a gate, or delete it and correct CLAUDE.md.
+status: "charter — investigated + measured, NOT implemented. One owner decision open (§5): wire it as a gate, or delete it and correct CLAUDE.md."
 created: 2026-07-15
 updated: 2026-07-15
 related:

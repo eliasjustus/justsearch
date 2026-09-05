@@ -538,7 +538,7 @@ Questions — these are "we should eventually" not "we need to know."
 
 <!-- source: docs/explanation/05-ai-architecture.md -->
 
-# 05. AI Architecture (The "Brain")
+# AI Architecture
 
 JustSearch implements a **Hybrid Inference Architecture** to provide advanced AI features (RAG, Vision, Summarization) on consumer hardware with limited VRAM (e.g., 8GB).
 
@@ -1166,7 +1166,7 @@ Verification lanes:
 
 <!-- source: docs/explanation/17-ai-bridge-deep-dive.md -->
 
-# 17. AI Bridge Deep Dive
+# AI Bridge Deep Dive
 
 This page is retained as historical context. It no longer describes the live AI runtime architecture.
 

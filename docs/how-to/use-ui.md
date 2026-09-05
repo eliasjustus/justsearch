@@ -5,7 +5,7 @@ status: stable
 description: "Running dev modes and accessing debug dashboards."
 ---
 
-# How-To: Use and Debug the UI
+# Using the UI
 
 This guide explains how to run, use, and debug the JustSearch user interface.
 

@@ -5,7 +5,7 @@ status: draft
 description: "Offline pack format, allowlist trust model, safe extraction, and rollback semantics."
 ---
 
-# 14. AI Pack Spec (v2/v3)
+# AI Pack Spec (v2/v3)
 
 This document defines the **offline pack format** used by JustSearch for:
 
