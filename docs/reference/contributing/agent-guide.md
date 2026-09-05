@@ -524,7 +524,9 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs
   hundreds of loop iterations and GitHub API calls on a multi-minute job, and
   can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
-  until checks register on the branch, then decodes `gh pr checks`'s
+  until checks register on the branch AND the `CI` workflow itself has a row
+  in the rollup — a lone non-CI check (e.g. `cla-assistant`) reporting green
+  is not "CI is green" (tempdoc 872 §6) — then decodes `gh pr checks`'s
   documented 0=pass/1=fail/8=pending bitwise exit contract instead of
   guessing at it (tempdoc 743 P-K). For a specific landed commit, use
   `node scripts/dev/run-gh.mjs run-wait-sha <sha> --workflow CI --branch main

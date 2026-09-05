@@ -10,9 +10,11 @@
  *   stdin  (newline-delimited JSON-RPC)  --->  POST http://127.0.0.1:<port>/mcp
  *   stdout (newline-delimited JSON-RPC)  <---  JSON or SSE response bodies
  *
- * Port discovery (in order): JUSTSEARCH_API_PORT env var, the port file the
- * app writes (%APPDATA%\io.justsearch.shell\runtime\api-port.txt), then the
- * default 8080. A candidate counts only if GET /api/health answers.
+ * Port discovery (in order): JUSTSEARCH_API_PORT env var, the runtime
+ * manifest the app writes (%APPDATA%\io.justsearch.shell\runtime\manifest.json,
+ * field head.apiPort — tempdoc 501 Phase 18 retired the old api-port.txt
+ * sibling file), then the default 8080. A candidate counts only if GET
+ * /api/health answers.
  *
  * Fully offline by design: zero dependencies, Node builtins only, and no
  * network access beyond 127.0.0.1 — this bridge never downloads anything.
@@ -30,7 +32,16 @@ const REQUEST_TIMEOUT_MS = 300000; // long: answer/ingest calls can be slow on C
 const LOG_PREFIX = '[justsearch-mcpb]';
 
 const APPDATA = process.env.APPDATA || '';
-const PORT_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'api-port.txt');
+// Tempdoc 501 Phase 18 removed the api-port.txt sibling file outright; the sole
+// filesystem discovery channel is <dataDir>/runtime/manifest.json, field
+// head.apiPort (see modules/app-api/.../RuntimeManifest.java's HeadInfo record
+// and modules/ui/.../RuntimeManifestPublisher.java). This bridge is packaged
+// standalone (packaging/mcpb/.mcpbignore ships only manifest.json + server/**),
+// so it cannot `require()` the canonical Node reader
+// (scripts/lib/platform-paths.mjs, ESM) or the prod MCP discovery module
+// (scripts/prod/justsearch-mcp/discovery.mjs) — the minimal read below mirrors
+// their logic instead of forking a new discovery algorithm.
+const MANIFEST_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'manifest.json');
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -54,19 +65,21 @@ function actionableUnreachableMessage(tried) {
     '  2. Launch JustSearch and wait for the window to load.',
     '  3. Retry from your MCP client (e.g. toggle the connector in Claude Desktop).',
     '',
-    `If JustSearch IS running, check which port it bound: ${PORT_FILE}`,
-    'should contain the live API port, and http://127.0.0.1:<port>/api/health',
-    'should answer in a browser.',
+    `If JustSearch IS running, check which port it bound: ${MANIFEST_FILE}`,
+    'should contain a "head": { "apiPort": <port> } field, and',
+    'http://127.0.0.1:<port>/api/health should answer in a browser.',
   ].join('\n');
 }
 
-function readPortFile() {
+/** Reads <dataDir>/runtime/manifest.json and returns manifest.head.apiPort, or null. */
+function readManifestPort() {
   try {
-    const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
-    const port = Number.parseInt(raw, 10);
+    const raw = fs.readFileSync(MANIFEST_FILE, 'utf8');
+    const manifest = JSON.parse(raw);
+    const port = manifest && manifest.head && manifest.head.apiPort;
     if (Number.isInteger(port) && port > 0 && port < 65536) return port;
   } catch {
-    /* missing/unreadable file — fall through */
+    /* missing/unreadable/malformed manifest — fall through */
   }
   return null;
 }
@@ -118,13 +131,13 @@ function fetchSessionToken(port) {
   });
 }
 
-/** Returns a live port or null. Order: env pin, port file, default 8080. */
+/** Returns a live port or null. Order: env pin, runtime manifest, default 8080. */
 async function discoverPort(triedOut) {
   const candidates = [];
   const envPort = Number.parseInt(process.env.JUSTSEARCH_API_PORT || '', 10);
   if (Number.isInteger(envPort) && envPort > 0) candidates.push(envPort);
-  const filePort = readPortFile();
-  if (filePort !== null) candidates.push(filePort);
+  const manifestPort = readManifestPort();
+  if (manifestPort !== null) candidates.push(manifestPort);
   candidates.push(DEFAULT_PORT);
   const unique = [...new Set(candidates)];
   for (const port of unique) {

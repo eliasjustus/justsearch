@@ -9,7 +9,7 @@ follows:
   - 326 (the eval escape hatch for breath-holding: throughput ~5 → ~1 doc/s under polling)
   - 627 / 630 (supervision extraction; PID gate + energy slot)
   - 430 / 445 / 662 (HealthEvent substrate; push jobs; SSE connection budget)
-  - 269 §A9 (RISK-002 SQLite queue throughput: "Monitor", never instrumented)
+  - "269 §A9 (RISK-002 SQLite queue throughput: \"Monitor\", never instrumented)"
 ---
 
 # 885 — Decision review, lane C: runtime lifecycle and isolation

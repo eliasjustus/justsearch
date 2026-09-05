@@ -5,7 +5,7 @@ created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth
 related:
-  - the `dead-code-identification-sweep` tempdoc (638) — the rubric precedent (`audit-without-test`: "a 'this is dead' claim is a hypothesis until zero callers are proven") and the source of the deliberate scope-out of member-level dead-code detection
+  - "the `dead-code-identification-sweep` tempdoc (638) — the rubric precedent (`audit-without-test`: \"a 'this is dead' claim is a hypothesis until zero callers are proven\") and the source of the deliberate scope-out of member-level dead-code detection"
   - the `observations-backlog-triage` tempdoc (721) — the disposition-ledger structure this doc borrows
   - ADR-0043 / the `language-agnostic-analysis` tempdoc (581) — killed the consumer of `Index.defaultLanguage` and `Policy.languagePolicy`
 ---

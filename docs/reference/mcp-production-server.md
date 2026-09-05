@@ -30,12 +30,14 @@ MCP server on?" is exactly "which port is the API on?":
 - **Pin it:** set the `JUSTSEARCH_API_PORT` environment variable (or the
   `-Djustsearch.api.port=` system property for source runs) before launching. Note that a pin
   is a *preference*: if that port is taken, the ephemeral fallback above still applies.
-- **Discover the actual port:** the backend writes it to
-  `<data dir>\runtime\api-port.txt` — for the installed desktop app that is
-  `%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. It also prints
-  `JUSTSEARCH_API_PORT=<port>` to stdout (captured in `logs\headless-backend.log`) and serves
-  `GET /api/health` once up. (Gradle dev tasks like `runHeadless`/`devAll` default to `33221`,
-  which is why older docs and scripts mention that number — the installed app does not use it.)
+- **Discover the actual port:** the backend writes it to the `head.apiPort` field of
+  `<data dir>\runtime\manifest.json` — for the installed desktop app that is
+  `%APPDATA%\io.justsearch.shell\runtime\manifest.json` (tempdoc 501 Phase 18 removed the
+  older `api-port.txt` sibling file; the runtime manifest is the sole filesystem discovery
+  channel now). It also prints `JUSTSEARCH_API_PORT=<port>` to stdout (captured in
+  `logs\headless-backend.log`) and serves `GET /api/health` once up. (Gradle dev tasks like
+  `runHeadless`/`devAll` default to `33221`, which is why older docs and scripts mention that
+  number — the installed app does not use it.)
 
 ## Setup
 
@@ -48,14 +50,15 @@ published release yet, and it needs an app build that serves `POST /mcp`,
 which the v0.1.0 release may predate. Once shipped: download the `.mcpb` from
 the release page and open it with Claude Desktop (Settings → Extensions) —
 one click, no JSON editing. The bundle is a thin local stdio bridge to the
-running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
-automatically. Until then, use the connector flow below.
+running app's `/mcp` endpoint; it handles port discovery via the runtime manifest
+(`manifest.json`) automatically. Until then, use the connector flow below.
 
 ### Claude Desktop in ~2 minutes, starting from "launch the app"
 
 1. **Launch JustSearch** (Start menu). Wait for the window to load — the API is up when
    `http://127.0.0.1:8080/api/health` answers in a browser. If it doesn't, read the actual
-   port from `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` and use that below.
+   port from the `head.apiPort` field of
+   `%APPDATA%\io.justsearch.shell\runtime\manifest.json` and use that below.
 2. **Claude Desktop → Settings → Connectors → Add custom connector**, URL:
 
    ```text
@@ -100,8 +103,8 @@ Add to `.cursor/mcp.json` or equivalent:
 claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp
 ```
 
-In all three: replace `8080` with the port from
-`%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
+In all three: replace `8080` with the `head.apiPort` field from
+`%APPDATA%\io.justsearch.shell\runtime\manifest.json` if `8080` was taken on your machine
 (see [Which port?](#which-port)).
 
 Every flow above needs a build that serves `POST /mcp`; the v0.1.0 installer release may predate it.

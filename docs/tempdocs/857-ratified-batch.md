@@ -1,7 +1,8 @@
 ---
 number: 857
 title: The ratified batch — run-spine navigation ported, surface-audience honesty, pane closes on conversation switch
-status: PR-A IMPLEMENTED (2026-08-19) AND PR-B IMPLEMENTED (2026-08-19). Design is rev 2,
+status: >-
+  PR-A IMPLEMENTED (2026-08-19) AND PR-B IMPLEMENTED (2026-08-19). Design is rev 2,
   adversarially reviewed. PR-A (§10 "the run-spine navigation port", rows PR-A1-PR-A6) is implemented
   in full, with the rev 2 amendments A1-A10 and one recorded deviation (the `runPrompt` anchor carries
   a `:hold` suffix — see §13). Its live-verification rows (§10) are NOT yet run: they need the shared

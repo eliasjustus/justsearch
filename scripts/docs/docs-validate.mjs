@@ -5,11 +5,38 @@ import { execFileSync } from 'node:child_process';
 
 const files = await fg(['docs/**/*.md', '!docs/_**/*']);
 
+// Blank out fenced code blocks so shell/YAML comments inside them are not read as headings.
+function stripFencedCode(md) {
+  const out = [];
+  let fence = null;
+  for (const line of md.split(/\r?\n/)) {
+    const m = line.match(/^\s{0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+      out.push('');
+      continue;
+    }
+    if (m) {
+      fence = m[1];
+      out.push('');
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 let issues = [];
 
 for (const f of files) {
   const raw = fs.readFileSync(f, 'utf8');
-  if (raw.includes('\uFFFD')) {
+  // Tempdocs are append-only dated history with a freeform front matter contract
+  // (docs/tempdocs/README.md \u00A7Frontmatter) and no heading contract at all. They get the
+  // front-matter checks (other tooling parses that) and nothing else: applying canonical heading
+  // rules to files the repo forbids rewriting produced ~80 permanent findings (tempdoc 932), and
+  // one "encoding" hit there is a U+FFFD kept on purpose as recorded evidence (743 \u00A7piped-python).
+  const isTempdoc = /^docs\/tempdocs\//.test(f.replaceAll('\\', '/'));
+  if (!isTempdoc && raw.includes('\uFFFD')) {
     issues.push({ file: f, kind: 'encoding', msg: 'Found U+FFFD replacement character' });
   }
   // A single malformed front matter must be a FINDING, not a crash that hides every other
@@ -43,53 +70,31 @@ for (const f of files) {
       }
     }
   }
+  if (isTempdoc) continue;
   // Skip generated/lint files already excluded
   const content = fm.content || '';
   const lines = content.split(/\r?\n/);
+  // Heading checks read the prose only: a `# comment` line inside a fenced shell block is not
+  // a heading (tempdoc 932 — this counted 37 "H1 headings" in jseval-pipeline-reference.md).
+  const prose = stripFencedCode(content);
   let idx = 0;
   while (idx < lines.length && /^\s*$/.test(lines[idx])) idx++;
   const first = lines[idx] || '';
   // Enforce: exactly one H1 and it must match front matter title
-  const h1Matches = content.match(/^#\s+(.+?)\s*$/gm) || [];
+  const h1Matches = prose.match(/^#\s+(.+?)\s*$/gm) || [];
   if (h1Matches.length === 0) {
     issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Missing top-level H1' });
   }
   if (h1Matches.length > 1) {
     issues.push({ file: f, kind: 'heading', severity: 'error', msg: `Multiple H1 headings (${h1Matches.length})` });
   }
-  if (h1Matches.length === 1) {
-    const h1Text = h1Matches[0].replace(/^#\s+/, '').trim();
-    if (data.title && String(data.title).trim() !== h1Text) {
-      issues.push({ file: f, kind: 'heading', severity: 'error', msg: `H1 does not match front matter title ('${data.title}' vs '${h1Text}')` });
-    }
-  }
-  // Title Case checks for H1 and H2 (simple heuristic)
-  function isTitleCase(s) {
-    const minor = new Set(['and','or','of','the','a','an','to','in','on','for','with','by']);
-    const parts = s.split(/\s+/).filter(Boolean);
-    for (let i = 0; i < parts.length; i++) {
-      const w = parts[i].replace(/[^A-Za-z0-9]/g, '');
-      if (!w) continue;
-      if (/^[A-Z0-9]{2,}$/.test(w)) continue; // ACRONYMS
-      if (i > 0 && minor.has(w.toLowerCase())) continue;
-      const first = w[0];
-      if (first !== first.toUpperCase()) return false;
-    }
-    return true;
-  }
-  if (h1Matches.length === 1) {
-    const h1TextTC = h1Matches[0].replace(/^#\s+/, '').trim();
-    if (!isTitleCase(h1TextTC)) {
-      issues.push({ file: f, kind: 'heading-case', severity: 'error', msg: `H1 not in Title Case: '${h1TextTC}'` });
-    }
-  }
-  const h2Matches = content.match(/^##\s+(.+?)\s*$/gm) || [];
-  for (const m of h2Matches) {
-    const txt = m.replace(/^##\s+/, '').replace(/\s*\{#.*\}\s*$/, '').trim();
-    if (!isTitleCase(txt)) {
-      issues.push({ file: f, kind: 'heading-case', severity: 'error', msg: `H2 not in Title Case: '${txt}'` });
-    }
-  }
+  // Two rules were removed (tempdoc 932) because they enforced conventions this repo never
+  // adopted and so permanently masked this script's exit code:
+  //  - `heading-case` (Title Case H1/H2): the repo writes sentence-case headings; 7164 findings.
+  //  - "H1 must equal front-matter `title`": `title` is the short index label (what
+  //    llmstxt-generate.mjs indexes) and the H1 is the display heading — 48/49 ADRs carry an
+  //    `ADR-NNNN:` prefix, 23/25 explanation docs a `NN.` prefix; 400 findings.
+  // Do not replace either with the opposite convention — neither has been decided.
   if (/^#\s+Untitled\s*$/.test(first)) {
     issues.push({ file: f, kind: 'heading', severity: 'error', msg: 'Top-level H1 is "Untitled"' });
   }

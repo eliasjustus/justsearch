@@ -1,6 +1,8 @@
 /**
  * ts-any enforcer — tempdoc 530 §2.5.
  * Per-file count of TS `any` casts (`as any`, `: any`, `<any>`); only-shrinks.
+ * Counted over code only — comments and string/template literals are stripped first
+ * (tempdoc 932 item 1), so the English word "any" in prose no longer scores as a cast.
  *
  * Baseline file format: same TSV as todo-fixme (`<path> <count> <date>`).
  * The existing eslint.config.js has `@typescript-eslint/no-explicit-any: off`;
@@ -31,7 +33,42 @@ export const TS_ANY_RULE_DESCRIPTIONS = {
 
 const ANY_PATTERN = /\bas\s+any\b|:\s*any\b|<\s*any\s*>/g;
 
-function countAny(content) { return (content.match(ANY_PATTERN) ?? []).length; }
+// Strips `//` line comments, `/* */` block comments (incl. JSDoc), and string/template literals
+// so countAny only sees real code. Known limitation: a template literal's `${...}` interpolation
+// is stripped along with its surrounding literal text (a cast written inside one, e.g.
+// `` `${x as any}` ``, is not counted), and regex literals are not special-cased (a `/…/` is
+// scanned as ordinary code, so an `any` inside one could still false-positive) — both are
+// accepted per tempdoc 932 item 1 as rare in this codebase.
+function stripCommentsAndStrings(src) {
+  let out = '';
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && d === '*') {
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '\'' || c === '"' || c === '`') {
+      const quote = c;
+      i++;
+      while (i < n && src[i] !== quote) i += src[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+export function countAny(content) { return (stripCommentsAndStrings(content).match(ANY_PATTERN) ?? []).length; }
 
 function globToRegex(g) {
   let re = '', i = 0;

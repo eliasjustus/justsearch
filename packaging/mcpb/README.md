@@ -14,9 +14,9 @@ MCPB hosts launch bundles over **stdio**, so this bundle is only a **thin
 stdio→Streamable-HTTP bridge** (`server/index.js`):
 
 1. On start it discovers the live API port: `JUSTSEARCH_API_PORT` env var →
-   `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` (the app writes its
-   actual port there) → default `8080`; a candidate counts only if
-   `GET /api/health` answers.
+   `%APPDATA%\io.justsearch.shell\runtime\manifest.json` (the app writes its
+   actual port to the `head.apiPort` field there) → default `8080`; a
+   candidate counts only if `GET /api/health` answers.
 2. If no running JustSearch is found, it exits with an actionable message
    (install + launch the desktop app).
 3. It also fetches the desktop session token (`GET /api/mcp/token`) and sends
@@ -26,7 +26,7 @@ stdio→Streamable-HTTP bridge** (`server/index.js`):
 4. Otherwise it forwards newline-delimited JSON-RPC from stdin to
    `http://127.0.0.1:<port>/mcp` (JSON and SSE response bodies both handled)
    and relays server messages back on stdout. If the app restarts on a
-   different port mid-session, the bridge re-reads the port file,
+   different port mid-session, the bridge re-reads the runtime manifest,
    re-initializes the session with the cached `initialize` params, and replays
    the failed call once before giving up.
 

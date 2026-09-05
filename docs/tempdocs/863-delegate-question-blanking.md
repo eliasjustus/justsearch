@@ -1,7 +1,8 @@
 ---
 number: 863
 title: The delegate turn is missing from the answer plane — `recordsToThread` as a declared capability
-status: IMPLEMENTED — slice A (PR #550) and slice B (#542) both built; awaiting merge. Charter premise
+status: >-
+  IMPLEMENTED — slice A (PR #550) and slice B (#542) both built; awaiting merge. Charter premise
   CORRECTED by source + live evidence (§1); the layer decision is SERVER-SIDE (§4.A) as the fix, with
   the FE merge rule repaired as a distinct correctness defect (§4.B) — both, doing two different jobs.
   Decisions taken during implementation are recorded in §9, including three defects the design did not

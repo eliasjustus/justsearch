@@ -98,15 +98,21 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 // AdvisoryLog.recent(), so there is no race to win against the broadcast.
 //
 // Port discovery mirrors the shipped bridge's own algorithm (index.js
-// discoverPort): --port / JUSTSEARCH_API_PORT env var, then the port file the
-// app writes (%APPDATA%\io.justsearch.shell\runtime\api-port.txt), then the
-// default 8080 -- each candidate is only trusted if GET /api/health answers.
+// discoverPort): --port / JUSTSEARCH_API_PORT env var, then the runtime
+// manifest the app writes (%APPDATA%\io.justsearch.shell\runtime\manifest.json,
+// field head.apiPort -- tempdoc 501 Phase 18 retired the old api-port.txt
+// sibling file), then the default 8080 -- each candidate is only trusted if
+// GET /api/health answers.
 // ---------------------------------------------------------------------------
 
 const DEFAULT_API_PORT = 8080;
 const HEALTH_TIMEOUT_MS = 2500;
 const APPDATA = process.env.APPDATA || '';
-const PORT_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'api-port.txt');
+// This script is staged standalone next to a copy of index.js (see
+// sandbox-launch.py's mcp-client/ staging), so — same as index.js — it cannot
+// rely on scripts/lib/platform-paths.mjs being present at runtime; the read
+// below mirrors that module's resolveManifestPath()/readManifestSync().
+const MANIFEST_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'manifest.json');
 
 // The advisory record's classExtras.operationId is the WIRE operation id, not
 // the MCP tool name -- these differ. McpToolSurface.callTool dispatches
@@ -125,13 +131,15 @@ const PORT_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'api-port
 // recent unrelated one.
 export const INGEST_OPERATION_ID = 'core.ingest-files';
 
-function readPortFile() {
+/** Reads <dataDir>/runtime/manifest.json and returns manifest.head.apiPort, or null. */
+function readManifestPort() {
   try {
-    const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
-    const port = Number.parseInt(raw, 10);
+    const raw = fs.readFileSync(MANIFEST_FILE, 'utf8');
+    const manifest = JSON.parse(raw);
+    const port = manifest && manifest.head && manifest.head.apiPort;
     if (Number.isInteger(port) && port > 0 && port < 65536) return port;
   } catch {
-    /* missing/unreadable file -- fall through */
+    /* missing/unreadable/malformed manifest -- fall through */
   }
   return null;
 }
@@ -147,15 +155,15 @@ function httpGetStatus(port, urlPath, timeoutMs) {
   });
 }
 
-/** Returns a live, health-checked port, or null. Order: --port/env, port file, default 8080. */
+/** Returns a live, health-checked port, or null. Order: --port/env, runtime manifest, default 8080. */
 async function discoverApiPort(explicitPort) {
   const candidates = [];
   const explicit = Number.parseInt(explicitPort ?? '', 10);
   if (Number.isInteger(explicit) && explicit > 0) candidates.push(explicit);
   const envPort = Number.parseInt(process.env.JUSTSEARCH_API_PORT || '', 10);
   if (Number.isInteger(envPort) && envPort > 0) candidates.push(envPort);
-  const filePort = readPortFile();
-  if (filePort !== null) candidates.push(filePort);
+  const manifestPort = readManifestPort();
+  if (manifestPort !== null) candidates.push(manifestPort);
   candidates.push(DEFAULT_API_PORT);
   const unique = [...new Set(candidates)];
   for (const port of unique) {
@@ -472,7 +480,7 @@ async function main() {
         }
       } else {
         process.stdout.write(
-          '\nWARN: could not discover the API port to resolve pendingId (tried --port, JUSTSEARCH_API_PORT, the port file, and default 8080). ' +
+          '\nWARN: could not discover the API port to resolve pendingId (tried --port, JUSTSEARCH_API_PORT, the runtime manifest, and default 8080). ' +
             'Check the JustSearch app UI for the pending approval instead.\n',
         );
       }
