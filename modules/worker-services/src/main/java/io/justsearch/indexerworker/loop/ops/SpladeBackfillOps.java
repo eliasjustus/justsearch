@@ -38,6 +38,9 @@ public final class SpladeBackfillOps {
       BooleanSupplier runningSupplier,
       int batchSize,
       boolean commitAfterBatch,
+      // Tempdoc 712/931: chunk docs carry splade_status=PENDING from creation whatever this flag
+      // says, so without it here this lane encodes chunk sparse data the flag says not to produce.
+      boolean chunkSpladeEnabled,
       Logger log) {}
 
   /**
@@ -53,12 +56,19 @@ public final class SpladeBackfillOps {
     long t0 = System.nanoTime();
     try {
       List<String> pendingIds =
-          context
-              .documentFieldOps()
-              .queryDocIdsByField(
-                  SchemaFields.SPLADE_STATUS,
-                  SchemaFields.SPLADE_STATUS_PENDING,
-                  context.batchSize());
+          context.chunkSpladeEnabled()
+              ? context
+                  .documentFieldOps()
+                  .queryDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize())
+              : context
+                  .documentFieldOps()
+                  .queryNonChunkDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize());
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {

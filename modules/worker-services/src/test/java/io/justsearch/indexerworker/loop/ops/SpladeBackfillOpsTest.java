@@ -71,7 +71,36 @@ class SpladeBackfillOpsTest {
                             batch.get(0).getValue().get(SchemaFields.SPLADE_STATUS))));
   }
 
+  @Test
+  @DisplayName(
+      "chunk-SPLADE flag OFF: the lane selects whole documents only — it must not encode sparse"
+          + " data the configuration says not to produce (tempdoc 931)")
+  void chunkSpladeOff_selectsWholeDocumentsOnly() throws Exception {
+    when(documentFieldOps.queryNonChunkDocIdsByField(
+            eq(SchemaFields.SPLADE_STATUS),
+            eq(SchemaFields.SPLADE_STATUS_PENDING),
+            anyInt()))
+        .thenReturn(List.of("parent-1"));
+    when(documentFieldOps.getDocumentContentBatch(List.of("parent-1")))
+        .thenReturn(Map.of("parent-1", "parent body"));
+    when(encoder.encodeBatch(List.of("parent body")))
+        .thenReturn(new ArrayList<>(List.of(Map.of("token", 1.0f))));
+    when(indexingCoordinator.updateDocumentsBatch(anyList()))
+        .thenReturn(new LuceneRuntimeTypes.BatchUpdateResult(1, 0));
+
+    StageOutcome outcome = SpladeBackfillOps.processSpladeBackfill(context(false));
+
+    assertEquals(1, outcome.docsProcessed());
+    verify(documentFieldOps, never())
+        .queryDocIdsByField(
+            eq(SchemaFields.SPLADE_STATUS), eq(SchemaFields.SPLADE_STATUS_PENDING), anyInt());
+  }
+
   private SpladeBackfillOps.BackfillContext context() {
+    return context(true);
+  }
+
+  private SpladeBackfillOps.BackfillContext context(boolean chunkSpladeEnabled) {
     return new SpladeBackfillOps.BackfillContext(
         documentFieldOps,
         indexingCoordinator,
@@ -81,6 +110,7 @@ class SpladeBackfillOpsTest {
         () -> true,
         100,
         false,
+        chunkSpladeEnabled,
         LoggerFactory.getLogger(SpladeBackfillOpsTest.class));
   }
 }
