@@ -65,7 +65,7 @@ class TestClassifyConsole:
         # accessible name flattens correctly and axe does NOT flag button-name. It is an unreliable,
         # false-positive-prone heuristic, so it must NOT count as a real ('app') defect — else it
         # pollutes console_real with phantoms (the §33 trust-pollution class). Real nameless controls
-        # remain caught by the static controls-a11y gate + axe on captured surfaces (§43 review caveat:
+        # remain caught by axe on captured surfaces (§43 review caveat:
         # we demote because it's noisy, not because coverage is proven complete).
         err = {
             "type": "console.error",

@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadOtlpStream, loadCostsFromOtlp } from './telemetry-io.mjs';
+import { loadOtlpStream, loadCostsFromOtlp, readOtlpLedger } from './telemetry-io.mjs';
 
 let passed = 0;
 const failures = [];
@@ -110,6 +110,42 @@ try {
     const dir = fs.mkdtempSync(path.join(tmpDir, 'empty-'));
     const out = loadOtlpStream(dir, 'metrics');
     assert.deepEqual(out, []);
+  });
+
+  // --- readOtlpLedger: the compact stream (tempdoc 930 F2) ----------------
+  // ledger.ndjson is the body-free projection of logs.ndjson, kept for 90
+  // archives where logs keeps 2. Its whole reason to exist is that a reader
+  // reaches BACK past the current file, so the archive-aware read is the
+  // property under test, not an incidental one.
+
+  run('readOtlpLedger concatenates archive then current, oldest first', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'ledger-'));
+    writeNdjson(path.join(dir, 'ledger.2026-09-04T100000Z.ndjson'), [
+      { signal: 'ledger', event: 'api_request', 'session.id': 'sess-1', attributes: { cost_usd: 0.01 } },
+    ]);
+    writeNdjson(path.join(dir, 'ledger.ndjson'), [
+      { signal: 'ledger', event: 'tool_result', 'session.id': 'sess-1', attributes: { tool_name: 'Read' } },
+    ]);
+    const out = readOtlpLedger(dir);
+    assert.equal(out.length, 2);
+    assert.equal(out[0].event, 'api_request', 'the archive must come first');
+    assert.equal(out[1].event, 'tool_result');
+    assert.equal(out[0].attributes.cost_usd, 0.01);
+  });
+
+  run('readOtlpLedger does not pick up the logs stream it projects from', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'ledger-vs-logs-'));
+    writeNdjson(path.join(dir, 'logs.ndjson'), [{ signal: 'log', body: 'claude_code.api_request' }]);
+    writeNdjson(path.join(dir, 'logs.2026-09-04T100000Z.ndjson'), [{ signal: 'log' }]);
+    writeNdjson(path.join(dir, 'ledger.ndjson'), [{ signal: 'ledger', event: 'api_request' }]);
+    const out = readOtlpLedger(dir);
+    assert.deepEqual(out, [{ signal: 'ledger', event: 'api_request' }]);
+  });
+
+  run('readOtlpLedger on a directory with no ledger stream returns empty', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'ledger-absent-'));
+    writeNdjson(path.join(dir, 'metrics.ndjson'), [{ n: 1 }]);
+    assert.deepEqual(readOtlpLedger(dir), []);
   });
 
   // --- loadCostsFromOtlp: gen_ai.usage dedup (tempdoc 886 §12 PR 3) --------

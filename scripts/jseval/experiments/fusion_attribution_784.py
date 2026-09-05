@@ -40,8 +40,15 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from collections import Counter
 from pathlib import Path
+
+# Import this worktree's jseval, not whichever checkout the editable install points at
+# (tempdoc 716; same bootstrap as experiments/inject_707_probe.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from jseval.trec import parse_trec_line  # noqa: E402
 
 ARMS = ["A1", "A2", "A3", "A4"]
 ARM_SEMANTICS = {
@@ -125,9 +132,9 @@ def load_arm(root: Path, arm: str) -> dict:
     trec = {}
     with (d / "hybrid_run.trec").open(encoding="utf-8") as f:
         for line in f:
-            p = line.split()
-            if p:
-                trec.setdefault(p[0], []).append((p[2], int(p[3]), float(p[4])))
+            e = parse_trec_line(line)
+            if e is not None:
+                trec.setdefault(e.qid, []).append((e.doc_id, e.rank, e.score))
     out["trec"] = trec
     return out
 

@@ -4,8 +4,7 @@
  * Tempdoc 578 Workstream B — the 569 DeclaredSurface engine renders NESTED inside the shell STAGE
  * (which is itself role="main"), so it must never emit a second `main` landmark. A STAGE-placed
  * declaration becomes a named `region`; without a heading it carries no role at all. This pins the
- * fix the `check-a11y-closure` gate cannot see (the gate scans Shell.ts source, not the engine's
- * derived runtime role — 578 §14).
+ * fix at the engine's derived runtime role, which no static source scan can see (578 §14).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import './DeclaredSurface.js';

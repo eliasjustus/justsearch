@@ -1137,10 +1137,10 @@ describe('this window re-splits no word the product has already settled', () => 
     const { dirname, join } = await import('node:path');
     const { fileURLToPath } = await import('node:url');
     const here = dirname(fileURLToPath(import.meta.url));
-    // The repo-wide gate (`scripts/ci/check-offline-single-sense.mjs`) keeps a per-file allow-list of
-    // sanctioned uses; search-v3 has NO entry, and this is what keeps that true rather than leaving
-    // it to be discovered at the gate. The window's every "the model is unavailable" phrase comes
-    // from `readinessNotice`, so it needs the word nowhere.
+    // The repo-wide copy lint (`scripts/ci/check-offline-single-sense.mjs`, retired 930 chunk H) kept
+    // a per-file allow-list of sanctioned uses; search-v3 had NO entry, and this test keeps that true
+    // directly now. The window's every "the model is unavailable" phrase comes from
+    // `readinessNotice`, so it needs the word nowhere.
     const offenders = readdirSync(here)
       .filter((name) => name.endsWith('.ts'))
       // This file writes the token in order to forbid it — the one allowed mention.

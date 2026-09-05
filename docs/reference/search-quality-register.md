@@ -670,6 +670,158 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-059: lane D PR-C2 (unstored chunk/entity text) is byte-exact and storage-real — legal stored fields −75.8 % (21.03 → 5.09 MB) with 4,122/4,122 chunk vectors intact — but the wave-3 campaign found two masked enrichment defects on the way (a non-converging flag-off chunk-SPLADE loop, and `rag.chunk_splade.enabled` honoured by one lane of three); with the flag made truly OFF, legal hybrid is 0.5776 = the 832 scorecard, and the −0.012 vs a same-day control is race-encoded chunk postings plus tombstone-inflated BM25 statistics, not C2 (2026-09-05, tempdoc 931 §D findings 5/5b/6, §E 8-11)
+
+- **What C2 does.** `chunk_content` stays analyzed/indexed but `stored:false`; every consumer
+  re-derives the text from the stored parent `content` plus chunk offsets (`ChunkSplitter`'s
+  offset law). Direct Lucene inspection of a fresh legal index: 7,781,026 chars of stored chunk
+  text on the pre-C2 arm = 7,781,026 chars re-derived on C2, 0 mismatches / blanks / out-of-range.
+- **Storage (legal, on disk, by Lucene file type).** `fdt` 21.03 MB → 5.09 MB is the C2 effect.
+  Totals (74.66 MB vs 25.74 MB) are NOT comparable: the control carried 2,629 tombstoned docs in
+  142 un-merged files vs 222 in 58 — `vec`/`pos`/`doc`/`cfs` differ for that reason, and both
+  indexes hold 4,122 chunk vectors and 199 parent vectors (counted, not inferred).
+- **Finding 5 (fixed, `58c3c344`).** With `rag.chunk_splade.enabled` off (the default) C2's
+  combined backfill escalated every PENDING chunk through the SPLADE retry seam each cycle; a
+  retry bump is not stage progress, so the 5 s budget tripped 231 times, embeddings/NER starved
+  for ~25 min on 198 docs, and every chunk ended terminal-FAILED. Readiness 1,793 s → 235 s.
+- **Finding 6 (fixed, `286a97bc`).** `SpladeBackfillOps`/`BgeM3BackfillOps` selected
+  `splade_status=PENDING` with no chunk filter while `ChunkDocumentWriter` stamps PENDING on every
+  chunk, so chunk SPLADE postings were produced by whichever lane won a race — the 832 scorecard
+  and every hybrid baseline on a chunked corpus were measured on that race. Now every lane honours
+  the flag. **Owner decision (tempdoc 712):** the query-side chunk-SPLADE leg still runs off
+  `pipeline.spladeEnabled`; "default OFF" now means no chunk postings at all.
+- **Quality (legal, paired, same machine).** Flag truly off: C2 hybrid **0.5776** / P@1 0.360 /
+  R@10 0.805 vs control 0.5900 (settled re-query) — Δ −0.0125, inside the F-057 2σ line; vector-
+  only 0.6215 vs 0.6148 (R@10 0.83 vs 0.82); lexical 0.6858 vs 0.6873. The C2 number equals the
+  scorecard's 0.578. Verdict: no regression attributable to C2.
+- **Two measurement lessons (routed, 931 §E 9-10).** (i) jseval `--pipeline` readiness counts
+  parents only, so on chunked corpora the query phase can overlap chunk-lane encoding — the same
+  index moved +0.011 in ten minutes; re-query before trusting a fresh hybrid delta ≤ ~0.015.
+  (ii) Paired arms need equal merge state — tombstones inflate BM25 collection statistics
+  (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts 3–4 % with no code cause.
+- **Not measured.** C1 (quantization) quality/recall campaign — still owed before the C2+C1 draft
+  can undraft (915 §P3.F, 931 §B 3d).
+
+### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
+
+- **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
+  planner rule: skip dense only when another leg can answer AND the *rarest* analyzed query term
+  occurs in ≥ `index.hybrid.vector_skip_min_df_fraction` (default 0.25) of `content` documents, on
+  ≥ 100 field docs (`SearchPlanner.planDenseSkip`, `SearchInputCapture` min DF fraction). C5b asked
+  for comparable per-language skip rates and no material quality loss on the six pre-registered
+  corpora before PR-C0 may merge.
+- **Skip rate (index-only hybrid, PR-C0 tip `0bb0b8cb`, 17 min, every run `comparable=True`;
+  `denseStatus`/`denseReason` now persisted per query by jseval and rolled up by
+  `scripts/jseval/915_c0_skip_rate.py`).** legal-clerc-200 4/200 (2.0 %, all
+  `SKIPPED_NO_DISCRIMINATIVE_TERM`); scifact 0/300; enron-qa 0/300; ohr-bench-clean 0/962;
+  miracl-de-2k 0/305; miracl-fr-2k 0/343. The 4 legal hits prove the gate path is live; the zeros
+  are the rule's real answer (a natural-language query almost never has *every* term in ≥ 25 % of
+  documents). Per language: en 0–2 %, de 0 %, fr 0 % — comparable; the retired rule could only
+  ever fire for English.
+- **Quality (paired, same machine, same hour, fresh `--clean` index, `--pipeline --embedding`,
+  control = PR-A branch `c0e5dbf5` without C0).** legal-clerc-200: C0 0.5989 / P@1 0.390 / R@10
+  0.825 vs control 0.5914 / 0.365 / 0.830 → Δ +0.0075 nDCG@10, inside the F-057 legal 2σ line
+  (0.0136); miracl-de-2k: 0.8575 / 0.6656 / 0.9967 on both arms (identical; the rule fired 0/305 and
+  the old rule never fired on German, so C0 is a no-op there by construction). Every leg observed on
+  every arm. Scifact/enron/fr/OHR fully-enriched no-regression runs were not run (≈1.5 h, over the
+  wave's 2 h budget) — a limit, not a pass.
+- **Calibration worth keeping.** Two no-C2 legal arms share only 24/200 identical top-10 lists
+  (20 up, 21 down, mean +0.0075): top-10 churn on legal is run-to-run noise; only the mean and the
+  hit count carry signal. `summary.json`'s `ingest.index_size_bytes` is a mid-ingest status snapshot
+  (16.1 MB vs 33.6 MB reported for indexes that are 40.9 MB vs 43.0 MB on disk) — measure index
+  bytes on disk, by Lucene file type.
+- **Consequence for the owner.** At 0.25 the dense skip is a no-op on every corpus we measure, so
+  PR-C0 is a locale-invariance change, not a latency lever; if the old English savings mattered,
+  the knob to revisit is the DF fraction, and this row is the baseline to beat.
+- **Method + run dirs.** tempdoc 931 §D (3a table, 3b/3c design); runs under
+  `.claude/worktrees/wave3-{c0,pa}/scripts/jseval/tmp/eval-results/20260905T02*` (gitignored).
+
+### F-057: the chunk target/overlap re-derivation RETAINS 500/50/100 — 32 admissible runs reduce the matrix to four legal-capable challengers, and none clears the Enron +2σ line needed for a two-of-three win; the unchanged 2000-character prefilter is analytically characterized, not quality-optimized (2026-09-03/04)
+
+- **Question and answer.** Re-derive the document chunk target and overlap instead of inheriting the
+  original 500/50 choice. The 4×3 matrix tested targets `{128,256,384,500}` and overlaps
+  `{0,25,50}` with sentence-aligned boundaries, per-target minimum `max(1,target/5)`, and the writer
+  threshold held at 2000 characters. **No challenger satisfies the pre-registered adoption rule.**
+  Keep `(target, overlap, minimum) = (500, 50, 100)`. The fixed threshold is outside this result.
+- **Evidence admitted.** 32 completed arms: 15 `mixed/legal-clerc-200` (12-cell matrix, two extra
+  incumbent reindexes, one shipped-deadline control), 12 `mixed/ohr-bench-clean`, and five
+  `mixed/enron-qa`. Every cited arm has `ce_coverage.verdict == "ok"`, comparable hybrid output,
+  complete decision-bearing fields, and a clean machine signature. The matrix used one invariant
+  2000 ms CE pre-check deadline so small chunks did not become inadmissible merely by creating more
+  rerank candidates. That deadline is campaign instrumentation; the shipped default remains 200 ms.
+- **Calibration.** Three independently rebuilt legal incumbents scored nDCG@10
+  `0.581629 / 0.592372 / 0.580665` and R@10 `0.810 / 0.835 / 0.815`, at run ids
+  `20260903T085832`, `20260903T090447`, and `20260903T091138_mixed_legal-clerc-200`.
+  Mean/sample-σ are `0.584888 / 0.006499` for nDCG and `0.820 / 0.013229` for R@10. The committed
+  `max(observed σ, 0.0068)` rule therefore puts legal's strict nDCG win line at **0.598488**. OHR
+  and Enron have one incumbent replicate, so their marked floor gives ±2σ = **0.0136**.
+- **Complete cheap-matrix reduction.** The full OHR matrix has no winner: its maximum is the
+  incumbent's **0.957099** (`20260903T125636_mixed_ohr-bench-clean`), so every challenger misses
+  OHR's +2σ line of 0.970699. On legal, only four challengers both clear 0.598488 and avoid a
+  leg-union recall fall below 0.925:
+
+  | target / overlap | legal nDCG@10 | legal R@10 | legal union | run id |
+  | :--- | ---: | ---: | ---: | :--- |
+  | 128 / 25 | 0.634915 | 0.840 | 0.925 | `20260903T093157_mixed_legal-clerc-200` |
+  | 256 / 0 | 0.629296 | 0.835 | 0.930 | `20260903T095341_mixed_legal-clerc-200` |
+  | 384 / 0 | 0.621148 | 0.845 | 0.925 | `20260903T102630_mixed_legal-clerc-200` |
+  | 384 / 25 | 0.609067 | 0.835 | 0.925 | `20260903T103256_mixed_legal-clerc-200` |
+
+- **Decisive Enron result.** Because no arm wins OHR, adoption requires winning both legal and
+  Enron. The incumbent scores 0.792402 nDCG@10 on Enron (`20260903T133806_mixed_enron-qa`), putting
+  the strict +2σ line at **0.806002**. The four legal-capable arms score, respectively,
+  `0.760281`, `0.787604`, `0.793542`, and `0.798495` (run ids `20260903T171519`, `T155614`,
+  `T150903`, `T142710_mixed_enron-qa`). The best delta is only **+0.006093**, below the required
+  >0.0136. Thus no result from a remaining cell can satisfy the necessary two-of-three condition.
+- **Early-stop deviation.** The execution plan originally called for all 12 Enron arms, followed by
+  winner/incumbent multilingual, scifact and RAG checks. It did not pre-register pruning. Seven
+  Enron challengers already incapable of winning legal were stopped, and the downstream controls
+  were not run, only after the necessary-condition proof above was independently reconstructed.
+  This is disclosed as an **unplanned, decision-preserving early stop**, not reported as a full
+  matrix: controls and the secondary/veto-only RAG fixture cannot promote an arm after the primary
+  adoption condition is false. One earlier Enron 256/50 smoke was inadmissible; an attempted 128/0
+  resume produced no metrics or completion marker. Neither is evidence.
+- **Deadline control and threshold disposition.** A clean incumbent at the shipped 200 ms deadline scored
+  0.581146 nDCG@10, 0.810 R@10 and 0.925 union
+  (`20260903T091800_mixed_legal-clerc-200`), inside the incumbent calibration band; campaign scores
+  do not repin a release baseline. The 2000-character writer threshold was **held fixed**, not
+  optimized. Its closed analytic rationale is
+  `TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS) == 2000`: one 500-token window
+  under the canonical optimistic typical-prose estimate of four characters per token. It is only a
+  cheap prefilter; the content-aware splitter and the writer's zero/one-chunk guard decide actual
+  emission. CJK can map 500 tokens to a different character span inside the splitter, without
+  introducing a per-language threshold. The formerly stated ≥1536 “corpus-profile floor” is only
+  the arithmetic point where `IndexingDocumentOps`'s `/3` fallback estimate reaches 512; it is not a
+  measured corpus property or a quality criterion. Classification: **analytically derived,
+  operationally exercised, not quality-optimized**. No threshold sweep or quality-optimum claim is
+  made.
+- **Shipping consequence.** No production chunking constant or configuration surface changes.
+  `ChunkSplitter` remains the static owner; the temporary four-key experiment channel is removed.
+  Index identity already includes target, overlap, minimum, threshold and
+  `ChunkSplitter.ALGORITHM_VERSION`. Since both values and boundary algorithm are unchanged, the
+  correct version remains **`v1`**; bumping it would force an unnecessary reindex.
+- **Historical analysis and runner safety.** `scripts/jseval/916_chunk_sweep.py` records per-arm run ids,
+  admissibility, retrieval/recall, truncation, index bytes, throughput and machine state. The four
+  temporary `JUSTSEARCH_CHUNKING_SWEEP_*` consumers are intentionally absent from the shipping
+  tree, so `run` now refuses to start there; `analyze` remains available for the archived evidence.
+  A resume on the original throwaway experiment shape
+  exposed that non-zero arm exits and decision-bearing nulls could still allow outer completion
+  markers, while the generated PowerShell chain did not enforce child exit status. A reusable arm
+  now needs a structured identity binding target, overlap, minimum, threshold, deadline, run id and
+  source SHA, plus clean-machine and known chunk-branch evidence. The driver retracts invalid or
+  mismatched completion; `tests/test_916_chunk_sweep.py` pins failure and stale-resume shapes plus
+  chain exit propagation. Selection was recomputed from each arm's own metrics and completion
+  evidence, never from the defective outer marker.
+- **Rider (2026-09-05) — OHR `leg_union_recall`/`final_recall` above are biased LOW by 0.1091; the
+  verdict is unchanged.** The staged-recall projection's TREC reader was left-anchored
+  (`parts[2]`), so the 109 `mixed/ohr-bench-clean` golds whose doc ids contain a space were
+  truncated at parse time — the sole cause of the campaign's 105/962 OHR reconciliation mismatches.
+  Corrected for the incumbent arm: `leg_union_recall` 0.8794 → **0.9886**, `final_recall` 0.8784 →
+  **0.9875**, `LEG_MISS` 115 → 10, mismatches → **0** (fix: `scripts/jseval/jseval/trec.py`). The
+  offset is identical on all 12 OHR arms, so every OHR delta and the adoption rule's clause-2
+  comparison hold; `nDCG@10`/`R@10` never read the TREC file, and the legal figures quoted above
+  are unaffected (0 mismatches — CLERC ids contain no whitespace). Detail: tempdoc 916 §L.8.
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
@@ -1107,6 +1259,19 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+- **Instrument rider (2026-09-05) — the projection under-reported `leg_union_recall` (and
+  `final_recall`) on any corpus whose doc ids contain whitespace, until fixed.** `_load_trec` read
+  the doc id left-anchored as `parts[2]` of a whitespace-split line, while the writer emitted
+  `qid Q0 <docid> rank score tag` space-delimited, so a doc id containing a space was truncated and
+  then missed every membership check — inflating `LEG_MISS`, deflating `leg_union_recall` and
+  `final_recall`, and showing up as "projection says absent, harness says present" reconciliation
+  mismatches. **Observed on `mixed/ohr-bench-clean` only** (109/962 golds affected; bias −0.1091;
+  105 mismatches). The four corpora profiled above, plus `mixed/legal-clerc-200` and
+  `mixed/enron-qa`, have whitespace-free ids and reported 0 mismatches — their numbers stand. Fixed
+  2026-09-05: `scripts/jseval/jseval/trec.py` is now the single right-anchored reader + tab-delimiting
+  writer used by all three in-repo TREC readers. **A non-zero mismatch count that is entirely
+  "absent/present"-shaped is a parser symptom first, a retrieval finding second.** Detail: tempdoc
+  916 §L.8.
 
 ### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
 
@@ -2380,6 +2545,15 @@ above)*
   `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
   release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
   parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+- **Instrument rider (2026-09-05) — the gated quantity itself was under-reported on
+  whitespace-bearing doc ids until fixed.** `leg_union_recall` comes from
+  `staged_recall_accounting`, whose TREC reader truncated any doc id containing a space (see the
+  F-025 rider), so the floor was measured too low on such corpora. **Observed on
+  `mixed/ohr-bench-clean`** (bias −0.1091). The three pinned floor corpora
+  (`mixed/legal-clerc-200`, `beir/scifact`, `golden/needle-burial-v1`) all have whitespace-free doc
+  ids and are **unaffected — the pins stand and were not re-derived**. Fixed in
+  `scripts/jseval/jseval/trec.py`; a future `union-recall-gate-derive` that adds a corpus with
+  spaces in its ids would previously have pinned a floor ~0.11 too low.
 
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
@@ -3325,6 +3499,16 @@ Questions — these are "we should eventually" not "we need to know."
 - **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
 - **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
 - **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
-- **FW-008: Vector quantization cross-machine evidence** — Codec wiring implemented (default off). Needs cross-machine benchmark evidence before enabling by default. Source: RAG-004 (retired from issues/). **Still open (verified 2026-06-15):** default remains Float32 (`JustSearchCodec.java:43`); only storage (~75%) is measured — the **nDCG quality cost of Int8 is unmeasured** (single-machine only, RAG-003/235). **Post-cutoff capability note (580 §14.1, Lucene-10.4.0-verified):** `Lucene104(Hnsw)ScalarQuantizedVectorsFormat` exposes **1/2/4/7/8-bit** + **asymmetric 2-bit-store/4-bit-query** ("2-bit recall-competitive with old 4-bit") — so a lower-bit path than Int8 is config-only (no new dep) but reindex-required and recall is corpus-dependent; an **efficiency** lever (memory), not a quality one — eval-gate recall before adopting.
+- **FW-008: Vector quantization evidence** — **Implementation candidate updated 2026-09-03;
+  evidence remains open.** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
+  Int8, and makes quantization the unconfigured write default while retaining explicit Float32
+  opt-out. Restart, mixed-segment, merge, and configuration tests are short-checkable, but they do
+  not establish ranking quality or footprint. The default is not accepted or merge-ready until the
+  tempdoc 915 campaign passes the stricter intersection: jseval nDCG@10 and R@10 within 0.010 on
+  the registered corpora, EngineVectorIndexBench Float32 recall@50 at least 0.97 and Int8 no more
+  than 0.01 absolute below it, smaller index bytes, and reported RSS. Cross-machine
+  replication remains desirable but is not silently claimed. The lower-bit
+  `SINGLE_BIT_QUERY_NIBBLE` `chunk_vector` arm remains report-only and cannot authorize a shipped
+  default.
 - **FW-009: Citation scorer threshold calibration** — Default 0.5 threshold works in tests but not validated across real-world content types. Source: RAG-006 (retired from issues/).
 - **FW-010: 1M+ vector scale benchmarks** — No runs at 1M+ vectors or cross-machine. Current evidence limited to smaller datasets on single machine. Source: RAG-003 (retired from issues/).
