@@ -843,8 +843,10 @@ final class JobQueueMigrationTest {
       try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(document_identity)")) {
         while (rs.next()) columns.add(rs.getString("name"));
       }
+      // This walks the WHOLE ladder from V10, so the shape asserted is the current one: V11's four
+      // columns plus V13's deletion mark (tempdoc 931 §C.6).
       assertEquals(
-          List.of("path_hash", "doc_uid", "first_seen_at", "last_seen_at"), columns);
+          List.of("path_hash", "doc_uid", "first_seen_at", "last_seen_at", "deleted_at"), columns);
       assertFalse(columns.stream().anyMatch(name -> name.contains("path") && !name.equals("path_hash")));
       try (ResultSet rs =
           stmt.executeQuery(
@@ -893,7 +895,7 @@ final class JobQueueMigrationTest {
   }
 
   @Test
-  void migratesV11ToV12PreservingQueueAndIdentityRowsAndRefusesV13() throws Exception {
+  void migratesV11ToCurrentPreservingQueueAndIdentityRowsAndRefusesTheNextVersion() throws Exception {
     Path dbPath = tempDir.resolve("v11.db");
     String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
     String pathHash = DocumentIdentityStore.pathHash("/v11/preserved.txt");
@@ -919,9 +921,9 @@ final class JobQueueMigrationTest {
         Statement stmt = conn.createStatement()) {
       try (ResultSet rs = stmt.executeQuery("PRAGMA user_version")) {
         assertTrue(rs.next());
-        assertEquals(12, rs.getInt(1));
+        assertEquals(13, rs.getInt(1));
       }
-      assertEquals(12, SqliteSchema.TARGET_VERSION);
+      assertEquals(13, SqliteSchema.TARGET_VERSION);
       assertTrue(hasTable(stmt, "document_identity_import"));
       List<String> columns = new java.util.ArrayList<>();
       try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(document_identity_import)")) {
@@ -956,19 +958,19 @@ final class JobQueueMigrationTest {
       assertEquals(1L, store.identityCount());
     }
 
-    // A V13 database was written by a newer binary: refused, not silently downgraded.
-    Path futurePath = tempDir.resolve("v13.db");
+    // A V14 database was written by a newer binary: refused, not silently downgraded.
+    Path futurePath = tempDir.resolve("v14.db");
     try (Connection conn =
             DriverManager.getConnection("jdbc:sqlite:" + futurePath.toAbsolutePath());
         Statement stmt = conn.createStatement()) {
       stmt.execute(SqliteSchema.CREATE_JOBS_TABLE);
-      stmt.execute("PRAGMA user_version = 13");
+      stmt.execute("PRAGMA user_version = 14");
     }
     SqliteJobQueue future = new SqliteJobQueue(futurePath);
     try {
       SQLException refusal = assertThrows(SQLException.class, future::open);
       assertTrue(
-          refusal.getMessage().contains("13"),
+          refusal.getMessage().contains("14"),
           "the refusal must name the unsupported version: " + refusal.getMessage());
     } finally {
       future.close();
@@ -1004,6 +1006,99 @@ final class JobQueueMigrationTest {
         assertEquals(11, rs.getInt(1));
       }
       assertFalse(hasTable(stmt, "document_identity_import"));
+    }
+  }
+
+  @Test
+  void migratesV12ToV13AddingDeletedAtWithoutDisturbingExistingIdentityRows() throws Exception {
+    Path dbPath = tempDir.resolve("v12.db");
+    String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
+    String pathHash = DocumentIdentityStore.pathHash("/v12/preserved.txt");
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      stmt.execute(SqliteSchema.CREATE_JOBS_TABLE);
+      stmt.execute(SqliteSchema.CREATE_DOCUMENT_IDENTITY_TABLE);
+      stmt.execute(SqliteSchema.CREATE_DOCUMENT_IDENTITY_UID_INDEX);
+      stmt.execute(SqliteSchema.CREATE_DOCUMENT_IDENTITY_IMPORT_TABLE);
+      stmt.execute("PRAGMA user_version = 12");
+      stmt.execute(
+          "INSERT INTO document_identity(path_hash, doc_uid, first_seen_at, last_seen_at)"
+              + " VALUES ('"
+              + pathHash
+              + "', 'v12-uid', 7, 9)");
+    }
+
+    SqliteJobQueue queue = new SqliteJobQueue(dbPath);
+    queue.open();
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      try (ResultSet rs = stmt.executeQuery("PRAGMA user_version")) {
+        assertTrue(rs.next());
+        assertEquals(13, rs.getInt(1));
+      }
+      List<String> columns = new java.util.ArrayList<>();
+      try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(document_identity)")) {
+        while (rs.next()) columns.add(rs.getString("name"));
+      }
+      assertEquals(
+          List.of("path_hash", "doc_uid", "first_seen_at", "last_seen_at", "deleted_at"), columns);
+      try (ResultSet rs =
+          stmt.executeQuery("SELECT deleted_at FROM document_identity WHERE path_hash='" + pathHash + "'")) {
+        assertTrue(rs.next());
+        rs.getLong(1);
+        assertTrue(
+            rs.wasNull(),
+            "nothing observed the deletion of a pre-existing row, so nothing may claim it");
+      }
+    } finally {
+      queue.close();
+    }
+
+    try (SqliteDocumentIdentityStore store = new SqliteDocumentIdentityStore(dbPath)) {
+      var migrated = store.lookup(pathHash).orElseThrow();
+      assertEquals("v12-uid", migrated.docUid());
+      assertEquals(7L, migrated.firstSeenAtMs());
+      assertNull(migrated.deletedAtMs());
+      assertEquals(1L, store.identityCount());
+      // The migrated row keeps its uid at any clock: an unmarked row never enters the grace path.
+      assertEquals("v12-uid", store.resolve(pathHash, Long.MAX_VALUE / 2).docUid());
+    }
+  }
+
+  @Test
+  void v12ToV13FailureRollsBackTheColumnAndVersion() throws Exception {
+    Path dbPath = tempDir.resolve("v12-rollback.db");
+    String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      stmt.execute(SqliteSchema.CREATE_JOBS_TABLE);
+      stmt.execute(SqliteSchema.CREATE_DOCUMENT_IDENTITY_TABLE);
+      stmt.execute(SqliteSchema.CREATE_DOCUMENT_IDENTITY_IMPORT_TABLE);
+      stmt.execute("PRAGMA user_version = 12");
+    }
+
+    SqliteJobQueue queue =
+        new SqliteJobQueue(
+            dbPath,
+            3,
+            null,
+            version -> {
+              if (version == 13) throw new SQLException("fail V13 after DDL");
+            });
+    assertThrows(SQLException.class, queue::open);
+    queue.close();
+
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      try (ResultSet rs = stmt.executeQuery("PRAGMA user_version")) {
+        assertTrue(rs.next());
+        assertEquals(12, rs.getInt(1));
+      }
+      List<String> columns = new java.util.ArrayList<>();
+      try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(document_identity)")) {
+        while (rs.next()) columns.add(rs.getString("name"));
+      }
+      assertFalse(columns.contains("deleted_at"));
     }
   }
 

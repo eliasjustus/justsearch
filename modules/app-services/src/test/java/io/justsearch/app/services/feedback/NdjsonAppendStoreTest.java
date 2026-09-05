@@ -41,6 +41,39 @@ class NdjsonAppendStoreTest {
   }
 
   @Test
+  void featureSnapshot_roundtripsTheContentRevisionAndReadsALegacyRowAsUnknown(@TempDir Path dir)
+      throws IOException {
+    // Tempdoc 931 §C.6 — a row written before contentRevision existed must deserialize with null,
+    // not fail and not default to something LabelProjection would read as a mismatch. The legacy
+    // line is written VERBATIM rather than round-tripped, so this is the real on-disk shape.
+    Path file = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(
+        file,
+        "{\"schemaVersion\":1,\"record\":{\"interactionId\":\"iid-legacy\",\"query\":\"q\","
+            + "\"occurredAtMs\":1,\"hits\":[{\"docId\":\"uid-legacy\",\"sourceDocId\":\"C:/a.md\","
+            + "\"rank\":1,\"sparse\":0.1,\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,"
+            + "\"parentTokenCount\":null}]}}\n");
+
+    var store = new NdjsonAppendStore<>(file, FeatureSnapshot.class);
+    store.append(
+        new FeatureSnapshot(
+            "iid-current",
+            "q",
+            2L,
+            List.of(
+                new FeatureSnapshot.HitFeatures(
+                    "uid-current", "C:/b.md", 1, 0.9f, 0.8f, 0.7f, 0.85f, 10L, "rev-b"))));
+
+    List<FeatureSnapshot> all = store.readAll();
+    assertEquals(2, all.size());
+    assertNull(
+        all.get(0).hits().get(0).contentRevision(),
+        "a pre-931 row is UNKNOWN, never a revision mismatch");
+    assertEquals("uid-legacy", all.get(0).hits().get(0).docId());
+    assertEquals("rev-b", all.get(1).hits().get(0).contentRevision());
+  }
+
+  @Test
   void resultDisposition_roundtrips(@TempDir Path dir) throws IOException {
     var store =
         new NdjsonAppendStore<>(dir.resolve("result-dispositions.ndjson"), ResultDisposition.class);

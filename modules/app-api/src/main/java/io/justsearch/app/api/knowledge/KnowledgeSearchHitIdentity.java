@@ -15,6 +15,7 @@ import java.util.Map;
 public final class KnowledgeSearchHitIdentity {
 
   private static final String DOC_UID = "doc_uid";
+  private static final String CONTENT_SHA256 = "content_sha256";
   private static final String PARENT_DOC_ID = "parent_doc_id";
   private static final String CHUNK_INDEX = "chunk_index";
   private static final String IS_CHUNK = "is_chunk";
@@ -75,6 +76,22 @@ public final class KnowledgeSearchHitIdentity {
       return parentUid.indexOf('#') < 0 ? parentUid : null;
     }
     return uid.indexOf('#') < 0 ? uid : null;
+  }
+
+  /**
+   * Returns the PARENT document's content revision for this hit, or {@code null} when the hit
+   * carries none (tempdoc 931 §C.6).
+   *
+   * <p>Chunk hits carry their parent's revision, put there by the Worker alongside the parent UID —
+   * a chunk has no revision of its own, and the label being dated is the parent document's. Null is
+   * an honest "unknown", never a value: a legacy row or an un-reindexed document must not be
+   * mistaken for one whose revision happens to differ.
+   */
+  public static String contentRevision(KnowledgeSearchResponse.Hit hit) {
+    if (hit == null) {
+      return null;
+    }
+    return nonBlank(hit.fields().get(CONTENT_SHA256));
   }
 
   private static String nonBlank(String value) {

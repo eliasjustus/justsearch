@@ -271,6 +271,14 @@ final class SqliteQueueMigrationOps {
           log.info("V11 to V12: Ensured document_identity_import table (tempdoc 931)");
         }
       }
+      case 13 -> {
+        if (!columnExists(conn, "document_identity", "deleted_at")) {
+          try (Statement stmt = conn.createStatement()) {
+            stmt.execute(SqliteSchema.MIGRATE_V12_TO_V13_ADD_DOCUMENT_IDENTITY_DELETED_AT);
+          }
+        }
+        log.info("V12 to V13: Ensured deleted_at column on document_identity (tempdoc 931 §C.6)");
+      }
       default -> throw new SQLException("Unknown migration version: " + version);
     }
   }

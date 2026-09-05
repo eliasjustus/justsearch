@@ -57,7 +57,10 @@ public final class FeatureSnapshots {
         legs.dense(),
         legs.splade(),
         legs.fused(),
-        parentTokenCount(hit.fields()));
+        parentTokenCount(hit.fields()),
+        // Tempdoc 931 §C.6 — the revision this hit was ranked at. Absent (null) when the document
+        // predates the field; LabelProjection treats that as unknown, not as a mismatch.
+        KnowledgeSearchHitIdentity.contentRevision(hit));
   }
 
   /**

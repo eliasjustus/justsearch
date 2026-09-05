@@ -396,6 +396,13 @@ public final class SearchTool implements OperationHandler {
     var f = new LinkedHashMap<String, Object>();
     f.put("docId", docId);
     f.put("docUid", docUid);
+    // Tempdoc 931 §C.6 — the parent content revision this hit was ranked at, so an agent-captured
+    // label ages the same way a UI-captured one does. Omitted (not null-valued) when the hit
+    // carries none, matching the map's other absent-means-unknown entries.
+    String contentRevision = KnowledgeSearchHitIdentity.contentRevision(hit);
+    if (contentRevision != null) {
+      f.put("contentRevision", contentRevision);
+    }
     f.put("rank", rank);
     f.put("sparse", legs.sparse());
     f.put("dense", legs.dense());

@@ -248,9 +248,18 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     // the parent doc + chunks are removed in one Worker-side write. In deferred mode
     // (ingestRunning == null) the sink is a no-op; this is acceptable because deletions in
     // deferred mode are handled by the periodic sync once the writer upgrades.
+    // Tempdoc 931 §C.6 — a confirmed deletion point: the OS reported the file removed. The marker
+    // re-verifies absence, so a DELETE event that is really the first half of an atomic replace
+    // (or a recreate that beat us to the check) records nothing.
+    var watcherDeletionMarker =
+        new io.justsearch.indexerworker.services.ConfirmedDeletionMarker(
+            ctx.documentIdentityStore());
     java.util.function.Consumer<String> deletePathSink =
         ingestRunning != null
-            ? ingestRunning.indexingCoordinator()::deleteByIdAndChunks
+            ? path -> {
+              ingestRunning.indexingCoordinator().deleteByIdAndChunks(path);
+              watcherDeletionMarker.markIfAbsent(path);
+            }
             : path -> {};
     var workerWatcherCatalog =
         new io.justsearch.indexerworker.services.WorkerWatcherMetricCatalog(ctx.metricRegistry());

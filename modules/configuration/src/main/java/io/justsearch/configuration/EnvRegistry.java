@@ -1326,7 +1326,29 @@ public enum EnvRegistry {
      * config snapshot, not from a raw sysprop read inside the Worker JVM (the [R1] defect shape).
      */
     INDEX_COMMIT_TIMER_INTERVAL_MS(
-        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000", LifecycleStage.PERMANENT);
+        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000", LifecycleStage.PERMANENT),
+
+    // ============ Document-identity deletion grace (tempdoc 931 §C.6) ============
+
+    /**
+     * How long, in ms, a confirmed-deleted path keeps its document identity before a file
+     * reappearing at that path is treated as a NEW document (default 30 days).
+     *
+     * <p>Identity rows have no GC, so before this key a replacement file at a previously-deleted
+     * path inherited the old uid — and with it the old document's accumulated feedback. Deleting
+     * the row on removal would be worse: an unmounted drive, a sync client that momentarily hides a
+     * file, or a cloud placeholder would each look like a deletion and permanently break identity
+     * across an ordinary restore. The grace window is the compromise: within it a reappearance is
+     * the SAME document; past it, a new uid is minted.
+     *
+     * <p>Resolved onto {@code ResolvedConfig.Index} and read by the Worker from the ordinal-450
+     * config snapshot, not from a raw sysprop read inside the Worker JVM.
+     */
+    INDEX_IDENTITY_DELETION_GRACE_MS(
+        "index.identity.deletion_grace_ms",
+        "JUSTSEARCH_INDEX_IDENTITY_DELETION_GRACE_MS",
+        "2592000000",
+        LifecycleStage.PERMANENT);
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 
