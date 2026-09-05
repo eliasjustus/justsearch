@@ -559,12 +559,19 @@ jobs:
     # starts a backend, and `run.py`'s three socket-opening helpers are stubbed by
     # `tests/test_run.py::_offline_backend`), so it runs on a hosted Linux runner.
     #
-    # Optional-dependency behaviour, verified per module: `inspect_ai` (agent extra),
-    # `playwright` (ui extra) and `Pillow` (scan extra) are reached only through
-    # `pytest.importorskip`, so those tests SKIP rather than error and the ~80
-    # transitive deps of the agent extra stay out of this lane. `hypothesis` and
-    # `jsonschema` are NOT guarded (`tests/test_suite_stats_properties.py:10`), which is
-    # why the `dev` extra is installed in full below.
+    # Optional-dependency behaviour: `inspect_ai` (agent extra), `playwright` (ui extra)
+    # and `Pillow` (scan extra) are reached only through `pytest.importorskip`, so those
+    # tests SKIP rather than error and the ~80 transitive deps of the agent extra stay out
+    # of this lane. That guard was MISSING in four places — the three modules importing
+    # `jseval.agent_utility_inspect` at module scope (`test_agent_behavioral_789.py`,
+    # `test_delivery_tier_735.py`, `test_partial_usage_capture_757.py`) and the
+    # `_graded_logs` helper in `test_utility_comparison.py` — and was added to match
+    # their already-guarded siblings. The first run of this job caught the module-scope
+    # three as `Interrupted: 3 errors during collection`, which aborted the WHOLE suite.
+    # All four went unnoticed precisely because nothing ran the suite on a machine
+    # without the agent extra installed. `hypothesis` and `jsonschema` are NOT guarded
+    # (`tests/test_suite_stats_properties.py:10`), which is why the `dev` extra is
+    # installed in full below.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
