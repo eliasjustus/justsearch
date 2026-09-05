@@ -96,6 +96,11 @@ log = logging.getLogger(__name__)
               type=int, default=DEFAULT_BATCH_MIN_FILES, show_default=True,
               help="Newly indexed documents that must accumulate before --first-search-probe "
                    "issues its next query. Ignored unless --first-search-probe is set.")
+@click.option("--settle-index", "settle_index", is_flag=True, default=False,
+              help="Tempdoc 931 sec E item 10: purge deleted-but-unmerged documents from the "
+                   "active index after the readiness gate and before the query phase, so two "
+                   "arms of a paired comparison query indexes with equal merge state. Off by "
+                   "default (it holds the writer for the duration of a force-merge).")
 @click.option("--json", "json_flag", is_flag=True, hidden=True, help="Alias for top-level --json.")
 @click.option(
     "--skip-projection", "skip_projections", multiple=True,
@@ -104,7 +109,7 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, first_search_probe, first_search_probe_files, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, first_search_probe, first_search_probe_files, settle_index, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
@@ -651,6 +656,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         query_syntax=query_syntax,
         search_load=search_load_block,
         first_search_probe=first_search_block,
+        settle_index=settle_index,
     )
     if suppress_stdout:
         return

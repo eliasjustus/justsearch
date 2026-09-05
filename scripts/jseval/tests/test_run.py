@@ -17,6 +17,7 @@ from jseval.run import (
     _compute_qrels_summary,
     _compute_score_stats,
     _get_corpus_identity,
+    _settle_index,
     execute_run,
 )
 from jseval.types import AnnProofResult, ComparabilityResult, QueryRecord, ReadinessResult
@@ -955,6 +956,7 @@ class TestBuildIndexStateAtQuery:
             "chunk_splade_coverage_percent": 100.0,
             "splade_coverage_percent": 99.95,
             "chunk_vector_coverage_percent": 100.0,
+            "settled": False,
             "readiness_passed_at": "2026-09-05T00:00:00+00:00",
         }
 
@@ -970,6 +972,7 @@ class TestBuildIndexStateAtQuery:
             "chunk_splade_coverage_percent": None,
             "splade_coverage_percent": None,
             "chunk_vector_coverage_percent": None,
+            "settled": False,
             "readiness_passed_at": "2026-09-05T00:00:00+00:00",
         }
 
@@ -1022,6 +1025,178 @@ class TestBuildSummaryEmbedsIndexStateAtQuery:
         assert "index_state_at_query" in summary
         assert summary["index_state_at_query"]["max_doc"] is None
         assert summary["index_state_at_query"]["readiness_passed_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 931 §E item 10: --settle-index (equal merge state across paired arms)
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, status_code, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """Stands in for ``httpx.Client`` as a context manager; records the POSTs it saw."""
+
+    def __init__(self, response, calls):
+        self._response = response
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, path, json=None):
+        self._calls.append((path, json))
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
+def _patch_settle_client(response, calls):
+    return patch(
+        "jseval.run.httpx.Client",
+        side_effect=lambda *a, **kw: _FakeClient(response, calls),
+    )
+
+
+_SETTLE_202 = {
+    "status": "settle completed",
+    "maxDocBefore": 2851,
+    "numDocsBefore": 222,
+    "maxDocAfter": 222,
+    "numDocsAfter": 222,
+    "segmentsAfter": 3,
+    "elapsedMs": 4200,
+}
+
+
+class TestSettleIndexHelper:
+    def test_accepted_normalizes_the_before_and_after_counts(self):
+        calls = []
+        with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+            block = _settle_index("http://localhost:8080")
+        assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+        assert block == {
+            "max_doc_before": 2851,
+            "num_docs_before": 222,
+            "max_doc_after": 222,
+            "num_docs_after": 222,
+            "segments_after": 3,
+            "elapsed_ms": 4200,
+        }
+
+    def test_404_from_an_older_backend_degrades_to_none(self):
+        calls = []
+        with _patch_settle_client(_FakeResponse(404, None, "Not found"), calls):
+            assert _settle_index("http://localhost:8080") is None
+        assert calls, "the 404 path must still have attempted the call"
+
+    def test_409_refusal_degrades_to_none(self):
+        with _patch_settle_client(
+            _FakeResponse(409, None, "settle rejected by worker"), []
+        ):
+            assert _settle_index("http://localhost:8080") is None
+
+    def test_transport_failure_degrades_to_none(self):
+        with _patch_settle_client(RuntimeError("connection refused"), []):
+            assert _settle_index("http://localhost:8080") is None
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_without_settle_flag_never_calls_the_endpoint(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+        summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert calls == [], "the settle is opt-in; a routine run must not hold the writer"
+    block = summary["index_state_at_query"]
+    assert block["settled"] is False
+    assert "settle" not in block
+    assert mock_readiness.check_search_ready.call_count == 1
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_with_settle_flag_records_the_block_and_rechecks_readiness(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+        summary = execute_run(
+            "scifact", "http://localhost:8080", ["hybrid"], settle_index=True,
+        )
+
+    assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+    block = summary["index_state_at_query"]
+    assert block["settled"] is True
+    assert block["settle"]["max_doc_before"] == 2851
+    assert block["settle"]["max_doc_after"] == 222
+    assert block["settle"]["segments_after"] == 3
+    assert block["settle"]["elapsed_ms"] == 4200
+    # The settle commits and reopens the searcher, so the recorded coverage percentages must
+    # come from a post-settle readiness snapshot, not the pre-settle one.
+    assert mock_readiness.check_search_ready.call_count == 2
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_with_settle_flag_on_an_older_backend_continues_unsettled(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(404, None, "Not found"), calls):
+        summary = execute_run(
+            "scifact", "http://localhost:8080", ["hybrid"], settle_index=True,
+        )
+
+    assert calls, "the 404 path must have attempted the call"
+    block = summary["index_state_at_query"]
+    assert block["settled"] is False, "a 404 must not claim the arm was settled"
+    assert "settle" not in block
+    assert summary["query_count"] == 2, "the run continues rather than failing"
+    assert mock_readiness.check_search_ready.call_count == 1
 
 
 # --- tempdoc 885: search_load block wiring ----------------------------------
