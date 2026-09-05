@@ -220,8 +220,8 @@ needed unless the shared hook parser reveals incompatible harness command shapes
   and any maintained quick-reference surface with the validated enqueue command.
 - [x] Amend ADR-0045 and its index/probes to state that repository-owned agent CLI merges
   cross the live publication preflight. Preserve the explicit UI/API and no-CAS limits.
-- [x] Update tempdoc 921 only with a forward pointer where its completed plan still names
-  raw enqueue instructions; do not rewrite its dated evidence.
+- [x] Leave oversized tempdoc 921's dated evidence untouched and record its narrow
+  workflow supersession in this tempdoc and ADR-0045 instead.
 - [x] Run required docs/skill/hook regeneration and drift checks rather than hand-editing
   generated regions.
 

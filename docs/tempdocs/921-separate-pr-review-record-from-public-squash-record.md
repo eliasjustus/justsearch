@@ -1779,12 +1779,3 @@ governance-dashboard freshness, generated docs/skills, canonical links, module-d
 and runtime-config projections, prompt-surface inventory, the focused
 `WireShapeMandateTest`, and the full multi-module Gradle test task. The remaining checkbox
 is now only the already-authorized PR-record refresh and publication sequence.
-
-## 26. Forward supersession — 2026-09-05
-
-Tempdoc 933 supersedes this document only where its completed workflow leaves the two
-publication validators as manually sequenced instructions followed by raw `gh pr merge`.
-The separate commit-safe PR body and managed review comment remain authoritative, while
-the repository-owned `run-gh.mjs enqueue` gateway now repeats both live validations before
-requesting the ordinary merge queue. This dated document's implementation and publication
-evidence otherwise remains unchanged.
