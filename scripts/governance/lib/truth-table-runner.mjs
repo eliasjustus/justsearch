@@ -8,9 +8,9 @@
  *
  *   (input) → { ruleId, status, reason }
  *
- * Inputs are gate-specific (a class-size verdict reads `{rel, loc, pinnedLoc,
- * ...}`; an npm-audit verdict reads `{target, severity, baseline, current,
- * ...}`). The contract is uniform on the output side:
+ * Inputs are gate-specific (a module-deps verdict reads `{module, count,
+ * pinnedCount, ...}`; an npm-audit verdict reads `{target, severity, baseline,
+ * current, ...}`). The contract is uniform on the output side:
  *
  *   ruleId : string  (kebab-namespaced; the gate's id is the namespace prefix)
  *   status : 'pass' | 'fail' | 'info'

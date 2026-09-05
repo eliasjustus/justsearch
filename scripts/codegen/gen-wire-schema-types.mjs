@@ -23,7 +23,7 @@
  *   node scripts/codegen/gen-wire-schema-types.mjs           # write
  *   node scripts/codegen/gen-wire-schema-types.mjs --check   # exit non-zero on drift
  *
- * The CI gate `scripts/ci/check-wire-schema-types-regen.mjs` wraps `--check`.
+ * The CI gate `scripts/ci/regen-all.mjs --check` wraps `--check`.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -78,7 +78,7 @@ const TARGETS = [
   // authorities (the Java DTO plus two independent TS interfaces, one still modelling the retired
   // v1 `assets[]`), and the staged install widened the drift with every field it added. Generating
   // the TS from the same schema the Java DTO emits leaves exactly one authority, with
-  // check-wire-schema-types-regen as the guard.
+  // regen-all --check as the guard.
   {
     schema: 'SSOT/schemas/ai-install-status.v1.json',
     outFile: 'ai-install-status.ts',

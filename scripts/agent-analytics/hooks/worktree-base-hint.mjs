@@ -3,7 +3,7 @@
 /**
  * PostToolUse hook for EnterWorktree.
  *
- * Mechanizes `verify-worktree-base` (tier-register.md row 35, previously prose-only).
+ * Mechanizes `verify-worktree-base` (.claude/rules/branch-safety.md, previously prose-only).
  * `worktree.baseRef: "head"` (.claude/settings.json) should make a new worktree's HEAD
  * equal the main checkout's HEAD by construction, but a harness-version quirk or a
  * manual `git worktree add` can silently violate that (tempdoc 618 §1 — local main can

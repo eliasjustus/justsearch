@@ -30,7 +30,7 @@ import type { InstallComponentEstimate } from '../state/installComponents.js';
  * Three hand-maintained copies of one shape, with nothing keeping them in sync — so the staged
  * install's `stages`/`readyCapabilities` reached neither of them. The Java DTO is now projected to
  * `SSOT/schemas/ai-install-status.v1.json` and generated into `schema-types/ai-install-status.ts`
- * (type + Zod), which `check-wire-schema-types-regen` fails the build on drifting from.
+ * (type + Zod), which `regen-all --check` fails the build on drifting from.
  *
  * `InstallStatus` stays as the name this module's subscribers already import; it is an alias, not a
  * fork — do not add fields here.
