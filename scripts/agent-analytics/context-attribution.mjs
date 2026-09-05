@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadEvents, groupBySession, repoRoot, round,
-  TELEMETRY_DIR, SESSIONS_DIR,
+  TELEMETRY_DIR,
 } from './lib/telemetry-io.mjs';
 import { callsFromClaudeTranscript } from './lib/ledger/claude-adapter.mjs';
 
@@ -32,7 +32,8 @@ const DEFAULT_TOP = 10;
 // fixed properties of the estimator and do not move as the population grows —
 // unlike a recalibratable baseline with tolerances, which is what the retired
 // `check-agent-quality-trend.mjs` carried its own floor in (tempdoc 858 §4.5).
-// In-lane precedent for a declared floor: `MIN_TOOL_CALLS` in analyze-trends.mjs.
+// The in-lane precedent for a declared floor was `MIN_TOOL_CALLS` in
+// analyze-trends.mjs (deleted, tempdoc 930 — no invoker since 2026-07).
 
 /**
  * Aggregate mode summarises each category as a median with a [P25–P75] band.

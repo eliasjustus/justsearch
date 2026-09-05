@@ -140,7 +140,7 @@ Settled empirical facts. Each was an open question that got answered.
 - **Don't re-derive (640 D):** tokens/sec needs **no** conversation-subsystem change — the chat `done` event already emits `promptTokens` + `totalTokens` flat (`ConversationEngine:357-361`), so `llm_bench` derives `completion = total − prompt`. (The confidence pass disproved the "needs a backend SSE `usage` emit" assumption.)
 - **Baseline (RTX 4070, Qwen3VL-8B-Thinking Q4, summarization):** TTFT ~103 ms, e2e ~6.3 s, ~25.5 tokens/sec. Floor: `scripts/jseval/llm-gen-ratchet-baselines.v1.json` (projected from a green bench via `--update-baseline`, never hand-typed; per-machine + per-configured-LLM).
 - **Evidence:** tempdoc 640 L + D (2026-06-24); live-confirmed end-to-end on a real summarization (25.5 t/s).
-- **Conditions/caveats:** Advisory tier (nudged by `search-engine-hint` on inference-path edits, not a CI-blocking gate). The committed baseline pins TTFT + e2e; tokens/sec pins on the next `--update-baseline` (needs a bench run where doc-discovery serves the eval index).
+- **Conditions/caveats:** Advisory tier — run after inference-path edits, not a CI-blocking gate. The committed baseline pins TTFT + e2e; tokens/sec pins on the next `--update-baseline` (needs a bench run where doc-discovery serves the eval index).
 
 ### F-013: A missing fp16 variant silently runs the INT8 CPU model on CUDA at ~10× per-call cost (NER incident, fixed)
 

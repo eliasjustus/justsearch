@@ -610,7 +610,7 @@ export function checkCorruptionPolicyVocabulary({ durableStores, policies, await
     // Without an expiry the marker only retires on the SUCCESS path (a row lands and the
     // row-landed branch above fires). If the referenced PR is abandoned, nothing ever removes it
     // and the value sits in the vocabulary forever — exactly the outliving-its-reason this
-    // register is meant to prevent. Same shape as an expected-state pin's `reviewBy`.
+    // register is meant to prevent.
     if (typeof until !== 'string' || !ISO_DAY.test(until)) {
       failures.push(
         `${label} must carry an ISO \`until\` date (YYYY-MM-DD). A marker with no expiry only ` +

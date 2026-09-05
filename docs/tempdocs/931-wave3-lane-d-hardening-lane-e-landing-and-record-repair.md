@@ -1,7 +1,7 @@
 ---
 title: "Wave 3: lane D hardening, lane E landing, and record repair after the Codex continuation"
 type: tempdocs
-status: "IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
+status: "MERGING (2026-09-05 pm): #643, #645 merged; #646 queued; #647 next; #648 split (C2 PR without C1); flag/jseval/1f follow-ups in review. Earlier: IMPLEMENTED, AWAITING MERGE GO-AHEAD (2026-09-05). Every §B item done or recorded-skipped; PRs #643 (lane E), #645 (A+1b), #646 (C0+evidence), #647 (B+1d) green and unmerged; #648 (C2+C1+1a/1c/1e+findings 5/6) draft pending the C1 campaign. Owner decisions in §E: 1f identity/revision, chunk-SPLADE flag semantics (8), lane F."
 created: 2026-09-05
 updated: 2026-09-05
 lane: D/E/F (decision re-examination programme, wave 3)
@@ -578,11 +578,47 @@ to either a projection fix (if the population differs) or an F-057 caveat.
   4) — restored 6/6 green; gate pass (indexing back above its 95.1 % pin). Suites: adapters-lucene 691 / indexing 84
   / app-launcher scanner 28 — 0 failures; `build -x test` green.
 
+- 2026-09-05 (pm) **Owner go-ahead on the recommendations** ("proceed accordingly"; no multi-hour
+  evals): merge #643 and #645, then #646, then #647; finish the chunk-SPLADE flag before deciding
+  its default and keep it off; keep #648 draft and gate C1 on the evaluator fixes; adopt the 1f
+  contract with a deletion grace period; lane F no-go until D lands and the brief is refreshed.
+- 2026-09-05 **Merge queue rejected #643/#645 on a gate that landed today**: `check-tempdoc-size`
+  (#649, 800 lines per touched tempdoc number; `NNN-evidence/` exempt). 916 (2,615 lines) and
+  915 (1,891 → 3,074 up the stack) split verbatim into `916-evidence/` (5 files) and
+  `915-evidence/` (8 files) with the 930 pointer convention; reassembly diffs empty. #643 merged
+  (`274881af`), #645 merged; `origin/main` merged (not rebased) into c0/b; the register conflict
+  kept F-059/F-058 above lane E's F-057. Two `.agents` mirror rows described the unmerged
+  `JustSearchCodecV2` on #646/#647 — corrected to the source doc's row. Hook lesson: `gh api -f`
+  in the same command as `git push` trips the force-push guard; push alone. Shell lesson: a
+  backtick inside a double-quoted `node -e` script is a command substitution — write the script
+  to a file.
+- 2026-09-05 **#648 split** (`worktree-wave3-c2-split`, off #647): every draft commit except C1
+  (`88ed1f17`) cherry-picked. §C.3 was built on C1's DOT_PRODUCT normalisation, so on this
+  branch the drop covers what actually aborts a batch on main — a NaN/infinite component, which
+  `KnnFloatVectorField` refuses under every similarity — and a zero vector stays legal under the
+  catalog's Euclidean similarity (`FieldMapper.vectorRejectionReason`; `NonFiniteVectorDropTest`;
+  falsified: 3 RED with the rejection disabled). 915's §P3.E note now says C1 stays on the
+  draft. Six modules 2,778 tests / 0 failures; `ssotValidate` regenerated the repro manifest.
+  C1 gets its own draft on top of this branch once it lands.
+- 2026-09-05 **Follow-ups delegated and returned** (each with falsified tests, `file:line` in the
+  PR bodies): (A) `worktree-wave3-flag` — `rag.chunk_splade.enabled` gates the query-side leg
+  (`SearchExecutor.chunkSpladeLegEnabled`, config read before the early return), chunks are not
+  stamped `splade_status=PENDING` when off (every reader treats absence as "not applicable"),
+  `/api/status` publishes `chunkSpladeEnabled`/`chunkSpladeCoveragePercent` and the active
+  index's `indexMaxDoc`/`indexNumDocs`; wire gate pass; consequence: chunks written while off are
+  not retro-enrolled by flipping the flag (rebuild needed). (B) `worktree-wave3-jseval` —
+  `chunk_splade_not_complete` readiness term at all three gate sites, `index_state_at_query` in
+  `summary.json` (max/num/deleted docs, coverages, readiness timestamp), `jseval compare` warns
+  when paired arms' tombstones differ by >10 % of docs; one pre-existing red fixed in place
+  (`test_execute_run_always_emits_a_cadence_block`, stale since #612). (C) `worktree-wave3-1f` —
+  in flight: identity store V13 `deleted_at` + 30-day grace (`index.identity.deletion_grace_ms`),
+  parent `content_sha256` on hits, `HitFeatures.contentRevision`, stale-label down-weighting.
+
 ## §E Open items
 
-1. C1 campaign (3-4 h) — deferred; draft PR carries C2+C1 together.
-2. 1f identity/revision contract — designed, owner decision needed.
-3. Lane F derisk — after D lands and owner confirmation.
+1. C1 campaign (3-4 h) — deferred; C2 now lands without C1 (§D split entry); C1 re-drafted on top, campaign only after the jseval readiness/merge-state fixes (items 9/10) land.
+2. 1f identity/revision contract — owner adopted the §C.6 design with a deletion grace period (30 days) over explicit confirmation; implementation in flight (`worktree-wave3-1f`).
+3. Lane F derisk — **no-go for now** (owner, 2026-09-05): a process-boundary rewrite (917: 1,806-line Head client, 48 RPCs, spawner, 20 chaos tests, dev-runner) waits for D fully merged, the C1 decision closed, and a brief refreshed with 917's corrections.
 4. **Closed** (`bc968416` / `d829ef7c`, see §D). §C.5 residual: the determinate-input fallback only runs when the *expected* digest is
    uncomputable. An index committed while a model file was unreadable (stored digest blank,
    inputs present) opened later by a runtime that can read every model (expected digest present)
@@ -636,3 +672,8 @@ to either a projection fix (if the population differs) or an F-057 caveat.
     quality gap attributed to 5b/10, not C2); **8 closed on the write side** (every lane honours
     the flag) — the query-side leg still runs regardless of the flag; owner decision remains
     (tempdoc 712).
+12. Status after the follow-ups (§D): **8 closed on both sides** (flag PR); **9 closed** (jseval PR;
+    the Worker now publishes chunk-SPLADE coverage); **10 half closed** — merge state is recorded
+    and paired-arm divergence warns, but nothing forces a merge before the query phase yet; the
+    Worker-side "settle" call (mutation-token endpoint per ADR-0046) stays open, owner: jseval +
+    Worker. **5** and **7** unchanged.

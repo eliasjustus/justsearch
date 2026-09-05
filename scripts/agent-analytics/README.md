@@ -5,8 +5,9 @@ Two kinds of thing live here:
 - **`hooks/` + `lib/`** — the Claude Code discipline hooks: blocking *guards* (e.g. preventing
   destructive git in the main checkout) and just-in-time *hints*. The hook **wiring** lives in
   `.claude/settings.json`; the shared helpers are in `lib/`.
-- **Everything else** (`otlp-sink.py`, `*-session.mjs`, `generate-index.mjs`, `otlp-viewer/`, …)
-  — **maintainer** telemetry/analytics tooling for measuring agent-assisted development.
+- **Everything else** (`otlp-sink.py`, `cost-session.mjs`, `baseline-economics.mjs`,
+  `otlp-viewer/`, …) — **maintainer** telemetry/analytics tooling for measuring
+  agent-assisted development.
 
 **Contributors don't need any of this** — it is published for transparency (see
 [`/MAINTAINING.md`](../../MAINTAINING.md)). The analytics tooling is maintainer-only and is not
@@ -26,7 +27,7 @@ afterwards so those numbers no longer describe a runnable metric.
 
 ## Signature census (743 P-L)
 
-`mine-friction.mjs`/`analyze-session.mjs` (the alive 727 friction-mining pass) judge whole
+`mine-friction.mjs` (the alive 727 friction-mining pass) judges whole
 sessions via an LLM. `signature-census.mjs` is the cheap, mechanical complement: it scans every
 session in a window for a small seeded table of known recurring error signatures (the `& "gh.exe"`
 PowerShell-call-operator class, cp1252/`UnicodeEncodeError`, quoting-EOF, `gh` exit-code
@@ -297,44 +298,3 @@ booleans are exempt, which is what lets `input_tokens`/`output_tokens` through. 
 the only identity attribute kept (it is what every reader joins on); `user.email`, `user.id`,
 `user.account_id`, `user.account_uuid` and `organization.id` are dropped. Read it with
 `readOtlpLedger(dir)` from `lib/telemetry-io.mjs`.
-
-## Control shims (886 PR 4)
-
-`hooks/spawn-cost-hint.mjs` and `hooks/context-ceiling-hint.mjs` are non-blocking PostToolUse
-advisories that surface tempdoc 886 §2.2/§2.3's two findings at the moment they matter, instead
-of only in a post-hoc report:
-
-- **`spawn-cost-hint.mjs`** (Claude-only matcher `Agent`) fires when a subagent call returns. It resolves
-  the spawn's OWN `subagents/agent-*.jsonl` transcript — joining on `tool_use_id` against every
-  sibling `*.meta.json`'s `toolUseId` (the synchronous-spawn case), or on an `agentId:` line the
-  `tool_response` text carries for an async/background spawn with no `toolUseId` recorded — reads
-  it through `lib/ledger/claude-adapter.mjs`'s new `callsFromClaudeTranscript` (a single-file
-  parse, not a second implementation), and prints `spawn-cost: <calls> calls, peak ctx <N>k, out
-  <M>k, model <actual> (requested <meta.model>), ~$<cost> — <description>`. Cost is priced per
-  call via `lib/transcript-cost.mjs`'s `findPricing`; an unpriced call (unknown model, e.g.
-  Claude's own literal `<synthetic>` model-name turns) is counted, not treated as voiding the
-  whole line — the sum covers the PRICED calls and appends `(+N unpriced)` when `N > 0`, and
-  `n/a` is reserved for the case where ZERO calls are priceable (independent-review fix: one bad
-  axis previously collapsed an otherwise-known cost to `n/a`). Silent (no output) when the spawn
-  can't be resolved — this is an advisory delivering data that isn't always available, not a guard.
-- **`context-ceiling-hint.mjs`** (matcher: every tool) fires on every `PostToolUse` and reads only
-  the last ~256KB of `transcript_path` (never the whole file — transcripts reach hundreds of MB),
-  retrying once at ~2MB if no assistant usage line turns up (a single trailing tool_result can
-  exceed 256KB and push the last assistant line out of the first tail read), to find the LAST
-  usage snapshot. Claude computes `contextTokens = input + cache_read + cache_creation` and uses
-  the established 300k/500k thresholds. Codex reads the latest rollout `token_count` event and
-  uses 75%/90% of its reported `model_context_window`. Once per threshold per session (state under
-  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it names the active harness's
-  compaction remedy. **Re-arms**: Claude clears both flags below 300k; Codex clears them below 70%
-  of its model window. A later climb can therefore fire again rather than staying silent forever (independent-review
-  fix — the pre-fix version fired once per session for life). Like `build-counter.mjs`'s per-session
-  state, `context-ceiling-state/<session_id>.json` is **not swept on SessionEnd**
-  (`dispatch.mjs`'s cleanup list covers `turn-count`/`repeat-buffer`/`build-fails` only) — a known,
-  small (one file per session, a few hundred bytes each), harmless pile, not yet addressed.
-
-Both are registered in `governance/agent-hooks.v1.json` (`role: "advisory"`) with a unit-test
-`bite` entry. Claude wiring is generated into `.claude/settings.local.json[.example]`; Codex
-wiring is generated into `.codex/hooks.json` and enters through `codex-hook-adapter.mjs`.
-`spawn-cost-hint` is an explicit Codex exclusion because current rollouts do not expose its
-required parent-tool-to-spawn join. `node scripts/governance/run.mjs --gate hook-integrity
---mode gate` and `node scripts/ci/check-codex-agent-parity.mjs` verify the two projections.

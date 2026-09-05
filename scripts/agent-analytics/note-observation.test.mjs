@@ -57,7 +57,7 @@ try {
   run('renderRouting names every destination and echoes the text', () => {
     const t = renderRouting('stale comment at Foo.java:12');
     assert.match(t, /RETIRED \(tempdoc 872\)/);
-    assert.match(t, /expected-state\.v1\.json/);
+    assert.match(t, /quarantine the flaky test in its own runner/);
     assert.match(t, /agent-lessons\.md/);
     assert.match(t, /owning tempdoc/);
     assert.match(t, /fix it in place/);
