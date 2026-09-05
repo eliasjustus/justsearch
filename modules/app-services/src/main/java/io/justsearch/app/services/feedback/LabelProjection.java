@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -15,8 +16,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 580 §17.5 (Track C P5) — the LABEL projection: joins {@link ResultDisposition}s to the
- * per-query {@link FeatureSnapshot} that ranked them (by {@code interactionId} — the §17.4 join) and
- * writes real-label training triples in the existing trainer's NDJSON format.
+ * per-query {@link FeatureSnapshot} that ranked them (by {@code interactionId} plus stable UID, or
+ * the retained path key for legacy rows — the §17.4 join) and writes real-label training triples in
+ * the existing trainer's NDJSON format.
  *
  * <p>This is the structural answer to F-021: the learned layer's missing piece was <em>real labels</em>
  * (a data problem, not a feature-count problem). The projection derives them from actual outcomes, so
@@ -29,6 +31,17 @@ import org.slf4j.LoggerFactory;
 public final class LabelProjection {
 
   private static final Logger log = LoggerFactory.getLogger(LabelProjection.class);
+
+  /**
+   * Weight applied to a triple whose hit was ranked at an OLDER content revision than the newest
+   * one observed for that document (tempdoc 931 §C.6).
+   *
+   * <p>Dropping the label would be the wrong correction: the click happened, and a document that is
+   * edited often would contribute nothing at all. But the text that earned the click is gone, so
+   * the label is evidence about a version of the document the ranker will never see again. Halving
+   * it keeps the signal while letting a fresh label outweigh it.
+   */
+  static final float STALE_LABEL_WEIGHT = 0.5f;
 
   private LabelProjection() {}
 
@@ -52,37 +65,65 @@ public final class LabelProjection {
       List<ResultDisposition> dispositions,
       List<FeatureSnapshot> snapshots,
       GplTrainingTripleStore realLabelStore) {
-    // Index hits by (interactionId → docId → features). UNION across snapshots that share an
-    // interactionId: the search-interaction path emits one snapshot per query, but an agent run
-    // (Fix B) emits one per search keyed by the run's sessionId, so its multiple per-search snapshots
-    // must combine. First-seen wins per docId (matching the agent's collectGroundingSources dedup).
-    Map<String, Map<String, FeatureSnapshot.HitFeatures>> byInteraction = new HashMap<>();
+    // Index each interaction twice: the primary map deduplicates the persisted identity (UID for
+    // new rows, path for legacy rows), while the alias map also accepts the path-oriented source id
+    // emitted by unchanged UI/agent surfaces. A conflicting alias is removed and stays unusable;
+    // arbitrary first-wins identity selection would attach a label to the wrong logical document.
+    Map<String, Map<String, FeatureSnapshot.HitFeatures>> primaryByInteraction = new HashMap<>();
+    Map<String, Map<String, FeatureSnapshot.HitFeatures>> aliasesByInteraction = new HashMap<>();
+    Set<String> conflictingAliases = new HashSet<>();
+    Map<String, String> newestRevisionByDoc = newestRevisionByDoc(snapshots);
     for (FeatureSnapshot snap : snapshots) {
-      Map<String, FeatureSnapshot.HitFeatures> byDoc =
-          byInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
+      if (snap == null || snap.interactionId() == null || snap.hits() == null) {
+        continue;
+      }
+      Map<String, FeatureSnapshot.HitFeatures> primary =
+          primaryByInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
+      Map<String, FeatureSnapshot.HitFeatures> aliases =
+          aliasesByInteraction.computeIfAbsent(snap.interactionId(), k -> new HashMap<>());
       for (FeatureSnapshot.HitFeatures h : snap.hits()) {
-        byDoc.putIfAbsent(h.docId(), h);
+        if (h == null || h.docId() == null || h.docId().isBlank()) {
+          continue;
+        }
+        FeatureSnapshot.HitFeatures canonical = primary.putIfAbsent(h.docId(), h);
+        if (canonical == null) {
+          canonical = h;
+        }
+        aliases.putIfAbsent(canonical.docId(), canonical);
+        String sourceDocId = h.sourceDocId();
+        if (sourceDocId == null || sourceDocId.isBlank() || sourceDocId.equals(h.docId())) {
+          continue;
+        }
+        String aliasKey = disposedKey(snap.interactionId(), sourceDocId);
+        if (conflictingAliases.contains(aliasKey)) {
+          continue;
+        }
+        FeatureSnapshot.HitFeatures previous = aliases.putIfAbsent(sourceDocId, canonical);
+        if (previous != null && !previous.docId().equals(canonical.docId())) {
+          aliases.remove(sourceDocId);
+          conflictingAliases.add(aliasKey);
+        }
       }
     }
 
-    // Which queries carry an explicit positive, and which (interactionId, docId) pairs are already
-    // explicitly disposed (so the derived pass never double-writes a doc).
+    // Which queries carry a JOINED, successfully-written explicit positive, and which stable
+    // (interactionId, document key) pairs are already disposed so the derived pass cannot write the
+    // same UID again under a path alias.
     Set<String> interactionsWithPositive = new HashSet<>();
     Set<String> explicitlyDisposed = new HashSet<>();
-    for (ResultDisposition d : dispositions) {
-      explicitlyDisposed.add(disposedKey(d.interactionId(), d.docId()));
-      if (!labelFor(d.kind()).isNegative()) {
-        interactionsWithPositive.add(d.interactionId());
-      }
-    }
 
     // Per-group [hasPositive, hasNegative] for the contrast-group count.
     Map<String, boolean[]> groupFlags = new HashMap<>();
     int written = 0;
+    int stale = 0;
 
-    // Pass 1 — explicit dispositions.
+    // Resolve and coalesce explicit dispositions before writing. One stable UID may appear under
+    // multiple source-path aliases during an agent run or rename. Persisting each alias separately
+    // would create duplicate positives or, worse, both a positive and a negative for one document.
+    // A positive dominates a negative, and the strongest positive grade wins.
+    Map<String, ResolvedDisposition> resolvedDispositions = new LinkedHashMap<>();
     for (ResultDisposition d : dispositions) {
-      Map<String, FeatureSnapshot.HitFeatures> byDoc = byInteraction.get(d.interactionId());
+      Map<String, FeatureSnapshot.HitFeatures> byDoc = aliasesByInteraction.get(d.interactionId());
       if (byDoc == null) {
         continue; // no snapshot for this query → cannot form a featured label
       }
@@ -91,25 +132,48 @@ public final class LabelProjection {
         continue;
       }
       Label label = labelFor(d.kind());
-      if (append(realLabelStore, d.interactionId(), d.docId(), label, hf)) {
+      String stableKey = disposedKey(d.interactionId(), hf.docId());
+      resolvedDispositions.merge(
+          stableKey,
+          new ResolvedDisposition(d.interactionId(), hf, label),
+          LabelProjection::strongerDisposition);
+    }
+
+    // Pass 1 — coalesced explicit dispositions.
+    for (ResolvedDisposition resolved : resolvedDispositions.values()) {
+      FeatureSnapshot.HitFeatures hf = resolved.features();
+      Label label = resolved.label();
+      explicitlyDisposed.add(disposedKey(resolved.interactionId(), hf.docId()));
+      boolean isStale = isStale(hf, newestRevisionByDoc);
+      if (append(realLabelStore, resolved.interactionId(), hf.docId(), label, hf, isStale)) {
         written++;
-        mark(groupFlags, d.interactionId(), label.isNegative());
+        if (isStale) {
+          stale++;
+        }
+        mark(groupFlags, resolved.interactionId(), label.isNegative());
+        if (!label.isNegative()) {
+          interactionsWithPositive.add(resolved.interactionId());
+        }
       }
     }
 
     // Pass 2 — derived SHOWN negatives for queries with a positive (the contrast).
     Label shown = labelFor(ResultDisposition.Kind.SHOWN);
-    for (FeatureSnapshot snap : snapshots) {
-      if (!interactionsWithPositive.contains(snap.interactionId())) {
+    for (var interaction : primaryByInteraction.entrySet()) {
+      if (!interactionsWithPositive.contains(interaction.getKey())) {
         continue; // no positive → an all-negative group; the trainer drops it anyway
       }
-      for (FeatureSnapshot.HitFeatures hf : snap.hits()) {
-        if (explicitlyDisposed.contains(disposedKey(snap.interactionId(), hf.docId()))) {
+      for (FeatureSnapshot.HitFeatures hf : interaction.getValue().values()) {
+        if (explicitlyDisposed.contains(disposedKey(interaction.getKey(), hf.docId()))) {
           continue; // already labelled explicitly (positive or negative)
         }
-        if (append(realLabelStore, snap.interactionId(), hf.docId(), shown, hf)) {
+        boolean isStale = isStale(hf, newestRevisionByDoc);
+        if (append(realLabelStore, interaction.getKey(), hf.docId(), shown, hf, isStale)) {
           written++;
-          mark(groupFlags, snap.interactionId(), shown.isNegative());
+          if (isStale) {
+            stale++;
+          }
+          mark(groupFlags, interaction.getKey(), shown.isNegative());
         }
       }
     }
@@ -120,21 +184,97 @@ public final class LabelProjection {
         contrastGroups++;
       }
     }
-    return new Result(written, contrastGroups);
+    if (stale > 0) {
+      log.info(
+          "Feedback labels: {} of {} triples were captured at a superseded content revision and"
+              + " were down-weighted to {}x",
+          stale,
+          written,
+          STALE_LABEL_WEIGHT);
+    }
+    return new Result(written, contrastGroups, stale);
   }
 
-  /** Projection outcome: total triples written + the number of contrast groups (Fix-C gate input). */
-  public record Result(int triples, int contrastGroups) {}
+  /**
+   * The newest observed content revision per document uid (tempdoc 931 §C.6). "Newest" is the
+   * revision seen in the LATEST capture, not the most frequent one: a snapshot is a dated
+   * observation, and the last observation is the one that describes the document as it stands.
+   * Documents with no revision anywhere are absent from the map and can never be stale.
+   */
+  private static Map<String, String> newestRevisionByDoc(List<FeatureSnapshot> snapshots) {
+    Map<String, String> newest = new HashMap<>();
+    Map<String, Long> newestAt = new HashMap<>();
+    for (FeatureSnapshot snap : snapshots) {
+      if (snap == null || snap.hits() == null) {
+        continue;
+      }
+      for (FeatureSnapshot.HitFeatures h : snap.hits()) {
+        if (h == null
+            || h.docId() == null
+            || h.docId().isBlank()
+            || h.contentRevision() == null
+            || h.contentRevision().isBlank()) {
+          continue;
+        }
+        Long seenAt = newestAt.get(h.docId());
+        if (seenAt == null || snap.occurredAtMs() >= seenAt) {
+          newestAt.put(h.docId(), snap.occurredAtMs());
+          newest.put(h.docId(), h.contentRevision());
+        }
+      }
+    }
+    return newest;
+  }
+
+  /**
+   * Whether this hit's label describes a superseded version of its document. A null revision on
+   * either side is UNKNOWN, never a mismatch — legacy rows and un-reindexed documents must not be
+   * silently down-weighted.
+   */
+  private static boolean isStale(
+      FeatureSnapshot.HitFeatures hf, Map<String, String> newestRevisionByDoc) {
+    String revision = hf.contentRevision();
+    if (revision == null || revision.isBlank()) {
+      return false;
+    }
+    String newest = newestRevisionByDoc.get(hf.docId());
+    return newest != null && !newest.equals(revision);
+  }
+
+  /**
+   * Projection outcome: total triples written, the number of contrast groups (Fix-C gate input),
+   * and how many of the written triples were down-weighted as revision-stale (931 §C.6).
+   */
+  public record Result(int triples, int contrastGroups, int staleTriples) {
+
+    /** Source-compatible constructor for callers that predate stale accounting. */
+    public Result(int triples, int contrastGroups) {
+      this(triples, contrastGroups, 0);
+    }
+  }
+
+  private record ResolvedDisposition(
+      String interactionId, FeatureSnapshot.HitFeatures features, Label label) {}
+
+  private static ResolvedDisposition strongerDisposition(
+      ResolvedDisposition current, ResolvedDisposition candidate) {
+    if (current.label().isNegative() != candidate.label().isNegative()) {
+      return current.label().isNegative() ? candidate : current;
+    }
+    return candidate.label().score() > current.label().score() ? candidate : current;
+  }
 
   private static boolean append(
       GplTrainingTripleStore store,
       String interactionId,
       String docId,
       Label label,
-      FeatureSnapshot.HitFeatures hf) {
+      FeatureSnapshot.HitFeatures hf,
+      boolean stale) {
     try {
+      float score = stale ? label.score() * STALE_LABEL_WEIGHT : label.score();
       store.appendWithFeatures(
-          interactionId, docId, "", label.score(), label.isNegative(), payload(hf));
+          interactionId, docId, "", score, label.isNegative(), payload(hf), stale);
       return true;
     } catch (IOException e) {
       log.warn(

@@ -19,12 +19,11 @@ import java.util.Set;
  * cite → {@link ResultDisposition.Kind#SHOWN}. It is the LLM-as-judge tier (§16): dense and
  * day-one, but reorder-only and not user behaviour.
  *
- * <p>Tempdoc 580 §17 P4 (Fix B, resolved): these dispositions are keyed by the agent run's
- * {@code sessionId} (passed in by {@link AgentDispositionWiring} from the stamped event payload), and
- * the agent search path now captures a {@link FeatureSnapshot} under that SAME {@code sessionId} (from
- * each {@code tool_exec_completed}'s {@code feedbackFeatures}). So a CITED/SHOWN disposition JOINS its
- * ranking features and becomes a real training label — the §17.4 join the original P4 left unwired
- * (before, a fresh {@code agent-<UUID>} id matched no snapshot and every agent disposition was dropped).
+ * <p>Tempdoc 580 §17 P4 (Fix B, resolved): these transient contributor rows carry the path-oriented
+ * source id from the answer plus the run's {@code sessionId}. {@link AgentDispositionWiring} resolves
+ * that pair through the UID-bearing {@link FeatureSnapshot} captured from each
+ * {@code tool_exec_completed} event, then persists the disposition under the stable UID. Thus the
+ * unchanged citation surface joins the new UID-keyed label stream without a wire-field addition.
  */
 public final class AgentCitationContributor {
 

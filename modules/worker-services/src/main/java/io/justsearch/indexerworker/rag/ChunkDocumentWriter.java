@@ -7,11 +7,11 @@ import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkIds;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.indexing.chunking.ChunkSplitter;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,17 +46,21 @@ public final class ChunkDocumentWriter {
       String fileKind,
       String language,
       Long parentTokenCount,
-      String collection) {}
+      String collection,
+      String parentDocUid) {}
 
   /**
    * Regenerates chunk docs for a parent doc by loading metadata from the existing parent document.
    *
    * <p>This is used by VDU update/replay paths where we don't have a {@code Path} or
    * {@code ExtractionResult} but want chunks to inherit metadata such as mime/file_kind.
+   *
+   * @param chunkSpladeEnabled see {@link #regenerateChunks}; read from the LIVE resolved config at
+   *     the call site, never a constructor-time copy
    */
   public static int regenerateChunksFromExistingParent(
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator,
-      String parentDocId, String content) {
+      String parentDocId, String content, boolean chunkSpladeEnabled) {
     if (documentFieldOps == null) {
       return 0;
     }
@@ -67,6 +71,7 @@ public final class ChunkDocumentWriter {
         documentFieldOps.getDocumentField(parentDocId, SchemaFields.PARENT_TOKEN_COUNT);
     // Tempdoc 811 item 3 — inherit the parent's collection tag so the chunk branch can scope on it.
     String collection = documentFieldOps.getDocumentField(parentDocId, SchemaFields.COLLECTION);
+    String parentDocUid = documentFieldOps.getDocumentField(parentDocId, SchemaFields.DOC_UID);
 
     boolean isMarkdown = "markdown".equalsIgnoreCase(fileKind);
     String preview = LanguageUtils.contentPreview(content, CONTENT_PREVIEW_MAX_CHARS, isMarkdown);
@@ -81,30 +86,33 @@ public final class ChunkDocumentWriter {
         indexingCoordinator,
         parentDocId,
         content,
-        new ParentChunkMetadata(mime, mimeBase, fileKind, language, parentTokenCount, collection));
+        new ParentChunkMetadata(
+            mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid),
+        chunkSpladeEnabled);
   }
 
   /**
    * Regenerates chunk docs for a parent doc with explicit metadata.
    *
    * <p>Deletion is best-effort; worst-case is stale chunks remain rather than failing the caller.
+   *
+   * @param chunkSpladeEnabled {@code rag.chunk_splade.enabled} (tempdoc 712 / 931 §E item 8). When
+   *     false the chunk carries NO {@code splade_status} at all rather than PENDING: every backfill
+   *     lane refuses chunk SPLADE while the flag is off, so a PENDING stamp would be a permanent
+   *     claim of outstanding work for a stage that will never run — and it sits in every
+   *     field-carrying denominator ({@code IndexCountOps#countWithField}) forever. Absence is the
+   *     post-798 "this stage does not apply to this document" encoding.
    */
   public static int regenerateChunks(
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator,
-      String parentDocId, String content, ParentChunkMetadata meta) {
+      String parentDocId, String content, ParentChunkMetadata meta, boolean chunkSpladeEnabled) {
     if (documentFieldOps == null || indexingCoordinator == null
         || parentDocId == null || parentDocId.isBlank()) {
       return 0;
     }
 
-    // Always delete existing chunks first (prevents stale/orphan chunks).
-    try {
-      indexingCoordinator.deleteChunksForParentDocId(parentDocId);
-    } catch (RuntimeException e) {
-      log.debug("Failed to delete existing chunks for {}: {}", parentDocId, e.getMessage());
-    }
-
     if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
+      deleteExistingChunks(indexingCoordinator, parentDocId);
       return 0;
     }
 
@@ -115,10 +123,23 @@ public final class ChunkDocumentWriter {
     List<ChunkSplitter.Chunk> chunks =
         ChunkSplitter.splitWithMetadata(content, CHUNK_TARGET_TOKENS, CHUNK_OVERLAP_TOKENS, mode);
     if (chunks.size() <= 1) {
+      deleteExistingChunks(indexingCoordinator, parentDocId);
       return 0;
     }
+    if (meta == null || meta.parentDocUid == null || meta.parentDocUid.isBlank()) {
+      throw new IllegalStateException(
+          "A persisted parent document identity is required before chunk indexing");
+    }
+
+    // Validate every prerequisite for replacement before deleting the currently searchable
+    // chunks. A transient parent-identity read failure must fail closed without data loss.
+    deleteExistingChunks(indexingCoordinator, parentDocId);
 
     // ChunkSplitter offsets are now relative to the original content (including leading whitespace).
+    // Tempdoc 931 §C.1: every chunk carries the identity of the parent revision it was cut from, so
+    // an RMW that re-slices chunk_content out of a LATER parent revision is detectable instead of
+    // silently producing wrong text. Hashed once per parent, not once per chunk.
+    String parentContentRevision = ChunkParentRevision.sha256Hex(content);
     int indexed = 0;
     for (ChunkSplitter.Chunk chunk : chunks) {
       String chunkContent = chunk.content();
@@ -129,7 +150,7 @@ public final class ChunkDocumentWriter {
       Map<String, Object> fields = new HashMap<>();
       String chunkId = ChunkIds.newChunkDocId();
       fields.put(SchemaFields.DOC_ID, chunkId);
-      fields.put(SchemaFields.DOC_UID, UUID.randomUUID().toString());
+      fields.put(SchemaFields.DOC_UID, meta.parentDocUid + "#" + chunk.index());
       fields.put(SchemaFields.IS_CHUNK, "true");
       fields.put(SchemaFields.PARENT_DOC_ID, parentDocId);
       fields.put(SchemaFields.CHUNK_INDEX, String.valueOf(chunk.index()));
@@ -139,6 +160,7 @@ public final class ChunkDocumentWriter {
       int absoluteEndChar = chunk.endChar();
       fields.put(SchemaFields.CHUNK_START_CHAR, String.valueOf(absoluteStartChar));
       fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(absoluteEndChar));
+      fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, parentContentRevision);
       fields.put(SchemaFields.PATH, parentDocId);
 
       // F8 Tier 2: Line numbers (1-based)
@@ -195,14 +217,25 @@ public final class ChunkDocumentWriter {
       fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
       fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
 
-      // Initialize SPLADE status for Phase 3 backfill
-      fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+      // Initialize SPLADE status for Phase 3 backfill — only when the stage applies at all.
+      if (chunkSpladeEnabled) {
+        fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+      }
 
       indexingCoordinator.indexSingle(new IndexDocument(fields));
       indexed++;
     }
 
     return indexed;
+  }
+
+  private static void deleteExistingChunks(
+      IndexingCoordinator indexingCoordinator, String parentDocId) {
+    try {
+      indexingCoordinator.deleteChunksForParentDocId(parentDocId);
+    } catch (RuntimeException e) {
+      log.debug("Failed to delete existing chunks for {}: {}", parentDocId, e.getMessage());
+    }
   }
 
   // ========== F8 Tier 2: Line Number & Heading Extraction ==========

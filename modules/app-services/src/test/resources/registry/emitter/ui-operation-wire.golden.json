@@ -347,6 +347,53 @@
   "audience" : "USER",
   "consumers" : [ ]
 }, {
+  "id" : "core.copy-diagnostic-summary",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.copy-diagnostic-summary.label",
+    "descriptionKey" : "ops.copy-diagnostic-summary.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : { },
+      "additionalProperties" : false
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "summary" : {
+          "type" : "string"
+        }
+      },
+      "required" : [ "summary" ]
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
   "id" : "core.add-watched-root",
   "type" : "operation",
   "presentation" : {
@@ -1468,6 +1515,78 @@
     "risk" : "MEDIUM",
     "confirm" : {
       "kind" : "INLINE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "UI" ],
+  "audience" : "OPERATOR",
+  "consumers" : [ ]
+}, {
+  "id" : "core.settle-index",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.settle-index.label",
+    "descriptionKey" : "ops.settle-index.description",
+    "category" : "maintenance"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "expungeDeletesOnly" : {
+          "type" : "boolean"
+        },
+        "maxSegments" : {
+          "type" : "integer",
+          "minimum" : 0
+        }
+      }
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "accepted" : {
+          "type" : "boolean"
+        },
+        "maxDocBefore" : {
+          "type" : "integer"
+        },
+        "numDocsBefore" : {
+          "type" : "integer"
+        },
+        "maxDocAfter" : {
+          "type" : "integer"
+        },
+        "numDocsAfter" : {
+          "type" : "integer"
+        },
+        "segmentsAfter" : {
+          "type" : "integer"
+        },
+        "elapsedMs" : {
+          "type" : "integer"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
     },
     "audit" : "METADATA_ONLY",
     "undoSupported" : false,

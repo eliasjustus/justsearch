@@ -6,7 +6,9 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
@@ -14,9 +16,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.StreamWriteFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.MissingNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * The single rebuild-requiring identity of an index: a SHA-256 over a canonical JSON rendering of
@@ -81,11 +86,37 @@ import tools.jackson.databind.json.JsonMapper;
  * nothing and compare nothing in that case: a transiently unreadable model file must not be
  * indistinguishable from a swapped one, because the consequence of the latter is a full rebuild
  * (`green-masked-destructive`).
+ *
+ * <p>The digest stays all-or-nothing, but "no digest" no longer has to mean "no comparison". The
+ * canonical inputs are ALSO stamped, under {@link #COMMIT_META_INPUTS_KEY}, so a runtime that
+ * cannot compute a digest can still compare the inputs the indeterminate model does not touch —
+ * a vector dimension or a chunking change is a rebuild-requiring difference whether or not the NER
+ * model file happened to be readable this boot (tempdoc 931 §C.5). {@link #differingInputs} is that
+ * comparison; the ignored keys are named by the caller, never inferred from the JSON, because an
+ * indeterminate model and an unconfigured one both render as {@code null}.
  */
 public final class IndexFingerprint {
 
   /** Key under which the fingerprint is stamped into Lucene commit user data. */
   public static final String COMMIT_META_KEY = "index_fingerprint";
+
+  /**
+   * Key under which the canonical inputs JSON — the exact bytes {@link #compute} hashes — is
+   * stamped alongside the digest. Deliberately NOT a parity key of its own: it is the SAME
+   * statement as {@code index_fingerprint}, so comparing both would report one shape change twice
+   * and (worse) let a rendering difference that the digest already covers surface as a second,
+   * independent-looking mismatch. It is read only on the path where the digest is unavailable.
+   */
+  public static final String COMMIT_META_INPUTS_KEY = "index_fingerprint_inputs";
+
+  /**
+   * The model-digest input names, in report order — the one place they are written. The canonical
+   * rendering, the "which input went unresolved" report and the parity fallback's ignore list all
+   * read them from here: three hand-typed copies of the same three strings is how one of them ends
+   * up spelled differently from the key that is actually hashed.
+   */
+  public static final List<String> MODEL_INPUT_KEYS =
+      List.of("embedding_model_sha256", "splade_model_sha256", "ner_model_sha256");
 
   /**
    * Version of the {@link #compute} rendering itself. Bump it when the canonical JSON shape
@@ -208,17 +239,12 @@ public final class IndexFingerprint {
      * question went unanswered instead of just going quiet.
      */
     public List<String> indeterminateInputs() {
-      List<String> out = new ArrayList<>();
-      if (embeddingModel.state() == ModelState.INDETERMINATE) {
-        out.add("embedding_model_sha256");
-      }
-      if (spladeModel.state() == ModelState.INDETERMINATE) {
-        out.add("splade_model_sha256");
-      }
-      if (nerModel.state() == ModelState.INDETERMINATE) {
-        out.add("ner_model_sha256");
-      }
-      return List.copyOf(out);
+      return namedIndeterminate(orderedModels());
+    }
+
+    /** The three model fingerprints positionally aligned with {@link #MODEL_INPUT_KEYS}. */
+    List<ModelFingerprint> orderedModels() {
+      return List.of(embeddingModel, spladeModel, nerModel);
     }
   }
 
@@ -268,9 +294,10 @@ public final class IndexFingerprint {
     analysis.put("icu_version", inputs.analysis().icuVersion());
     root.put("analysis", analysis);
 
-    root.put("embedding_model_sha256", modelValue(inputs.embeddingModel()));
-    root.put("splade_model_sha256", modelValue(inputs.spladeModel()));
-    root.put("ner_model_sha256", modelValue(inputs.nerModel()));
+    List<ModelFingerprint> models = inputs.orderedModels();
+    for (int i = 0; i < MODEL_INPUT_KEYS.size(); i++) {
+      root.put(MODEL_INPUT_KEYS.get(i), modelValue(models.get(i)));
+    }
 
     List<FieldShape> sortedFields = new ArrayList<>(inputs.fields());
     sortedFields.sort((a, b) -> a.id().compareTo(b.id()));
@@ -311,6 +338,128 @@ public final class IndexFingerprint {
 
   private static String modelValue(ModelFingerprint fp) {
     return fp.state() == ModelState.PRESENT ? fp.sha() : null;
+  }
+
+  /** One input that differs between a stored and an expected canonical rendering. */
+  public record InputDifference(String path, String stored, String expected) {
+    @Override
+    public String toString() {
+      return path + " (stored=" + stored + ", expected=" + expected + ")";
+    }
+  }
+
+  /**
+   * The inputs that differ between two canonical renderings, ignoring {@code ignoredTopLevelKeys}.
+   *
+   * <p>This is what makes an uncomputable digest survivable. When a configured model's digest is
+   * unreadable, {@link #compute} refuses to answer — but the answer it refuses to give is about
+   * that model, not about the vector dimension, the chunk threshold or the analyzer. Dropping the
+   * unresolved model keys from BOTH sides and comparing the rest asks exactly the question the
+   * runtime can still answer truthfully.
+   *
+   * <p>The ignored keys are supplied, not inferred: an {@code INDETERMINATE} model and a
+   * {@code NOT_CONFIGURED} one both render as JSON {@code null} (see {@link #modelValue}), so the
+   * stored JSON alone cannot say which it was. The caller knows which inputs this runtime could not
+   * resolve, and that is the only honest source.
+   *
+   * <p>Paths are the operator-facing part: {@code fields} is an array, but it is an array keyed by
+   * {@code id}, so a difference is reported as {@code fields[vector].vector.dimension} rather than
+   * an ordinal nobody can map back to a field.
+   *
+   * @param storedJson the canonical rendering recorded in commit metadata
+   * @param expectedJson the canonical rendering this runtime would write
+   * @param ignoredTopLevelKeys top-level input names to drop from both sides before comparing
+   * @return the differing input paths, ordered, empty when the determinate inputs agree
+   */
+  public static List<InputDifference> differingInputs(
+      String storedJson, String expectedJson, Collection<String> ignoredTopLevelKeys) {
+    Objects.requireNonNull(storedJson, "storedJson");
+    Objects.requireNonNull(expectedJson, "expectedJson");
+    JsonNode stored = parseOrNull(storedJson);
+    JsonNode expected = parseOrNull(expectedJson);
+    if (stored == null || expected == null || !stored.isObject() || !expected.isObject()) {
+      // Unparseable is not "different". A commit whose recorded inputs cannot be read leaves the
+      // question unanswered, exactly like an uncomputable digest does, and the caller declines.
+      return List.of();
+    }
+    ObjectNode a = (ObjectNode) stored.deepCopy();
+    ObjectNode b = (ObjectNode) expected.deepCopy();
+    if (ignoredTopLevelKeys != null) {
+      for (String key : ignoredTopLevelKeys) {
+        a.remove(key);
+        b.remove(key);
+      }
+    }
+    List<InputDifference> out = new ArrayList<>();
+    compareNodes("", a, b, out);
+    return List.copyOf(out);
+  }
+
+  private static JsonNode parseOrNull(String json) {
+    try {
+      return M.readTree(json);
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
+  private static void compareNodes(
+      String path, JsonNode stored, JsonNode expected, List<InputDifference> out) {
+    if (stored.isObject() && expected.isObject()) {
+      for (String name : sortedUnion(stored.propertyNames(), expected.propertyNames())) {
+        compareNodes(
+            path.isEmpty() ? name : path + "." + name,
+            stored.path(name),
+            expected.path(name),
+            out);
+      }
+      return;
+    }
+    if (stored.isArray() && expected.isArray() && keyedById(stored) && keyedById(expected)) {
+      Map<String, JsonNode> storedById = byId(stored);
+      Map<String, JsonNode> expectedById = byId(expected);
+      for (String id : sortedUnion(storedById.keySet(), expectedById.keySet())) {
+        compareNodes(
+            path + "[" + id + "]",
+            storedById.getOrDefault(id, MissingNode.getInstance()),
+            expectedById.getOrDefault(id, MissingNode.getInstance()),
+            out);
+      }
+      return;
+    }
+    if (!stored.equals(expected)) {
+      out.add(new InputDifference(path, render(stored), render(expected)));
+    }
+  }
+
+  private static boolean keyedById(JsonNode array) {
+    for (JsonNode element : array) {
+      if (!element.isObject() || !element.has("id")) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static Map<String, JsonNode> byId(JsonNode array) {
+    Map<String, JsonNode> out = new TreeMap<>();
+    for (JsonNode element : array) {
+      out.put(element.path("id").asString(""), element);
+    }
+    return out;
+  }
+
+  private static List<String> sortedUnion(Collection<String> a, Collection<String> b) {
+    java.util.TreeSet<String> union = new java.util.TreeSet<>(a);
+    union.addAll(b);
+    return List.copyOf(union);
+  }
+
+  private static String render(JsonNode node) {
+    if (node == null || node.isMissingNode()) {
+      return "<absent>";
+    }
+    return node.isValueNode() ? node.asString("null") : node.toString();
   }
 
   private static String sha256Hex(byte[] bytes) {
@@ -409,15 +558,48 @@ public final class IndexFingerprint {
    * cause instead of silence.
    */
   public static List<String> indeterminateModelInputs() {
+    return namedIndeterminate(List.of(embeddingModel(), spladeModel(), nerModel()));
+  }
+
+  /** The {@link #MODEL_INPUT_KEYS} whose positionally-aligned fingerprint is INDETERMINATE. */
+  private static List<String> namedIndeterminate(List<ModelFingerprint> orderedModels) {
     List<String> out = new ArrayList<>();
-    if (embeddingModel().state() == ModelState.INDETERMINATE) {
-      out.add("embedding_model_sha256");
+    for (int i = 0; i < MODEL_INPUT_KEYS.size(); i++) {
+      if (orderedModels.get(i).state() == ModelState.INDETERMINATE) {
+        out.add(MODEL_INPUT_KEYS.get(i));
+      }
     }
-    if (spladeModel().state() == ModelState.INDETERMINATE) {
-      out.add("splade_model_sha256");
+    return List.copyOf(out);
+  }
+
+  /**
+   * The {@link #MODEL_INPUT_KEYS} that a stored canonical rendering records as JSON {@code null}.
+   *
+   * <p>Only meaningful when the commit recorded NO digest, and then it is the mirror image of
+   * {@link #indeterminateModelInputs()}: that names what THIS runtime cannot resolve, this names
+   * what the COMMIT could not resolve. A commit without a digest was written while at least one
+   * model was {@code INDETERMINATE}, but {@link #modelValue} renders {@code INDETERMINATE} and
+   * {@code NOT_CONFIGURED} identically as {@code null}, so the rendering cannot say which. Every
+   * null-valued model key is therefore ambiguous and must be dropped rather than reported as a
+   * difference against a digest this runtime can now read.
+   *
+   * <p><strong>Honest limit:</strong> because they are dropped, a model ADDED since such a commit
+   * (stored {@code null}, expected a real digest) is not caught by the fallback. That is a real
+   * miss, and it is still strictly better than the alternative it replaces — declining to compare
+   * anything at all, which missed the vector dimension too. It closes on the next commit, which
+   * records a digest.
+   */
+  public static List<String> nullModelInputs(String storedJson) {
+    JsonNode stored = storedJson == null ? null : parseOrNull(storedJson);
+    if (stored == null || !stored.isObject()) {
+      return List.of();
     }
-    if (nerModel().state() == ModelState.INDETERMINATE) {
-      out.add("ner_model_sha256");
+    List<String> out = new ArrayList<>();
+    for (String key : MODEL_INPUT_KEYS) {
+      JsonNode value = stored.path(key);
+      if (value.isMissingNode() || value.isNull()) {
+        out.add(key);
+      }
     }
     return List.copyOf(out);
   }

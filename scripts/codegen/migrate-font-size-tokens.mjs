@@ -8,7 +8,7 @@
  * far outside the scale are reported (not silently clamped-then-forgotten) so they can get a dedicated
  * token or be confirmed. `--font-size-*` references and keyword values (inherit/…) are skipped.
  *
- * One-shot: run once, review the report, then the `style-literal-ratchet` gate keeps font-size at the
+ * One-shot: run once, review the report, then `scripts/ci/check-style-literal-ratchet.mjs` keeps font-size at the
  * post-migration floor. `--check` reports without writing.
  *
  * NOTE (574 critical-analysis F1): the live 574 tokenization ran with the original nearest-tie-break,

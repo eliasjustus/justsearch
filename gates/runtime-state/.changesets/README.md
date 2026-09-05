@@ -6,7 +6,7 @@ sibling of `execution-surface`/tempdoc 553).
 The gate's own baseline is `kind: git` (current-state fail-hard on the three checks in
 `scripts/governance/gates/runtime-state/truth-table.mjs`), not a ratchet-file with a silent-*
 ruleId — like `execution-surface`/`operation-surface`, it does not gate merges on a classified
-changeset today. This directory exists for the same reason `prose-tier-register`'s does: a durable,
+changeset today. This directory exists for the same reason the retired `prose-tier-register`'s did: a durable,
 greppable record of *why* the register looks the way it does at each point in its history, starting
 with its introduction.
 

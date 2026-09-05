@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/runtime-ready-response.v1.json",
+  "title": "JustSearch runtime readiness response",
+  "type": "object",
+  "properties": {
+    "ready": { "type": "boolean" },
+    "lifecycle": { "type": ["string", "null"] },
+    "instanceId": { "type": ["string", "null"] }
+  },
+  "required": ["ready", "lifecycle", "instanceId"],
+  "additionalProperties": false
+}

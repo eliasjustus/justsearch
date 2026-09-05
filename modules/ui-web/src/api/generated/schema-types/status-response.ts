@@ -251,6 +251,8 @@ export interface StatusResponse {
     core?: {
       commitCount?: number;
       indexHealthy?: boolean;
+      indexMaxDoc?: number;
+      indexNumDocs?: number;
       indexSizeBytes?: number;
       indexState?: string | null;
       indexedDocuments?: number;
@@ -276,6 +278,10 @@ export interface StatusResponse {
         chunkEmbeddingCompletedCount?: number;
         chunkEmbeddingFailedCount?: number;
         chunkEmbeddingPendingCount?: number;
+        chunkSpladeCompletedCount?: number;
+        chunkSpladeCoveragePercent?: number;
+        chunkSpladeEnabled?: boolean;
+        chunkSpladePendingCount?: number;
         chunkVectorCoveragePercent?: number;
         chunkVectorsReady?: boolean;
       } | null;
@@ -593,6 +599,8 @@ export const statusResponseSchema = z.strictObject({
     "core": z.strictObject({
       "commitCount": z.number().int().optional(),
       "indexHealthy": z.boolean().optional(),
+      "indexMaxDoc": z.number().int().optional(),
+      "indexNumDocs": z.number().int().optional(),
       "indexSizeBytes": z.number().int().optional(),
       "indexState": z.string().nullable().optional(),
       "indexedDocuments": z.number().int().optional(),
@@ -618,6 +626,10 @@ export const statusResponseSchema = z.strictObject({
         "chunkEmbeddingCompletedCount": z.number().int().optional(),
         "chunkEmbeddingFailedCount": z.number().int().optional(),
         "chunkEmbeddingPendingCount": z.number().int().optional(),
+        "chunkSpladeCompletedCount": z.number().int().optional(),
+        "chunkSpladeCoveragePercent": z.number().optional(),
+        "chunkSpladeEnabled": z.boolean().optional(),
+        "chunkSpladePendingCount": z.number().int().optional(),
         "chunkVectorCoveragePercent": z.number().optional(),
         "chunkVectorsReady": z.boolean().optional(),
       }).nullable().optional(),

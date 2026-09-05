@@ -118,11 +118,16 @@ public sealed interface SearchDecision
    * value", carried here so a divergence is a missing read of this component rather than a silently
    * different literal. A count parsed differently from its leg reads as "Top 3 of 1 matches"
    * (tempdoc 821 §L.3).
+   *
+   * <p>{@code denseSkipReason} is a deliberate planner decision, separate from {@code
+   * hybridFallback}: the former means dense was runnable but redundant for this query, while the
+   * latter carries an actual vector-encoding failure.
    */
   record MultiLegDecision(
       LuceneRuntimeTypes.QuerySyntax runtimeSyntax,
       LegSet legs,
       Optional<VectorEncoding.Failed> hybridFallback,
+      Optional<SearchReasonCode> denseSkipReason,
       Optional<SpladeEncoding.Failed> spladeSkip,
       Optional<FacetCompute.FromFreshBm25> facets,
       ChunkMergeDirective chunkMerge)
@@ -131,6 +136,7 @@ public sealed interface SearchDecision
       Objects.requireNonNull(runtimeSyntax, "runtimeSyntax");
       Objects.requireNonNull(legs, "legs");
       Objects.requireNonNull(hybridFallback, "hybridFallback");
+      Objects.requireNonNull(denseSkipReason, "denseSkipReason");
       Objects.requireNonNull(spladeSkip, "spladeSkip");
       Objects.requireNonNull(facets, "facets");
       Objects.requireNonNull(chunkMerge, "chunkMerge");
@@ -143,6 +149,7 @@ public sealed interface SearchDecision
       m.put("legs", legs.kind());
       m.put("effective_mode", legs.effectiveModeLabel());
       hybridFallback.ifPresent(f -> m.put("hybrid_fallback_reason", f.reason().name()));
+      denseSkipReason.ifPresent(reason -> m.put("dense_skip_reason", reason.name()));
       spladeSkip.ifPresent(f -> m.put("splade_skip_reason", f.reason().name()));
       m.put("facet_source", facets.isPresent() ? "from_fresh_bm25" : "absent");
       m.put("chunk_merge_kind", chunkMerge.kind());

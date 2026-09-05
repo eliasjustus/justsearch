@@ -84,6 +84,9 @@ public final class KnowledgeServerMigrationOps {
       Path indexBasePath,
       Path activeIndexPath,
       ObjectMapper json,
+      // Tempdoc 931 §E item 8: rag.chunk_splade.enabled, read from the LIVE resolved config each
+      // time a buffered VDU_UPDATE regenerates chunks — a drain can span a config change.
+      BooleanSupplier chunkSpladeEnabledSupplier,
       Logger log) {}
 
   public record EnqueueContext(
@@ -630,6 +633,10 @@ public final class KnowledgeServerMigrationOps {
                     String preview =
                         io.justsearch.indexerworker.services.LanguageUtils.contentPreview(extracted, 4096);
                     updates.put(SchemaFields.CONTENT, extracted);
+                    // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+                    updates.put(
+                        SchemaFields.CONTENT_SHA256,
+                        io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extracted));
                     updates.put(SchemaFields.CONTENT_PREVIEW, preview);
                     updates.put(
                         SchemaFields.LANGUAGE,
@@ -676,7 +683,8 @@ public final class KnowledgeServerMigrationOps {
                       ChunkDocumentWriter.regenerateChunksFromExistingParent(
                           context.ingestLifecycle().documentFieldOps(),
                           context.ingestLifecycle().indexingCoordinator(),
-                          docId, extracted);
+                          docId, extracted,
+                          context.chunkSpladeEnabledSupplier().getAsBoolean());
                   if (chunksRegenerated > 0) {
                     context
                         .log()

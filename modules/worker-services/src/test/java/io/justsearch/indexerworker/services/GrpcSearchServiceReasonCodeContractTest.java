@@ -44,7 +44,7 @@ final class GrpcSearchServiceReasonCodeContractTest {
           // Tempdoc 819 defect B: the rebuild drained with zero successful embeddings, so the
           // fingerprint attestation was refused instead of stamped over an empty vector space.
           "REBUILD_FAILED_NO_VECTORS",
-          // Tempdoc 517: 26th member — fall-through for unrecognised compat strings
+          // Tempdoc 517: fall-through for unrecognised compat strings
           // via SearchReasonCode.fromCompatString(...). Surfaces when the boundary
           // controller hands back a string the enum doesn't know.
           "EMBEDDING_COMPATIBILITY_UNKNOWN");
@@ -55,7 +55,9 @@ final class GrpcSearchServiceReasonCodeContractTest {
           "EMBEDDING_COMPATIBILITY_BLOCKED",
           "NO_EMBEDDING_SERVICE",
           "EMBEDDING_GENERATION_FAILED",
-          "EMBEDDING_EXCEPTION");
+          "EMBEDDING_EXCEPTION",
+          "SKIPPED_SHORT_QUERY",
+          "SKIPPED_NO_DISCRIMINATIVE_TERM");
 
   private static final Set<String> CHUNK_MERGE_REASON_CODES =
       Set.of(

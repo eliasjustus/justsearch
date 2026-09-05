@@ -9,7 +9,8 @@
  * state without re-journaling). No new store — the journal is the single source.
  *
  * The shell supplies the IntentRouter dispatch via the `dispatch` property (mirroring `<jf-pane-picker>`'s
- * `onPick`). Native `<button>`s keep every activation keyboard-operable (the controls-a11y gate).
+ * `onPick`). Native `<button>`s keep every activation keyboard-operable (the 559 operability contract;
+ * measured axe verifies it on the rendered page since the static gate was retired, 930 chunk H).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';

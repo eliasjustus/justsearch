@@ -3,7 +3,7 @@
  *
  * Mechanizes the 564 thesis on the 530 kernel: every migrated wire record is the SINGLE generated
  * projection (record → JSON Schema → {TS, Zod}), its generated artifacts never drift from the
- * source, and no hand-authored second copy exists. Like execution-surface / prose-tier-register
+ * source, and no hand-authored second copy exists. Like execution-surface
  * this is a META-COORDINATOR: it does not re-implement the checks, it delegates to the two proven
  * gates (the regen drift check + the single-authority mandate check) and to a coverage check.
  *

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.adapters.lucene.commit.IndexFingerprint;
 import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.configuration.FieldCatalogDef;
@@ -67,7 +68,12 @@ final class SchemaMismatchPolicyBranchTest {
    */
   private static CommitMetadataSource withoutFingerprint() {
     Map<String, Object> base = new HashMap<>(new SsotCommitMetadataSource().build());
-    base.remove("index_fingerprint");
+    base.remove(IndexFingerprint.COMMIT_META_KEY);
+    // BOTH keys. Tempdoc 931 §C.5 stamps the canonical inputs beside the digest, and an index
+    // carrying those recorded its shape — the guard compares it instead of migrating it. Removing
+    // only the digest would model the "committed while a model was unreadable" index, not the
+    // pre-upgrade one these branches are about, and this helper's whole claim is the latter.
+    base.remove(IndexFingerprint.COMMIT_META_INPUTS_KEY);
     Map<String, Object> frozen = Map.copyOf(base);
     return () -> frozen;
   }

@@ -485,9 +485,9 @@ export class Sv3Composer extends JfElement {
            whatever the outer selector's specificity — so a ':root'-side override of it is
            structurally unreachable. '--glass-blur-scale' is the one multiplier sv3 does NOT
            re-declare, which is exactly why it can carry the escape in — and it is read WITHOUT a
-           var() fallback on purpose (strip-token-fallbacks): it is a real design token declared in
+           var() fallback on purpose: it is a real design token declared in
            the shipped styles/tokens.css, so a hardcoded 1 here would be a dead second source of
-           the default and exactly the drift that gate exists to remove. */
+           the default and exactly the drift a fallback would reintroduce. */
         background: color-mix(
           in srgb,
           var(--composer-rest-surface)
@@ -789,7 +789,8 @@ export class Sv3Composer extends JfElement {
       }
       /* The design spec highlights a menu item with accent fill + accent foreground; the FILL is copied
          and the text stays on --foreground, because an accent-role token used as text is the
-         growth the accent-as-text ratchet exists to stop (tempdoc 576 §6 rung-1). Same resolved
+         growth the accent-as-text ratchet existed to stop (tempdoc 576 §6 rung-1; the static ratchet
+         was retired in 930 chunk H, the measured contrast sweep is what checks it now). Same resolved
          ink in dark, one step darker in light — and one text colour across the window. */
       button.menu-item:hover {
         background: var(--accent-surface);
@@ -1205,8 +1206,8 @@ export class Sv3Composer extends JfElement {
    * default IS suppressed, because the press's default action is precisely the focus move this
    * method exists to prevent.
    *
-   * The `data-focus-forward` marker on the element is the claim this makes to `check-controls-a11y`:
-   * a press handler that only moves the caret into the element's own field adds no affordance to
+   * The `data-focus-forward` marker on the element is the declared operability claim (tempdoc 864
+   * Layer 1(b)): a press handler that only moves the caret into the element's own field adds no affordance to
    * reach by keyboard. A real `<label>` is the platform's word for it and cannot be used here — it
    * would also wrap the footer's controls, which is not what a field's label may contain.
    */
@@ -1903,7 +1904,7 @@ export class Sv3Composer extends JfElement {
         // TWO forms of the one control, and the split is not cosmetic. An empty draft keeps slice-3's
         // native `disabled` — there is nothing to route, so nothing to explain — and carries NO
         // `title`, because a browser suppresses a tooltip on a disabled element and an unreachable
-        // reason is worse than none (596 face 1.1, enforced by `check-controls-a11y`). The moment
+        // reason is worse than none (596 face 1.1). The moment
         // there IS a draft the control is live and the routing hint becomes both true and reachable.
         return empty
           ? html`

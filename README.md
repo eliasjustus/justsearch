@@ -69,8 +69,8 @@ build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how
 JustSearch exposes its retrieval over MCP at `POST /mcp` — **in-process Streamable HTTP** on the loopback API
 (no separate process, no Node.js). The desktop app listens on **`http://127.0.0.1:8080`** by default; if 8080
 is already taken it falls back to a random free port. To pin a port, set the `JUSTSEARCH_API_PORT` environment
-variable before launching; the actual port in use is always written to
-`%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. Details + a 2-minute Claude Desktop walkthrough:
+variable before launching; the actual port in use is always written as `head.apiPort` in
+`%APPDATA%\io.justsearch.shell\runtime\manifest.json`. Details + a 2-minute Claude Desktop walkthrough:
 [`docs/reference/mcp-production-server.md`](docs/reference/mcp-production-server.md). Connect your agent:
 
 - **Claude Code:** `claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp`
@@ -143,14 +143,17 @@ expected to exceed single-model *components*, and MIRACL baselines are a differe
 reading is "a reproducible offline hybrid system lands in the range of strong published retrievers," not
 "we beat them" — full comparison-class notes in
 [the methodology](docs/reference/benchmarks/methodology.md#how-to-read-the-comparison-system-vs-component).
-Per-corpus nDCG@10 floors are projected from this release and regression-gated in CI.
+Per-corpus nDCG@10 floors are checked against a pinned baseline at release-composition time
+(`python -m jseval relevance-gate`, `scripts/jseval/relevance-ratchet-baselines.v1.json`); that is a
+local gate run when a release is composed, not an automated CI job. The README table itself is checked
+against the release object in CI (`scripts/ci/check-readme-benchmark-numbers.mjs`).
 
 Reproduce (from `scripts/jseval`): `python -m jseval run --start-backend --dataset beir/scifact --modes hybrid`
 then `python -m jseval relevance-gate --dataset beir/scifact`. Slugs: `beir/scifact`, `mixed/enron-qa`,
 `mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
 Full methodology, comparison-class caveats, and reproduction:
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md). The table above is
-projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-16 release), not hand-transcribed.
+projected from `scripts/jseval/release.v1.json` (the canonical 2026-08-14 release), not hand-transcribed.
 For the broader research angle — open questions, what's deferred, and how to get involved — see
 [`RESEARCH.md`](RESEARCH.md).
 

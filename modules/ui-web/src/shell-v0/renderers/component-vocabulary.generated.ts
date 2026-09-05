@@ -59,7 +59,6 @@ export type ComponentTag =
   | 'jf-filter-chip'
   | 'jf-folder-card'
   | 'jf-form'
-  | 'jf-governance-view'
   | 'jf-group-layout'
   | 'jf-handoff-card'
   | 'jf-health-event'
@@ -205,7 +204,6 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-filter-chip',
   'jf-folder-card',
   'jf-form',
-  'jf-governance-view',
   'jf-group-layout',
   'jf-handoff-card',
   'jf-health-event',

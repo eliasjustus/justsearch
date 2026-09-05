@@ -59,7 +59,7 @@ python -m jseval --help
 
 | Directory | Purpose |
 |-----------|---------|
-| `governance/` | Unified discipline-gate kernel (tempdoc 530): registry-driven gate runner, SARIF emitter, dashboard, run-history, per-gate enforcers under `gates/<id>/`. Wire-evolution lives at `gates/wire/` (migrated from the prior `contract-governance/` kernel in Phase F). |
+| `governance/` | Unified discipline-gate kernel (tempdoc 530): registry-driven gate runner, SARIF emitter, per-gate enforcers under `gates/<id>/`. Wire-evolution lives at `gates/wire/` (migrated from the prior `contract-governance/` kernel in Phase F). |
 | `docs/` | Documentation validation, linting, transformation. |
 | `evidence/` | EvidenceBundle validation and determinism checks. |
 | `architecture/` | Dependency analysis (`module-deps.mjs`), IPC usage snapshot (`ipc-usage.mjs`). |

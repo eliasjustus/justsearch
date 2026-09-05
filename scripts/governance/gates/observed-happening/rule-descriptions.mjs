@@ -85,5 +85,5 @@ export const OBSERVED_HAPPENING_RULE_DESCRIPTIONS = {
   'observed-happening/scan-population-live':
     'The catalog scan parsed >= the declared floor of Resource/Channel stream ids — not vacuous (healthy).',
   // 'observed-happening/liveness-window-*' — RETIRED (tempdoc 575 §17 Face A): the window is now
-  // generated from the register into the worker + FE constants; see check-liveness-constants-regen.
+  // generated from the register into the worker + FE constants; see regen-all --check.
 };

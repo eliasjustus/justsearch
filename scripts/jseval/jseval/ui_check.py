@@ -714,19 +714,6 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                 )
                 if cooldown_ms > 0:
                     await asyncio.sleep(cooldown_ms / 1000)
-            if view_name == "governance":
-                # Live-only operator evidence: remove first-run chrome, then show the repository
-                # snapshot this step was added to verify rather than only the top of the gate roster.
-                dismiss = page.get_by_role("button", name="Dismiss", exact=True)
-                if await dismiss.count() > 0 and await dismiss.first.is_visible():
-                    await dismiss.first.click()
-                snapshot = page.get_by_role(
-                    "heading", name="Latest local repository snapshot", exact=True
-                )
-                await snapshot.wait_for(state="visible", timeout=10_000)
-                await snapshot.scroll_into_view_if_needed(timeout=5_000)
-                if cooldown_ms > 0:
-                    await asyncio.sleep(cooldown_ms / 1000)
         return setup
 
     async def _goto_surface(page, surface_id: str):
@@ -1890,6 +1877,14 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.get_by_role("heading", name="Index", exact=True).scroll_into_view_if_needed()
         await asyncio.sleep(0.5)
 
+    async def setup_help_narrow(page):
+        # Tempdoc 899 review closeout: retain a real small-viewport proof for the Help
+        # operation controls instead of relying on a one-off screenshot at the default width.
+        await page.set_viewport_size({"width": 760, "height": 720})
+        await _view_setup("help")(page)
+        await page.get_by_text("Copy Diagnostic Summary", exact=True).scroll_into_view_if_needed()
+        await asyncio.sleep(0.3)
+
     views = [
         "home",
         "search",
@@ -1903,8 +1898,6 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         "settings",
         "security",
         "help",
-        # Read-only operator dashboard, reached through its off-rail deep link.
-        "governance",
     ]
 
     return [
@@ -1926,6 +1919,7 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # --- Isolated: main views (dark + light) ---
         *[Step(f"{v}", setup=_view_setup(v), isolated=True) for v in views],
         *[Step(f"{v}-light", setup=_view_setup(v, "light"), isolated=True, color_scheme="light") for v in views],
+        Step("help-narrow", setup=setup_help_narrow, isolated=True),
 
         # --- Isolated: density/mode variants ---
         Step("search-results-light",   setup=_density_setup("comfort"), isolated=True, color_scheme="light"),

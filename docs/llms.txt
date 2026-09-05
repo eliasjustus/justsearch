@@ -54,15 +54,11 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [28-runtime-contract](explanation/28-runtime-contract.md): The JustSearch Runtime Contract — the small, versioned local surface external AI agents target. Public center = the local runtime; the desktop app is its first-party reference client. Defines the v1 stable core (health/status lifecycle subset + MCP endpoint/tools + runtime manifest), discovered through the manifest's runtimeContract descriptor. Matrix + policy + surface classification live in docs/reference/runtime-contract.md.
 
 ### How-To (Specific Tasks)
-- [Capture an Encoder-Drift Baseline (LR4-g)](how-to/calibrate-drift-baseline.md): Procedure for capturing the first cohort baseline of encoder.ort_run span duration distributions used by the encoder_drift projection.
 - [Capture UI Evidence](how-to/capture-ui-evidence.md): Screenshot capture for UI verification and agent visual feedback.
 - [Developing the UI](how-to/develop-ui.md): Demo mode (no backend), real backend mode, and frontend verification.
-- [Cohort Envelope Staleness Policy (LR1-b)](how-to/envelope-staleness-policy.md): When a cohort envelope (non-determinism σ per metric) should be rotated, and what triggers automatic vs manual invalidation.
 - [Interpret `jseval bisect` Output (LR5-d)](how-to/interpret-bisect-output.md): Reading the manifest-hash bisection report — single-axis, multi-axis, MULTI_AXIS_INTERACTION, no-cached-run, and identical-cohort paths.
-- [Rebase the Phase 3 Drift-Gate Baseline](how-to/recalibrate-phase3-baseline.md): Procedure for accepting genuine infrastructure drift by rebasing the manual jseval gate's σ(nDCG@10) baseline.
 - [Spawn an Isolated Test Backend](how-to/spawn-isolated-test-backend.md): Lite mode env flag (JUSTSEARCH_LITE_MODE) and the per-class IsolatedBackendFixture pattern for integration tests that need a clean backend per test class without paying the 3-8s cost of loading the AI stack.
 - [Test GPU Inference Locally](how-to/test-gpu-locally.md): How to run llama-server with GPU offload for local development and testing.
-- [Triage PSI Drift on Encoder Distributions (LR4-g)](how-to/triage-psi-drift.md): Investigation checklist when encoder_drift flags PSI > 0.2 on an encoder.ort_run duration distribution.
 - [Use Codex for JustSearch Development](how-to/use-codex-for-development.md): Install, authenticate, launch, and verify Codex CLI, the Codex IDE extension, or the ChatGPT desktop app against JustSearch's shared instructions, skills, hooks, MCP server, and agent roles.
 - [Using the UI](how-to/use-ui.md): Running dev modes and accessing debug dashboards.
 - [Verify your JustSearch download](how-to/verify-your-download.md): Checking the installer's SHA-256 and Authenticode identity, understanding Windows reputation warnings, and using the build-from-source alternative.
@@ -91,14 +87,13 @@ We strictly enforce "Inversion of Control" for configuration and use "Memory Map
 - [Conflict Ledger](reference/contributing/conflict-ledger.md): The going-forward register for design conflicts, intentional reframes, and unresolved authority questions — plus the implementer≠resolver closure protocol that governs how they are resolved.
 - [Cross-Component Checklist](reference/contributing/cross-component-checklist.md): Checklist for features spanning build, shell, backend, and frontend.
 - [Development Philosophy](reference/contributing/development-philosophy.md): Issue tracking tiers, observation workflow, and documentation update rules.
-- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-audit, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634.
+- [Discipline-Gate Kernel](reference/contributing/discipline-gate-kernel.md): Substrate for ratchet-style hygiene gates (npm-advisory identities, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634; five more were replaced by commodity tools — tempdoc 930 chunk F.
 - [Logging Conventions](reference/contributing/logging-conventions.md): Conventions for log statements, exception handling, MDC usage, and query redaction.
 - [MCP Dev Tools Reference](reference/contributing/mcp-dev-tools.md): Dev orchestration tools for starting, monitoring, and verifying the JustSearch dev stack.
 - [Reliability Budget](reference/contributing/reliability-budget.md): Warn-only reliability hotspot report generated from local gate summaries.
 - [Slice Execution Methodology](reference/contributing/slice-execution.md): Bidirectional spec/critical-analysis pass discipline for multi-phase tempdoc slices, validated empirically across slice 430's Phases 6-10 (5 consecutive zero-finding outcomes).
 - [Smoke test: HealthEvent Resource substrate (slice 430)](reference/contributing/smoke-test-health-event-substrate.md): Manual + scripted verification procedure for the HealthEvent Resource substrate; runs verification gate items 3-10 + 7a from tempdoc 430.
 - [Test Quality Guidelines](reference/contributing/testing-quality.md): Anti-patterns to avoid and high-value test patterns to prefer.
-- [Prose-rule Enforcement Tier Register](reference/contributing/tier-register.md): Which tier enforces each load-bearing prose rule in CLAUDE.md and .claude/rules/*.md. Read by the prose-tier-register and hook-integrity gates. Relocated out of always-loaded context (tempdoc 799 K.2): agents need the rules, which live in the rule files; the enforcement-tier table is a maintainer artifact.
 - [Writing Docs for AI](reference/contributing/writing-docs-for-ai.md): How to keep docs agent-friendly.
 - [Project Glossary](reference/glossary.md): Authority index for overloaded JustSearch architecture, search, runtime, and interface terms.
 - [Troubleshooting: Reindex doesn't run (schema mismatch)](reference/index-schema-mismatch-reindex-noop.md): Diagnosing "reindex doesn't run" due to schema mismatch.

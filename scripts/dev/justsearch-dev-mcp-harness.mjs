@@ -229,9 +229,11 @@ async function main() {
         `tools/call(quick_health) failed: ${healthRes.error ? JSON.stringify(healthRes.error) : toolErrorText(healthRes)}`,
       );
     }
-    const healthRunning = !!healthRes.result?.structuredContent?.running;
+    const healthRunning = healthRes.result?.structuredContent?.running ?? null;
     const healthRunId = healthRes.result?.structuredContent?.runId;
-    if (!healthRunning) {
+    if (healthRunning === null) {
+      process.stderr.write(`[mcp-harness] WARNING: quick_health.running is unknown. result=${JSON.stringify(healthRes.result)?.slice(0, 1200)}\n`);
+    } else if (healthRunning === false) {
       process.stderr.write(`[mcp-harness] WARNING: quick_health.running=false. result=${JSON.stringify(healthRes.result)?.slice(0, 1200)}\n`);
     }
     if (healthRunId && healthRunId !== runId) {
@@ -382,5 +384,4 @@ main().catch((err) => {
   process.stderr.write(`[mcp-harness] fatal: ${err?.stack || String(err)}\n`);
   process.exit(1);
 });
-
 

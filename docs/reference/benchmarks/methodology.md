@@ -45,30 +45,32 @@ everywhere) — and they are **not directly apples-to-apples**. Read them honest
 
 <!-- generated:start — do not edit between markers; run: node scripts/docs/gen-public-benchmark.mjs -->
 
-*Default mode `hybrid`, commit `8aacedc37`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
+*Default mode `hybrid`, commit `32d6a0a0e`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
 
 | Corpus | Ours (mode) | nDCG@10 | Ablation | Published baselines (cited) |
 |---|---|---|---|---|
-| beir/scifact | hybrid | **0.760** | 0.661 (lexical); 0.668 (bm25_splade); 0.731 (vector) | BM25 (multifield) 0.665; SPLADE++ EnsembleDistil 0.710; ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | **0.736** | 0.828 (lexical); 0.813 (bm25_splade); 0.587 (vector) | — |
-| mixed/legal-clerc-200 | hybrid | **0.598** | 0.688 (lexical); 0.684 (bm25_splade); 0.620 (vector) | BM25 0.054; Contriever-MSMarco (zero-shot dense) 0.042 |
-| mixed/miracl-de-2k | hybrid | **0.862** | 0.703 (lexical); 0.746 (bm25_splade); 0.851 (vector) | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | **0.873** | 0.702 (lexical); 0.760 (bm25_splade); 0.891 (vector) | BM25 0.183 (dev); mDPR (zero-shot) 0.435 (dev); Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | **0.757** | 0.662 (lexical); 0.734 (vector); 0.487 (splade) | BM25 (multifield) 0.665; SPLADE++ EnsembleDistil 0.710; ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | **0.796** | 0.825 (lexical); 0.591 (vector); 0.140 (splade) | — |
+| mixed/legal-clerc-200 | hybrid | **0.578** | 0.685 (lexical); 0.624 (vector); 0.045 (splade) | BM25 0.054; Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | **0.857** | 0.701 (lexical); 0.851 (vector); 0.776 (splade) | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | **0.884** | 0.703 (lexical); 0.891 (vector); 0.858 (splade) | BM25 0.183 (dev); mDPR (zero-shot) 0.435 (dev); Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640; lower latency / higher throughput / lower footprint better):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
-| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
-| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
-| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
-| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
+| beir/scifact | 142 | 76.1 | 1.3 | 2.02 |
+| mixed/enron-qa | 147 | 63.8 | 3.6 | 2.02 |
+| mixed/legal-clerc-200 | 165 | 18.6 | 0.8 | 2.02 |
+| mixed/miracl-de-2k | 133 | 125.6 | 34.1 | 2.02 |
+| mixed/miracl-fr-2k | 143 | 151.7 | 46.6 | 2.02 |
 
 <!-- generated:end -->
 
-Per-corpus nDCG@10 floors are projected from this release and regression-gated in CI
-(`scripts/jseval/relevance-ratchet-baselines.v1.json` + the relevance gate). The internal
+Per-corpus nDCG@10 floors are checked against a pinned baseline at release-composition time
+(`python -m jseval relevance-gate`, `scripts/jseval/relevance-ratchet-baselines.v1.json`); that is a
+local gate run when a release is composed, not an automated CI job. The README table itself is checked
+against the release object in CI (`scripts/ci/check-readme-benchmark-numbers.mjs`). The internal
 search-quality register carries the full per-config ablation log (`docs/reference/search-quality-register.md`).
 
 ## Agent-utility publication
@@ -87,7 +89,10 @@ python -m jseval relevance-gate --dataset beir/scifact
 
 Dataset slugs: `beir/scifact`, `mixed/enron-qa`, `mixed/legal-clerc-200`, `mixed/miracl-de-2k`,
 `mixed/miracl-fr-2k`. Corpora are fetched from their canonical sources (pointer + checksum), not
-redistributed here. A third party on equivalent hardware should land within the cohort's ±2σ envelope.
+redistributed here. Run-to-run variation is reported per run; no envelope calibration is required —
+each run's `summary.json` carries its own `per_mode.<mode>.latency_stats` (p50/p95/p99/max over that
+run's queries) and `encoder_latency.encoders.<name>` (per-encoder ONNX p50/p95), so a third party
+compares their run's spread against the published one directly.
 
 ## See also
 - `scripts/jseval/release.v1.json` — the canonical release object (the source of truth for every number above).

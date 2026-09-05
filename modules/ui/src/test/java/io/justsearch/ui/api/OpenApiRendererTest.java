@@ -7,7 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.javalin.Javalin;
 import io.justsearch.ui.api.RouteManifestController.RouteEntry;
+import java.net.URI;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -108,8 +111,27 @@ class OpenApiRendererTest {
   @Test
   @DisplayName("every descriptor field contributes to the shared digest")
   void completeDescriptorContributesToDigest() {
+    var query = new RouteContractPolicy.QueryParameter("limit", false, "integer.v1.json");
+    var lifecycle =
+        new RouteManifestController.LifecycleEntry(
+            "2026-01-01T00:00:00Z",
+            "2026-05-01T00:00:00Z",
+            "GET /replacement",
+            "https://docs.justsearch.example/deprecations/a");
     RouteEntry baseline =
-        route("GET", "/api/a", "cohort", "Owner", List.of("WORKER"), "result.v1.json");
+        new RouteEntry(
+            "GET",
+            "/api/a",
+            "cohort",
+            "Owner",
+            List.of("WORKER"),
+            "result.v1.json",
+            "public-contract",
+            "getA",
+            "request.v1.json",
+            List.of(query),
+            Map.of(200, "result.v1.json"),
+            lifecycle);
     String digest = RouteDescriptorDigest.sha256(List.of(baseline));
 
     assertNotEquals(
@@ -128,6 +150,63 @@ class OpenApiRendererTest {
         digest,
         RouteDescriptorDigest.sha256(
             List.of(route("GET", "/api/a", "cohort", "Owner", List.of("WORKER"), null))));
+    assertNotEquals(digest, RouteDescriptorDigest.sha256(List.of(withStability(baseline, "reference-client"))));
+    assertNotEquals(digest, RouteDescriptorDigest.sha256(List.of(withSdkOperationId(baseline, "getOther"))));
+    assertNotEquals(digest, RouteDescriptorDigest.sha256(List.of(withRequestSchema(baseline, "other.v1.json"))));
+    assertNotEquals(
+        digest,
+        RouteDescriptorDigest.sha256(
+            List.of(withQueryParameters(baseline, List.of(new RouteContractPolicy.QueryParameter("limit", true, "integer.v1.json"))))));
+    assertNotEquals(
+        digest,
+        RouteDescriptorDigest.sha256(
+            List.of(withResponseSchemas(baseline, Map.of(503, "error.v1.json")))));
+    assertNotEquals(
+        digest,
+        RouteDescriptorDigest.sha256(
+            List.of(
+                withLifecycle(
+                    baseline,
+                    new RouteManifestController.LifecycleEntry(
+                        lifecycle.deprecatedSince(),
+                        lifecycle.sunsetAt(),
+                        "GET /other",
+                        lifecycle.documentationUri())))));
+  }
+
+  @Test
+  @DisplayName("lifecycle metadata projects across the route manifest and both OpenAPI documents")
+  void projectsLifecycleMetadata() {
+    Javalin app = Javalin.create(config -> config.showJavalinBanner = false);
+    app.get("/fake/{id}", context -> {});
+    RouteContractPolicy.Contract contract =
+        new RouteContractPolicy.Contract(
+            "GET",
+            "/fake/{id}",
+            RouteContractPolicy.Stability.PUBLIC_CONTRACT,
+            "getFake",
+            null,
+            List.of(),
+            Map.of(200, "runtime-live-response.v1.json"),
+            ApiSecurityFilters.contractSecurity("GET", "/fake/{id}"),
+            new RouteContractPolicy.Lifecycle(
+                Instant.parse("2026-01-01T00:00:00Z"),
+                Instant.parse("2026-05-01T00:00:00Z"),
+                "GET /replacement",
+                URI.create("https://docs.justsearch.example/deprecations/fake")),
+            null);
+    Map<String, RouteContractPolicy.Contract> policy =
+        RouteContractPolicy.index(List.of(contract));
+
+    RouteEntry route = RouteManifestController.build(app, List.of(), policy).getFirst();
+    assertEquals("public-contract", route.stability());
+    assertEquals("getFake", route.sdkOperationId());
+    assertEquals("2026-01-01T00:00:00Z", route.lifecycle().deprecatedSince());
+
+    assertLifecycleProjection(
+        operation(OpenApiRenderer.render(List.of(route)), "/fake/{id}", "get"));
+    assertLifecycleProjection(
+        operation(SdkOpenApiProjection.build(app, List.of(), policy), "/fake/{id}", "get"));
   }
 
   @Test
@@ -154,6 +233,78 @@ class OpenApiRendererTest {
       String owner,
       List<String> capabilities,
       String responseSchema) {
-    return new RouteEntry(method, path, cohort, owner, capabilities, responseSchema);
+    return new RouteEntry(
+        method,
+        path,
+        cohort,
+        owner,
+        capabilities,
+        responseSchema,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
+  }
+
+  private static RouteEntry withStability(RouteEntry route, String stability) {
+    return copy(route, stability, route.sdkOperationId(), route.requestSchema(), route.queryParameters(), route.responseSchemas(), route.lifecycle());
+  }
+
+  private static RouteEntry withSdkOperationId(RouteEntry route, String operationId) {
+    return copy(route, route.stability(), operationId, route.requestSchema(), route.queryParameters(), route.responseSchemas(), route.lifecycle());
+  }
+
+  private static RouteEntry withRequestSchema(RouteEntry route, String requestSchema) {
+    return copy(route, route.stability(), route.sdkOperationId(), requestSchema, route.queryParameters(), route.responseSchemas(), route.lifecycle());
+  }
+
+  private static RouteEntry withQueryParameters(
+      RouteEntry route, List<RouteContractPolicy.QueryParameter> queryParameters) {
+    return copy(route, route.stability(), route.sdkOperationId(), route.requestSchema(), queryParameters, route.responseSchemas(), route.lifecycle());
+  }
+
+  private static RouteEntry withResponseSchemas(
+      RouteEntry route, Map<Integer, String> responseSchemas) {
+    return copy(route, route.stability(), route.sdkOperationId(), route.requestSchema(), route.queryParameters(), responseSchemas, route.lifecycle());
+  }
+
+  private static RouteEntry withLifecycle(
+      RouteEntry route, RouteManifestController.LifecycleEntry lifecycle) {
+    return copy(route, route.stability(), route.sdkOperationId(), route.requestSchema(), route.queryParameters(), route.responseSchemas(), lifecycle);
+  }
+
+  private static RouteEntry copy(
+      RouteEntry route,
+      String stability,
+      String sdkOperationId,
+      String requestSchema,
+      List<RouteContractPolicy.QueryParameter> queryParameters,
+      Map<Integer, String> responseSchemas,
+      RouteManifestController.LifecycleEntry lifecycle) {
+    return new RouteEntry(
+        route.method(),
+        route.path(),
+        route.cohort(),
+        route.owningModule(),
+        route.requiredCapabilities(),
+        route.responseSchema(),
+        stability,
+        sdkOperationId,
+        requestSchema,
+        queryParameters,
+        responseSchemas,
+        lifecycle);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void assertLifecycleProjection(Map<String, Object> operation) {
+    assertEquals(Boolean.TRUE, operation.get("deprecated"));
+    assertEquals("2026-01-01T00:00:00Z", operation.get("x-deprecated-since"));
+    assertEquals("2026-05-01T00:00:00Z", operation.get("x-sunset"));
+    assertEquals("GET /replacement", operation.get("x-justsearch-replacement"));
+    Map<String, Object> externalDocs = (Map<String, Object>) operation.get("externalDocs");
+    assertEquals("https://docs.justsearch.example/deprecations/fake", externalDocs.get("url"));
   }
 }

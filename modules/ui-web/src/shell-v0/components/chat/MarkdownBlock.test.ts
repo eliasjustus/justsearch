@@ -600,8 +600,8 @@ describe('MarkdownBlock 822 §3c — the ungrounded mark has its own color', () 
     // is that what falls through must not collide with a tier that states itself.
     const sourceTier = shippedInk('.cite-ref');
     expect(new Set([sourceTier, grounded, weak, ungrounded]).size).toBe(4);
-    // The warning role's TEXT member — `check-accent-as-text` forbids an `--accent-*` fill token as a
-    // text color, and sv3 bridges `--text-warning` and `--accent-warning` to one `--warning-foreground`.
+    // The warning role's TEXT member — an `--accent-*` fill token is not a text color, and sv3
+    // bridges `--text-warning` and `--accent-warning` to one `--warning-foreground`.
     expect(ungrounded).toBe('--text-warning');
     expect(weak).toBe('--text-secondary');
     // …and the opt-in knobs are the cite vocabulary's own, so a window re-points the INK without

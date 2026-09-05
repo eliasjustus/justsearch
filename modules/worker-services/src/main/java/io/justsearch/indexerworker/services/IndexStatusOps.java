@@ -459,6 +459,13 @@ final class IndexStatusOps {
             .setRefreshLagMs(gauges.refreshLagMs())
             .setPendingBytes(pendingBytes == null ? 0L : pendingBytes.knownBytes())
             .setPendingUnknownSizeJobs(pendingBytes == null ? 0L : pendingBytes.unknownSizeJobs());
+    // Tempdoc 931 §E item 8 — merge state of the reader that SERVES search (the same reader
+    // activeDocCount is counted on), so maxDoc - numDocs is the deleted-but-unmerged backlog of the
+    // generation a query can actually reach, not of a half-built rebuild generation.
+    IndexCountOps activeCountOps = searchCountOps != null ? searchCountOps : ingestCountOps;
+    if (activeCountOps != null) {
+      b.setIndexMaxDoc(activeCountOps.maxDoc()).setIndexNumDocs(activeCountOps.docCount());
+    }
     for (long v : recentJobQueueDepthTrend()) {
       b.addRecentJobQueueDepth(v);
     }
@@ -718,6 +725,12 @@ final class IndexStatusOps {
     // diagnostic signal.
     LuceneRuntimeTypes.ChunkVectorPresence chkVec =
         ingestCountOps != null ? ingestCountOps.queryChunkVectorPresenceCount() : null;
+    // Tempdoc 931 §E item 8: the chunk-SPLADE stage, over CHUNK documents only. The `splade`
+    // FeatureCoverage below counts parents, so this is the only number that describes what the
+    // chunk-SPLADE retrieval leg has to score against.
+    LuceneRuntimeTypes.SpladeFeatureCounts chkSplade =
+        ingestCountOps != null ? ingestCountOps.queryChunkSpladeCounts() : null;
+    boolean chunkSpladeEnabled = chunkSpladeEnabled();
     // Tempdoc 821 §3-C3: the auditor projection. `expected` is the field-carrying denominator
     // (an absent status field means the stage does not apply, post-798), so a stage that lost a
     // sub-population reads `missing > 0` instead of hiding inside a coverage percentage that
@@ -756,6 +769,10 @@ final class IndexStatusOps {
                 // Presence-truthful coverage/readiness (tempdoc 717), not status-derived.
                 .setCoveragePercent(chkVec == null ? 0.0 : chkVec.coveragePercent())
                 .setVectorsReady(chkVec != null && chkVec.isReady(VECTOR_READY_PERCENT))
+                .setSpladeEnabled(chunkSpladeEnabled)
+                .setSpladeCompletedCount(chkSplade == null ? 0L : chkSplade.completed())
+                .setSpladePendingCount(chkSplade == null ? 0L : chkSplade.pending())
+                .setSpladeCoveragePercent(chkSplade == null ? 0.0 : chkSplade.coveragePercent())
                 .build())
         // Tempdoc 821 §3-C3 — the two thresholds the auditor owns, published so off-process
         // oracles read them instead of mirroring the Java constants.
@@ -908,7 +925,19 @@ final class IndexStatusOps {
     return gpu.build();
   }
 
-  private io.justsearch.ipc.SearchConfig buildSearchConfig() {
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8) — published on the status snapshot so
+   * a consumer can tell "chunk SPLADE has no coverage because it is off" from "it is on and behind".
+   * Absent config reads as the flag's own default (false).
+   */
+  private boolean chunkSpladeEnabled() {
+    Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier = resolvedConfigSupplier;
+    io.justsearch.configuration.resolved.ResolvedConfig config =
+        supplier == null ? null : supplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
+  }
+
+  io.justsearch.ipc.SearchConfig buildSearchConfig() {
     io.justsearch.ipc.SearchConfig.Builder sc = io.justsearch.ipc.SearchConfig.newBuilder();
     if (resolvedConfigSupplier != null) {
       var config = resolvedConfigSupplier.get();
@@ -923,7 +952,9 @@ final class IndexStatusOps {
             .setBranchCcWeightChunk(hybrid.branchCcWeightChunk())
             .setBranchChunkMinWeightMultiplier(hybrid.branchChunkMinWeightMultiplier())
             .setTitleBoost(search.titleBoost())
-            .setEntityBoost(search.entityBoost())
+            // Compatibility tombstone: field 9 remains on the wire but the retired query boost is
+            // never active.
+            .setEntityBoost(0.0)
             .setQueryClassificationEnabled(search.queryClassificationEnabled());
       }
     }
@@ -1110,36 +1141,47 @@ final class IndexStatusOps {
   // ==================== Schema Compatibility Helpers (U21-MIG-001) ====================
 
   private String safeSchemaFingerprintCurrent() {
+    Object fp = expectedCommitMetadataBestEffort().get(IndexFingerprint.COMMIT_META_KEY);
+    return fp == null ? "" : String.valueOf(fp);
+  }
+
+  /** The metadata this runtime would commit, or an empty map if it cannot be built. */
+  private Map<String, Object> expectedCommitMetadataBestEffort() {
     try {
-      Object fp =
-          new SsotCommitMetadataSource().build().get(IndexFingerprint.COMMIT_META_KEY);
-      return fp == null ? "" : String.valueOf(fp);
+      return new SsotCommitMetadataSource().build();
     } catch (Exception e) {
-      log.debug("Failed to get current schema fingerprint: {}", e.getMessage());
-      return "";
+      log.debug("Failed to build expected commit metadata: {}", e.getMessage());
+      return Map.of();
     }
   }
 
   private String safeSchemaFingerprintStored() {
+    String fp = storedCommitUserData().get(IndexFingerprint.COMMIT_META_KEY);
+    return fp == null ? "" : fp;
+  }
+
+  /**
+   * The commit user data the compat state is judged against, never null.
+   *
+   * <p>The open-time snapshot, because commits during the runtime's lifetime (NER backfill,
+   * embedding rebuild) overwrite the stored fingerprint with the current one and would mask a
+   * mismatch. Extracted so the {@code index_fingerprint_inputs} fallback reads the SAME snapshot
+   * the digest does — two different reads of "what this index recorded" is how the guard and the
+   * status surface end up describing different indexes.
+   */
+  private Map<String, String> storedCommitUserData() {
     if (openTimeCommitUserData == null) {
-      return "";
+      return Map.of();
     }
     try {
-      // Use the open-time snapshot to detect schema mismatches reliably.
-      // Commits during the runtime's lifetime (NER backfill, embedding rebuild, etc.)
-      // overwrite the stored fingerprint with the current one, masking the mismatch.
       Map<String, String> ud = openTimeCommitUserData.get();
       if (ud == null || ud.isEmpty()) {
         ud = latestCommitUserDataBestEffort.get();
       }
-      if (ud == null) {
-        return "";
-      }
-      String fp = ud.get(IndexFingerprint.COMMIT_META_KEY);
-      return fp == null ? "" : fp;
+      return ud == null ? Map.of() : ud;
     } catch (Exception e) {
-      log.debug("Failed to get stored schema fingerprint: {}", e.getMessage());
-      return "";
+      log.debug("Failed to read stored commit metadata: {}", e.getMessage());
+      return Map.of();
     }
   }
 
@@ -1159,13 +1201,20 @@ final class IndexStatusOps {
     }
     long docCount = ingestCountOps == null ? 0 : ingestCountOps.docCount();
     if (stored.isEmpty()) {
-      // No recorded shape: either the index predates the key or a commit was made while an
-      // input was indeterminate. Which one it is cannot be told from the commit, so the same
-      // predicate the open-time guard uses decides it here — one rule, two consumers, so a
-      // brand-new empty index is never reported as needing a rebuild by one and not the other.
-      return ParityDiagnostics.isIndexWithoutRecordedFingerprint(stored, docCount)
-          ? "BLOCKED_LEGACY"
-          : "COMPATIBLE";
+      // No recorded DIGEST. Two different indexes look like this and they get different answers
+      // (tempdoc 931 §C.5): one that predates index_fingerprint_inputs recorded no shape at all and
+      // is migrated once; one committed while a model digest was unresolvable recorded its shape as
+      // inputs, and the guard compares those rather than charging it a rebuild. The same predicate
+      // and the same diff the open-time guard runs decide both here — one rule, two consumers, so
+      // the banner cannot demand a reindex the guard is not performing.
+      Map<String, String> ud = storedCommitUserData();
+      if (ParityDiagnostics.isIndexWithoutRecordedFingerprint(
+          stored, ud.get(IndexFingerprint.COMMIT_META_INPUTS_KEY), docCount)) {
+        return "BLOCKED_LEGACY";
+      }
+      return ParityDiagnostics.diff(ud, expectedCommitMetadataBestEffort(), docCount).isEmpty()
+          ? "COMPATIBLE"
+          : "BLOCKED_MISMATCH";
     }
     if (current.equals(stored)) {
       return "COMPATIBLE";

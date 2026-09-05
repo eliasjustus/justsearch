@@ -134,6 +134,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
           new io.justsearch.indexerworker.loop.IndexingLoopOptions(
               !"none".equalsIgnoreCase(tracingLevel),                  // detailedTracing
               ctx.pathResolutionStore(),                                // pathResolutionStore
+              ctx.documentIdentityStore(),                              // documentIdentityStore
               migrationActiveSupplier,                                  // 516 P3 final — pre-wired at ctor
               ingestRunning::latestCommitUserDataBestEffort,            // commitMetadataSupplier
               embeddingTelemetryEvents);                                // 516 P3 final — pre-wired at ctor
@@ -186,6 +187,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     // Tempdoc 419 / T5.3 (ADR-0028): wire the scoped reverse-lookup store. KnowledgeServer
     // constructed it; we just inject so the LookupPathByHash gRPC handler returns real data.
     this.ingestService.setPathResolutionStore(ctx.pathResolutionStore());
+    this.ingestService.setDocumentIdentityStore(ctx.documentIdentityStore());
 
     // Tempdoc 400 §22 Issue D / LR2-e.4 (Phase 6 / 6.7): wire the
     // active-generation supplier from the ingest service's
@@ -246,9 +248,18 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     // the parent doc + chunks are removed in one Worker-side write. In deferred mode
     // (ingestRunning == null) the sink is a no-op; this is acceptable because deletions in
     // deferred mode are handled by the periodic sync once the writer upgrades.
+    // Tempdoc 931 §C.6 — a confirmed deletion point: the OS reported the file removed. The marker
+    // re-verifies absence, so a DELETE event that is really the first half of an atomic replace
+    // (or a recreate that beat us to the check) records nothing.
+    var watcherDeletionMarker =
+        new io.justsearch.indexerworker.services.ConfirmedDeletionMarker(
+            ctx.documentIdentityStore());
     java.util.function.Consumer<String> deletePathSink =
         ingestRunning != null
-            ? ingestRunning.indexingCoordinator()::deleteByIdAndChunks
+            ? path -> {
+              ingestRunning.indexingCoordinator().deleteByIdAndChunks(path);
+              watcherDeletionMarker.markIfAbsent(path);
+            }
             : path -> {};
     var workerWatcherCatalog =
         new io.justsearch.indexerworker.services.WorkerWatcherMetricCatalog(ctx.metricRegistry());

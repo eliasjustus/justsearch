@@ -16,6 +16,7 @@ import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexerworker.text.TextQualityAnalyzer;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -47,9 +48,10 @@ public final class IndexingDocumentOps {
      *     this record because it is a property of the indexing job, not of the extracted content
      *     {@code deriveParentMetadata} sees.
      */
-    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata(String collection) {
+    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata(
+        String collection, String parentDocUid) {
       return new ChunkDocumentWriter.ParentChunkMetadata(
-          mime, mimeBase, fileKind, language, parentTokenCount, collection);
+          mime, mimeBase, fileKind, language, parentTokenCount, collection, parentDocUid);
     }
   }
 
@@ -101,7 +103,11 @@ public final class IndexingDocumentOps {
       StageRecorder stageRecorder,
       Logger log,
       float[] precomputedEmbedding,
-      SourceFileMetadata sourceMetadata) {
+      SourceFileMetadata sourceMetadata,
+      String docUid) {
+    if (docUid == null || docUid.isBlank()) {
+      throw new IllegalStateException("A persisted document identity is required before indexing");
+    }
     return buildDocumentInternal(
         filePath,
         artifact.result(),
@@ -114,7 +120,8 @@ public final class IndexingDocumentOps {
         stageRecorder,
         log,
         precomputedEmbedding,
-        withArtifact(sourceMetadata, artifact));
+        withArtifact(sourceMetadata, artifact),
+        docUid);
   }
 
   private static IndexDocument buildDocumentInternal(
@@ -129,10 +136,11 @@ public final class IndexingDocumentOps {
       StageRecorder stageRecorder,
       Logger log,
       float[] precomputedEmbedding,
-      SourceFileMetadata sourceMetadata) {
+      SourceFileMetadata sourceMetadata,
+      String docUid) {
     EmbeddingProvider ep =
         embeddingProvider != null ? embeddingProvider : NoOpEmbeddingProvider.INSTANCE;
-    String absolutePath = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
+    String absolutePath = PathNormalizer.normalizeKey(filePath);
     String fileName = filePath.getFileName().toString();
 
     ParentIndexMetadata metadata =
@@ -143,10 +151,16 @@ public final class IndexingDocumentOps {
 
     Map<String, Object> fields = new HashMap<>();
     fields.put(SchemaFields.DOC_ID, absolutePath);
-    fields.put(SchemaFields.DOC_UID, java.util.UUID.randomUUID().toString());
+    fields.put(SchemaFields.DOC_UID, docUid);
     fields.put(SchemaFields.PATH, absolutePath);
     fields.put(SchemaFields.FILENAME, fileName);
     fields.put(SchemaFields.CONTENT, extraction.content());
+    // Tempdoc 931 §C.6 — the content revision, written wherever CONTENT is, from the SAME string
+    // that is stored. Feedback captures (doc_uid, content_revision), so a label taken against one
+    // revision of a document is recognisable as stale after the file is edited.
+    if (extraction.content() != null) {
+      fields.put(SchemaFields.CONTENT_SHA256, ChunkParentRevision.sha256Hex(extraction.content()));
+    }
     fields.put(SchemaFields.CONTENT_PREVIEW, contentPreview(extraction.content(), isMarkdown));
     fields.put(SchemaFields.INDEXED_AT, System.currentTimeMillis());
     if (collection != null && !collection.isBlank()) {
@@ -392,6 +406,9 @@ public final class IndexingDocumentOps {
    * @param collection the parent document's collection tag (nullable), written onto every chunk so
    *     collection scoping works on the chunk branch (tempdoc 811 item 3). Must be the same value
    *     passed to {@link #buildDocument} for the parent, or parent and chunks disagree on scope.
+   * @param chunkSpladeEnabled {@code rag.chunk_splade.enabled}, read from the live resolved config
+   *     by the caller (tempdoc 931 §E item 8) — decides whether a chunk carries a
+   *     {@code splade_status} at all.
    */
   public static int indexChunks(
       Path filePath,
@@ -399,12 +416,15 @@ public final class IndexingDocumentOps {
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
       ParentIndexMetadata parentMetadata,
-      String collection) {
+      String collection,
+      String parentDocUid,
+      boolean chunkSpladeEnabled) {
     String content = extraction.content();
-    String parentDocId = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
+    String parentDocId = PathNormalizer.normalizeKey(filePath);
 
     if (content == null || content.length() < CHUNK_THRESHOLD_CHARS) {
-      ChunkDocumentWriter.regenerateChunks(documentFieldOps, indexingCoordinator, parentDocId, "", null);
+      ChunkDocumentWriter.regenerateChunks(
+          documentFieldOps, indexingCoordinator, parentDocId, "", null, chunkSpladeEnabled);
       return 0;
     }
 
@@ -418,7 +438,8 @@ public final class IndexingDocumentOps {
         indexingCoordinator,
         parentDocId,
         content,
-        metadata.toChunkMetadata(collection));
+        metadata.toChunkMetadata(collection, parentDocUid),
+        chunkSpladeEnabled);
   }
 
   public static ParentIndexMetadata deriveParentMetadata(

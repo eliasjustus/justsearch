@@ -60,7 +60,7 @@ final class RegistryControllerTest {
   }
 
   @Test
-  @DisplayName("/api/registry/operations returns envelope with 29 seed entries")
+  @DisplayName("/api/registry/operations returns envelope with 32 seed entries")
   void operationsEnvelope() throws Exception {
     // Slice 445: CoreOperationCatalog now seeds 26 entries — slice 3a-2-c's 23
     // plus core.cancel-indexing-job, core.retry-indexing-job, core.resolve-path-hash
@@ -87,7 +87,9 @@ final class RegistryControllerTest {
     // Tempdoc 626 §Recency: core.reconcile-root added to CoreOperationCatalog; total 29.
     // Tempdoc 737 §12b: core.set-chat-enabled added (intent write superseding
     // switch-inference-mode); total 30.
-    assertEquals(30, envelope.get("entries").size());
+    // Tempdoc 899 D5: core.copy-diagnostic-summary added; total 31.
+    // Tempdoc 931 §E item 10: core.settle-index added; total 32.
+    assertEquals(32, envelope.get("entries").size());
   }
 
   @Test

@@ -990,8 +990,8 @@ export class Shell extends JfElement {
     });
     // Tempdoc 864 Layer 4 — the modifier-less-printable policy: a bare printable may be a global
     // binding only if a `when` clause scopes it to named surfaces. `/` is the app's only one, and
-    // the two named here are the surfaces that OWN a composer. Enforced by
-    // `scripts/ci/check-printable-keybinding-policy.mjs`.
+    // the two named here are the surfaces that OWN a composer. (Was gate-enforced by
+    // `scripts/ci/check-printable-keybinding-policy.mjs`, retired 930 chunk H.)
     //
     // What that does and does NOT buy today, stated exactly (864 review F4, closed by PR B): on
     // `core.unified-chat-surface` the key works — `UnifiedChatView` listens for the dispatched

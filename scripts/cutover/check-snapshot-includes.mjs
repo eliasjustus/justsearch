@@ -7,7 +7,8 @@
  *   - CLOSURE  : the FULL agent/governance machinery dependency closure MUST be present (631 C1 — the
  *                narrower "hooks/-only" list ships broken machinery: hooks import ../lib/*, the 36 gate
  *                enforcers live under scripts/governance/gates/).
- *   - SETTINGS : .claude/settings.json must be the guards-only public template (no `permissions`/`env`; the
+ *   - SETTINGS : .claude/settings.json must be the guards-only public template (`permissions` may carry
+ *                `deny` rules only — 930 row 4 moved force-push protection there; no `env`; the
  *                4 founder-analytics hooks excluded). Enforced in strict mode only (the swap happens at the
  *                flip; the live dev settings legitimately differ before then).
  *
@@ -91,7 +92,12 @@ export function evaluateSettings(settings) {
   const v = [];
   const obj = settings || {};
   if (Object.prototype.hasOwnProperty.call(obj, "permissions")) {
-    v.push("contains a `permissions` block (the public template must omit it)");
+    // 930 row 4: force-push protection moved off the PreToolUse guard onto `permissions.deny`, so a
+    // deny-ONLY block is now part of the public template. An allow/ask posture is still local-only.
+    const extra = Object.keys(obj.permissions ?? {}).filter((k) => k !== "deny");
+    if (extra.length > 0) {
+      v.push(`contains a \`permissions\` block with non-deny keys (${extra.join(", ")}); the public template carries deny rules only`);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(obj, "env")) {
     v.push("contains an `env` block (the public template must omit it)");

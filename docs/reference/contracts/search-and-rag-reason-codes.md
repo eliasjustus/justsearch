@@ -16,10 +16,11 @@ Worker-emitted reason codes are treated as a contract: they are allowlisted by `
 Degradation fields on `SearchResponse` (`modules/ipc-common/src/main/proto/indexing.proto`):
 
 - `effective_mode`: `"TEXT" | "VECTOR" | "HYBRID"`
-- `vector_blocked`: `true` when VECTOR search is blocked by embedding compatibility
-- `vector_blocked_reason`: stable reason code for why VECTOR is blocked
-- `hybrid_fallback`: `true` when HYBRID fell back to TEXT
-- `hybrid_fallback_reason`: stable reason code for why HYBRID fell back
+- `vector_blocked`: `true` when dense retrieval did not run, either because it was unavailable or
+  because the planner deliberately omitted a redundant dense leg
+- `vector_blocked_reason`: stable reason code for why dense retrieval did not run
+- `hybrid_fallback`: `true` when HYBRID lost dense retrieval because query encoding failed
+- `hybrid_fallback_reason`: stable encoding-failure reason; deliberate planner skips do not populate it
 
 ### Embedding compatibility reason codes (`EmbeddingCompatibilityController.reasonCode()`)
 
@@ -44,6 +45,15 @@ Used when HYBRID cannot run as requested (may also appear for VECTOR when the co
 - `NO_EMBEDDING_SERVICE`: no embedding service available to generate a query vector
 - `EMBEDDING_GENERATION_FAILED`: query embedding returned null/empty
 - `EMBEDDING_EXCEPTION`: query embedding threw an exception
+- `SKIPPED_SHORT_QUERY`: dense retrieval was runnable but omitted because the query was shorter than
+  `index.hybrid.vector_skip_min_chars` and another retrieval leg could answer
+- `SKIPPED_NO_DISCRIMINATIVE_TERM`: dense retrieval was runnable but omitted because every analyzed
+  query term occurred in at least `index.hybrid.vector_skip_min_df_fraction` of content-bearing
+  documents. This corpus-relative rule is disabled below 100 content-bearing documents.
+
+Both planner skips apply only to multi-leg search. Dense-only search and the direct RAG retrieval
+paths remain recall-first and always run a usable dense leg. The trace reports the dense stage as
+`skipped` with the exact reason; neither reason masquerades as an embedding failure.
 
 ### Cross-encoder skip reason codes (`CrossEncoderSkipReason`, Head-owned)
 
@@ -120,10 +130,14 @@ Payload shape:
 
 ## Reason-code governance
 
-Reason codes are validated by the CI checks `scripts/ci/check-readiness-reason-codes.mjs` (lifecycle / readiness reason codes) and `scripts/ci/check-search-degradation-reason-codes.mjs` (search-degradation reason codes), which cross-check the Java enums (`LifecycleReasonCode.java`; `SearchReasonCode.java` and `CrossEncoderSkipReason.java`) against their FE consumers. `check-search-degradation-reason-codes.mjs` iterates the `vocabularies` list in `governance/search-degradation-reason-codes.v1.json`, one producer enum ↔ one FE wording table per entry.
+Lifecycle / readiness reason codes are validated by the CI check `scripts/ci/check-readiness-reason-codes.mjs`, which cross-checks `LifecycleReasonCode.java` against its FE consumer (`readinessNotice.ts`).
+
+The **search-degradation** vocabularies (`SearchReasonCode.java`, `CrossEncoderSkipReason.java`) have no such offline check: the `search-degradation-reason-codes` register and its script were retired in tempdoc 930 because they ran in no workflow. The surviving authority is the colocated FE unit test `searchTraceExplain.test.ts`, which pins `DEGRADATION_REASON_WORDING` and `CROSS_ENCODER_SKIP_WORDING` against declared code lists in both directions — nothing declared goes unworded (so a degraded search-explain line never shows a raw `(CODE)`), and no worded key is dead. Honest limit: those lists are hand-kept mirrors of the Java enums, because the generated wire schema types the trace's `reason` fields as plain `string`; adding a producer code means updating the mirror in the same change. On the producer side, `CrossEncoderSkipReason.isDrop()` is an exhaustive `switch`, so a new member cannot silently join the worded or the unworded class without a compile error.
 
 `check-readiness-reason-codes.mjs` additionally enforces a **producer direction** (tempdoc 837): every `LifecycleReasonCode` member must be referenced by at least one `modules/**/src/main` Java source outside the enum's own file — by enum name or quoted code string, matched after comment-stripping. A code nothing can emit is a phantom: its wording row is unreachable UI and the vocabulary claims a state the system cannot report. The direction runs with no exemption list; adding a code with no emit site fails the build. Honest limit: a *reference* is not an *emission*, so the check catches the zero-reference class rather than proving every code is reachable.
 
 **Case convention:** Java source uses `UPPER_CASE` IDs; FE/wire equivalents use `lower_snake_case` (`no_embedding_service` ↔ `NO_EMBEDDING_SERVICE`). The mapping is a trivial case-fold. The contract test allowlists in `GrpcSearchServiceReasonCodeContractTest` serve as the compile-time safety net.
 
-**Category design:** `embedding` (5 codes) covers search execution failures from `GrpcSearchService`. `embedding_compat` (8 codes) covers lifecycle states from `EmbeddingCompatibilityController`.
+**Category design:** the search-routing partition has seven codes: five execution failures and two
+planner-owned dense-skip decisions. The embedding-compatibility partition covers lifecycle states
+from `EmbeddingCompatibilityController`, plus an explicit unknown-string fall-through.

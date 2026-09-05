@@ -163,22 +163,11 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   public static final String SYSTEM_MOUNT_TAG = "jf-system-surface";
 
   /**
-   * Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard: a read-only DEVELOPER projection of
-   * the discipline-gate kernel (gate roster · exception ceiling · mutation-strength floors · class-size
-   * debt) served by {@code GET /api/governance/state}. DEEPLINK (off-rail, reached by URL / command
-   * palette) — a dev/operator legibility tool, not a workspace surface. Empty consumes ⟹ PRODUCT
-   * altitude (no altitude-conflict; the state is fetched out-of-band, cf. SystemSelfView / Activity).
-   */
-  public static final SurfaceRef GOVERNANCE_SURFACE_ID = new SurfaceRef("core.governance-surface");
-
-  public static final String GOVERNANCE_MOUNT_TAG = "jf-governance-view";
-
-  /**
    * Tempdoc 583 §D.3b — the API explorer: a read-only DEVELOPER projection of the self-describing
    * route manifest ({@code GET /api/meta/routes}, §D.3a) — the live HTTP surface grouped by cohort
    * with each route's required capability. DEEPLINK (off-rail, reached by URL / command palette) — a
-   * dev/operator legibility tool, sibling of the governance dashboard. Empty consumes ⟹ PRODUCT
-   * altitude (the manifest is fetched out-of-band, cf. GovernanceView).
+   * dev/operator legibility tool. Empty consumes ⟹ PRODUCT altitude (the manifest is fetched
+   * out-of-band, cf. SystemSelfView / Activity).
    */
   public static final SurfaceRef API_EXPLORER_SURFACE_ID =
       new SurfaceRef("core.api-explorer-surface");
@@ -347,9 +336,12 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   /** Slice 449 phase 7c — TABULAR Resource that backs Library's row data. */
   private static final ResourceRef RES_INDEXED_ROOTS = new ResourceRef("core.indexed-roots");
 
-  /** Slice 451 phase 9 — Help's only backend interaction. */
+  /** Slice 451 phase 9 — Help's full diagnostics-bundle interaction. */
   private static final OperationRef OP_EXPORT_DIAGNOSTICS =
       new OperationRef("core.export-diagnostics");
+  /** Tempdoc 899 D5 — Help's bounded, transient bug-report summary interaction. */
+  private static final OperationRef OP_COPY_DIAGNOSTIC_SUMMARY =
+      new OperationRef("core.copy-diagnostic-summary");
 
   /** Slice 452 phase 9 — Brain's set of consumed Operations. */
   private static final OperationRef OP_START_AI_INSTALL = new OperationRef("core.start-ai-install");
@@ -402,7 +394,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
               Placement.DEEPLINK,
               new SurfaceConsumes(
                   /* resources */ Set.of(),
-                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS),
+                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS, OP_COPY_DIAGNOSTIC_SUMMARY),
                   /* prompts */ Set.of(),
                   /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
               HELP_MOUNT_TAG,
@@ -438,23 +430,6 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                   /* prompts */ Set.of(),
                   /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
               PRESENTATION_EDITOR_MOUNT_TAG,
-              Provenance.core("1.0")),
-          // Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard (read-only DEVELOPER projection
-          // of the discipline-gate kernel; GET /api/governance/state). DEEPLINK, empty consumes ⟹
-          // PRODUCT altitude (the state is fetched out-of-band, like SystemSelfView's live authorities).
-          new Surface(
-              GOVERNANCE_SURFACE_ID,
-              Presentation.of(
-                  new I18nKey("registry-surface.governance-surface.label"),
-                  new I18nKey("registry-surface.governance-surface.description")),
-              Audience.DEVELOPER,
-              Placement.DEEPLINK,
-              new SurfaceConsumes(
-                  /* resources */ Set.of(),
-                  /* operations */ Set.of(),
-                  /* prompts */ Set.of(),
-                  /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
-              GOVERNANCE_MOUNT_TAG,
               Provenance.core("1.0")),
           // Tempdoc 583 §D.3b — the API explorer (read-only route-manifest projection). DEEPLINK
           // dev/operator tool; empty consumes ⟹ PRODUCT altitude (manifest fetched out-of-band).

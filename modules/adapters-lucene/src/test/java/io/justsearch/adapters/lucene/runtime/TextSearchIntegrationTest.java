@@ -23,6 +23,37 @@ import org.junit.jupiter.api.Test;
 class TextSearchIntegrationTest extends RuntimeTestBase {
 
   @Test
+  void retiredEntityBoostCannotReenterTheTextQuery() throws Exception {
+    String legacyKey = "justsearch.search.entity_boost";
+    String previous = System.getProperty(legacyKey);
+    RunningRuntime runtime = null;
+    try {
+      System.setProperty(legacyKey, "9.0");
+      Path base = dataDir();
+      Path cfg =
+          writeConfig(
+              "app:\n  data_dir: "
+                  + base.toString().replace("\\", "\\\\")
+                  + "\nindex:\n  collections:\n    - name: entityretirement\n      roots: ['ignored']\n"
+                  + "  vector:\n    dimension: 4\n");
+      System.setProperty("justsearch.config", cfg.toString());
+      runtime = createRuntimeWithDim(4);
+
+      String rendered = runtime.textQueryOps().buildTextQuery("alice", null).toString();
+      assertTrue(rendered.contains(SchemaFields.CONTENT));
+      assertTrue(rendered.contains(SchemaFields.TITLE));
+      assertTrue(rendered.contains(SchemaFields.AUTHOR));
+      assertFalse(rendered.contains("entity_persons_text"));
+      assertFalse(rendered.contains("entity_organizations_text"));
+      assertFalse(rendered.contains("entity_locations_text"));
+    } finally {
+      if (runtime != null) runtime.close();
+      if (previous != null) System.setProperty(legacyKey, previous);
+      else System.clearProperty(legacyKey);
+    }
+  }
+
+  @Test
   void searchTextReturnsResults() throws Exception {
     Path base = dataDir();
     String yaml =

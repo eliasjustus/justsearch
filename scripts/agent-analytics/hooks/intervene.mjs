@@ -1,13 +1,23 @@
 #!/usr/bin/env node
 
 /**
- * Synchronous PreToolUse intervention hook (matcher: "Read", "Edit").
+ * PreToolUse intervention hook (matcher: "Read", "Edit") + a PostToolUse advisory
+ * (matcher: "Edit|Write", scoped to `docs/tempdocs/**` — see governance/agent-hooks.v1.json).
+ * Same shape as build-counter.mjs: one script, two manifest bindings, branching on
+ * `input.hook_event_name`.
  *
- * Three behaviors:
+ * PreToolUse behaviors (synchronous, can block):
  * 1. Blocks a file's UNBOUNDED re-reads once they pass HOT_FILE_CAP this session.
  * 2. Caps an agent-supplied offset/limit whose slice would still blow the Read tool's
  *    own ~25k-token ceiling (tempdoc 727 F-7c).
  * 3. Tracks per-session read and edit counts for compact-save.mjs (no warnings).
+ *
+ * PostToolUse behavior (advisory only, tempdoc 930 §18.1 row 8 / §19.3 F4):
+ * 4. After an Edit/Write to a `docs/tempdocs/NNN-*` file, if that tempdoc number now exceeds
+ *    the size cap (`scripts/ci/check-tempdoc-size.mjs`), surfaces the same three-remedy
+ *    message at write time instead of leaving it for CI to catch at merge time. Never blocks —
+ *    PostToolUse can't undo the write anyway, and CI's `check-tempdoc-size.mjs` is the actual
+ *    gate; this is purely earlier feedback.
  *
  * REMOVED 2026-08-18: the blanket "auto-limit any >8KB file to 200 lines" injection.
  * It was tuned for a much smaller context budget than the sessions that now run here
@@ -27,7 +37,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { atomicWriteFileSync, readStdin, runHook, telemetryDir as TELEMETRY_DIR } from '../lib/hook-base.mjs';
+import { atomicWriteFileSync, readStdin, runHook, telemetryDir as TELEMETRY_DIR, repoRoot as REPO_ROOT } from '../lib/hook-base.mjs';
+import { CAP_LINES, tempdocSize, remedyMessage } from '../../ci/check-tempdoc-size.mjs';
 
 // Below this size a file is too small for any slice of it to approach the Read
 // tool's token ceiling, so the F-7c explicit-limit cap skips it outright.
@@ -44,6 +55,36 @@ function normalizePath(p) {
 /** Block an unbounded read once it has been re-read `cap` times this session. */
 export function shouldBlockHotFile(unboundedCount, isUnbounded, cap = HOT_FILE_CAP) {
   return !!isUnbounded && unboundedCount >= cap;
+}
+
+const TEMPDOC_NUMBER_RE = /(?:^|\/)docs\/tempdocs\/(\d+)-/;
+
+/** The tempdoc NUMBER a path belongs to (its main file or a `NNN-*` sidecar), or null. */
+export function tempdocNumberFromPath(filePath) {
+  if (!filePath) return null;
+  const m = TEMPDOC_NUMBER_RE.exec(normalizePath(filePath));
+  return m ? m[1] : null;
+}
+
+/**
+ * PostToolUse advisory: after an Edit/Write under `docs/tempdocs/`, has that tempdoc number
+ * crossed the size cap? Returns the hint string to surface, or null (under cap / not a
+ * tempdoc path / repo lookup failure — fail-open, this is advisory-only).
+ */
+export function tempdocSizeHint(repoRoot, filePath) {
+  const number = tempdocNumberFromPath(filePath);
+  if (!number) return null;
+  let size;
+  try {
+    size = tempdocSize(repoRoot, number);
+  } catch {
+    return null;
+  }
+  if (size.total <= CAP_LINES) return null;
+  return (
+    `Write-time size-cap advisory (this is not a block — check-tempdoc-size.mjs is the CI gate):\n` +
+    remedyMessage(repoRoot, number, size, CAP_LINES)
+  );
 }
 
 // Tempdoc 727 F-7c: chars-per-token estimate, calibrated live against a real dense tempdoc
@@ -217,20 +258,6 @@ function pruneStaleCountFiles() {
   }
 }
 
-// Tempdoc 727 F-7a: reserved key for the basename→[full paths] index (below), stored
-// alongside the per-path counts in the same read-counts-<sessionId>.json file rather than a
-// second cache file — one source of truth for "what has this session read." Prefixed with an
-// underscore so it can't collide with a normalized file path (all real paths contain `/`).
-// Review Finding D: living in the SAME cache file means compact-save.mjs's read-counts reset
-// wipes this index too on every compaction (deliberate for its original hot-file-cap purpose)
-// — cross-root recognition in edit-reread-hint.mjs only covers reads since the last compaction.
-const BASENAME_INDEX_KEY = '_byBasename';
-
-function basenameOf(normPath) {
-  const idx = normPath.lastIndexOf('/');
-  return idx === -1 ? normPath : normPath.slice(idx + 1);
-}
-
 function trackRead(sessionId, filePath, isUnbounded) {
   if (!sessionId || !filePath) return { total: 0, unbounded: 0 };
   const counts = loadReadCounts(sessionId);
@@ -246,36 +273,12 @@ function trackRead(sessionId, filePath, isUnbounded) {
   counts[norm].total += 1;
   if (isUnbounded) counts[norm].unbounded += 1;
 
-  // Tempdoc 727 F-7a: index this read by basename too, so a later Edit-before-fresh-Read
-  // failure on a DIFFERENT full path with the same basename (the worktree-copy vs.
-  // main-checkout-copy case) can be recognized as "you read this file, just under a
-  // different root" rather than staying silent or restating the platform's own generic error.
-  const byBasename = counts[BASENAME_INDEX_KEY] ?? (counts[BASENAME_INDEX_KEY] = {});
-  const base = basenameOf(norm);
-  const paths = byBasename[base] ?? (byBasename[base] = []);
-  if (!paths.includes(norm)) paths.push(norm);
-
   saveReadCounts(sessionId, counts);
 
   // Prune stale cache files on first read of a new session
   if (isFirst) pruneStaleCountFiles();
 
   return counts[norm];
-}
-
-/**
- * Tempdoc 727 F-7a: full normalized paths read this session sharing `filePath`'s basename,
- * EXCLUDING `filePath` itself — used by edit-reread-hint.mjs to recognize a cross-root
- * re-read miss. Returns `[]` if nothing else with this basename was read (including when
- * `filePath` was never read at all, or is the only path read under this basename).
- */
-export function getOtherPathsWithSameBasename(sessionId, filePath) {
-  if (!sessionId || !filePath) return [];
-  const counts = loadReadCounts(sessionId);
-  const norm = normalizePath(filePath);
-  const base = basenameOf(norm);
-  const paths = counts[BASENAME_INDEX_KEY]?.[base] ?? [];
-  return paths.filter(p => p !== norm);
 }
 
 function trackEdit(sessionId, filePath) {
@@ -298,7 +301,23 @@ async function main() {
     const toolInput = input.tool_input;
     const sessionId = input.session_id;
 
-    // --- Edit handling (track only, no warning) ---
+    // --- PostToolUse: tempdoc size-cap advisory (Edit|Write, docs/tempdocs/** only — see
+    // the manifest's `if` predicate). Checked FIRST and returns unconditionally: PostToolUse
+    // calls also carry tool_name 'Edit', and the PreToolUse-only tracking branch below must
+    // not double-count them.
+    if (input.hook_event_name === 'PostToolUse') {
+      if (input.tool_name === 'Edit' || input.tool_name === 'Write') {
+        const hint = tempdocSizeHint(REPO_ROOT, toolInput?.file_path);
+        if (hint) {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: hint },
+          }));
+        }
+      }
+      return;
+    }
+
+    // --- Edit handling (PreToolUse; track only, no warning) ---
     if (input.tool_name === 'Edit') {
       trackEdit(sessionId, toolInput?.file_path);
       return;

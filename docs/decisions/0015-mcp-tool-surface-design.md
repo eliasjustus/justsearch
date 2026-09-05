@@ -6,7 +6,7 @@ description: "Consolidate the MCP surface from 7 capability-oriented tools to a 
 date: 2026-04-01
 probes:
   - adr-0015-six-mcp-tools
-last_reviewed: 2026-09-02
+last_reviewed: 2026-09-04
 ---
 
 # ADR-0015: MCP Tool Surface Design
@@ -123,3 +123,18 @@ this ADR to be re-read before the surface grows again.
   six-tool surface with the compact chat profile; if it falls below the 92% the 4-tool surface
   measured, consolidate.
 - A seventh tool is proposed — the probe fails by construction; decide here, not in the surface.
+
+## Amendment 2026-09-04: the six tools are defined by a typed registry
+
+Re-examined during tempdoc 899 publication after `adr-0015-six-mcp-tools` correctly failed: the
+surface no longer contained the inline `tool("justsearch_…")` calls that the probe counted. The
+load-bearing product premise is still true. `McpToolSurface.PRODUCTION_TOOL_DEFINITIONS`
+(`modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:373`) is now the canonical,
+position-ordered registry and contains exactly six `ToolDefinition` entries at `:375-414`.
+`PRODUCTION_TOOL_NAMES` derives the dispatch allowlist from that same registry at `:495-496`, so
+the list and dispatch paths no longer maintain separate name sets.
+
+This is a representation change, not a seventh tool or a narrowing of the decision. The probe now
+counts entries in the typed production registry. The six names and their order remain `answer`,
+`search`, `browse`, `ingest`, `status`, and `runtime_manifest`; any seventh registry entry still
+fails the count premise and forces another decision review.

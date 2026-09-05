@@ -11,6 +11,7 @@ import io.justsearch.ipc.EnrichmentCoverage;
 import io.justsearch.ipc.GpuDiagnostics;
 import io.justsearch.ipc.HealthCheckResponse;
 import io.justsearch.ipc.OrtCudaProbeResult;
+import io.justsearch.ipc.SearchConfig;
 import io.justsearch.ipc.StatusResponse;
 import io.justsearch.ipc.VisualExtractionStatus;
 import java.util.Map;
@@ -18,6 +19,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 final class WorkerStatusMapperTest {
+
+  @Test
+  void retiredEntityBoostCannotLeakFromAnOlderWorker() {
+    StatusResponse status =
+        StatusResponse.newBuilder()
+            .setCore(CoreStatus.newBuilder().build())
+            .setSearchConfig(SearchConfig.newBuilder().setEntityBoost(2.0).build())
+            .build();
+
+    WorkerOperationalView out = WorkerStatusMapper.toUiStatusMap(status, null);
+
+    assertEquals(0.0, out.searchConfig().entityBoost(), 0.0);
+  }
 
   @Test
   void toUiStatusMapIncludesReadinessFieldsWhenHealthProvided() {

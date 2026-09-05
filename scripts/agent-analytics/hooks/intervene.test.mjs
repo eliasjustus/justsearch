@@ -10,8 +10,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shouldBlockHotFile, shouldCapExplicitLimit, getOtherPathsWithSameBasename } from './intervene.mjs';
-import { telemetryDir } from '../lib/hook-base.mjs';
+import {
+  shouldBlockHotFile,
+  shouldCapExplicitLimit,
+  tempdocNumberFromPath,
+  tempdocSizeHint,
+} from './intervene.mjs';
+import { CAP_LINES } from '../../ci/check-tempdoc-size.mjs';
 
 let passed = 0;
 const failures = [];
@@ -99,43 +104,38 @@ try {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
-// --- getOtherPathsWithSameBasename (tempdoc 727 F-7a): reads the basename index a real
-// trackRead() call would have written; tests the reader's contract against a synthetic cache
-// file rather than exercising the private writer directly.
-{
-  const sessionId = `intervene-test-${process.pid}-${Date.now()}`;
-  const cacheFile = path.join(telemetryDir, `read-counts-${sessionId}.json`);
-  // telemetryDir is real per-session hook state, not an injectable path — don't leave an
-  // empty dir behind for a fresh checkout/worktree that never had one.
-  const telemetryDirPreexisted = fs.existsSync(telemetryDir);
-  fs.mkdirSync(telemetryDir, { recursive: true });
-  try {
-    const synthetic = {
-      'f:/repo/tempdoc.md': { total: 1, unbounded: 1 },
-      'f:/repo/.claude/worktrees/x/tempdoc.md': { total: 1, unbounded: 1 },
-      _byBasename: {
-        'tempdoc.md': ['f:/repo/tempdoc.md', 'f:/repo/.claude/worktrees/x/tempdoc.md'],
-      },
-    };
-    fs.writeFileSync(cacheFile, JSON.stringify(synthetic));
+// --- tempdocNumberFromPath (tempdoc 930 §18.1 row 8 / §19.3 F4) ---
+run('main tempdoc file resolves its number', () =>
+  assert.equal(tempdocNumberFromPath('docs/tempdocs/930-replace-bounded-areas-with-maintained-oss.md'), '930'));
+run('a sidecar file resolves the owning number', () =>
+  assert.equal(tempdocNumberFromPath('docs/tempdocs/930-evidence/verification.md'), '930'));
+run('a backslash (Windows) path resolves the number', () =>
+  assert.equal(tempdocNumberFromPath('docs\\tempdocs\\930-evidence\\verification.md'), '930'));
+run('a non-tempdoc path resolves to null', () => assert.equal(tempdocNumberFromPath('docs/reference/foo.md'), null));
+run('no path resolves to null', () => assert.equal(tempdocNumberFromPath(undefined), null));
 
-    run('cross-root basename match found', () => {
-      const others = getOtherPathsWithSameBasename(sessionId, 'f:/repo/.claude/worktrees/x/tempdoc.md');
-      assert.deepEqual(others, ['f:/repo/tempdoc.md']);
+// --- tempdocSizeHint: the write-time advisory, using a real fixture repo tree ---
+{
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'intervene-tempdoc-'));
+  try {
+    fs.mkdirSync(path.join(fixtureRoot, 'docs', 'tempdocs'), { recursive: true });
+    const under = Array.from({ length: 10 }, (_, i) => `line ${i}`).join('\n') + '\n';
+    const over = Array.from({ length: CAP_LINES + 20 }, (_, i) => `line ${i}`).join('\n') + '\n';
+    fs.writeFileSync(path.join(fixtureRoot, 'docs', 'tempdocs', '400-under.md'), under);
+    fs.writeFileSync(path.join(fixtureRoot, 'docs', 'tempdocs', '500-over.md'), over);
+
+    run('under-cap edit → no hint (null)', () => {
+      assert.equal(tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/tempdocs/400-under.md')), null);
     });
-    run('no other path → empty array, not null', () => {
-      const others = getOtherPathsWithSameBasename(sessionId, 'f:/repo/only-one.md');
-      assert.deepEqual(others, []);
+    run('over-cap edit → a hint naming the three remedies, not "summarise"', () => {
+      const hint = tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/tempdocs/500-over.md'));
+      assert.ok(hint && /canonical doc/.test(hint) && /500-evidence\//.test(hint) && !/summarise/i.test(hint));
     });
-    run('unknown session → empty array', () => {
-      const others = getOtherPathsWithSameBasename('no-such-session', 'f:/repo/tempdoc.md');
-      assert.deepEqual(others, []);
+    run('a non-tempdoc path → no hint (null)', () => {
+      assert.equal(tempdocSizeHint(fixtureRoot, path.join(fixtureRoot, 'docs/reference/foo.md')), null);
     });
   } finally {
-    fs.rmSync(cacheFile, { force: true });
-    if (!telemetryDirPreexisted) {
-      try { fs.rmdirSync(telemetryDir); } catch { /* not empty — another writer landed there first, leave it */ }
-    }
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 }
 

@@ -16,6 +16,10 @@ def _write(path: Path, records: list[dict]) -> None:
             f.write(json.dumps(r) + "\n")
 
 
+def _envelope(record: dict) -> dict:
+    return {"schemaVersion": 1, "record": record}
+
+
 def _seed(data_dir: Path) -> None:
     feedback = data_dir / "feedback"
     _write(
@@ -73,6 +77,100 @@ def test_read_labeled_examples_joins_features(tmp_path: Path) -> None:
     cited = next(e for e in examples if e["docId"] == "doc-C")
     assert cited["contributor"] == "AGENT_CITATION"
     assert cited["features"]["dense"] == 0.8
+
+
+def test_versioned_uid_rows_and_legacy_path_rows_both_join(tmp_path: Path) -> None:
+    feedback = tmp_path / "feedback"
+    _write(
+        feedback / "result-dispositions.ndjson",
+        [
+            _envelope(
+                {
+                    "interactionId": "new",
+                    "docId": "stable-uid",
+                    "kind": "OPENED",
+                    "contributor": "SEARCH_INTERACTION",
+                    "occurredAtMs": 2,
+                }
+            ),
+            _envelope(
+                {
+                    "interactionId": "new",
+                    "docId": "stable-uid",
+                    "kind": "SHOWN",
+                    "contributor": "AGENT_CITATION",
+                    "occurredAtMs": 3,
+                }
+            ),
+            _envelope(
+                {
+                    "interactionId": "new",
+                    "docId": "stable-uid",
+                    "kind": "DWELLED",
+                    "contributor": "SEARCH_INTERACTION",
+                    "occurredAtMs": 4,
+                }
+            ),
+            {
+                "interactionId": "legacy",
+                "docId": "C:/old/path.md",
+                "kind": "CITED",
+                "contributor": "AGENT_CITATION",
+                "occurredAtMs": 1,
+            },
+        ],
+    )
+    _write(
+        feedback / "feature-snapshots.ndjson",
+        [
+            _envelope(
+                {
+                    "interactionId": "new",
+                    "query": "q",
+                    "occurredAtMs": 1,
+                    "hits": [
+                        {
+                            "docId": "stable-uid",
+                            "sourceDocId": "C:/new/path.md",
+                            "rank": 1,
+                            "sparse": 0.5,
+                            "dense": 0.4,
+                            "splade": 0.3,
+                            "fused": 0.6,
+                            "parentTokenCount": 10,
+                        }
+                    ],
+                }
+            ),
+            {
+                "interactionId": "legacy",
+                "query": "q",
+                "occurredAtMs": 1,
+                "hits": [
+                    {
+                        "docId": "C:/old/path.md",
+                        "rank": 1,
+                        "sparse": 0.2,
+                        "dense": 0.1,
+                        "splade": 0.0,
+                        "fused": 0.2,
+                        "parentTokenCount": None,
+                    }
+                ],
+            },
+        ],
+    )
+
+    examples = feedback_reader.read_labeled_examples(tmp_path)
+
+    assert {example["docId"] for example in examples} == {
+        "stable-uid",
+        "C:/old/path.md",
+    }
+    assert len(examples) == 2
+    current = next(example for example in examples if example["docId"] == "stable-uid")
+    assert current["kind"] == "DWELLED"
+    assert current["polarity"] == "positive"
 
 
 def test_unjoinable_disposition_dropped(tmp_path: Path) -> None:

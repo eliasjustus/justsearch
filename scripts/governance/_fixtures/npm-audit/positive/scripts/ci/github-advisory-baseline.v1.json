@@ -1,0 +1,10 @@
+{
+  "schema": "github-advisory-baseline.v1",
+  "targets": {
+    "root": { "advisories": [{ "ghsa_id": "GHSA-35JH-R3H4-6JHM", "severity": "high" }] },
+    "ui-web": { "advisories": [] },
+    "shell": { "advisories": [] },
+    "runtime-client": { "advisories": [] },
+    "wire-contract": { "advisories": [] }
+  }
+}

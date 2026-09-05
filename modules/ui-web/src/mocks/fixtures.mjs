@@ -86,7 +86,7 @@ export const DEFAULT_STATUS = {
     searchConfig: {
       chunkAwareEnabled: true, ccWeightSparse: 0.4, ccWeightDense: 0.4, ccWeightSplade: 0.2,
       branchCcWeightWhole: 0.6, branchCcWeightChunk: 0.4, branchChunkMinWeightMultiplier: 0.1,
-      titleBoost: 1.5, entityBoost: 1.2, queryClassificationEnabled: true,
+      titleBoost: 1.5, entityBoost: 0.0, queryClassificationEnabled: true,
     },
   },
 

@@ -118,18 +118,16 @@ def shared_models_dir() -> Path | None:
 _JSEVAL_TMP: Path = REPO_ROOT / "scripts" / "jseval" / "tmp"
 
 # Tempdoc 716: the canonical jseval-owned data root. Every durable artifact
-# jseval itself writes (eval-results/ runs, cohort_baselines/ calibration,
-# non_determinism_envelopes/ legacy sidecars) lives under this one root, so a
-# defaults-only `jseval run` composes with a defaults-only gate/calibrate
-# reader. Distinct from DEFAULT_BACKEND_DATA_DIR below, which the Worker
+# jseval itself writes (eval-results/ runs, the manifest index, the history DB)
+# lives under this one root, so a defaults-only `jseval run` composes with a
+# defaults-only gate reader. Distinct from DEFAULT_BACKEND_DATA_DIR below, which the Worker
 # process owns and mutates (index/, watched_roots.json, logs/, telemetry/)
 # and which `--clean` may wipe wholesale.
 DEFAULT_JSEVAL_DATA_DIR: Path = _JSEVAL_TMP
 
 # The eval-mode backend's JUSTSEARCH_DATA_DIR default (mirrors
 # backend.start_backend's `<repo>/tmp/headless-eval-data` fallback). Named so
-# the 716 migration fallback (pre-716 calibration state lived inside this
-# dir) and cmd_calibrate's backend-target default share one definition.
+# every consumer that needs the Worker-owned data dir shares one definition.
 DEFAULT_BACKEND_DATA_DIR: Path = REPO_ROOT / "tmp" / "headless-eval-data"
 
 DEFAULT_EVAL_RESULTS: Path = DEFAULT_JSEVAL_DATA_DIR / "eval-results"

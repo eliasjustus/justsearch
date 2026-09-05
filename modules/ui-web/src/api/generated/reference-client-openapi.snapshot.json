@@ -13,6 +13,9 @@
       "knowledge-search-response": {
         "$ref": "/api/schemas/knowledge-search-response.v1.json"
       },
+      "lifecycle-snapshot": {
+        "$ref": "/api/schemas/lifecycle-snapshot.v1.json"
+      },
       "operation-history-entry": {
         "$ref": "/api/schemas/operation-history-entry.v1.json"
       },
@@ -21,6 +24,15 @@
       },
       "runtime-context": {
         "$ref": "/api/schemas/runtime-context.v1.json"
+      },
+      "runtime-live-response": {
+        "$ref": "/api/schemas/runtime-live-response.v1.json"
+      },
+      "runtime-manifest-public": {
+        "$ref": "/api/schemas/runtime-manifest-public.v1.json"
+      },
+      "runtime-ready-response": {
+        "$ref": "/api/schemas/runtime-ready-response.v1.json"
       }
     }
   },
@@ -33,8 +45,16 @@
   "paths": {
     "/.well-known/justsearch/manifest.json": {
       "get": {
+        "operationId": "getWellKnownRuntimeManifest",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
@@ -42,6 +62,7 @@
         "tags": [
           "runtime"
         ],
+        "x-justsearch-stability": "public-contract",
         "x-owning-module": "ResourceApiModule"
       }
     },
@@ -437,7 +458,8 @@
         "summary": "GET /api/ai/runtime/status",
         "tags": [
           "ai-runtime"
-        ]
+        ],
+        "x-justsearch-stability": "reference-client"
       }
     },
     "/api/authorizations/approve": {
@@ -1835,19 +1857,6 @@
         "x-owning-module": "ResourceApiModule"
       }
     },
-    "/api/governance/state": {
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Successful response."
-          }
-        },
-        "summary": "GET /api/governance/state",
-        "tags": [
-          "governance"
-        ]
-      }
-    },
     "/api/gpu/capabilities": {
       "get": {
         "responses": {
@@ -1863,15 +1872,24 @@
     },
     "/api/health": {
       "get": {
+        "operationId": "getLifecycleHealth",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
         "summary": "GET /api/health",
         "tags": [
           "observability"
-        ]
+        ],
+        "x-justsearch-stability": "public-contract"
       }
     },
     "/api/health/events/stream": {
@@ -1905,7 +1923,8 @@
         "summary": "GET /api/indexing-jobs/failed",
         "tags": [
           "resource"
-        ]
+        ],
+        "x-justsearch-stability": "reference-client"
       }
     },
     "/api/indexing-jobs/failed/by-prefix": {
@@ -1925,7 +1944,8 @@
         "summary": "GET /api/indexing-jobs/failed/by-prefix",
         "tags": [
           "resource"
-        ]
+        ],
+        "x-justsearch-stability": "reference-client"
       }
     },
     "/api/indexing-jobs/stream": {
@@ -2411,7 +2431,8 @@
         "summary": "GET /api/knowledge/search",
         "tags": [
           "knowledge"
-        ]
+        ],
+        "x-justsearch-stability": "reference-client"
       },
       "post": {
         "responses": {
@@ -2430,6 +2451,7 @@
         "tags": [
           "knowledge"
         ],
+        "x-justsearch-stability": "reference-client",
         "x-required-capabilities": [
           "WORKER"
         ]
@@ -2916,6 +2938,7 @@
         "tags": [
           "resource"
         ],
+        "x-justsearch-stability": "reference-client",
         "x-owning-module": "ResourceApiModule"
       }
     },
@@ -3058,7 +3081,8 @@
         "summary": "GET /api/policy/effective",
         "tags": [
           "config"
-        ]
+        ],
+        "x-justsearch-stability": "reference-client"
       }
     },
     "/api/policy/user/allowlist/pack-manifest/add": {
@@ -3201,6 +3225,7 @@
         "tags": [
           "registry"
         ],
+        "x-justsearch-stability": "reference-client",
         "x-owning-module": "ResourceApiModule"
       }
     },
@@ -3278,6 +3303,7 @@
         "tags": [
           "runtime"
         ],
+        "x-justsearch-stability": "reference-client",
         "x-owning-module": "ResourceApiModule"
       }
     },
@@ -3335,8 +3361,16 @@
     },
     "/api/runtime/live": {
       "get": {
+        "operationId": "getRuntimeLiveness",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-live-response"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
@@ -3344,6 +3378,7 @@
         "tags": [
           "runtime"
         ],
+        "x-justsearch-stability": "public-contract",
         "x-owning-module": "ResourceApiModule"
       },
       "head": {
@@ -3361,8 +3396,16 @@
     },
     "/api/runtime/manifest": {
       "get": {
+        "operationId": "getRuntimeManifest",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-manifest-public"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
@@ -3370,6 +3413,7 @@
         "tags": [
           "runtime"
         ],
+        "x-justsearch-stability": "public-contract",
         "x-owning-module": "ResourceApiModule"
       }
     },
@@ -3389,8 +3433,16 @@
     },
     "/api/runtime/ready": {
       "get": {
+        "operationId": "getRuntimeReadiness",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/runtime-ready-response"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
@@ -3398,6 +3450,7 @@
         "tags": [
           "runtime"
         ],
+        "x-justsearch-stability": "public-contract",
         "x-owning-module": "ResourceApiModule"
       },
       "head": {
@@ -3499,15 +3552,24 @@
     },
     "/api/status": {
       "get": {
+        "operationId": "getLifecycleStatus",
         "responses": {
           "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/lifecycle-snapshot"
+                }
+              }
+            },
             "description": "Successful response."
           }
         },
         "summary": "GET /api/status",
         "tags": [
           "observability"
-        ]
+        ],
+        "x-justsearch-stability": "public-contract"
       }
     },
     "/api/telemetry/health": {
@@ -3802,8 +3864,8 @@
     }
   },
   "x-justsearch-route-source": {
-    "routeCount": 243,
-    "routeDigest": "sha256:9a1ee92e4593d204692792f458554f87ad4165ce51634e76059a1981af0047e6"
+    "routeCount": 242,
+    "routeDigest": "sha256:20af51cd50396b09a92152e45daf256c39d1b891968fbbb1847c074802592043"
   },
   "x-justsearch-surface": {
     "classification": "reference-client-structural-inventory",

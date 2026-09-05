@@ -85,7 +85,9 @@ final class WorkerStatusMapper {
                         toDoubleArray(core.getRecentDocsPerSecList()),
                         core.getPendingBytes(),
                         core.getPendingUnknownSizeJobs(),
-                        core.getSearchableDocCount()))
+                        core.getSearchableDocCount(),
+                        core.getIndexMaxDoc(),
+                        core.getIndexNumDocs()))
                 .failure(new FailureTrackingView(
                         failure.getFailedCount(),
                         failure.getLastFailedPath(),
@@ -148,7 +150,11 @@ final class WorkerStatusMapper {
                                 enrichment.getChunk().getPendingCount(),
                                 enrichment.getChunk().getFailedCount(),
                                 enrichment.getChunk().getCoveragePercent(),
-                                enrichment.getChunk().getVectorsReady()))
+                                enrichment.getChunk().getVectorsReady(),
+                                enrichment.getChunk().getSpladeEnabled(),
+                                enrichment.getChunk().getSpladeCompletedCount(),
+                                enrichment.getChunk().getSpladePendingCount(),
+                                enrichment.getChunk().getSpladeCoveragePercent()))
                         .embeddingDocCount(enrichment.getEmbedding().getDocCount())
                         .embeddingCompletedCount(enrichment.getEmbedding().getCompletedCount())
                         .embeddingPendingCount(enrichment.getEmbedding().getPendingCount())
@@ -306,7 +312,8 @@ final class WorkerStatusMapper {
                 sc.getBranchCcWeightChunk(),
                 sc.getBranchChunkMinWeightMultiplier(),
                 sc.getTitleBoost(),
-                sc.getEntityBoost(),
+                // Compatibility tombstone: do not expose a legacy Worker's nonzero boost as live.
+                0.0,
                 sc.getQueryClassificationEnabled());
     }
 

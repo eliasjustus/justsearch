@@ -47,4 +47,29 @@
 
   <!-- Logging hygiene: all output should go through SLF4J -->
   <rule ref="category/java/bestpractices.xml/SystemPrintln"/>
+
+  <!--
+    Tempdoc 930 chunk F — the Java half of the retired `todo-fixme` kernel gate. A parked marker
+    is a deferred fix nobody scheduled (CLAUDE.md `log-pre-existing-issues`): fix it now or route it.
+    PMD parses, so unlike the gate's raw-text scanner this cannot score the letters in an
+    identifier or a URL. The TypeScript half is ESLint `no-warning-comments` in
+    modules/ui-web/eslint.config.js.
+
+    No `message` override here: CommentContentRule reports with its own per-violation message
+    ("Line matches forbidden content regex (...)"), so a rule-level message attribute is silently
+    ignored. Verified by planting `// TODO ...` in modules/app-util and running
+    `./gradlew.bat :modules:app-util:pmdMain -PskipPmd=false` (2 violations, BUILD FAILED).
+
+    HONEST SCOPE: PMD is skipped locally unless `-PskipPmd=false`, and no workflow currently puts
+    `pmdMain` in its task graph (the unit-test lanes run `:modules:<m>:test`, not `check`), so this
+    rule bites only when PMD is deliberately run. Java main sources carry zero markers today, so
+    that is a latent gap rather than an open hole. Closing it means fixing the ~78 pre-existing
+    violations of the OTHER rules above (mostly UnnecessaryFullyQualifiedName) and then wiring
+    `pmdMain` into CI; `./gradlew.bat pmdMain -PskipPmd=false` reproduces them.
+  -->
+  <rule ref="category/java/documentation.xml/CommentContent">
+    <properties>
+      <property name="forbiddenRegex" value="(?i)\b(todo|fixme|xxx)\b"/>
+    </properties>
+  </rule>
 </ruleset>

@@ -14,6 +14,12 @@ related:
 > settings, branch protection, and `git log` before treating any detail as
 > current truth.
 
+> FORWARD SUPERSESSION (2026-09-04): tempdoc 921 and ADR-0045's dated amendment
+> preserve `PR_TITLE` / `PR_BODY` but require the complete PR body to remain
+> commit-safe. Mutable verification and review state now live in one managed PR
+> comment. The whole-rich-PR-body and exact-byte-projection assumptions below are
+> historical, not current publication instructions.
+
 # 653 - Public main as projected history surface and merge policy
 
 ## Idea

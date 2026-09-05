@@ -20,6 +20,7 @@ import io.justsearch.app.services.registry.operations.handlers.BulkReindexHandle
 import io.justsearch.app.services.registry.operations.handlers.CancelAiInstallHandler;
 import io.justsearch.app.services.registry.operations.handlers.CancelIndexingJobHandler;
 import io.justsearch.app.services.registry.operations.handlers.ClearFailedJobsHandler;
+import io.justsearch.app.services.registry.operations.handlers.CopyDiagnosticSummaryHandler;
 import io.justsearch.app.services.registry.operations.handlers.CreateUserPolicyHandler;
 import io.justsearch.app.services.registry.operations.handlers.DeactivateRuntimeVariantHandler;
 import io.justsearch.app.services.registry.operations.handlers.ExportDiagnosticsHandler;
@@ -39,6 +40,7 @@ import io.justsearch.app.services.registry.operations.handlers.ResolvePathHashHa
 import io.justsearch.app.services.registry.operations.handlers.RestartWorkerHandler;
 import io.justsearch.app.services.registry.operations.handlers.RetryIndexingJobHandler;
 import io.justsearch.app.services.registry.operations.handlers.SetChatEnabledHandler;
+import io.justsearch.app.services.registry.operations.handlers.SettleIndexHandler;
 import io.justsearch.app.services.registry.operations.handlers.StartAiInstallHandler;
 import io.justsearch.app.services.registry.operations.handlers.SwitchInferenceModeHandler;
 import io.justsearch.app.services.registry.operations.handlers.TriggerOfflineProcessingHandler;
@@ -98,6 +100,9 @@ public final class OperationHandlerRegistrations {
         CoreOperationCatalog.INDEX_GC,
         new IndexGcHandler(indexingServiceSupplier, operationLeaseService));
     handlers.register(
+        CoreOperationCatalog.SETTLE_INDEX,
+        new SettleIndexHandler(indexingServiceSupplier, operationLeaseService));
+    handlers.register(
         CoreOperationCatalog.CANCEL_INDEXING_JOB,
         new CancelIndexingJobHandler(indexingServiceSupplier));
     handlers.register(
@@ -123,6 +128,9 @@ public final class OperationHandlerRegistrations {
     handlers.register(
         CoreOperationCatalog.EXPORT_DIAGNOSTICS,
         new ExportDiagnosticsHandler(diagnosticsServiceSupplier));
+    handlers.register(
+        CoreOperationCatalog.COPY_DIAGNOSTIC_SUMMARY,
+        new CopyDiagnosticSummaryHandler(diagnosticsServiceSupplier));
     handlers.register(
         CoreOperationCatalog.RELOAD_INFERENCE,
         new ReloadInferenceHandler(brainRuntimeServiceSupplier));

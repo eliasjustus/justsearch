@@ -375,7 +375,9 @@ function main() {
   if (reportIds.size === 0) {
     console.error(
       `cost-session: no session reports under ${path.relative(repoRoot, reportsDir)} — ` +
-        '--all will cost 0 sessions. Generate reports first, or check TELEMETRY_DIR/SESSIONS_DIR.',
+        '--all will cost 0 sessions. Their producer (analyze-session.mjs) was deleted in tempdoc ' +
+          '930, so this filter is now historical: pass --session-id, or re-run against a checkout ' +
+          'whose reports dir predates the deletion.',
     );
   }
 

@@ -82,16 +82,16 @@ function buildGuidance(input = {}) {
   } else {
     sections.push(
       '### Subagent-specific risk profile',
-      '- **No hooks fire in your context.** The parent\'s bash-guard, repeat-guard, intervene, build-counter, and ssot/docs/lockfile/ui-shot hints DO NOT protect you.',
-      '- You can run destructive git commands (e.g., `git reset --hard`) in the main worktree without the bash-guard intercepting. Don\'t.',
-      '- You don\'t get auto-Read-limit injection. Be explicit with offset/limit on files >8KB; large files include modules/ui-web/src/shell-v0/views/UnifiedChatView.ts (~5,400 lines), SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs.',
+      '- **No hooks fire in your context.** The parent\'s repeat-guard, intervene, build-counter, and the ssot/docs/lockfile regen pointers DO NOT protect you.',
+      '- Destructive git commands (e.g., `git reset --hard`) in the main worktree are not intercepted for you. Don\'t run them.',
+      '- You don\'t get auto-Read-limit injection. Be explicit with offset/limit on files >8KB; large files include modules/ui-web/src/shell-v0/views/UnifiedChatView.ts (~5,400 lines), SummaryController.java, LuceneIndexRuntime.java, baseline-economics.mjs.',
       '- You don\'t get repeat-guard. If you find yourself reading the same file 3 times, stop and reconsider.',
     );
   }
 
   sections.push(
     '### Out-of-scope findings protocol (tempdoc 872 — there is no inbox)',
-    'If you notice a pre-existing issue outside your task scope: a wrong doc/comment with a verified one-line fix -> fix it in place (ride-along). Anything else -> report it in your final result with `file:line` so the orchestrator routes it (expected-state pin for a red/flaky command on main; a hook or agent-lessons.md for a platform lesson; the owning tempdoc for a defect). Do not investigate further and do not call note-observation.mjs — it no longer writes.',
+    'If you notice a pre-existing issue outside your task scope: a wrong doc/comment with a verified one-line fix -> fix it in place (ride-along). Anything else -> report it in your final result with `file:line` so the orchestrator routes it (a red/flaky command on main is fixed or quarantined, never remembered; a hook or agent-lessons.md for a platform lesson; the owning tempdoc for a defect). Do not investigate further and do not call note-observation.mjs — it no longer writes.',
   );
 
   sections.push(
@@ -102,7 +102,7 @@ function buildGuidance(input = {}) {
     '- Build: `./gradlew.bat build -x test` (compile only) before declaring done.',
     '- Format: `./gradlew.bat spotlessApply` after Java edits.',
     '- Pipeline profiling: `python -m jseval` (NEVER raw `gradlew runHeadless &` + `sleep` loops).',
-    '- Sleep ≥1s in Bash is blocked by the parent\'s bash-guard but not yours — still don\'t use it. Use jseval for backend lifecycle.',
+    '- Don\'t use bare `sleep` to wait on a backend; use a bounded condition-poll, or jseval for backend lifecycle.',
   );
 
   sections.push(

@@ -88,9 +88,9 @@ describe('KeybindingRegistry editable-target guard (Search Thread S2)', () => {
    * Tempdoc 864 review F3 — SHIFT is not a modifier for this guard, and that is the runtime's answer,
    * not an accident: the dispatcher's test is `!parsed.mod && !parsed.ctrl && !parsed.meta &&
    * !parsed.alt`. A `shift+?` binding is therefore still a printable a reader can type, and must be
-   * suppressed in an editable exactly like a bare one. `scripts/ci/check-printable-keybinding-policy.mjs`
-   * classifies Shift the same way — this case is what keeps the gate and the runtime from drifting
-   * apart into two answers.
+   * suppressed in an editable exactly like a bare one. The retired `check-printable-keybinding-policy.mjs`
+   * gate (930 chunk H) classified Shift the same way; this test is now the standing pin for that
+   * agreement between this runtime guard and the registration policy.
    */
   it('864: Shift does not make a printable a chord — shift+? is suppressed while typing', () => {
     registerKeybinding({

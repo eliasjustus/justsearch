@@ -23,6 +23,7 @@ import io.justsearch.indexerworker.fixtures.TestDocumentBuilder;
 import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -431,7 +432,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               /* precomputedEmbedding */ null,
-              new IndexingDocumentOps.SourceFileMetadata(123L, 456L));
+              new IndexingDocumentOps.SourceFileMetadata(123L, 456L),
+              "test-doc-uid");
 
       Map<String, Object> fields = doc.fields();
       assertEquals("SUCCESS_PARTIAL", fields.get(SchemaFields.EXTRACTION_STATUS));
@@ -465,7 +467,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertEquals(
           IngestionReasonCodes.SUCCESS_PARTIAL,
@@ -494,7 +497,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertFalse(doc.fields().containsKey(SchemaFields.EXTRACTION_REASON_CODE));
     }
@@ -527,7 +531,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertEquals(3L, doc.fields().get(SchemaFields.PARSER_WARNINGS_COUNT));
     }
@@ -554,7 +559,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertFalse(doc.fields().containsKey(SchemaFields.PARSER_WARNINGS_COUNT));
     }
@@ -1016,6 +1022,79 @@ class IndexingLoopTest {
               + "bump indexedSinceCommit on a no-op (best-effort delete semantics).");
     }
 
+    @Test
+    @DisplayName(
+        "StaleSourceHandler marks identity deleted only when the source is really gone "
+            + "(tempdoc 931 §C.6 — the DELETED classification also fires on an IOException)")
+    void staleSourceHandlerMarksIdentityOnlyForAVerifiedAbsentSource() throws Exception {
+      java.util.List<String> marked = new java.util.ArrayList<>();
+      io.justsearch.indexerworker.identity.DocumentIdentityStore recorder =
+          new io.justsearch.indexerworker.identity.DocumentIdentityStore() {
+            @Override
+            public void markDeleted(String pathHash, long nowMs) {
+              marked.add(pathHash);
+            }
+
+            @Override
+            public Identity resolve(String pathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Identity importExisting(String pathHash, String docUid, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public int importExisting(
+                java.util.Collection<ImportedIdentity> identities, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public long identityCount() {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean hasImportRecord(String generationId) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void recordImport(ImportRecord record) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RekeyResult rekey(String oldPathHash, String newPathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public java.util.Optional<Identity> lookup(String pathHash) {
+              throw new UnsupportedOperationException();
+            }
+          };
+      io.justsearch.indexerworker.loop.StaleSourceHandler handler =
+          new io.justsearch.indexerworker.loop.StaleSourceHandler(
+              mock(IndexingCoordinator.class), recorder);
+
+      Path stillThere = Files.writeString(Files.createTempFile("js-stale-present", ".txt"), "body");
+      assertEquals(1, handler.deleteMissingSource(stillThere));
+      assertTrue(
+          marked.isEmpty(),
+          "the source is present, so the index delete is not evidence of a deletion");
+
+      Path gone = Files.createTempDirectory("js-stale-gone").resolve("gone.txt");
+      assertEquals(1, handler.deleteMissingSource(gone));
+      assertEquals(
+          java.util.List.of(
+              io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(
+                  io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(gone))),
+          marked);
+    }
+
 
     @Test
     @DisplayName(
@@ -1229,6 +1308,15 @@ class IndexingLoopTest {
       DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
       IndexCountOps indexCountOps = mock(IndexCountOps.class);
       WorkerSignalBus signalBus = mock(WorkerSignalBus.class);
+      DocumentIdentityStore identityStore = mock(DocumentIdentityStore.class);
+      lenient()
+          .when(identityStore.resolve(anyString(), anyLong()))
+          .thenAnswer(
+              invocation -> {
+                String hash = invocation.getArgument(0);
+                long now = invocation.getArgument(1);
+                return new DocumentIdentityStore.Identity(hash, "test-uid-" + hash, now, now);
+              });
       queue.indexingCoordinator = mock(IndexingCoordinator.class);
       return new IndexingLoop(
           queue,
@@ -1248,7 +1336,7 @@ class IndexingLoopTest {
               Duration.ofSeconds(5),
               (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
           null, // W7.2 — default EncoderBindings
-          null); // W7.2 followup — default IndexingLoopOptions
+          new IndexingLoopOptions(false, null, identityStore, null, null, null));
     }
 
     private Object invokeExtractJob(IndexingLoop loop, Path file) throws Exception {
@@ -1303,7 +1391,8 @@ class IndexingLoopTest {
           null,
           artifact,
           System.currentTimeMillis(),
-          envelope);
+          envelope,
+          "00000000-0000-4000-8000-000000000001");
     }
 
     private ContentExtractorProvider providerReturning(String content) {

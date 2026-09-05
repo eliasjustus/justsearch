@@ -6,14 +6,18 @@ the Head persists — it does NOT define a second store (580 §17.3 anti-fork:
 "the agentic-citation harvest and the search-UI interaction both land here, not
 in two stores"). Two on-disk files under ``<dataDir>/feedback/``:
 
-* ``result-dispositions.ndjson`` — one ``ResultDisposition`` per line:
+* ``result-dispositions.ndjson`` — one versioned ``ResultDisposition`` envelope per line:
   ``{interactionId, docId, kind, contributor, occurredAtMs}``. ``contributor`` is
   ``SEARCH_INTERACTION`` (user click/open/dwell), ``AGENT_CITATION`` (the LLM's
   grounding/citation harvest), or ``EXPLICIT_RATING``.
-* ``feature-snapshots.ndjson`` — one ``FeatureSnapshot`` per line:
-  ``{interactionId, query, occurredAtMs, hits:[{docId, rank, sparse, dense,
-  splade, fused, parentTokenCount}]}`` — the per-query ranking features to join
+* ``feature-snapshots.ndjson`` — one versioned ``FeatureSnapshot`` envelope per line:
+  ``{interactionId, query, occurredAtMs, hits:[{docId, sourceDocId, rank,
+  sparse, dense, splade, fused, parentTokenCount}]}`` — the per-query ranking features to join
   a disposition back to "what we ranked" (the §17.4 join).
+
+The Java store writes ``{"schemaVersion":1,"record":{...}}``. Pre-versioning
+unwrapped rows remain readable. In Phase 2, new ``docId`` values are stable
+document UIDs; legacy rows retain path keys and omit ``sourceDocId``.
 
 Encryption caveat (tempdoc 778 store hardening): when Head at-rest encryption is
 ENABLED, these files are sealed line-by-line with the ``JSEv1:`` prefix and the
@@ -38,12 +42,21 @@ SEALED_PREFIX = "JSEv1:"
 _FEEDBACK_DIR = "feedback"
 _DISPOSITIONS_FILE = "result-dispositions.ndjson"
 _SNAPSHOTS_FILE = "feature-snapshots.ndjson"
+_CURRENT_SCHEMA_VERSION = 1
 
 # The graded positive tiers (mirrors ResultDisposition.Kind); REFINED_WITHOUT_OPENING
 # and the derived SHOWN are the negatives. Kept here so a ranking consumer can bucket
 # signals without re-deriving the label polarity.
 POSITIVE_KINDS = frozenset({"OPENED", "DWELLED", "CITED", "ACTED_ON"})
 NEGATIVE_KINDS = frozenset({"SHOWN", "REFINED_WITHOUT_OPENING"})
+_KIND_SCORES = {
+    "SHOWN": 0.0,
+    "REFINED_WITHOUT_OPENING": 0.0,
+    "OPENED": 0.6,
+    "DWELLED": 0.8,
+    "CITED": 1.0,
+    "ACTED_ON": 1.0,
+}
 
 
 class FeedbackReadResult:
@@ -76,9 +89,27 @@ def _read_ndjson(path: Path) -> FeedbackReadResult:
                     sealed += 1
                     continue
                 try:
-                    records.append(json.loads(line))
+                    parsed = json.loads(line)
                 except json.JSONDecodeError:
                     log.debug("Skipping unparseable line %s:%d", path.name, line_no)
+                    continue
+                if not isinstance(parsed, dict):
+                    log.debug("Skipping non-object line %s:%d", path.name, line_no)
+                    continue
+                version = parsed.get("schemaVersion")
+                if version is None:
+                    records.append(parsed)
+                    continue
+                record = parsed.get("record")
+                if version != _CURRENT_SCHEMA_VERSION or not isinstance(record, dict):
+                    log.debug(
+                        "Skipping unsupported feedback envelope %s:%d (version=%r)",
+                        path.name,
+                        line_no,
+                        version,
+                    )
+                    continue
+                records.append(record)
     except OSError as e:
         log.debug("Failed to read feedback file %s: %s", path, e)
     if sealed:
@@ -136,11 +167,12 @@ def read_labeled_examples(data_dir: Path) -> list[dict]:
     """Ranking-ready examples: each explicit disposition joined to its ranked features.
 
     Mirrors ``LabelProjection`` pass 1 (the §17.4 join) read-only: a disposition
-    joins the ``FeatureSnapshot`` sharing its ``interactionId`` on ``docId``. A
-    disposition with no joinable snapshot hit is dropped (it cannot become a
-    featured example) — the same honest limit the Java projection surfaces. This
-    is the labelled feature-vector interface a trainer/eval consumes; it does not
-    write anything.
+    joins the ``FeatureSnapshot`` sharing its ``interactionId`` on ``docId``.
+    Repeated dispositions for one stable document are coalesced, with a positive
+    dominating a negative and the strongest positive grade retained. A disposition
+    with no joinable snapshot hit is dropped (it cannot become a featured example)
+    — the same honest limit the Java projection surfaces. This is the labelled
+    feature-vector interface a trainer/eval consumes; it does not write anything.
     """
     # interactionId -> docId -> features (first-seen wins, mirroring the Java union).
     by_interaction: dict[str, dict[str, dict]] = {}
@@ -154,13 +186,26 @@ def read_labeled_examples(data_dir: Path) -> list[dict]:
             if doc_id is not None:
                 by_doc.setdefault(doc_id, hit)
 
-    examples: list[dict] = []
+    selected: dict[tuple[str, str], tuple[dict, dict]] = {}
     for d in read_dispositions(data_dir).records:
         iid = d.get("interactionId")
         doc_id = d.get("docId")
+        if not isinstance(iid, str) or not isinstance(doc_id, str):
+            continue
         features = by_interaction.get(iid, {}).get(doc_id)
         if features is None:
             continue
+        key = (iid, doc_id)
+        current = selected.get(key)
+        if current is None or _kind_priority(d.get("kind")) > _kind_priority(
+            current[0].get("kind")
+        ):
+            selected[key] = (d, features)
+
+    examples: list[dict] = []
+    for d, features in selected.values():
+        iid = d.get("interactionId")
+        doc_id = d.get("docId")
         kind = d.get("kind")
         examples.append(
             {
@@ -185,6 +230,15 @@ def read_labeled_examples(data_dir: Path) -> list[dict]:
             }
         )
     return examples
+
+
+def _kind_priority(kind: object) -> tuple[int, float]:
+    """Java LabelProjection precedence: positive > negative > unknown, then score."""
+    if kind in POSITIVE_KINDS:
+        return (2, _KIND_SCORES[kind])
+    if kind in NEGATIVE_KINDS:
+        return (1, _KIND_SCORES[kind])
+    return (0, -1.0)
 
 
 def summarize(data_dir: Path) -> dict:

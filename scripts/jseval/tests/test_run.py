@@ -6,8 +6,11 @@ import json
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from jseval.run import (
     METRIC_CONTRACT,
+    _build_index_state_at_query,
     _build_summary,
     _compute_ce_coverage,
     _compute_chunk_completeness,
@@ -16,9 +19,38 @@ from jseval.run import (
     _compute_qrels_summary,
     _compute_score_stats,
     _get_corpus_identity,
+    _settle_index,
     execute_run,
 )
 from jseval.types import AnnProofResult, ComparabilityResult, QueryRecord, ReadinessResult
+
+
+@pytest.fixture(autouse=True)
+def _offline_backend(monkeypatch):
+    """Stub the three helpers in ``execute_run`` that open a socket.
+
+    Nothing in this module runs against a live backend, but ``_MOCK_STACK`` does not
+    cover ``_snapshot_models`` / ``_snapshot_search_config`` (module-private) nor
+    ``manifest.capture_state_snapshots`` (``manifest_mod`` is unpatched). Un-stubbed
+    each one waits out an httpx connect against ``http://localhost:8080`` — eight
+    requests at ~4 s, ~34 s per ``execute_run`` test — for values every test ignores.
+
+    The stubs return exactly what the real helpers return when the backend is absent:
+    ``None`` from both snapshots (the ``except`` arms at ``run.py:98-100`` and
+    ``run.py:161-163``) and a per-endpoint ``{"_error": ...}`` marker from the
+    manifest capture (``manifest.py:157``). Production timeouts are untouched.
+    """
+    from jseval import manifest as manifest_mod
+    from jseval import run as run_mod
+
+    monkeypatch.setattr(run_mod, "_snapshot_models", lambda base_url: None)
+    monkeypatch.setattr(run_mod, "_snapshot_search_config", lambda base_url: None)
+    monkeypatch.setattr(
+        manifest_mod, "capture_state_snapshots",
+        lambda base_url, timeout=5.0: {
+            ep: {"_error": "ConnectError"} for ep in manifest_mod._STATE_ENDPOINTS
+        },
+    )
 
 
 def _setup_mocks(
@@ -931,6 +963,272 @@ class TestBuildSummaryEmbedsCeCoverage:
         assert summary["per_mode"]["hybrid"]["error_count"] == 0
 
 
+# ---------------------------------------------------------------------------
+# tempdoc 931 §E item 10: merge-state snapshot at query-phase start
+# ---------------------------------------------------------------------------
+
+class TestBuildIndexStateAtQuery:
+    def test_full_snapshot_computes_deleted_docs(self):
+        block = _build_index_state_at_query(
+            {
+                "indexMaxDoc": 2851,
+                "indexNumDocs": 222,
+                "chunkSpladeCoveragePercent": 100.0,
+                "spladeCoveragePercent": 99.95,
+                "chunkVectorCoveragePercent": 100.0,
+            },
+            "2026-09-05T00:00:00+00:00",
+        )
+        assert block == {
+            "max_doc": 2851,
+            "num_docs": 222,
+            "deleted_docs": 2629,
+            "chunk_splade_coverage_percent": 100.0,
+            "splade_coverage_percent": 99.95,
+            "chunk_vector_coverage_percent": 100.0,
+            "settled": False,
+            "readiness_passed_at": "2026-09-05T00:00:00+00:00",
+        }
+
+    def test_missing_optional_fields_degrade_to_null(self):
+        # An empty snapshot (skip_readiness, or an older backend that publishes none of
+        # these fields) must not raise -- every field degrades to None, including the
+        # derived deleted_docs (which cannot be computed without both operands).
+        block = _build_index_state_at_query({}, "2026-09-05T00:00:00+00:00")
+        assert block == {
+            "max_doc": None,
+            "num_docs": None,
+            "deleted_docs": None,
+            "chunk_splade_coverage_percent": None,
+            "splade_coverage_percent": None,
+            "chunk_vector_coverage_percent": None,
+            "settled": False,
+            "readiness_passed_at": "2026-09-05T00:00:00+00:00",
+        }
+
+    def test_partial_snapshot_only_max_doc_still_nulls_deleted_docs(self):
+        # deleted_docs requires BOTH operands -- a snapshot with only one of the two
+        # doc-count fields must not silently compute a wrong (e.g. max_doc - 0) delta.
+        block = _build_index_state_at_query(
+            {"indexMaxDoc": 500}, "2026-09-05T00:00:00+00:00",
+        )
+        assert block["max_doc"] == 500
+        assert block["num_docs"] is None
+        assert block["deleted_docs"] is None
+
+
+class TestBuildSummaryEmbedsIndexStateAtQuery:
+    def _mode_results(self):
+        return {
+            "hybrid": {
+                "aggregate_metrics": {}, "ann_proof": AnnProofResult(status="PASS"),
+                "comparability": ComparabilityResult(comparable=True), "run_evidence": {},
+                "pipeline_tracking": {"observed": ["dense", "cross_encoder"]},
+                "latency_stats": {}, "score_stats": {},
+            },
+        }
+
+    def test_present_when_passed(self, tmp_path):
+        from types import SimpleNamespace
+
+        meta = SimpleNamespace(source="golden", name="golden/demo", doc_count=1, query_count=0)
+        block = _build_index_state_at_query(
+            {"indexMaxDoc": 100, "indexNumDocs": 90}, "2026-09-05T00:00:00+00:00",
+        )
+        summary = _build_summary(
+            "golden/demo", ["hybrid"], self._mode_results(), meta, {},
+            base_dir=tmp_path, status_snapshot=_status_snapshot(48, 100.0),
+            index_state_at_query=block,
+        )
+        assert summary["index_state_at_query"] == block
+
+    def test_absent_param_still_emits_null_block(self, tmp_path):
+        # Additive-key contract (like `cadence`): the key is always present, even when the
+        # caller doesn't pass one (existing call sites that predate this feature).
+        from types import SimpleNamespace
+
+        meta = SimpleNamespace(source="golden", name="golden/demo", doc_count=1, query_count=0)
+        summary = _build_summary(
+            "golden/demo", ["hybrid"], self._mode_results(), meta, {},
+            base_dir=tmp_path, status_snapshot=_status_snapshot(48, 100.0),
+        )
+        assert "index_state_at_query" in summary
+        assert summary["index_state_at_query"]["max_doc"] is None
+        assert summary["index_state_at_query"]["readiness_passed_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 931 §E item 10: --settle-index (equal merge state across paired arms)
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    def __init__(self, status_code, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+class _FakeClient:
+    """Stands in for ``httpx.Client`` as a context manager; records the POSTs it saw."""
+
+    def __init__(self, response, calls):
+        self._response = response
+        self._calls = calls
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, path, json=None):
+        self._calls.append((path, json))
+        if isinstance(self._response, Exception):
+            raise self._response
+        return self._response
+
+
+def _patch_settle_client(response, calls):
+    return patch(
+        "jseval.run.httpx.Client",
+        side_effect=lambda *a, **kw: _FakeClient(response, calls),
+    )
+
+
+_SETTLE_202 = {
+    "status": "settle completed",
+    "maxDocBefore": 2851,
+    "numDocsBefore": 222,
+    "maxDocAfter": 222,
+    "numDocsAfter": 222,
+    "segmentsAfter": 3,
+    "elapsedMs": 4200,
+}
+
+
+class TestSettleIndexHelper:
+    def test_accepted_normalizes_the_before_and_after_counts(self):
+        calls = []
+        with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+            block = _settle_index("http://localhost:8080")
+        assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+        assert block == {
+            "max_doc_before": 2851,
+            "num_docs_before": 222,
+            "max_doc_after": 222,
+            "num_docs_after": 222,
+            "segments_after": 3,
+            "elapsed_ms": 4200,
+        }
+
+    def test_404_from_an_older_backend_degrades_to_none(self):
+        calls = []
+        with _patch_settle_client(_FakeResponse(404, None, "Not found"), calls):
+            assert _settle_index("http://localhost:8080") is None
+        assert calls, "the 404 path must still have attempted the call"
+
+    def test_409_refusal_degrades_to_none(self):
+        with _patch_settle_client(
+            _FakeResponse(409, None, "settle rejected by worker"), []
+        ):
+            assert _settle_index("http://localhost:8080") is None
+
+    def test_transport_failure_degrades_to_none(self):
+        with _patch_settle_client(RuntimeError("connection refused"), []):
+            assert _settle_index("http://localhost:8080") is None
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_without_settle_flag_never_calls_the_endpoint(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+        summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert calls == [], "the settle is opt-in; a routine run must not hold the writer"
+    block = summary["index_state_at_query"]
+    assert block["settled"] is False
+    assert "settle" not in block
+    assert mock_readiness.check_search_ready.call_count == 1
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_with_settle_flag_records_the_block_and_rechecks_readiness(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(202, _SETTLE_202), calls):
+        summary = execute_run(
+            "scifact", "http://localhost:8080", ["hybrid"], settle_index=True,
+        )
+
+    assert calls == [("/api/indexing/settle", {"expungeDeletesOnly": True})]
+    block = summary["index_state_at_query"]
+    assert block["settled"] is True
+    assert block["settle"]["max_doc_before"] == 2851
+    assert block["settle"]["max_doc_after"] == 222
+    assert block["settle"]["segments_after"] == 3
+    assert block["settle"]["elapsed_ms"] == 4200
+    # The settle commits and reopens the searcher, so the recorded coverage percentages must
+    # come from a post-settle readiness snapshot, not the pre-settle one.
+    assert mock_readiness.check_search_ready.call_count == 2
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_with_settle_flag_on_an_older_backend_continues_unsettled(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    calls = []
+    with _patch_settle_client(_FakeResponse(404, None, "Not found"), calls):
+        summary = execute_run(
+            "scifact", "http://localhost:8080", ["hybrid"], settle_index=True,
+        )
+
+    assert calls, "the 404 path must have attempted the call"
+    block = summary["index_state_at_query"]
+    assert block["settled"] is False, "a 404 must not claim the arm was settled"
+    assert "settle" not in block
+    assert summary["query_count"] == 2, "the run continues rather than failing"
+    assert mock_readiness.check_search_ready.call_count == 1
+
+
 # --- tempdoc 885: search_load block wiring ----------------------------------
 
 @patch(*_MOCK_STACK[:1])
@@ -1005,6 +1303,10 @@ def test_execute_run_always_emits_a_cadence_block(
         "reopen_total": None,
         "commit_total": None,
         "segments_since_reopen": None,
+        # tempdoc 912 item 2 (commit 33ffc3bb) added the reason-tagged pair; they degrade
+        # to null on the same no-telemetry path as the three counters above.
+        "commit_by_reason": None,
+        "commit_by_reason_total": None,
         "first_search_after_indexing": None,
     }
 
@@ -1050,3 +1352,88 @@ def test_execute_run_reads_worker_cadence_metrics_and_carries_the_probe(
     assert summary["cadence"]["commit_total"] == 4
     assert summary["cadence"]["segments_since_reopen"] == 2
     assert summary["cadence"]["first_search_after_indexing"] == probe
+
+
+# --- tempdoc 930 §18.1 row 7: encoder_latency block wiring --------------------
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_always_emits_an_encoder_latency_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    """Absent encoder spans degrade to an empty mapping — the key exists on every run."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path / "no-telemetry-here"))
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert summary["encoder_latency"] == {"encoders": {}}
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_execute_run_reads_encoder_ort_run_spans_from_worker_telemetry(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir(parents=True)
+    (telemetry / "traces.ndjson").write_text(
+        "\n".join(json.dumps({
+            "name": "encoder.ort_run",
+            "attrs": {"encoder.name": "BgeM3Encoder"},
+            "duration_ms": d,
+        }) for d in (2.0, 4.0, 6.0)) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path))
+
+    summary = execute_run("scifact", "http://localhost:8080", ["hybrid"])
+
+    assert summary["encoder_latency"]["encoders"] == {
+        "BgeM3Encoder": {"n": 3, "p50_ms": 4.0, "p95_ms": 6.0},
+    }
+
+
+@patch(*_MOCK_STACK[:1])
+@patch(*_MOCK_STACK[1:2])
+@patch(*_MOCK_STACK[2:3])
+@patch(*_MOCK_STACK[3:4])
+@patch(*_MOCK_STACK[4:5])
+@patch(*_MOCK_STACK[5:6])
+@patch(*_MOCK_STACK[6:7])
+@patch(*_MOCK_STACK[7:8])
+@patch(*_MOCK_STACK[8:9])
+def test_ingest_only_run_also_carries_the_encoder_latency_block(
+    mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+    mock_provenance, mock_ann, mock_comp, mock_artifacts, mock_history,
+    tmp_path, monkeypatch,
+):
+    """The no-modes (ingest-only) summary branch composes its own dict — the key rides it too."""
+    _setup_mocks(mock_corpora, mock_readiness, mock_retriever, mock_scoring,
+                 mock_provenance, mock_ann, mock_comp)
+    monkeypatch.setenv("JUSTSEARCH_DATA_DIR", str(tmp_path / "no-telemetry-here"))
+
+    summary = execute_run("scifact", "http://localhost:8080", [])
+
+    assert summary["encoder_latency"] == {"encoders": {}}

@@ -38,6 +38,9 @@ public final class SpladeBackfillOps {
       BooleanSupplier runningSupplier,
       int batchSize,
       boolean commitAfterBatch,
+      // Tempdoc 712/931: chunk docs carry splade_status=PENDING from creation whatever this flag
+      // says, so without it here this lane encodes chunk sparse data the flag says not to produce.
+      boolean chunkSpladeEnabled,
       Logger log) {}
 
   /**
@@ -53,12 +56,19 @@ public final class SpladeBackfillOps {
     long t0 = System.nanoTime();
     try {
       List<String> pendingIds =
-          context
-              .documentFieldOps()
-              .queryDocIdsByField(
-                  SchemaFields.SPLADE_STATUS,
-                  SchemaFields.SPLADE_STATUS_PENDING,
-                  context.batchSize());
+          context.chunkSpladeEnabled()
+              ? context
+                  .documentFieldOps()
+                  .queryDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize())
+              : context
+                  .documentFieldOps()
+                  .queryNonChunkDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize());
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
@@ -81,18 +91,15 @@ public final class SpladeBackfillOps {
         return StageOutcome.elapsedSince(t0);
       }
 
-      // Phase 1: Collect content for all pending docs
+      // Phase 1: collect parent content or reconstructed chunk slices in one batch.
       long t1 = System.nanoTime();
+      Map<String, String> contentByDocId =
+          context.documentFieldOps().getDocumentContentBatch(pendingIds);
       List<String> batchDocIds = new ArrayList<>(pendingIds.size());
       List<String> batchContents = new ArrayList<>(pendingIds.size());
       for (String docId : pendingIds) {
         try {
-          // Try chunk_content first (for chunk documents), fall back to content (parent docs)
-          String content =
-              context.documentFieldOps().getDocumentField(docId, SchemaFields.CHUNK_CONTENT);
-          if (content == null || content.isBlank()) {
-            content = context.documentFieldOps().getDocumentContent(docId);
-          }
+          String content = contentByDocId.get(docId);
 
           if (content == null || content.isBlank()) {
             // No content means no postings were produced. Marking COMPLETED here claims a splade

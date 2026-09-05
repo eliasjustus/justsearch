@@ -88,6 +88,36 @@ public final class IndexCountOps {
   }
 
   /**
+   * Returns the index's {@code maxDoc} — live documents PLUS deleted-but-unmerged tombstones.
+   *
+   * <p>The gap against {@link #docCount()} is the merge debt a settle purges (tempdoc 931 §E item
+   * 10): tombstones still contribute to BM25 collection statistics, so two indexes of the same
+   * corpus with different tombstone counts score the same query differently.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public long maxDoc() {
+    try {
+      return bridge.withSearcher(searcher -> (long) searcher.getIndexReader().maxDoc());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
+   * Returns the number of leaf segments the current searcher reads.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int segmentCount() {
+    try {
+      return bridge.withSearcher(searcher -> searcher.getIndexReader().leaves().size());
+    } catch (IOException e) {
+      return 0;
+    }
+  }
+
+  /**
    * {@link #docCount()} without the swallow: propagates the reader {@link IOException} instead of
    * reporting 0.
    *
@@ -119,6 +149,36 @@ public final class IndexCountOps {
       });
     } catch (IOException e) {
       log.debug("Failed to count {}={}: {}", field, value, e.getMessage());
+      return 0;
+    }
+  }
+
+  /**
+   * {@link #countByField} over whole documents only, excluding chunks.
+   *
+   * <p>The pair of {@code DocumentFieldOps.queryNonChunkDocIdsByField}: a lane that will not select
+   * chunk documents must not gate itself on a count that includes them, or a permanently-parked
+   * chunk population reads as perpetual outstanding work.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public int countNonChunkByField(String field, String value) {
+    if (field == null || value == null) {
+      return 0;
+    }
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query query =
+            new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(field, value)), BooleanClause.Occur.MUST)
+                .add(
+                    new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                    BooleanClause.Occur.MUST_NOT)
+                .build();
+        return searcher.count(query);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to count non-chunk {}={}: {}", field, value, e.getMessage());
       return 0;
     }
   }
@@ -422,6 +482,46 @@ public final class IndexCountOps {
       });
     } catch (IOException e) {
       log.debug("Failed to query SPLADE feature counts: {}", e.getMessage());
+      return new SpladeFeatureCounts(0, 0, 0, 0);
+    }
+  }
+
+  /**
+   * Queries SPLADE status counts for CHUNK documents (tempdoc 931 §E item 8) — the chunk-scoped twin
+   * of {@link #querySpladeFeatureCounts()}, which counts whole documents only ({@code IS_CHUNK}
+   * MUST_NOT) and therefore said nothing about the population the chunk-SPLADE retrieval leg scores
+   * against.
+   *
+   * <p>The denominator is the chunk documents that CARRY {@code splade_status}, not every chunk:
+   * with {@code rag.chunk_splade.enabled} off, {@code ChunkDocumentWriter} writes no status at all,
+   * and an absent status field means the stage does not apply to that document (the post-798
+   * convention {@link #countWithField} already encodes for every other stage). Counting every chunk
+   * instead would pin coverage below 100% forever for chunks no lane can ever select.
+   *
+   * <p>Does NOT call {@code ensureStarted()} — caller (facade) is responsible for that guard.
+   */
+  public SpladeFeatureCounts queryChunkSpladeCounts() {
+    try {
+      return bridge.withSearcher(searcher -> {
+        Query chunkDocs =
+            new BooleanQuery.Builder()
+                .add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+                    BooleanClause.Occur.FILTER)
+                .build();
+        int total = countWithField(searcher, chunkDocs, SchemaFields.SPLADE_STATUS);
+        // Terminal success is two-valued, exactly as in querySpladeFeatureCounts: COMPLETED_EMPTY
+        // means the encode ran and produced no materialisable weight, which is still "done".
+        int completed = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_COMPLETED, SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY);
+        int pending = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_PENDING);
+        int failed = countSettled(searcher, chunkDocs, SchemaFields.SPLADE_STATUS,
+            SchemaFields.SPLADE_STATUS_FAILED);
+        return new SpladeFeatureCounts(total, completed, pending, failed);
+      });
+    } catch (IOException e) {
+      log.debug("Failed to query chunk SPLADE counts: {}", e.getMessage());
       return new SpladeFeatureCounts(0, 0, 0, 0);
     }
   }

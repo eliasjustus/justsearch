@@ -77,6 +77,13 @@ final class OpenApiRenderer {
     Map<String, Object> operation = new LinkedHashMap<>();
     operation.put("summary", route.method() + " " + route.path());
     operation.put("tags", List.of(route.cohort()));
+    if (route.sdkOperationId() != null) {
+      operation.put("operationId", route.sdkOperationId());
+    }
+    if (route.stability() != null) {
+      operation.put("x-justsearch-stability", route.stability());
+    }
+    projectLifecycle(operation, route.lifecycle());
     if (route.owningModule() != null) {
       operation.put("x-owning-module", route.owningModule());
     }
@@ -102,6 +109,18 @@ final class OpenApiRenderer {
     }
     operation.put("responses", Map.of("200", ok));
     return operation;
+  }
+
+  static void projectLifecycle(
+      Map<String, Object> operation, RouteManifestController.LifecycleEntry lifecycle) {
+    if (lifecycle == null) return;
+    operation.put("deprecated", true);
+    operation.put("externalDocs", Map.of("url", lifecycle.documentationUri()));
+    operation.put("x-deprecated-since", lifecycle.deprecatedSince());
+    if (lifecycle.sunsetAt() != null) {
+      operation.put("x-sunset", lifecycle.sunsetAt());
+    }
+    operation.put("x-justsearch-replacement", lifecycle.replacement());
   }
 
   private static List<Map<String, Object>> pathParameters(String openApiPath) {

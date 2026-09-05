@@ -55,7 +55,7 @@ function claims(entries) {
 
 check('one worktree, two gates, one tempdoc number -> NOT a collision', () => {
   const c = claims([
-    ['884', '884-ts-any-prose.md', ['worktree:lane-B:gates/ts-any']],
+    ['884', '884-dead-code-prose.md', ['worktree:lane-B:gates/dead-code']],
     ['884', '884-dead-code-drift.md', ['worktree:lane-B:gates/dead-code']],
   ]);
   assert.deepEqual(divergentInFlightCollisions(c), []);
@@ -94,9 +94,32 @@ check('a tempdoc collision is NOT masked by a changeset sharing the number', () 
   const c = claims([
     ['553', '553-canonical-search-execution-record.md', ['worktree:lane-A']],
     ['553', '553-code-duplication-audit.md', ['worktree:548-followups']],
-    ['553', '553-some-gate-declaration.md', ['worktree:lane-A:gates/ts-any']],
+    ['553', '553-some-gate-declaration.md', ['worktree:lane-A:gates/dead-code']],
   ]);
   assert.equal(divergentInFlightCollisions(c).length, 1);
+});
+
+// --- the `<N>-evidence` sidecar is a companion, not a competing identity (tempdoc 930 chunk G) ---
+
+check('a fresh <N>-evidence sidecar in one worktree, main file already elsewhere -> NOT a collision', () => {
+  const c = claims([
+    ['930', '930-replace-bounded-areas-with-maintained-oss.md', [
+      'worktree:lane-A', 'worktree:lane-B', 'worktree:lane-C',
+    ]],
+    ['930', '930-evidence', ['worktree:lane-A']],
+  ]);
+  assert.deepEqual(divergentInFlightCollisions(c), []);
+});
+
+check('a genuine second MAIN basename alongside an evidence sidecar is still caught', () => {
+  const c = claims([
+    ['930', '930-replace-bounded-areas-with-maintained-oss.md', ['worktree:lane-A']],
+    ['930', '930-evidence', ['worktree:lane-A']],
+    ['930', '930-a-totally-different-doc.md', ['worktree:lane-B']],
+  ]);
+  const got = divergentInFlightCollisions(c);
+  assert.equal(got.length, 1, 'the evidence exemption must not swallow a real divergent basename');
+  assert.ok(!got[0].detail.includes('930-evidence'), 'the evidence sidecar itself is not named in the collision detail');
 });
 
 // --- changesets are not claimants (the residue fix) --------------------------------------------
@@ -115,7 +138,7 @@ check('two different worktrees, changesets for the SAME existing tempdoc -> NOT 
 check('two different worktrees, changesets across DIFFERENT gates -> NOT a collision', () => {
   const c = claims([
     ['884', '884-decision-review-lane-b.md', ['origin']],
-    ['884', '884-a.md', ['worktree:lane-A:gates/ts-any']],
+    ['884', '884-a.md', ['worktree:lane-A:gates/dead-code']],
     ['884', '884-b.md', ['worktree:lane-C:gates/dead-code']],
   ]);
   assert.deepEqual(divergentInFlightCollisions(c), []);
@@ -126,7 +149,7 @@ check('two different worktrees, changesets across DIFFERENT gates -> NOT a colli
 check('tempdocNumbers counts only tempdoc-labelled claims', () => {
   const c = claims([
     ['885', '885-lane-c.md', ['origin']],
-    ['999', '999-only-a-changeset.md', ['worktree:lane-A:gates/ts-any']],
+    ['999', '999-only-a-changeset.md', ['worktree:lane-A:gates/dead-code']],
   ]);
   const n = tempdocNumbers(c);
   assert.ok(n.has('885'), '885 has a real tempdoc');
@@ -137,14 +160,14 @@ check('a changeset whose `tempdoc:` names no existing tempdoc -> reported as an 
   const c = claims([['885', '885-lane-c.md', ['origin']]]);
   const orphans = orphanChangesetDeclarations(
     [
-      { number: '885', basename: '885-ok.md', label: 'worktree:x:gates/ts-any', path: 'gates/ts-any/.changesets/885-ok.md', declaredTempdoc: '885' },
-      { number: '999', basename: '999-bad.md', label: 'worktree:x:gates/ts-any', path: 'gates/ts-any/.changesets/999-bad.md', declaredTempdoc: '999' },
+      { number: '885', basename: '885-ok.md', label: 'worktree:x:gates/dead-code', path: 'gates/dead-code/.changesets/885-ok.md', declaredTempdoc: '885' },
+      { number: '999', basename: '999-bad.md', label: 'worktree:x:gates/dead-code', path: 'gates/dead-code/.changesets/999-bad.md', declaredTempdoc: '999' },
     ],
     tempdocNumbers(c),
   );
   assert.equal(orphans.length, 1, 'exactly the changeset pointing at a nonexistent tempdoc');
   assert.equal(orphans[0].declaredTempdoc, '999');
-  assert.equal(orphans[0].path, 'gates/ts-any/.changesets/999-bad.md');
+  assert.equal(orphans[0].path, 'gates/dead-code/.changesets/999-bad.md');
 });
 
 check('a changeset declaring a tempdoc number different from its FILENAME is judged on the frontmatter', () => {
@@ -152,7 +175,7 @@ check('a changeset declaring a tempdoc number different from its FILENAME is jud
   // the pointer; the filename is a label.
   const c = claims([['530', '530-class-size-ratchet-automation.md', ['origin']]]);
   const orphans = orphanChangesetDeclarations(
-    [{ number: '563', basename: '563-retire.md', label: 'worktree:x:gates/prose-tier-register', path: 'p', declaredTempdoc: '530' }],
+    [{ number: '563', basename: '563-retire.md', label: 'worktree:x:gates/dead-code', path: 'p', declaredTempdoc: '530' }],
     tempdocNumbers(c),
   );
   assert.deepEqual(orphans, []);

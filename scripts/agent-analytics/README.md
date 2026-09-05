@@ -5,8 +5,9 @@ Two kinds of thing live here:
 - **`hooks/` + `lib/`** — the Claude Code discipline hooks: blocking *guards* (e.g. preventing
   destructive git in the main checkout) and just-in-time *hints*. The hook **wiring** lives in
   `.claude/settings.json`; the shared helpers are in `lib/`.
-- **Everything else** (`otlp-sink.py`, `*-session.mjs`, `generate-index.mjs`, `otlp-viewer/`, …)
-  — **maintainer** telemetry/analytics tooling for measuring agent-assisted development.
+- **Everything else** (`otlp-sink.py`, `cost-session.mjs`, `baseline-economics.mjs`,
+  `otlp-viewer/`, …) — **maintainer** telemetry/analytics tooling for measuring
+  agent-assisted development.
 
 **Contributors don't need any of this** — it is published for transparency (see
 [`/MAINTAINING.md`](../../MAINTAINING.md)). The analytics tooling is maintainer-only and is not
@@ -26,7 +27,7 @@ afterwards so those numbers no longer describe a runnable metric.
 
 ## Signature census (743 P-L)
 
-`mine-friction.mjs`/`analyze-session.mjs` (the alive 727 friction-mining pass) judge whole
+`mine-friction.mjs` (the alive 727 friction-mining pass) judges whole
 sessions via an LLM. `signature-census.mjs` is the cheap, mechanical complement: it scans every
 session in a window for a small seeded table of known recurring error signatures (the `& "gh.exe"`
 PowerShell-call-operator class, cp1252/`UnicodeEncodeError`, quoting-EOF, `gh` exit-code
@@ -41,7 +42,7 @@ It is semi-automatic by design (tempdoc 743 P-L): the census only **proposes** c
 signature whose count clears the ratchet threshold (≥5 in the window) gets a **disposition** at
 the next mining-pass review session — exactly one of **root-fix** (a P-K-class exec-substrate
 fix), **fire-time hint** (a new redirect hook, registered the normal way — `agent-hooks.v1.json`
-+ tier-register + `hook-integrity` gate), or explicit **wontfix**. Census output must **never**
++ the `hook-integrity` gate), or explicit **wontfix**. Census output must **never**
 land in always-loaded prose (`CLAUDE.md`/`.claude/rules/`) — the always-loaded-budget ratchet is
 the guard against that self-poisoning failure mode. Falsifier: two consecutive mining passes
 whose dispositions nobody implements means the loop is dead weight — stop running it.
@@ -265,48 +266,35 @@ for pointing Codex CLI's own `[otel]` exporter at this sink.
 
 **Volume tradeoff:** the normalised twin roughly **doubles** `metrics.ndjson` volume for every
 mapped data point, and `RETENTION["metrics"]` is `None` (never pruned — metrics is the sole
-cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning; the
-main checkout's `tmp/agent-telemetry/otlp/` already carries ~146 MB of metrics archives as of
-this writing. Stated here as a known tradeoff — changing the retention policy is an owner
-decision, not made by this PR.
+cost-baseline source), so this growth accumulates indefinitely rather than self-cleaning. For
+the current per-stream volumes and caps see the `RETENTION` comment in `otlp-sink.py`, which is
+the one place they are stated.
 
-## Control shims (886 PR 4)
+## OTLP streams and retention (930 F2)
 
-`hooks/spawn-cost-hint.mjs` and `hooks/context-ceiling-hint.mjs` are non-blocking PostToolUse
-advisories that surface tempdoc 886 §2.2/§2.3's two findings at the moment they matter, instead
-of only in a post-hoc report:
+`otlp-sink.py` writes **four** streams under `tmp/agent-telemetry/otlp/`, all rotating at 20 MB
+through the same archive/prune path but under different `RETENTION` caps (the authoritative
+numbers live in that constant's comment, not here):
 
-- **`spawn-cost-hint.mjs`** (Claude-only matcher `Agent`) fires when a subagent call returns. It resolves
-  the spawn's OWN `subagents/agent-*.jsonl` transcript — joining on `tool_use_id` against every
-  sibling `*.meta.json`'s `toolUseId` (the synchronous-spawn case), or on an `agentId:` line the
-  `tool_response` text carries for an async/background spawn with no `toolUseId` recorded — reads
-  it through `lib/ledger/claude-adapter.mjs`'s new `callsFromClaudeTranscript` (a single-file
-  parse, not a second implementation), and prints `spawn-cost: <calls> calls, peak ctx <N>k, out
-  <M>k, model <actual> (requested <meta.model>), ~$<cost> — <description>`. Cost is priced per
-  call via `lib/transcript-cost.mjs`'s `findPricing`; an unpriced call (unknown model, e.g.
-  Claude's own literal `<synthetic>` model-name turns) is counted, not treated as voiding the
-  whole line — the sum covers the PRICED calls and appends `(+N unpriced)` when `N > 0`, and
-  `n/a` is reserved for the case where ZERO calls are priceable (independent-review fix: one bad
-  axis previously collapsed an otherwise-known cost to `n/a`). Silent (no output) when the spawn
-  can't be resolved — this is an advisory delivering data that isn't always available, not a guard.
-- **`context-ceiling-hint.mjs`** (matcher: every tool) fires on every `PostToolUse` and reads only
-  the last ~256KB of `transcript_path` (never the whole file — transcripts reach hundreds of MB),
-  retrying once at ~2MB if no assistant usage line turns up (a single trailing tool_result can
-  exceed 256KB and push the last assistant line out of the first tail read), to find the LAST
-  usage snapshot. Claude computes `contextTokens = input + cache_read + cache_creation` and uses
-  the established 300k/500k thresholds. Codex reads the latest rollout `token_count` event and
-  uses 75%/90% of its reported `model_context_window`. Once per threshold per session (state under
-  `tmp/agent-telemetry/context-ceiling-state/<session_id>.json`), it names the active harness's
-  compaction remedy. **Re-arms**: Claude clears both flags below 300k; Codex clears them below 70%
-  of its model window. A later climb can therefore fire again rather than staying silent forever (independent-review
-  fix — the pre-fix version fired once per session for life). Like `build-counter.mjs`'s per-session
-  state, `context-ceiling-state/<session_id>.json` is **not swept on SessionEnd**
-  (`dispatch.mjs`'s cleanup list covers `turn-count`/`repeat-buffer`/`build-fails` only) — a known,
-  small (one file per session, a few hundred bytes each), harmless pile, not yet addressed.
+| Stream | Contents | Archives kept |
+|---|---|---|
+| `metrics.ndjson` | decoded metric points + `gen_ai.usage` twins | all (`None`) — cost-baseline source |
+| `logs.ndjson` | decoded log records **verbatim**, request/response bodies included | 2 — rotates every ~25 min of active work |
+| `ledger.ndjson` | body-free **projection** of the log stream | 90 |
+| `traces.ndjson` | decoded spans | 14 — was unpruned, which is how it reached 17 GB |
 
-Both are registered in `governance/agent-hooks.v1.json` (`role: "advisory"`) with a unit-test
-`bite` entry. Claude wiring is generated into `.claude/settings.local.json[.example]`; Codex
-wiring is generated into `.codex/hooks.json` and enters through `codex-hook-adapter.mjs`.
-`spawn-cost-hint` is an explicit Codex exclusion because current rollouts do not expose its
-required parent-tool-to-spawn join. `node scripts/governance/run.mjs --gate hook-integrity
---mode gate` and `node scripts/ci/check-codex-agent-parity.mjs` verify the two projections.
+`ledger.ndjson` exists because `logs.ndjson`'s retention is the one that cannot be extended:
+`api_request` records embed request and response bodies (~1 GB per active day), so the numbers
+analytics actually reads used to age out within the hour alongside bodies nothing reads. The
+ledger keeps those numbers on a separate lifetime at ~1 MB/day. It is a projection, not a second
+capture authority — the `/v1/logs` route writes `logs.ndjson` verbatim first, then derives rows
+from the same decoded batch. Rows are emitted for `api_request`, `subagent_completed`,
+`tool_result` and `tool_decision` only, and carry a per-event **allow-list** of attributes
+(`LEDGER_KEEP`: model, token counts, cost, durations, request id, query source, agent name/type,
+tool name, success/decision). Under the allow-list sits a second net that refuses any string
+value whose attribute name contains a content word (`prompt`, `body`, `content`, `message`,
+`input`, `output`, `text`, `arguments`, `result`) or that exceeds 512 chars — numbers and
+booleans are exempt, which is what lets `input_tokens`/`output_tokens` through. `session.id` is
+the only identity attribute kept (it is what every reader joins on); `user.email`, `user.id`,
+`user.account_id`, `user.account_uuid` and `organization.id` are dropped. Read it with
+`readOtlpLedger(dir)` from `lib/telemetry-io.mjs`.

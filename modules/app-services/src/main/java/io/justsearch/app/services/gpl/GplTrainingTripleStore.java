@@ -326,19 +326,19 @@ public final class GplTrainingTripleStore {
   /**
    * Appends a training triple to the store.
    *
-   * @param docId the source document ID
+   * @param documentKey the document key (synthetic/legacy source id on this path)
    * @param syntheticQuery the LLM-generated query for this document
    * @param score the cross-encoder relevance score (0.0–1.0)
    * @throws IOException if writing to the store file fails
    */
-  public synchronized void append(String docId, String syntheticQuery, float score)
+  public synchronized void append(String documentKey, String syntheticQuery, float score)
       throws IOException {
     long timestampMs = Instant.now().toEpochMilli();
-    String line = buildJson(docId, syntheticQuery, score, timestampMs) + "\n";
+    String line = buildJson(documentKey, syntheticQuery, score, timestampMs) + "\n";
     Files.writeString(
         storeFile, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     tripleCount++;
-    log.debug("GPL triple appended: doc={} score={}", docId, score);
+    log.debug("GPL triple appended: doc={} score={}", documentKey, score);
   }
 
   /**
@@ -349,7 +349,9 @@ public final class GplTrainingTripleStore {
    * triples for the same synthetic query so the training runner can form pairwise comparisons.
    *
    * @param queryId stable identifier for the query (e.g. {@code "doc-abc#0"})
-   * @param docId the document being labelled (source doc for positives, retrieved doc for negatives)
+   * @param documentKey the document being labelled. New real-feedback projections supply the
+   *     stable parent {@code doc_uid}; synthetic and pre-Phase-2 rows retain their legacy source id.
+   *     The serialized property remains {@code doc_id} for trainer compatibility.
    * @param syntheticQuery the LLM-generated query text
    * @param score cross-encoder relevance score (0.0–1.0)
    * @param isNegative true if this triple is a non-relevant (negative) example
@@ -359,15 +361,38 @@ public final class GplTrainingTripleStore {
    */
   public synchronized void appendWithFeatures(
       String queryId,
-      String docId,
+      String documentKey,
       String syntheticQuery,
       float score,
       boolean isNegative,
       FeaturePayload payload)
       throws IOException {
+    appendWithFeatures(queryId, documentKey, syntheticQuery, score, isNegative, payload, false);
+  }
+
+  /**
+   * As {@link #appendWithFeatures(String, String, String, float, boolean, FeaturePayload)},
+   * additionally recording whether the label was captured at a superseded content revision
+   * (tempdoc 931 §C.6).
+   *
+   * <p>{@code score} already carries the stale down-weight; the {@code stale} property records WHY
+   * a positive arrived at a fraction of its grade, which the score alone cannot say (a halved
+   * {@code CITED} and a halved {@code DWELLED} are otherwise indistinguishable from ungraded
+   * intermediates). The trainer reads named properties and ignores the rest, so the key is additive
+   * for every existing consumer; it is written only when true, keeping legacy rows byte-identical.
+   */
+  public synchronized void appendWithFeatures(
+      String queryId,
+      String documentKey,
+      String syntheticQuery,
+      float score,
+      boolean isNegative,
+      FeaturePayload payload,
+      boolean stale)
+      throws IOException {
     ObjectNode node = MAPPER.createObjectNode();
     node.put("query_id", queryId);
-    node.put("doc_id", docId);
+    node.put("doc_id", documentKey);
     node.put("synthetic_query", syntheticQuery);
     node.put("score", score);
     node.put("is_negative", isNegative);
@@ -400,6 +425,9 @@ public final class GplTrainingTripleStore {
     node.put("qpp_query_scope", payload.qppQueryScope());
     node.put("rank_position", payload.rankPosition());
     node.put("timestamp_ms", payload.timestampMs());
+    if (stale) {
+      node.put("stale", true);
+    }
     String line;
     try {
       line = MAPPER.writeValueAsString(node) + "\n";
@@ -409,7 +437,12 @@ public final class GplTrainingTripleStore {
     Files.writeString(
         storeFile, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     tripleCount++;
-    log.debug("GPL triple appended: queryId={} doc={} isNegative={} score={}", queryId, docId, isNegative, score);
+    log.debug(
+        "GPL triple appended: queryId={} doc={} isNegative={} score={}",
+        queryId,
+        documentKey,
+        isNegative,
+        score);
   }
 
   /**
@@ -443,9 +476,10 @@ public final class GplTrainingTripleStore {
     return storeFile;
   }
 
-  private static String buildJson(String docId, String syntheticQuery, float score, long ts) {
+  private static String buildJson(
+      String documentKey, String syntheticQuery, float score, long ts) {
     ObjectNode node = MAPPER.createObjectNode();
-    node.put("doc_id", docId);
+    node.put("doc_id", documentKey);
     node.put("synthetic_query", syntheticQuery);
     node.put("score", score);
     node.put("timestamp_ms", ts);

@@ -95,6 +95,10 @@ final class ValidatorRunnerTest {
         CoreOperationCatalog.EXPORT_DIAGNOSTICS,
         new io.justsearch.app.services.registry.operations.handlers.ExportDiagnosticsHandler(
             () -> null));
+    handlers.register(
+        CoreOperationCatalog.COPY_DIAGNOSTIC_SUMMARY,
+        new io.justsearch.app.services.registry.operations.handlers.CopyDiagnosticSummaryHandler(
+            () -> null));
     // Tempdoc 561 P-E added core.remember to AgentToolsOperationCatalog. This registration is a
     // FIXTURE, not a mirror of production wiring: it exists only so ExecutorBindingValidator can
     // resolve the declared binding, and the no-op MemoryStore suffices because no validator ever
@@ -205,6 +209,12 @@ final class ValidatorRunnerTest {
     handlers.register(
         CoreOperationCatalog.INDEX_GC,
         new io.justsearch.app.services.registry.operations.handlers.IndexGcHandler(
+            io.justsearch.app.api.IndexingService::unavailable,
+            io.justsearch.app.api.OperationLeaseService.noOp()));
+    // Tempdoc 931 §E item 10: core.settle-index. Same fixture role as index-gc above.
+    handlers.register(
+        CoreOperationCatalog.SETTLE_INDEX,
+        new io.justsearch.app.services.registry.operations.handlers.SettleIndexHandler(
             io.justsearch.app.api.IndexingService::unavailable,
             io.justsearch.app.api.OperationLeaseService.noOp()));
     // Slice 491 §9.D Phase E (C4 / E3): agent navigation tool. Validator only checks

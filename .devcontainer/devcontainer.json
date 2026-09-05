@@ -1,0 +1,24 @@
+{
+  "name": "JustSearch contributor environment",
+  "image": "mcr.microsoft.com/devcontainers/base:1-noble",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "25",
+      "jdkDistro": "tem"
+    },
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13",
+      "installTools": false,
+      "installJupyterlab": false
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "minimal"
+    }
+  },
+  "postCreateCommand": "node scripts/setup/bootstrap.mjs && node scripts/dev/doctor.mjs",
+  "waitFor": "postCreateCommand"
+}

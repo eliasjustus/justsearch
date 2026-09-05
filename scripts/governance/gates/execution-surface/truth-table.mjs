@@ -3,7 +3,7 @@
  *
  * Mechanizes "every production surface that describes what the search pipeline did is a DECLARED
  * projection/consumer of the one canonical record, never an independent model." This gate is a
- * meta-coordinator (like prose-tier-register): it does NOT re-implement field/vocabulary
+ * meta-coordinator: it does NOT re-implement field/vocabulary
  * conformance — those stay in the specialized guards the register names (gate:stage-completeness,
  * gate:wire, test:KnowledgeWireContractConformanceTest). It enforces seven checks:
  *

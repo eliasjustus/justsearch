@@ -89,7 +89,7 @@ function parseArgs(argv) {
 // a notification. Crude proxy — see LIMITATIONS in the report.
 const SHORT_ACK_CHAR_THRESHOLD = 400;
 
-const HOOK_BLOCK_REGEX = /PreToolUse:.*hook|bash-guard|repeat-guard|build-counter blocked/i;
+const HOOK_BLOCK_REGEX = /PreToolUse:.*hook|repeat-guard|build-counter blocked/i;
 
 const GOAL_QUERY_PATTERNS = [
   /what was this chat.?s? main goal/i,

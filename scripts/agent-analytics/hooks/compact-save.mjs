@@ -110,10 +110,6 @@ async function main() {
 
     // Reset read counts so post-compaction re-reads don't trigger warnings.
     // The counts are preserved in compact-state above for analytics.
-    // Tempdoc 727 review Finding D: this also wipes intervene.mjs's `_byBasename` cross-root
-    // index (F-7a) — deliberate and correct for its original hot-file-cap purpose, but a real
-    // side effect: edit-reread-hint.mjs can only recognize a cross-root re-read for files read
-    // SINCE the last compaction, not before it.
     const readCountsPath = path.join(TELEMETRY_DIR, `read-counts-${sessionId}.json`);
     try { atomicWriteFileSync(readCountsPath, '{}'); } catch { /* best-effort */ }
 

@@ -9,8 +9,8 @@
  * here as private cases, so a consumer renders `present(ref).label` — never a
  * raw id/key/route. The render boundary takes the branded `DisplayLabel`, so a
  * raw string can't be passed where a presented label is expected (§5: tier-2 at
- * the seam; the html`` template itself is guarded by the presentation-purity
- * gate + ESLint, since Lit slots aren't type-checked).
+ * the seam; the html`` template itself is guarded by ESLint, since Lit slots
+ * aren't type-checked — the presentation-purity gate was retired in 930 chunk H).
  */
 import { getOperation } from '../../api/registry/OperationCatalogClient.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';

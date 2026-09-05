@@ -7,26 +7,28 @@ surface (``evaluate`` + ``REQUIRED_PROJECTIONS`` + helper functions)
 is unchanged; the argparse shim was dropped in favour of the
 ``jseval gate`` Click subcommand in :mod:`jseval.cli`.
 
-Validates the calibrated sidecar + the latest eval-results run
-directory produced by the Phase 3 nightly workflow:
+Validates the latest eval-results run directory produced by the Phase 3
+nightly workflow:
 
-1. Exactly one ``cohort_baselines/<hash>/envelope.json`` exists.
-2. Envelope schema_version == 1; contains ``metrics.full.nDCG@10.stdev``.
-3. σ(nDCG@10) is within ``[baseline - tolerance, baseline + tolerance]``.
-4. The latest run directory has:
-   - non-null ``manifest.non_determinism_envelope``.
-   - A populated ``projections/`` directory with the LR4-* outputs
-     actually produced (no hard-fail on any single projection status,
-     but at least ``contract_violations`` + ``rate_timeline`` +
-     ``stratified_metrics`` + ``bootstrap_ci`` must exist).
+1. The run has a readable ``manifest.json`` (its ``manifest_hash`` is
+   reported as the run's cohort identity).
+2. It has a populated ``projections/`` directory with the LR4-* outputs
+   actually produced (no hard-fail on any single projection status, but
+   at least ``contract_violations`` + ``rate_timeline`` +
+   ``stratified_metrics`` + ``bootstrap_ci`` must exist).
+
+Tempdoc 930 §18.1 row 7 removed the σ-band arm: it compared the cohort's
+calibrated ``envelope.json`` against a pinned ``--baseline-stdev``, and no
+``cohort_baselines/`` directory ever existed on any machine, so that arm
+could only ever report the infra exit.
 
 Exit codes (see :func:`jseval.commands.gates.cmd_gate`):
 
 - 0 — gate passed.
-- 1 — any hard assertion failed (σ outside band, manifest missing
-  envelope, required projection absent).
-- 2 — data-layout problem (no eval-results run found, no calibration
-  sidecar) — usually an infra issue, not a quality drift.
+- 1 — a hard assertion failed (manifest unreadable, required projection
+  absent).
+- 2 — data-layout problem (no eval-results run found) — usually an infra
+  issue, not a quality drift.
 """
 
 from __future__ import annotations
@@ -41,35 +43,6 @@ REQUIRED_PROJECTIONS = (
     "stratified_metrics",
     "bootstrap_ci",
 )
-
-
-def _find_envelope(data_dir: Path) -> tuple[Path, dict] | None:
-    """Return (envelope_path, envelope_doc) for the calibrated cohort.
-
-    Scans ``<data_dir>/cohort_baselines/`` first, then the pre-716 legacy
-    roots (the backend data dir — tempdoc 716 migration shim, WARNs on a
-    legacy hit).
-    """
-    from . import cohort_baselines as _cb
-
-    for i, root in enumerate(_cb.candidate_roots(data_dir)):
-        baselines = root / "cohort_baselines"
-        if not baselines.is_dir():
-            continue
-        for cohort_dir in sorted(baselines.iterdir()):
-            if not cohort_dir.is_dir():
-                continue
-            env_path = cohort_dir / "envelope.json"
-            if not env_path.is_file():
-                continue
-            try:
-                doc = json.loads(env_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if i > 0:
-                _cb.warn_legacy_hit(env_path)
-            return env_path, doc
-    return None
 
 
 def _latest_run_dir(data_dir: Path, dataset: str | None = None) -> Path | None:
@@ -114,70 +87,12 @@ def _load_json(path: Path) -> Any:
         return None
 
 
-def evaluate(
-    data_dir: Path,
-    baseline_stdev: float,
-    tolerance_pct: float,
-) -> dict:
+def evaluate(data_dir: Path) -> dict:
     report: dict = {
         "data_dir": str(data_dir),
-        "baseline_stdev": baseline_stdev,
-        "tolerance_pct": tolerance_pct,
         "checks": [],
         "exit_code": 0,
     }
-
-    envelope_hit = _find_envelope(data_dir)
-    if envelope_hit is None:
-        report["checks"].append({
-            "name": "envelope-present",
-            "status": "fail",
-            "detail": "no cohort_baselines/<h>/envelope.json found",
-        })
-        report["exit_code"] = 2
-        return report
-    env_path, envelope = envelope_hit
-    report["envelope_path"] = str(env_path)
-    report["cohort_hash"] = envelope.get("cohort_hash")
-    schema_version = envelope.get("schema_version")
-    if schema_version != 1:
-        report["checks"].append({
-            "name": "envelope-schema",
-            "status": "fail",
-            "detail": f"schema_version={schema_version}; expected 1",
-        })
-        report["exit_code"] = 1
-    else:
-        report["checks"].append({
-            "name": "envelope-schema",
-            "status": "ok",
-        })
-
-    metrics_block = (envelope.get("metrics") or {}).get("full") or {}
-    ndcg_block = metrics_block.get("nDCG@10") or {}
-    measured_stdev = ndcg_block.get("stdev")
-    if not isinstance(measured_stdev, (int, float)):
-        report["checks"].append({
-            "name": "ndcg10-stdev-present",
-            "status": "fail",
-            "detail": "metrics.full.nDCG@10.stdev missing or non-numeric",
-        })
-        report["exit_code"] = 1
-    else:
-        report["measured_stdev"] = float(measured_stdev)
-        tolerance = baseline_stdev * (tolerance_pct / 100.0)
-        low, high = baseline_stdev - tolerance, baseline_stdev + tolerance
-        within = low <= measured_stdev <= high
-        report["expected_range"] = [low, high]
-        report["checks"].append({
-            "name": "ndcg10-stdev-within-tolerance",
-            "status": "ok" if within else "fail",
-            "detail": (f"measured={measured_stdev:.6f} "
-                       f"baseline={baseline_stdev:.6f} "
-                       f"band=[{low:.6f}, {high:.6f}]"),
-        })
-        if not within:
-            report["exit_code"] = 1
 
     run_dir = _latest_run_dir(data_dir)
     if run_dir is None:
@@ -199,19 +114,11 @@ def evaluate(
         })
         report["exit_code"] = 1
     else:
-        envelope_embed = manifest.get("non_determinism_envelope")
-        if envelope_embed is None:
-            report["checks"].append({
-                "name": "manifest-envelope-embedded",
-                "status": "fail",
-                "detail": "manifest.non_determinism_envelope is null",
-            })
-            report["exit_code"] = 1
-        else:
-            report["checks"].append({
-                "name": "manifest-envelope-embedded",
-                "status": "ok",
-            })
+        report["cohort_hash"] = manifest.get("manifest_hash")
+        report["checks"].append({
+            "name": "run-manifest-present",
+            "status": "ok",
+        })
 
     projections_dir = run_dir / "projections"
     present = set()

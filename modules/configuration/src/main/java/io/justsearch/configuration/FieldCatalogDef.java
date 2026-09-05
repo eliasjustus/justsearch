@@ -78,6 +78,8 @@ public final class FieldCatalogDef {
                 new FieldDef("title", "text", true, false, List.of("highlight"), null, "icu", false),
                 // Align with SSOT: content is stored (preview + RAG fallback rely on stored extracted text).
                 new FieldDef("content", "text", true, false, List.of("highlight"), null, "icu", false),
+                // Tempdoc 931 §C.6: the parent content revision feedback is keyed against.
+                new FieldDef("content_sha256", "keyword", true, false, List.of(), null, null, false),
                 new FieldDef("content_preview", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("modified_at", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("indexed_at", "long", true, true, List.of("filter", "sort"), null, null, false),
@@ -101,7 +103,8 @@ public final class FieldCatalogDef {
      * Creates a test catalog with chunk-related fields for RAG testing.
      *
      * <p>Extends {@link #forTesting(int)} with is_chunk, parent_doc_id, chunk_index,
-     * chunk_total, and chunk_content fields needed for chunk lifecycle tests.
+     * chunk_total, and chunk_content fields needed for chunk lifecycle tests. Chunk content remains
+     * indexed but is reconstructed from its stored parent and offsets when read.
      *
      * @param vectorDim the vector dimension (e.g., 4 for tests)
      * @return a field catalog suitable for chunk/RAG testing
@@ -115,6 +118,8 @@ public final class FieldCatalogDef {
                 new FieldDef("title", "text", true, false, List.of("highlight"), null, "icu", false),
                 // Align with SSOT: content is stored (preview + RAG fallback rely on stored extracted text).
                 new FieldDef("content", "text", true, false, List.of("highlight"), null, "icu", false),
+                // Tempdoc 931 §C.6: the parent content revision feedback is keyed against.
+                new FieldDef("content_sha256", "keyword", true, false, List.of(), null, null, false),
                 new FieldDef("content_preview", "text", true, false, List.of("highlight"), null, "icu", false),
                 new FieldDef("modified_at", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("indexed_at", "long", true, true, List.of("filter", "sort"), null, null, false),
@@ -139,10 +144,13 @@ public final class FieldCatalogDef {
                 new FieldDef("parent_doc_id", "keyword", true, true, List.of("filter"), null, null, false),
                 new FieldDef("chunk_index", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("chunk_total", "long", true, true, List.of("filter", "sort"), null, null, false),
-                new FieldDef("chunk_content", "text", true, false, List.of("highlight"), null, "icu", false),
+                new FieldDef("chunk_content", "text", false, false, List.of("highlight"), null, "icu", false,
+                        "rederive-parent-slice"),
                 // Span offsets into parent extracted content (0-based, end exclusive) for click-to-verify UI.
                 new FieldDef("chunk_start_char", "long", true, true, List.of("filter", "sort"), null, null, false),
                 new FieldDef("chunk_end_char", "long", true, true, List.of("filter", "sort"), null, null, false),
+                // Tempdoc 931 §C.1: the parent content revision the offsets above address.
+                new FieldDef("chunk_parent_content_sha256", "keyword", true, false, List.of(), null, null, false),
                 // Phase 6: chunk embeddings
                 new FieldDef("chunk_vector", "vector", false, false, List.of("chunk_vector"),
                         new VectorSpec(vectorDim), null, false, "preserve-reread-or-reset:chunk_embedding_status"),

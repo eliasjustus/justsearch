@@ -6,6 +6,7 @@ import static io.justsearch.adapters.lucene.runtime.QueryFilterBuilder.normalize
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.TelemetryEvents;
 import io.justsearch.indexing.SchemaFields;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import net.jcip.annotations.ThreadSafe;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -68,8 +69,10 @@ public final class WritePathOps {
    * Core single-document write. Caller is responsible for guards and queue-depth accounting.
    *
    * @param fields the document fields (already validated)
+   * @param droppedVectors accumulator for vector fields dropped by the mapper (tempdoc 931 §C.3),
+   *     or null when the caller does not count them
    */
-  void indexDocument(Map<String, Object> fields) {
+  void indexDocument(Map<String, Object> fields, FieldMapper.DroppedVectorReport droppedVectors) {
     try {
       LifecycleSnapshot snap = session.snapshot;
       IndexWriter w = snap != null ? snap.writer() : null;
@@ -88,7 +91,7 @@ public final class WritePathOps {
         if (te != null) te.onHardDelete();
         return;
       }
-      Document luceneDoc = session.fieldMapper.toDocument(fields);
+      Document luceneDoc = session.fieldMapper.toDocument(fields, droppedVectors);
       boolean softDelete = asBoolean(fields.get(session.softDeleteField));
       if (softDelete) {
         appendSoftDeleteMaintenanceFields(luceneDoc, fields);
@@ -314,6 +317,51 @@ public final class WritePathOps {
    */
   boolean readModifyWrite(IndexSearcher searcher, String docId, Map<String, Object> updates)
       throws IOException {
+    return readModifyWrite(searcher, docId, updates, new ParentSliceCache());
+  }
+
+  /**
+   * Per-batch memo of the parent documents a chunk RMW re-slices from: the stored content, and the
+   * SHA-256 revision identity {@link #preserveChunkContent} compares against the chunk's own
+   * (tempdoc 931 §C.1). Both are keyed by parent doc id so a batch of sibling chunks reads and
+   * hashes each parent exactly once.
+   */
+  private static final class ParentSliceCache {
+    private final Map<String, String> content = new HashMap<>();
+    private final Map<String, String> revision = new HashMap<>();
+
+    String content(String parentId) {
+      return content.get(parentId);
+    }
+
+    void putContent(String parentId, String parentContent) {
+      content.put(parentId, parentContent);
+    }
+
+    void putContentIfAbsent(String parentId, String parentContent) {
+      content.putIfAbsent(parentId, parentContent);
+    }
+
+    String revision(String parentId, String parentContent) {
+      return revision.computeIfAbsent(parentId, k -> ChunkParentRevision.sha256Hex(parentContent));
+    }
+
+    /** After a rename the new parent id addresses the same content, hence the same revision. */
+    void alias(String oldParentId, String newParentId) {
+      String carried = content.get(oldParentId);
+      if (carried == null) return;
+      content.put(newParentId, carried);
+      String carriedRevision = revision.get(oldParentId);
+      if (carriedRevision != null) revision.put(newParentId, carriedRevision);
+    }
+  }
+
+  private boolean readModifyWrite(
+      IndexSearcher searcher,
+      String docId,
+      Map<String, Object> updates,
+      ParentSliceCache parentCache)
+      throws IOException {
     var topDocs = searcher.search(new TermQuery(new Term(idField, docId)), 1);
     if (topDocs.scoreDocs.length == 0) {
       log.debug("readModifyWrite: document not found: {}", docId);
@@ -346,6 +394,16 @@ public final class WritePathOps {
       }
     }
 
+    // A parent read here can serve every sibling chunk in batch/path RMW. More importantly, a
+    // rename rewrites the parent first while this searcher still exposes the old identity; caching
+    // its content lets all old-parent chunk slices survive that rewrite exactly.
+    String storedContent = asString(fields.get(SchemaFields.CONTENT));
+    if (storedContent != null) {
+      parentCache.putContentIfAbsent(docId, storedContent);
+    }
+
+    preserveChunkContent(searcher, docId, updates, fields, parentCache);
+
     // RMW preservation engine (tempdoc 711): stored-field reconstruction above cannot see
     // non-stored, non-docValues data-bearing fields (KnnFloatVectorField vectors, SPLADE
     // FeatureFields). For each catalog field that declares an rmwPolicy and is absent from the
@@ -365,7 +423,18 @@ public final class WritePathOps {
     StatusArtifactContract.enforce(session, fields, "read-modify-write:" + docId);
 
     // Re-index with updated fields
-    Document newDoc = session.fieldMapper.toDocument(fields);
+    FieldMapper.DroppedVectorReport droppedVectors = new FieldMapper.DroppedVectorReport();
+    Document newDoc = session.fieldMapper.toDocument(fields, droppedVectors);
+    if (droppedVectors.count() > 0) {
+      log.warn(
+          "read-modify-write dropped {} unusable vector field(s) for {}: {} ({})",
+          droppedVectors.count(),
+          docId,
+          droppedVectors.sampleDocIds(),
+          droppedVectors.lastReason());
+      TelemetryEvents rmwEvents = session.telemetryEvents;
+      if (rmwEvents != null) rmwEvents.onVectorFieldDropped(droppedVectors.count());
+    }
     LifecycleSnapshot rmwSnap = session.snapshot;
     if (rmwSnap == null || rmwSnap.writer() == null) {
       throw new IllegalStateException("IndexWriter not available during read-modify-write");
@@ -373,6 +442,127 @@ public final class WritePathOps {
     rmwSnap.writer().updateDocument(new Term(idField, docId), newDoc);
     log.debug("readModifyWrite: updated document: {}", docId);
     return true;
+  }
+
+  /**
+   * Reconstructs the non-stored chunk text before a whole-document RMW rewrite.
+   *
+   * <p>Failure is deliberately closed: rewriting a chunk without this field would silently erase
+   * its BM25 postings. The caller must rebuild an old or malformed index instead.
+   */
+  private void preserveChunkContent(
+      IndexSearcher searcher,
+      String chunkId,
+      Map<String, Object> updates,
+      Map<String, Object> fields,
+      ParentSliceCache parentCache)
+      throws IOException {
+    FieldMapper.FieldDef chunkContentDef =
+        session.fieldMapper.fieldDefs().get(SchemaFields.CHUNK_CONTENT);
+    if (chunkContentDef == null
+        || !FieldMapper.RMW_REDERIVE_PARENT_SLICE.equals(chunkContentDef.rmwPolicy)) {
+      return;
+    }
+    if (updates.containsKey(SchemaFields.CHUNK_CONTENT)
+        || !asBoolean(fields.get(SchemaFields.IS_CHUNK))) {
+      return;
+    }
+
+    String parentId =
+        asString(
+            updates.containsKey(SchemaFields.PARENT_DOC_ID)
+                ? updates.get(SchemaFields.PARENT_DOC_ID)
+                : fields.get(SchemaFields.PARENT_DOC_ID));
+    int start =
+        parseRequiredChunkOffset(
+            updates.containsKey(SchemaFields.CHUNK_START_CHAR)
+                ? updates.get(SchemaFields.CHUNK_START_CHAR)
+                : fields.get(SchemaFields.CHUNK_START_CHAR),
+            "start",
+            chunkId);
+    int end =
+        parseRequiredChunkOffset(
+            updates.containsKey(SchemaFields.CHUNK_END_CHAR)
+                ? updates.get(SchemaFields.CHUNK_END_CHAR)
+                : fields.get(SchemaFields.CHUNK_END_CHAR),
+            "end",
+            chunkId);
+    if (parentId == null || parentId.isBlank() || end < start) {
+      throw new IOException("Cannot preserve chunk_content for malformed chunk " + chunkId);
+    }
+
+    String parentContent = parentCache.content(parentId);
+    if (parentContent == null) {
+      var parentDocs = searcher.search(new TermQuery(new Term(idField, parentId)), 1);
+      if (parentDocs.scoreDocs.length == 0) {
+        throw new IOException(
+            "Cannot preserve chunk_content for " + chunkId + ": missing parent " + parentId);
+      }
+      Document parentDoc = searcher.storedFields().document(parentDocs.scoreDocs[0].doc);
+      parentContent = parentDoc.get(SchemaFields.CONTENT);
+      if (parentContent == null) {
+        throw new IOException(
+            "Cannot preserve chunk_content for " + chunkId + ": parent content unavailable");
+      }
+      parentCache.putContent(parentId, parentContent);
+    }
+
+    // Tempdoc 931 §C.1 — the offsets alone do not say WHICH parent revision they address. Parent
+    // write and chunk regeneration are separate coordinator calls, so an NRT refresh between them
+    // exposes the new parent content beside the not-yet-regenerated chunks; an equal-or-longer
+    // rewrite passes the length check below and silently re-slices the wrong text. Refusing costs
+    // nothing: such a chunk is stale by definition and regeneration deletes it.
+    String storedRevision =
+        asString(
+            updates.containsKey(SchemaFields.CHUNK_PARENT_CONTENT_SHA256)
+                ? updates.get(SchemaFields.CHUNK_PARENT_CONTENT_SHA256)
+                : fields.get(SchemaFields.CHUNK_PARENT_CONTENT_SHA256));
+    String liveRevision = parentCache.revision(parentId, parentContent);
+    if (storedRevision == null || !storedRevision.equals(liveRevision)) {
+      throw new IOException(
+          "Cannot preserve chunk_content for "
+              + chunkId
+              + ": parent content revision mismatch (stored "
+              + ChunkParentRevision.shortForm(storedRevision)
+              + ", live "
+              + ChunkParentRevision.shortForm(liveRevision)
+              + ")");
+    }
+
+    if (end > parentContent.length()) {
+      throw new IOException(
+          "Cannot preserve chunk_content for "
+              + chunkId
+              + ": slice ["
+              + start
+              + ","
+              + end
+              + ") exceeds parent length "
+              + parentContent.length());
+    }
+    fields.put(SchemaFields.CHUNK_CONTENT, parentContent.substring(start, end));
+  }
+
+  private static int parseRequiredChunkOffset(Object value, String label, String chunkId)
+      throws IOException {
+    if (value == null) {
+      throw new IOException(
+          "Cannot preserve chunk_content for " + chunkId + ": missing " + label + " offset");
+    }
+    try {
+      int parsed = Integer.parseInt(value.toString());
+      if (parsed < 0) throw new NumberFormatException("negative");
+      return parsed;
+    } catch (NumberFormatException e) {
+      throw new IOException(
+          "Cannot preserve chunk_content for "
+              + chunkId
+              + ": invalid "
+              + label
+              + " offset "
+              + value,
+          e);
+    }
   }
 
   /**
@@ -423,6 +613,12 @@ public final class WritePathOps {
             policy.substring(FieldMapper.RMW_RESET_STATUS_PREFIX.length()),
             updates,
             fields);
+      } else if (FieldMapper.RMW_REDERIVE_PARENT_SLICE.equals(policy)
+          && asBoolean(fields.get(SchemaFields.IS_CHUNK))
+          && !fields.containsKey(SchemaFields.CHUNK_CONTENT)) {
+        // preserveChunkContent runs before this catalog-driven loop. Keep the policy arm explicit
+        // so a future refactor cannot validate the declaration yet silently skip its disposition.
+        throw new IOException("chunk_content rederive-parent-slice policy was not satisfied");
       }
     }
   }
@@ -497,9 +693,10 @@ public final class WritePathOps {
     int updated = 0;
     int notFound = 0;
     long minNs = Long.MAX_VALUE, maxNs = 0, sumNs = 0;
+    ParentSliceCache parentCache = new ParentSliceCache();
     for (Map.Entry<String, Map<String, Object>> entry : batchUpdates) {
       long t0 = System.nanoTime();
-      if (readModifyWrite(searcher, entry.getKey(), entry.getValue())) {
+      if (readModifyWrite(searcher, entry.getKey(), entry.getValue(), parentCache)) {
         updated++;
       } else {
         notFound++;
@@ -543,6 +740,7 @@ public final class WritePathOps {
     // same pattern as LuceneRuntimeUtils).
     int lastSep = Math.max(newPath.lastIndexOf('/'), newPath.lastIndexOf('\\'));
     String newFilename = lastSep >= 0 ? newPath.substring(lastSep + 1) : newPath;
+    ParentSliceCache parentCache = new ParentSliceCache();
     boolean parentUpdated =
         readModifyWrite(
             searcher,
@@ -550,11 +748,13 @@ public final class WritePathOps {
             Map.ofEntries(
                 Map.entry(SchemaFields.DOC_ID, newPath),
                 Map.entry(SchemaFields.PATH, newPath),
-                Map.entry(SchemaFields.FILENAME, newFilename)));
+                Map.entry(SchemaFields.FILENAME, newFilename)),
+            parentCache);
     if (!parentUpdated) {
       log.debug("updateDocumentPaths: parent document not found: {}", oldPath);
       return 0;
     }
+    parentCache.alias(oldPath, newPath);
 
     // 2. Find all chunks for the old parent path
     BooleanQuery chunkQuery =
@@ -578,7 +778,8 @@ public final class WritePathOps {
           chunkId,
           Map.of(
               SchemaFields.PARENT_DOC_ID, newPath,
-              SchemaFields.PATH, newPath));
+              SchemaFields.PATH, newPath),
+          parentCache);
       count++;
     }
 
@@ -677,6 +878,43 @@ public final class WritePathOps {
       log.error("Failed to update document paths {} -> {}", oldPath, newPath, e);
       throw new IndexRuntimeIOException(
           classifyIOException(e), "Failed to update document paths", e);
+    }
+  }
+
+  /**
+   * Tempdoc 931 §E item 10 — purges deleted-but-unmerged documents so the index's {@code maxDoc}
+   * converges on its {@code numDocs}.
+   *
+   * <p>Tombstones are not inert: they stay in the collection statistics BM25 scores against, so
+   * two indexes built from the same corpus but carrying different tombstone counts answer the same
+   * query with different hit counts. A paired evaluation that wants to attribute a delta to a code
+   * change has to equalize merge state first.
+   *
+   * <p>Does NOT commit — the caller commits through {@code CommitOps.commitAndTrack(SETTLE)} so
+   * the commit stays attributed (see {@code CommitFunnelArchTest}).
+   *
+   * @param expungeDeletesOnly when true, only {@code forceMergeDeletes}; when false, also
+   *     {@code forceMerge} down to {@code maxSegments}
+   * @param maxSegments target segment count for the force-merge branch (values below 1 clamp to 1)
+   */
+  void settle(boolean expungeDeletesOnly, int maxSegments) {
+    guardWritable();
+    LifecycleSnapshot snap = session.snapshot;
+    IndexWriter w = snap != null ? snap.writer() : null;
+    if (w == null) {
+      throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
+    }
+    try {
+      w.forceMergeDeletes(true);
+      if (!expungeDeletesOnly) {
+        w.forceMerge(Math.max(1, maxSegments), true);
+      }
+      log.info(
+          "settle: expungeDeletesOnly={} maxSegments={}",
+          expungeDeletesOnly,
+          expungeDeletesOnly ? 0 : Math.max(1, maxSegments));
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(classifyIOException(e), "Failed to settle index", e);
     }
   }
 

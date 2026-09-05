@@ -237,13 +237,13 @@ public final class LuceneRuntimeTypes {
   /**
    * Low-level term statistics for a set of query terms, used to compute QPP signals.
    *
-   * @param numDocs total non-deleted document count in the index
+   * @param fieldDocCount number of non-deleted documents that contain the requested field
    * @param docFreqs per-term document frequency (number of docs containing the term)
    * @param termCollFreqs per-term collection frequency (total occurrences across all docs)
    * @param sumTotalTermFreq total term occurrences for the field across the whole collection
    */
   public record QppSignals(
-      long numDocs,
+      long fieldDocCount,
       Map<String, Integer> docFreqs,
       Map<String, Long> termCollFreqs,
       long sumTotalTermFreq) {}
@@ -477,6 +477,13 @@ public final class LuceneRuntimeTypes {
     }
 
     default void onValidationFailure(ValidationReason reason) {}
+
+    /**
+     * Dense-vector fields dropped from a write because their value could not be normalized — a
+     * zero-magnitude or non-finite embedding (tempdoc 931 §C.3). The document itself is still
+     * written; this counts the fields lost, not the documents.
+     */
+    default void onVectorFieldDropped(int count) {}
 
     // ==========================================================================
     // Tempdoc 406 substrate observability — drain / swap / lock contention.

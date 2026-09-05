@@ -1443,7 +1443,6 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.index.collection", "default"),
         resolveBoolean("justsearch.search.query_classification.enabled", true),
         resolveDouble("justsearch.search.title_boost", 3.0),
-        resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         // 775 §I / founder flip decision (2026-07-22): both evidence flags default-ON. The
         // putDefault above is the effective source; this fallback matches it for the no-putDefault
@@ -1579,7 +1578,13 @@ public final class ResolvedConfigBuilder {
         // The safety-net commit timer's period. Same channel and same reason as the three above:
         // CommitOps runs in the Worker, so a raw sysprop read there would never see a Head-side
         // value. The default reproduces the constant it replaces exactly.
-        resolveInt("index.commit.timer_interval_ms", 10_000));
+        resolveInt("index.commit.timer_interval_ms", 10_000),
+        // Tempdoc 931 §C.6 — the document-identity deletion grace. Same channel and same reason as
+        // the four above: the identity store lives in the Worker, so a raw sysprop read there would
+        // never see a Head-side value.
+        resolveLong(
+            "index.identity.deletion_grace_ms",
+            ResolvedConfig.Index.DEFAULT_IDENTITY_DELETION_GRACE_MS));
   }
 
   private ResolvedConfig.Collections buildCollections() {
@@ -1713,6 +1718,11 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.HybridSearch(
         resolveInt("index.hybrid.rrf_k", 60),
         resolveInt("index.hybrid.vector_skip_min_chars", 4),
+        Math.max(
+            0.0,
+            Math.min(
+                1.0,
+                resolveDouble("index.hybrid.vector_skip_min_df_fraction", 0.25))),
         Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),
         Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),

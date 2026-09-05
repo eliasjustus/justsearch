@@ -8,14 +8,6 @@
     "group": "analysis"
   },
   {
-    "name": "calibrate",
-    "group": "calibrate"
-  },
-  {
-    "name": "calibrate-drift-baseline",
-    "group": "calibrate"
-  },
-  {
     "name": "ce-replay",
     "group": "gates"
   },
@@ -202,10 +194,6 @@
   {
     "name": "rag-eval",
     "group": "eval"
-  },
-  {
-    "name": "recalibrate-nightly-baseline",
-    "group": "calibrate"
   },
   {
     "name": "recall-profile",

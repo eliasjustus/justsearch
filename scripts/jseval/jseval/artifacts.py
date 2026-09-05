@@ -10,6 +10,7 @@ from pathlib import Path
 
 from . import ce_coverage, provenance
 from .retriever import resolve_doc_id
+from .trec import format_trec_line
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ def _mirror_telemetry(data_dir: Path, run_dir: Path) -> list[str]:
         return []
     copied: list[str] = []
     for name in _TELEMETRY_FILES_TO_MIRROR:
-        sources = _collect_rotated_siblings(telemetry_dir, name)
+        sources = collect_rotated_siblings(telemetry_dir, name)
         if not sources:
             continue
         dst = run_dir / name
@@ -123,7 +124,7 @@ def _mirror_telemetry(data_dir: Path, run_dir: Path) -> list[str]:
     return copied
 
 
-def _collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[Path]:
+def collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[Path]:
     """Return the list of files to mirror for a given canonical NDJSON
     file, in timestamp-sorted filename order (rotated-oldest-first,
     then active last). Rotated siblings match the NdjsonSpanExporter
@@ -131,8 +132,11 @@ def _collect_rotated_siblings(telemetry_dir: Path, canonical_name: str) -> list[
 
     Active file is placed last so concatenation produces a
     chronologically-ordered stream — any span-time-based Layer-4
-    projection (rate_timeline, encoder_drift) sees the same ordering
-    it would have seen during live emission.
+    projection (rate_timeline) sees the same ordering it would have
+    seen during live emission. Also used by
+    :mod:`jseval.encoder_latency`, which reads the same rotated set
+    straight out of ``<data_dir>/telemetry/`` at summary-composition
+    time (before this mirror runs).
     """
     stem, _, ext = canonical_name.partition(".")
     if not ext:
@@ -172,6 +176,24 @@ def _concat_ndjson(sources: list[Path], dst: Path) -> None:
                     last_byte = chunk[-1:]
             if last_byte and last_byte != b"\n":
                 out.write(b"\n")
+
+
+DENSE_STAGE_WIRE_ID = "dense-retrieval"
+
+
+def _trace_stage_of(response: dict, stage_id: str) -> dict:
+    """The unified trace's stage node with ``stage_id`` from a raw search response, or ``{}``.
+
+    Same contract as ``ce_coverage.ce_stage_of`` (tempdoc 549: the trace's stage list is the
+    single source; ``{}`` means no trace at all, never an omitted stage).
+    """
+    trace = response.get("searchTrace") or {}
+    if not isinstance(trace, dict):
+        return {}
+    for stage in trace.get("stages") or []:
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            return stage
+    return {}
 
 
 def _build_per_query_entries(
@@ -225,6 +247,7 @@ def _build_per_query_entries(
             judge_signals.append({"docId": doc_id, **provenance.extract_judge_signals(h)})
 
         ce_stage = ce_coverage.ce_stage_of(resp)
+        dense_stage = _trace_stage_of(resp, DENSE_STAGE_WIRE_ID)
 
         entry = {
             "qid": qid,
@@ -259,6 +282,12 @@ def _build_per_query_entries(
             # makes the archived artifact judgeable at all (jseval.ce_coverage).
             "crossEncoderStatus": ce_stage.get("status"),
             "crossEncoderReason": ce_stage.get("reason"),
+            # Tempdoc 931 (lane D PR-C0 evidence): the dense-retrieval stage's own status + reason.
+            # C0 moved the dense skip into SearchPlanner and types it (SKIPPED_SHORT_QUERY /
+            # SKIPPED_NO_DISCRIMINATIVE_TERM); the per-language skip-rate check (915 C5b) reads
+            # these two fields, so they must survive into the archived artifact like the CE pair.
+            "denseStatus": dense_stage.get("status"),
+            "denseReason": dense_stage.get("reason"),
         }
         entries.append(entry)
 
@@ -266,7 +295,11 @@ def _build_per_query_entries(
 
 
 def _write_trec_run(path: Path, scored_docs: list, run_name: str) -> None:
-    """Write a TREC-format run file: qid Q0 docid rank score run_name."""
+    """Write a TREC-format run file: qid Q0 docid rank score run_name.
+
+    Tab-delimited (:data:`jseval.trec.DELIMITER`) so a doc id containing spaces
+    stays one unambiguous field on the wire.
+    """
     # Group by qid and assign ranks
     by_qid: dict[str, list] = {}
     for sd in scored_docs:
@@ -276,7 +309,7 @@ def _write_trec_run(path: Path, scored_docs: list, run_name: str) -> None:
     for qid in sorted(by_qid.keys()):
         docs = sorted(by_qid[qid], key=lambda d: d.score, reverse=True)
         for rank, sd in enumerate(docs, 1):
-            lines.append(f"{qid} Q0 {sd.doc_id} {rank} {sd.score:.6f} {run_name}")
+            lines.append(format_trec_line(qid, sd.doc_id, rank, sd.score, run_name))
 
     path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
