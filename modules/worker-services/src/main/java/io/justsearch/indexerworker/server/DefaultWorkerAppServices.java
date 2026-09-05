@@ -134,6 +134,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
           new io.justsearch.indexerworker.loop.IndexingLoopOptions(
               !"none".equalsIgnoreCase(tracingLevel),                  // detailedTracing
               ctx.pathResolutionStore(),                                // pathResolutionStore
+              ctx.documentIdentityStore(),                              // documentIdentityStore
               migrationActiveSupplier,                                  // 516 P3 final — pre-wired at ctor
               ingestRunning::latestCommitUserDataBestEffort,            // commitMetadataSupplier
               embeddingTelemetryEvents);                                // 516 P3 final — pre-wired at ctor
@@ -186,6 +187,7 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     // Tempdoc 419 / T5.3 (ADR-0028): wire the scoped reverse-lookup store. KnowledgeServer
     // constructed it; we just inject so the LookupPathByHash gRPC handler returns real data.
     this.ingestService.setPathResolutionStore(ctx.pathResolutionStore());
+    this.ingestService.setDocumentIdentityStore(ctx.documentIdentityStore());
 
     // Tempdoc 400 §22 Issue D / LR2-e.4 (Phase 6 / 6.7): wire the
     // active-generation supplier from the ingest service's

@@ -178,7 +178,7 @@ probe fails, a lifecycle trigger fires, or `last_reviewed` goes stale.
 | [0025](0025-core-dto-dual-type-layering.md) | Core DTO dual-type layering (gRPC vs REST) | Accepted | 2026-04-06 |
 | [0026](0026-manual-ci-triggering.md) | Manual-Only CI Triggering | Accepted (narrowed by ADR-0044) | 2026-04-22 |
 | [0027](0027-metric-catalog-as-telemetry-contract.md) | MetricCatalog as the Telemetry Contract | Accepted | 2026-04-25 |
-| [0028](0028-scoped-reverse-path-lookup.md) | Scoped Reverse Path-Hash Lookup | Accepted | 2026-04-26 |
+| [0028](0028-scoped-reverse-path-lookup.md) | Scoped Reverse Path-Hash Lookup | Accepted (amended 2026-09-03) | 2026-04-26 |
 | [0029](0029-telemetry-events-bridge-vs-direct-emit.md) | TelemetryEvents Bridge vs Direct-Emit Façade | Accepted | 2026-04-27 |
 | [0030](0030-policy-on-operations-vs-mcp-hints.md) | Policy on Operations vs MCP-style hints | Accepted | 2026-04-30 |
 | [0031](0031-fe-three-primitives.md) | Frontend three primitives — Operation, Resource, Prompt | Accepted | 2026-06-09 |

@@ -1,15 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.loop;
 
+import io.justsearch.indexerworker.identity.PathHash;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.Objects;
 
 /** Lightweight file identity and metadata snapshot for Worker-side stale-source detection. */
@@ -78,11 +76,6 @@ record FileFreshnessSnapshot(
   }
 
   static String pathHash(String value) {
-    try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      return HexFormat.of().formatHex(digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalStateException("SHA-256 is unavailable", e);
-    }
+    return PathHash.sha256(value);
   }
 }

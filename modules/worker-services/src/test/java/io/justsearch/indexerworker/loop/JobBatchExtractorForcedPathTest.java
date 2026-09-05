@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -17,6 +18,7 @@ import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.indexerworker.extract.ContentExtractor;
 import io.justsearch.indexerworker.extract.TimeboxedContentExtractor;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.loop.ops.BatchStats;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
@@ -32,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.InOrder;
 
 /**
  * Tempdoc 821 §3-C3 — the behavioural half of "make force-reindex real".
@@ -61,9 +64,18 @@ final class JobBatchExtractorForcedPathTest {
       DocumentFieldOps documentFieldOps,
       TimeboxedContentExtractor contentExtractor,
       IngestionOutcomeJournal journal,
-      BatchStats batchStats) {}
+      BatchStats batchStats,
+      DocumentIdentityStore identityStore) {}
 
   private Harness newHarness(Set<String> forcedPaths) throws Exception {
+    DocumentIdentityStore identityStore = mock(DocumentIdentityStore.class);
+    when(identityStore.resolve(anyString(), anyLong()))
+        .thenReturn(new DocumentIdentityStore.Identity("hash", "test-uid", 1L, 1L));
+    return newHarness(forcedPaths, identityStore);
+  }
+
+  private Harness newHarness(Set<String> forcedPaths, DocumentIdentityStore identityStore)
+      throws Exception {
     DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
     // Nothing changed on disk — the index's view of this doc is current. This is the precondition
     // that makes the UNCHANGED branch the DEFAULT outcome, so taking it is not the finding; NOT
@@ -100,10 +112,12 @@ final class JobBatchExtractorForcedPathTest {
             new AtomicBoolean(true),
             forcedPaths,
             () -> mock(PathResolutionStore.class),
+            () -> identityStore,
             mock(IndexingDocumentOps.StageRecorder.class),
             () -> false,
             delta -> {});
-    return new Harness(extractor, documentFieldOps, contentExtractor, journal, batchStats);
+    return new Harness(
+        extractor, documentFieldOps, contentExtractor, journal, batchStats, identityStore);
   }
 
   /** The key every marker writes for an admitted path — production's own derivation. */
@@ -153,6 +167,53 @@ final class JobBatchExtractorForcedPathTest {
     verify(h.contentExtractor(), never()).extractArtifact(any());
     verify(h.journal()).recordOutcomeSafely(eq(file), eq("UNCHANGED"), any());
     verify(h.batchStats()).recordSkipped();
+  }
+
+  @Test
+  @DisplayName("identity is durable before unchanged detection or extraction")
+  void identityResolutionPrecedesEveryAdmissionExit() throws Exception {
+    Path unchanged = Files.writeString(tempDir.resolve("unchanged.txt"), "same");
+    Harness unchangedHarness = newHarness(ConcurrentHashMap.newKeySet());
+
+    unchangedHarness.extractor().extractAll(List.of(new JobQueue.IndexJob(unchanged, null)));
+
+    InOrder unchangedOrder =
+        inOrder(unchangedHarness.identityStore(), unchangedHarness.documentFieldOps());
+    unchangedOrder.verify(unchangedHarness.identityStore()).resolve(anyString(), anyLong());
+    unchangedOrder
+        .verify(unchangedHarness.documentFieldOps())
+        .isUnmodified(eq(forcedKey(unchanged)), anyLong());
+
+    Path forced = Files.writeString(tempDir.resolve("forced.txt"), "same");
+    Set<String> forcedPaths = ConcurrentHashMap.newKeySet();
+    forcedPaths.add(forcedKey(forced));
+    Harness forcedHarness = newHarness(forcedPaths);
+
+    forcedHarness.extractor().extractAll(List.of(new JobQueue.IndexJob(forced, null)));
+
+    InOrder forcedOrder =
+        inOrder(forcedHarness.identityStore(), forcedHarness.contentExtractor());
+    forcedOrder.verify(forcedHarness.identityStore()).resolve(anyString(), anyLong());
+    forcedOrder.verify(forcedHarness.contentExtractor()).extractArtifact(forced);
+  }
+
+  @Test
+  @DisplayName("an unavailable identity store fails closed before any indexable artifact exists")
+  void unavailableIdentityStoreFailsClosedBeforeExtraction() throws Exception {
+    Path file = Files.writeString(tempDir.resolve("identity-unavailable.txt"), "body");
+    DocumentIdentityStore identityStore = mock(DocumentIdentityStore.class);
+    when(identityStore.resolve(anyString(), anyLong()))
+        .thenThrow(new IllegalStateException("identity store unavailable"));
+    Harness h = newHarness(ConcurrentHashMap.newKeySet(), identityStore);
+
+    List<ExtractedJob> extracted =
+        h.extractor().extractAll(List.of(new JobQueue.IndexJob(file, null)));
+
+    assertEquals(List.of(), extracted, "no artifact may escape without a persisted identity");
+    verify(h.contentExtractor(), never()).extractArtifact(any());
+    verify(h.documentFieldOps(), never()).isUnmodified(anyString(), anyLong());
+    verify(h.journal()).recordOutcomeSafely(eq(file), eq("WRITE_FAILED(document_identity)"), any());
+    verify(h.batchStats()).recordFailed();
   }
 
   /**

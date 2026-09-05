@@ -3,7 +3,10 @@ package io.justsearch.indexerworker.extract;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
@@ -13,7 +16,9 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.loop.IndexingLoop;
+import io.justsearch.indexerworker.loop.IndexingLoopOptions;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
 import java.io.IOException;
@@ -71,7 +76,7 @@ final class AdversarialCorpusIngestionTest {
                 Duration.ofSeconds(10),
                 (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
             null,
-            null);
+            identityOptions());
   }
 
   @Test
@@ -244,7 +249,7 @@ final class AdversarialCorpusIngestionTest {
                 Duration.ofSeconds(10),
                 (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
             null,
-            null);
+            identityOptions());
 
     // W5.2: extractJob moved to JobBatchExtractor (cross-package; reach via reflection on
     // the getExtractor() accessor).
@@ -311,7 +316,7 @@ final class AdversarialCorpusIngestionTest {
                 Duration.ofSeconds(10),
                 (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
             null,
-            null);
+            identityOptions());
 
     Object extractedJob = invokeExtractJobOn(tightLoop, file);
     assertNotNull(extractedJob, "Tight policy should still admit + extract (truncated)");
@@ -347,6 +352,19 @@ final class AdversarialCorpusIngestionTest {
   }
 
   // ---- helpers ----
+
+  private static IndexingLoopOptions identityOptions() {
+    DocumentIdentityStore store = mock(DocumentIdentityStore.class);
+    when(store.resolve(anyString(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              String pathHash = invocation.getArgument(0);
+              long nowMs = invocation.getArgument(1);
+              return new DocumentIdentityStore.Identity(
+                  pathHash, "00000000-0000-4000-8000-000000000410", nowMs, nowMs);
+            });
+    return new IndexingLoopOptions(false, null, store, null, null, null);
+  }
 
   private Object invokeExtractJob(Path file) throws Exception {
     return invokeExtractJobOn(loop, file);

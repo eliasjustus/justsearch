@@ -16,4 +16,16 @@ public record ExtractedJob(
     String collection,
     ValidatedExtractionArtifact artifact,
     long startTime,
-    FileEnvelope envelope) {}
+    FileEnvelope envelope,
+    String docUid) {
+
+  /** Back-compatible test fixture shape; production extraction always supplies {@code docUid}. */
+  public ExtractedJob(
+      Path filePath,
+      String collection,
+      ValidatedExtractionArtifact artifact,
+      long startTime,
+      FileEnvelope envelope) {
+    this(filePath, collection, artifact, startTime, envelope, null);
+  }
+}

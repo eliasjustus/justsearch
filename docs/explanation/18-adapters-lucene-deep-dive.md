@@ -497,7 +497,7 @@ boolean hasMore = topDocs.scoreDocs.length > limit;
 | Field | Type | Purpose |
 |-------|------|---------|
 | `doc_id` / `_id` | keyword | Primary key |
-| `doc_uid` | keyword | Tiebreaker for search-after |
+| `doc_uid` | keyword | Stable document identity and tiebreaker for search-after |
 | `vector` | vector | Document embeddings |
 | `chunk_vector` | vector | Chunk-level embeddings |
 | `parent_doc_id` | keyword | Links chunks to parent |

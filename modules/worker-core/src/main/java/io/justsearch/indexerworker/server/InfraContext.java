@@ -5,6 +5,7 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntime;
 import io.justsearch.indexerworker.WorkerConfig;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.index.MigrationProgressSnapshot;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.path.PathResolutionStore;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.telemetry.Telemetry;
@@ -38,7 +39,47 @@ public record InfraContext(
     Supplier<MigrationProgressSnapshot> migrationProgressSupplier,
     long migrationSwitchingMaxDurationMs,
     Runnable initiateShutdownAction,
-    PathResolutionStore pathResolutionStore) {
+    PathResolutionStore pathResolutionStore,
+    DocumentIdentityStore documentIdentityStore) {
+
+  public InfraContext {
+    pathResolutionStore =
+        pathResolutionStore != null ? pathResolutionStore : PathResolutionStore.NOOP;
+    documentIdentityStore =
+        documentIdentityStore != null ? documentIdentityStore : DocumentIdentityStore.UNAVAILABLE;
+  }
+
+  /** Back-compatible shape for callers that wire path resolution but not document identity. */
+  public InfraContext(
+      WorkerConfig config,
+      JobQueue jobQueue,
+      Supplier<LuceneRuntime> searchLifecycleSupplier,
+      Supplier<LuceneRuntime> ingestLifecycleSupplier,
+      WorkerSignalBus signalBus,
+      Telemetry telemetry,
+      MetricRegistry metricRegistry,
+      Path indexBasePath,
+      Path activeIndexPath,
+      Supplier<MigrationProgressSnapshot> migrationProgressSupplier,
+      long migrationSwitchingMaxDurationMs,
+      Runnable initiateShutdownAction,
+      PathResolutionStore pathResolutionStore) {
+    this(
+        config,
+        jobQueue,
+        searchLifecycleSupplier,
+        ingestLifecycleSupplier,
+        signalBus,
+        telemetry,
+        metricRegistry,
+        indexBasePath,
+        activeIndexPath,
+        migrationProgressSupplier,
+        migrationSwitchingMaxDurationMs,
+        initiateShutdownAction,
+        pathResolutionStore,
+        DocumentIdentityStore.UNAVAILABLE);
+  }
 
   /**
    * Tempdoc 419 / T5.2 — convenience factory for callers that don't yet wire a
@@ -72,6 +113,7 @@ public record InfraContext(
         migrationProgressSupplier,
         migrationSwitchingMaxDurationMs,
         initiateShutdownAction,
-        PathResolutionStore.NOOP);
+        PathResolutionStore.NOOP,
+        DocumentIdentityStore.UNAVAILABLE);
   }
 }

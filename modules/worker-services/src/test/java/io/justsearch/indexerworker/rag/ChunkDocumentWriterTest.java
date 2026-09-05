@@ -3,11 +3,15 @@ package io.justsearch.indexerworker.rag;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.RunningRuntime;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.configuration.FieldCatalogDef;
+import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
+import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
+import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkSplitter;
@@ -53,6 +57,7 @@ final class ChunkDocumentWriterTest {
     String mime = "application/pdf";
     String mimeBase = "application/pdf";
     String fileKind = "pdf";
+    String parentDocUid = "stable-parent-uid";
     long parentTokenCount = 2048L;
 
     String content = "     " + repeat("lorem ipsum ", 600);
@@ -60,7 +65,7 @@ final class ChunkDocumentWriterTest {
 
     lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
         SchemaFields.DOC_ID, parentDocId,
-        SchemaFields.DOC_UID, parentDocId + "#0",
+        SchemaFields.DOC_UID, parentDocUid,
         SchemaFields.PATH, parentDocId,
         SchemaFields.CONTENT, content,
         SchemaFields.MIME, mime,
@@ -100,6 +105,7 @@ final class ChunkDocumentWriterTest {
       String chunkIndexStr = fields.get(SchemaFields.CHUNK_INDEX);
       assertNotNull(chunkIndexStr);
       assertEquals(String.valueOf(i), chunkIndexStr);
+      assertEquals(parentDocUid + "#" + i, fields.get(SchemaFields.DOC_UID));
 
       String chunkContent = fields.get(SchemaFields.CHUNK_CONTENT);
       assertNotNull(chunkContent);
@@ -139,7 +145,8 @@ final class ChunkDocumentWriterTest {
             parentDocId,
             content,
             new ChunkDocumentWriter.ParentChunkMetadata(
-                "text/markdown", "text/markdown", "markdown", "en", parentTokenCount, null));
+                "text/markdown", "text/markdown", "markdown", "en", parentTokenCount, null,
+                "parent-uid"));
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -171,7 +178,7 @@ final class ChunkDocumentWriterTest {
             content,
             new ChunkDocumentWriter.ParentChunkMetadata(
                 "text/markdown", "text/markdown", "markdown", "en", null,
-                SchemaFields.AGENT_HISTORY_COLLECTION));
+                SchemaFields.AGENT_HISTORY_COLLECTION, "parent-uid"));
     assertTrue(regenerated > 0);
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
@@ -194,7 +201,7 @@ final class ChunkDocumentWriterTest {
 
     lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
         SchemaFields.DOC_ID, parentDocId,
-        SchemaFields.DOC_UID, parentDocId + "#0",
+        SchemaFields.DOC_UID, "stable-session-uid",
         SchemaFields.PATH, parentDocId,
         SchemaFields.CONTENT, content,
         SchemaFields.MIME, "text/markdown",
@@ -221,6 +228,80 @@ final class ChunkDocumentWriterTest {
     }
   }
 
+  @Test
+  @DisplayName("missing parent uid fails before replacing searchable chunks")
+  void missingParentUidDoesNotDeleteExistingChunks() throws Exception {
+    String parentDocId = "d:/docs/preserved.md";
+    String content = repeat("identity-safe replacement ", 500);
+    var validMetadata =
+        new ChunkDocumentWriter.ParentChunkMetadata(
+            "text/markdown", "text/markdown", "markdown", "en", null, null, "parent-uid");
+
+    int initial =
+        ChunkDocumentWriter.regenerateChunks(
+            lifecycle.documentFieldOps(),
+            lifecycle.indexingCoordinator(),
+            parentDocId,
+            content,
+            validMetadata);
+    assertTrue(initial > 1);
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
+    assertEquals(initial, findChunks(parentDocId).size());
+
+    var missingUidMetadata =
+        new ChunkDocumentWriter.ParentChunkMetadata(
+            "text/markdown", "text/markdown", "markdown", "en", null, null, null);
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            ChunkDocumentWriter.regenerateChunks(
+                lifecycle.documentFieldOps(),
+                lifecycle.indexingCoordinator(),
+                parentDocId,
+                content,
+                missingUidMetadata));
+
+    lifecycle.commitOps().maybeRefreshBlocking();
+    assertEquals(
+        initial,
+        findChunks(parentDocId).size(),
+        "failing closed on identity must leave the previous chunks searchable");
+  }
+
+  @Test
+  @DisplayName("index writer canonicalizes parent and chunk ids through redundant path hops")
+  void indexChunksUsesTheSameCanonicalParentIdAsTheParentWriter() throws Exception {
+    Path directory = java.nio.file.Files.createDirectories(tempDir.resolve("canonical"));
+    Path submitted =
+        directory.resolve("..").resolve(directory.getFileName()).resolve("document.txt");
+    String canonicalParentId = PathNormalizer.normalizeKey(submitted);
+    String nonCanonicalParentId =
+        PathNormalizer.normalizePath(submitted.toAbsolutePath().toString());
+    String content = repeat("canonical parent linkage ", 500);
+    ExtractionResult extraction = new ExtractionResult(content, null, "text/plain");
+    var metadata =
+        new IndexingDocumentOps.ParentIndexMetadata(
+            "text/plain", "text/plain", "text", "en", null);
+
+    int indexed =
+        IndexingDocumentOps.indexChunks(
+            submitted,
+            extraction,
+            lifecycle.documentFieldOps(),
+            lifecycle.indexingCoordinator(),
+            metadata,
+            null,
+            "canonical-parent-uid");
+    assertTrue(indexed > 1);
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
+
+    assertEquals(indexed, findChunks(canonicalParentId).size());
+    assertFalse(canonicalParentId.equals(nonCanonicalParentId), "fixture must detect normalization");
+    assertTrue(findChunks(nonCanonicalParentId).isEmpty());
+  }
+
   private List<LuceneRuntimeTypes.SearchHit> findChunks(String parentDocId) {
     BooleanQuery.Builder qb = new BooleanQuery.Builder();
     qb.add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")), BooleanClause.Occur.FILTER);
@@ -230,6 +311,7 @@ final class ChunkDocumentWriterTest {
     Set<String> projection =
         Set.of(
             SchemaFields.PARENT_DOC_ID,
+            SchemaFields.DOC_UID,
             SchemaFields.CHUNK_INDEX,
             SchemaFields.CHUNK_TOTAL,
             SchemaFields.CHUNK_CONTENT,

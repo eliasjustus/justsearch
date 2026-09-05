@@ -11,6 +11,8 @@ import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
+import io.justsearch.indexerworker.server.ops.KnowledgeServerMigrationOps;
+import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkSplitter;
@@ -34,6 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 @DisplayName("GrpcIngestService chunk regeneration (Tier 2)")
 final class GrpcIngestServiceChunkRegenerationTest {
@@ -74,7 +77,8 @@ final class GrpcIngestServiceChunkRegenerationTest {
   @Test
   @DisplayName("updateVduResult regenerates chunks with offsets + metadata")
   void updateVduResultRegeneratesChunksWithOffsetsAndMetadata() throws Exception {
-    String docId = "d:/docs/report.pdf";
+    String docId = PathNormalizer.normalizeKey(tempDir.resolve("report.pdf"));
+    String parentDocUid = "00000000-0000-4000-8000-000000000042";
     String mime = "application/pdf";
     String mimeBase = "application/pdf";
     String fileKind = "pdf";
@@ -84,7 +88,7 @@ final class GrpcIngestServiceChunkRegenerationTest {
 
     lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
         SchemaFields.DOC_ID, docId,
-        SchemaFields.DOC_UID, docId + "#0",
+        SchemaFields.DOC_UID, parentDocUid,
         SchemaFields.PATH, docId,
         SchemaFields.CONTENT, "placeholder",
         SchemaFields.MIME, mime,
@@ -125,6 +129,7 @@ final class GrpcIngestServiceChunkRegenerationTest {
       assertEquals(docId, fields.get(SchemaFields.PARENT_DOC_ID));
       assertEquals(String.valueOf(expectedChunks), fields.get(SchemaFields.CHUNK_TOTAL));
       assertEquals(String.valueOf(i), fields.get(SchemaFields.CHUNK_INDEX));
+      assertEquals(parentDocUid + "#" + i, fields.get(SchemaFields.DOC_UID));
       assertEquals(expected.get(i).content(), fields.get(SchemaFields.CHUNK_CONTENT));
 
       long start = Long.parseLong(fields.get(SchemaFields.CHUNK_START_CHAR));
@@ -137,6 +142,45 @@ final class GrpcIngestServiceChunkRegenerationTest {
       assertEquals(fileKind, fields.get(SchemaFields.FILE_KIND));
       assertNotNull(fields.get(SchemaFields.LANGUAGE));
     }
+
+    String normalizedId = IngestResponses.normalizeDocIdForMutation(docId);
+    assertTrue(
+        jobQueue.putSwitchBuffer(
+            IngestResponses.switchBufferVduUpdateKey(normalizedId),
+            "VDU_UPDATE",
+            IngestResponses.updateVduSwitchBufferPayload(request, normalizedId)));
+    assertEquals(1, jobQueue.listSwitchBufferOps().size());
+
+    KnowledgeServerMigrationOps.drainSwitchBufferBestEffort(
+        new KnowledgeServerMigrationOps.DrainSwitchBufferContext(
+            jobQueue,
+            lifecycle,
+            new StubWorkerSignalBus(),
+            IndexingPacing.unthrottled(),
+            tempDir.resolve("indexBase"),
+            tempDir.resolve("index"),
+            new tools.jackson.databind.ObjectMapper(),
+            LoggerFactory.getLogger(GrpcIngestServiceChunkRegenerationTest.class)));
+    lifecycle.commitOps().maybeRefreshBlocking();
+
+    assertTrue(
+        jobQueue.listSwitchBufferOps().isEmpty(),
+        "a successfully committed replay must clear its durable operation");
+    assertEquals(
+        parentDocUid,
+        lifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.DOC_UID),
+        "buffered VDU replay must preserve the parent identity");
+
+    List<LuceneRuntimeTypes.SearchHit> regenerated = findChunks(docId);
+    regenerated.sort(
+        Comparator.comparingInt(h -> Integer.parseInt(h.fields().get(SchemaFields.CHUNK_INDEX))));
+    assertEquals(expectedChunks, regenerated.size());
+    for (int i = 0; i < regenerated.size(); i++) {
+      assertEquals(
+          parentDocUid + "#" + i,
+          regenerated.get(i).fields().get(SchemaFields.DOC_UID),
+          "chunk identity must be deterministic across live and buffered VDU regeneration");
+    }
   }
 
   private List<LuceneRuntimeTypes.SearchHit> findChunks(String parentDocId) {
@@ -148,6 +192,7 @@ final class GrpcIngestServiceChunkRegenerationTest {
     Set<String> projection =
         Set.of(
             SchemaFields.PARENT_DOC_ID,
+            SchemaFields.DOC_UID,
             SchemaFields.CHUNK_INDEX,
             SchemaFields.CHUNK_TOTAL,
             SchemaFields.CHUNK_CONTENT,
