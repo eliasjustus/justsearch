@@ -254,7 +254,6 @@ export class MultiplexedStream {
       const payload = envelope.payload as { kind?: string } | null;
       const isHeartbeat = envelope.frameKind === 'LIFECYCLE' && payload?.kind === 'heartbeat';
       if (!isHeartbeat && IS_DEV) {
-        // eslint-disable-next-line no-console -- dev-only diagnostic, see class doc.
         console.warn(`[MultiplexedStream] frame for unregistered streamId: ${envelope.streamId}`);
       }
       return;

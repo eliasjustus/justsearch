@@ -385,7 +385,6 @@ export function evaluateWhen(expr: WhenExpression | undefined, ctx: WhenContext)
     if (node === null && !warned.has(expr)) {
       warned.add(expr);
       try {
-        // eslint-disable-next-line no-console
         console.warn(`[when] failed to parse expression: ${expr}`);
       } catch {
         /* swallow */

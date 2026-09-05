@@ -353,6 +353,18 @@ jobs:
       - name: Frontend lint (ts-any + todo-fixme successors)
         run: npm --prefix modules/ui-web run lint
 
+      # Tempdoc 930 section 22.2 follow-up 3 closes the other half of the same hole. The retired
+      # `todo-fixme` gate scanned `scripts/**` and `*.ps1` too, and neither successor above
+      # covered them: ESLint ran only in modules/ui-web, PMD only sees Java. `lint:scripts` is the
+      # root ESLint config (eslint.config.mjs, ~575 .mjs/.cjs files plus the packaging JS);
+      # `lint:ps1` is the PowerShell equivalent, which ESLint cannot parse. Both carry their
+      # pre-existing markers in a suppression list, so a NEW marker fails here.
+      - name: Script lint (todo-fixme successor for scripts/** and *.ps1)
+        run: |
+          npm run lint:scripts
+          npm run test:lint-ps1
+          npm run lint:ps1
+
       # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
       # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
       # and real stdio handler projection. No suite starts the shared dev stack or runs Gradle.

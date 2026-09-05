@@ -65,7 +65,6 @@ export function createTauriDeepLinkSource(): IntentSource {
           if (typeof url !== 'string') return;
           const intent = toIntent(url);
           if (!intent) {
-            // eslint-disable-next-line no-console
             console.warn(
               `[TauriDeepLinkSource] received un-parseable deep-link URL: ${url}`,
             );
@@ -75,7 +74,6 @@ export function createTauriDeepLinkSource(): IntentSource {
         });
         return unlisten;
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.warn('[TauriDeepLinkSource] failed to subscribe to Tauri event:', err);
         return () => {
           /* no-op */

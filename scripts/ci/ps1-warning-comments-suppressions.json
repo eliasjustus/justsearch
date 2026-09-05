@@ -1,0 +1,7 @@
+{
+  "scripts/ci/verify-installer-nsis-win.ps1": {
+    "no-warning-comments": {
+      "count": 1
+    }
+  }
+}
