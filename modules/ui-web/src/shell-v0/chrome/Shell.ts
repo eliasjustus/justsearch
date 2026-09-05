@@ -568,7 +568,6 @@ export class Shell extends JfElement {
   private activateUserStateActiveProfile(): void {
     const profileId = getActiveProfileId();
     void activateWorkspaceProfile(profileId).catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn(
         `[Shell] activateWorkspaceProfile('${profileId}') failed`,
         err,
@@ -1058,14 +1057,12 @@ export class Shell extends JfElement {
     // listInstalledManifests / getAction). Fire-and-forget; errors
     // surface as console warnings rather than blocking chrome boot.
     installCoreDemoManifest().catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn('[Shell] installCoreDemoManifest failed', err);
     });
     // 548 §4.3(d) — the welcome walkthrough now ships as a ContributionManifest
     // (migrated out of CorePlugin.register), proving the manifest is the
     // canonical declaration root for a real first-party feature.
     installCoreWalkthroughManifest().catch((err) => {
-      // eslint-disable-next-line no-console
       console.warn('[Shell] installCoreWalkthroughManifest failed', err);
     });
 
@@ -1691,7 +1688,6 @@ export class Shell extends JfElement {
             this.sourceTeardowns.push(teardown);
           }
         } catch (err) {
-          // eslint-disable-next-line no-console
           console.warn(`[Shell] source ${source.ref} failed to start:`, err);
         }
       }

@@ -177,6 +177,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | **`modules/ui-web/src/**`** (ui-web gate set) | `node scripts/ci/run-ui-web-gates.mjs` — authority: the `ui-web-gates` recipe in `governance/consult-register.v1.json` |
 | ui-shot harness · new RAIL surface | `check-ui-step-coverage` |
 | `scripts/agent-analytics/**` | `node scripts/agent-analytics/run-all-tests.mjs` |
+| `scripts/**` · `packaging/**` js · `*.ps1` | `npm run lint:scripts` · `check-ps1-warning-comments` |
 
 ## Common Pitfalls
 

@@ -68,7 +68,6 @@ function isRejected(entry: RecoveryOverlayEntry): boolean {
   const inOwnNamespace = entry.conditionId.startsWith(pluginNamespace);
   if (inOwnNamespace) return false;
   if (entry.provenance.tier === 'UNTRUSTED_PLUGIN') {
-    // eslint-disable-next-line no-console
     console.warn(
       `[RecoveryOverlayClient] UNTRUSTED plugin '${entry.pluginId}' attempted to override CORE condition '${entry.conditionId}'; rejected per §X.3.3 trust-tier governance`,
     );

@@ -313,7 +313,6 @@ const _warnedStates = new Set<string>();
 function warnUnknownState(state: string): void {
   if (_warnedStates.has(state)) return;
   _warnedStates.add(state);
-  // eslint-disable-next-line no-console
   console.warn(
     `[indexingJobsBridge] unrecognized job state ${JSON.stringify(state)} — ` +
       `rendering as 'queued'. The worker enum (PENDING/PROCESSING/DONE/FAILED) may have drifted.`,

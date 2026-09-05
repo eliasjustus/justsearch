@@ -683,7 +683,17 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    retire the kernel gate.
 2. PMD `CommentContent` is dormant behind ~78 pre-existing `pmdMain` violations; clear them and
    wire `pmdMain`, or accept dormancy explicitly.
-3. `scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.
+3. ~~`scripts/**/*.mjs` and `*.ps1` lost TODO-marker coverage; ESLint has no root config.~~
+   **CLOSED 2026-09-05** (PR `lint(930): scripts and ps1 TODO coverage; ui-web zero warnings`).
+   Root `eslint.config.mjs` covers `scripts/**` + `packaging/**` JS with `no-warning-comments`
+   (terms `todo`/`fixme`/`xxx`/`hack`, `location: anywhere`) plus 30 already-clean correctness
+   rules from `@eslint/js` recommended; full recommended was measured at 156 errors (`no-unused-vars`
+   62, `no-useless-assignment` 38, `no-empty` 24, `preserve-caught-error` 16, `no-useless-escape` 10,
+   `no-control-regex` 2, `no-regex-spaces` 1) and is a separate cleanup. `*.ps1` is covered by
+   `scripts/ci/check-ps1-warning-comments.mjs` (+ 8 tests), since ESLint cannot parse PowerShell.
+   Both wired in CI's "Script lint" step. Markers found: 3 JS + 1 ps1 — 2 fixed at the cause
+   (`scripts/docs/tempdoc-staleness-triage.mjs`, where the marker word was the subject matter, not
+   debt), 2 pinned in suppression lists.
 4. Promote `jseval-suite` to a required check (branch protection + the two inventories).
 5. `ui-a11y-gate` has no hosted lane (ADR-0026); decide whether measured axe should run on PRs.
 6. Row 11 (updater preserves models) needs its own lane: a Windows runner that installs silently.
@@ -700,6 +710,13 @@ separate lane. Enqueue, `merge-wait` and the exact-SHA main run stayed with the 
    frontmatter repair was unlandable without an unrelated content move. It now compares against
    the base ref and fails only when an over-cap tempdoc GREW (crossing the cap still fails);
    the cap's own rationale is unbounded growth, not any edit. Covered by 5 new tests.
-8. `modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
-   lint` has 24 pre-existing errors on `main`.
+8. ~~`modules/ui-web`: 37 unused `eslint-disable` directives (`--max-warnings=0` fails); `npm run
+   lint` has 24 pre-existing errors on `main`.~~ **CLOSED 2026-09-05** (same PR). Re-measured on
+   `origin/main` after #661: 0 errors, 37 warnings — the 24 errors were already gone, so only the
+   directives remained. 36 were deleted (every one named a rule this config does not enable —
+   `no-console` x29, `require-yield` x4, `no-alert`, `no-useless-escape`, `no-explicit-any`); the
+   37th is the blanket header of `src/api/generated/registry-enums.generated.ts`, whose bytes a Java
+   drift test owns, so the generated tree is exempted from unused-directive reporting in
+   `eslint.config.js` instead of edited. `lint` is now `eslint . --max-warnings=0`, and the
+   `ui-web-gates` recipe names it.
 9. Tempdoc 919's owner: apply the row-10 decision text held by the orchestrator.
