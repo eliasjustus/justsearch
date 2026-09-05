@@ -211,10 +211,11 @@ Publishing, opening a pull request, enqueueing, and merging are explicitly exclu
   proportion gate reported every geometric constraint held.
 - Frontend typecheck passed. An initial unit run passed 6,285 tests and hit only the two recorded
   cold-load timeouts in `PluginLoader.test.ts` and `resourceRegistry.test.ts`; their combined isolated
-  rerun passed all 35 tests. After the final `origin/main` catch-up, `npm run test:unit:run` passed all
-  469 files and 6,287 tests.
-- The worktree was caught up through merge commit `3ceec045`. The required post-merge
-  `./gradlew.bat build -x test` passed, and the subsequent repository-wide `./gradlew.bat test` passed
+  rerun passed all 35 tests. After each of the final two `origin/main` catch-ups,
+  `npm run test:unit:run` passed all 469 files and 6,287 tests.
+- The worktree was caught up through final merge commit `cff6d7b7` (including mainline
+  `8a83e6ea`). The required `./gradlew.bat build -x test` and repository-wide
+  `./gradlew.bat test` both passed after that merge. The preceding uncached full-suite run passed
   cleanly in 3m17s, including the previously load-sensitive Lucene concurrency regression. The
   complete `:modules:ui:test` task, including the new HTTP contract, also passed independently.
 - Documentation regeneration plus `llmstxt-generate --check`, `skills-sync --check`, and the current
