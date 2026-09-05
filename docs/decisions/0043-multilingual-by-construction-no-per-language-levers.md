@@ -1,5 +1,5 @@
 ---
-title: "Multilingual by construction — no per-language levers"
+title: "ADR-0043: Multilingual by construction — no per-language levers"
 type: decision
 status: accepted
 description: "The search engine is multilingual by construction via one multilingual model stack; no per-language analysis artifact (stemmer/analyzer field/stopwords/spelling dict/curated synonyms) may be authored or maintained. Language may be read as a signal to a uniform policy, but never forked into per-language components."

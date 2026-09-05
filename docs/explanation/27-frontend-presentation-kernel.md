@@ -5,7 +5,7 @@ status: stable
 description: "How the web frontend prevents presentation drift: single presentation authorities (tone, originator, layout, modality), a closed atom vocabulary, runtime-modality primitives, and catalog-projected gates — the Collapse > Generate > Gate prevention ladder that makes a re-authored badge/modal/transient unrepresentable rather than merely discouraged."
 ---
 
-# 27 — The Frontend Presentation Kernel
+# The Frontend Presentation Kernel
 
 The web frontend (`modules/ui-web`, the `shell-v0` tree) is built so that **a
 given visual or behavioural concept has exactly one authority**, and a second,

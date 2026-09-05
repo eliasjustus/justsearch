@@ -3,7 +3,7 @@ title: "eval validity lane: does the instrument measure what we think — questi
 type: tempdocs
 status: "EXECUTED (2026-07-21, same day — orchestrator-run: opus worker for §A.1/§A.3/§A.4 + mechanism probe worker + inline judge adjudication). Judge audit closed at zero cost; see §E Results."
 created: 2026-07-21
-author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
+author: "agent (Fable orchestration), founder-directed analysis program (umbrella: 762)"
 category: eval-analysis / eval-design
 related:
   - 762-agent-utility-analysis-program   # umbrella: priors §P, data §D, constraints §C — READ FIRST

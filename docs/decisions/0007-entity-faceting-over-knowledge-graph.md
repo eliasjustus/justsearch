@@ -1,5 +1,5 @@
 ---
-title: "Entity Faceting Over Full Knowledge Graph"
+title: "ADR-0007: Entity Faceting Over Full Knowledge Graph"
 type: decision
 status: stable
 description: "Selective adoption of NER entity extraction for Lucene keyword facets with SQLite sidecar disambiguation, deferring full knowledge graph."

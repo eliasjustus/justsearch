@@ -1,5 +1,5 @@
 ---
-title: "Core DTO Dual-Type Layering (gRPC vs REST)"
+title: "ADR-0025: Core DTO Dual-Type Layering (gRPC vs REST)"
 type: decision
 status: stable
 description: "Maintain separate core DTOs (gRPC-aligned) and app-api records (REST-aligned) as intentional layering, not duplication."

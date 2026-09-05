@@ -5,7 +5,7 @@ status: stable
 description: "Demo mode (no backend), real backend mode, and frontend verification."
 ---
 
-# How to develop the UI
+# Developing the UI
 
 > **⚠️ Correction (2026-06, tempdoc 615): `?demo=true` no longer supplies data to the live Lit `shell-v0`.**
 > The production `<jf-shell>` boot resolves its API base via `resolveApiEndpoint()` (`src/api/http.ts`), which

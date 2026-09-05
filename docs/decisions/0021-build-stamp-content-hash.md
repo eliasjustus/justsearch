@@ -1,5 +1,5 @@
 ---
-title: "Build-Stamp Content-Hash Design"
+title: "ADR-0021: Build-Stamp Content-Hash Design"
 type: decision
 status: stable
 description: "Use SHA-256 content hash of the Worker distribution to detect stale JVM processes during development."

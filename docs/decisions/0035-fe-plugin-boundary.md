@@ -1,5 +1,5 @@
 ---
-title: "Plugin boundary — truth vs presentation"
+title: "ADR-0035: Plugin boundary — truth vs presentation"
 type: decision
 status: accepted
 description: "Plugins author presentation (renderers, surfaces, layout, theme) but never own backend truth (Operations/Resources/Prompts). The boundary is a type, not a convention."

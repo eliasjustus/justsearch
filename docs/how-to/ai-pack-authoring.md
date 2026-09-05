@@ -5,6 +5,8 @@ status: draft
 description: "Step-by-step guide for creating offline AI packs."
 ---
 
+# Author an Offline AI Pack (v2 models-only)
+
 ## What this does
 
 This repo supports importing **offline AI Packs** (v2, **models-only**) via the local UI/API.

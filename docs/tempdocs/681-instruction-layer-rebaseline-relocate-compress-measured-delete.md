@@ -4,7 +4,7 @@ type: tempdocs
 status: "open — IMPLEMENTED (2026-07-07, worktree 681-instruction-layer), WATCH WINDOW ACTIVE for the Move 2/3 tranche (restore-on-recurrence; terms in §Implementation record). All three moves + the de-risk guard rails shipped and validated; the 2c912ae bump re-ratchet obligation (§Owner-directed addition) is honored — ceilings re-pinned at 66,493 B total. Remaining: the watch window, and future tranches only if evidence earns them."
 created: 2026-07-06
 updated: 2026-07-07
-author: agent workflow-review pass (live repo measurement: check-always-loaded-budget.mjs run 2026-07-06; official-source research pass over Anthropic docs/publications 2026-05-06..2026-07-06)
+author: "agent workflow-review pass (live repo measurement: check-always-loaded-budget.mjs run 2026-07-06; official-source research pass over Anthropic docs/publications 2026-05-06..2026-07-06)"
 category: agent-workflow / instruction-layer / context-efficiency
 related:
   - 620-claude-md-context-layer   # the direct precedent — relocated common-workflows.md out of the always-loaded layer, established residence→delivery conversions; this tempdoc is the continuation of that line

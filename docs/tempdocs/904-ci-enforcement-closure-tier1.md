@@ -1,7 +1,7 @@
 ---
 title: "CI enforcement closure, tier 1: a self-hosted Windows/GPU runner on the owner's machine for the perf ratchet, mutation ratchet, soak suite, full jseval pytest, and installer-over-release qualification"
 type: tempdocs
-status: CHARTERED, UNBLOCKED (2026-09-02) — decision revised same day: use the EXISTING self-hosted runner (verified online: justsearch-gpu-runner, labels self-hosted/Windows/X64/gpu), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); schedule proposed in §Schedule (owner may veto); item 0 amends ADR-0044, SHA-pins Actions, scopes secrets to an Environment, fixes the docs-lint label mismatch
+status: "CHARTERED, UNBLOCKED (2026-09-02) — decision revised same day: use the EXISTING self-hosted runner (verified online: justsearch-gpu-runner, labels self-hosted/Windows/X64/gpu), threat evaluated in §Decision (fork-PR RCE already gated by check-workflow-triggers, tempdoc 747 P-D); schedule proposed in §Schedule (owner may veto); item 0 amends ADR-0044, SHA-pins Actions, scopes secrets to an Environment, fixes the docs-lint label mismatch"
 created: 2026-09-02
 updated: 2026-09-03
 lane: 887 L2

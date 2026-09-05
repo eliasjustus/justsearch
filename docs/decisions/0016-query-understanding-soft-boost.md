@@ -1,5 +1,5 @@
 ---
-title: "Query Understanding Soft-Boost"
+title: "ADR-0016: Query Understanding Soft-Boost"
 type: decision
 status: stable
 description: "Use soft boosts (SHOULD clauses) for QU-extracted signals, not hard filters."

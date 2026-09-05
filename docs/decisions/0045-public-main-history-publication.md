@@ -1,5 +1,5 @@
 ---
-title: "Public main history publication"
+title: "ADR-0045: Public main history publication"
 type: decision
 status: stable
 description: "Public main receives curated squash commits from pull requests while branch commits remain workspace history."

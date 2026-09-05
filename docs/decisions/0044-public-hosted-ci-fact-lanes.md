@@ -1,5 +1,5 @@
 ---
-title: "Public hosted CI fact lanes"
+title: "ADR-0044: Public hosted CI fact lanes"
 type: decision
 status: accepted
 description: "The public repository runs standard GitHub-hosted CI on push and pull requests, split into stable fact lanes; self-hosted and specialty workflows remain manually dispatched unless separately amended."

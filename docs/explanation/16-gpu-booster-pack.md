@@ -5,7 +5,7 @@ status: draft
 description: "v3 GPU plan (NVML-first), runtime sourcing, self-test, and rollback."
 ---
 
-# 16. NVIDIA GPU Booster Pack (v3)
+# NVIDIA GPU Booster Pack (v3)
 
 This document describes the supported v3 approach for NVIDIA-only GPU acceleration in JustSearch:
 

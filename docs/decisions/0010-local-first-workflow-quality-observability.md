@@ -1,5 +1,5 @@
 ---
-title: "Local-First Workflow Quality Observability"
+title: "ADR-0010: Local-First Workflow Quality Observability"
 type: decision
 status: superseded
 description: "Keep repo-owned NDJSON workflow evidence canonical and treat Opik/Inspect as optional overlays."

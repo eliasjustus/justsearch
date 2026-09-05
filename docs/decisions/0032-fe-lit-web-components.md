@@ -1,5 +1,5 @@
 ---
-title: "Frontend rendering — Lit web components"
+title: "ADR-0032: Frontend rendering — Lit web components"
 type: decision
 status: accepted
 description: "The frontend is authored as Lit web components (the React stack was retired in the rewrite). Components are projected from typed catalogs."

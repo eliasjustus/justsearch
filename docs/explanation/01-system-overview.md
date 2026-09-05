@@ -5,7 +5,7 @@ status: stable
 description: "The 3-process architecture pattern."
 ---
 
-# 01. System Architecture: The "Local-First Cloud"
+# System Overview
 
 JustSearch is built on a **Local-First Microservices** architecture. While it runs entirely on the user's local machine, it mimics the resilience and separation of concerns found in distributed cloud systems. This design handles the unique constraints of desktop environments—specifically OS file locking on Windows and UI responsiveness guarantees.
 
