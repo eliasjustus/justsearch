@@ -1,5 +1,5 @@
 ---
-title: "MCP Tool Surface Design"
+title: "ADR-0015: MCP Tool Surface Design"
 type: decision
 status: stable
 description: "Consolidate the MCP surface from 7 capability-oriented tools to a short task-oriented list for higher agent accuracy; the shipped surface is six task-oriented tools (amended 2026-09-02)."

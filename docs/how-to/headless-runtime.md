@@ -5,6 +5,8 @@ status: draft
 description: "Launch the JustSearch backend as a local loopback service without the desktop shell, selecting an install/runtime mode."
 ---
 
+# Run JustSearch as a headless runtime (Headless / MCP Lite)
+
 ## What this does
 
 Runs the JustSearch backend (the Head process + its Worker) as a local, loopback-only

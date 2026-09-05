@@ -5,7 +5,7 @@ status: stable
 description: "Typed lifecycle evidence, live-pin extraction, and advisory review policy for pinned build and runtime platforms."
 ---
 
-# Platform lifecycle evidence policy
+# Platform Lifecycle Evidence Policy
 
 `governance/platform-lifecycle.v1.json` records lifecycle evidence for the
 build and runtime platforms JustSearch pins. It does not copy the live version:

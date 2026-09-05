@@ -1,5 +1,5 @@
 ---
-title: "Universal SSE envelope"
+title: "ADR-0037: Universal SSE envelope"
 type: decision
 status: accepted
 description: "Streaming Resources share one multi-frame SSE envelope (initial snapshot frame + subsequent delta frames) rather than per-endpoint ad-hoc stream shapes."

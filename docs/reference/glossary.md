@@ -5,7 +5,7 @@ status: stable
 description: "Authority index for overloaded JustSearch architecture, search, runtime, and interface terms."
 ---
 
-# Project glossary
+# Project Glossary
 
 This page is an authority index, not a second specification. Each row gives the
 short distinction needed to choose the right term and points to the canonical

@@ -6,7 +6,7 @@ updated: 2026-08-19
 description: "Secondary view behavioral specification (Library, Brain, Health, Settings, Help)."
 ---
 
-# Secondary Views: Behavioral Reference
+# Secondary Views Behavioral Reference
 
 [`search-ui-behavior.md`](search-ui-behavior.md) documents the search experience (Zones A, C, D, E). This document covers the secondary views accessed through Zone B (the ActivityRail), plus the ActivityRail itself. Together they form the complete UI behavioral reference.
 

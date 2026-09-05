@@ -5,7 +5,7 @@ status: stable
 description: "NSIS installer, Tauri boot sequence, sandbox harness scripts."
 ---
 
-# 12. Desktop Installer + Sandbox Setup (How it works today)
+# Desktop Installer + Sandbox Setup (How it works today)
 
 This document is a **purely descriptive** explanation of the current Windows desktop setup:
 

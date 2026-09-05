@@ -3,7 +3,7 @@ title: "agent economics & ergonomics lane: token/time anatomy of all 480 cells, 
 type: tempdocs
 status: "EXECUTED (2026-07-21, same day — orchestrator-run, pinned opus worker). Cost anatomy + exhaustion taxonomy + friction findings complete; campaign options drafted; see §E Results."
 created: 2026-07-21
-author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
+author: "agent (Fable orchestration), founder-directed analysis program (umbrella: 762)"
 category: eval-analysis / agent-economics / tool-ergonomics
 related:
   - 762-agent-utility-analysis-program   # umbrella: priors §P, data §D, constraints §C — READ FIRST

@@ -1,5 +1,5 @@
 ---
-title: Distributed Readiness — Remote Shard SPI
+title: "ADR-0011: Distributed Readiness — Remote Shard SPI"
 type: decision
 status: rejected - never built; retired 2026-09-02, a single-user desktop product has no shard need
 description: "Retired 2026-09-02: a Remote Shard SPI was accepted 2026-03-16 and never built. A single-user desktop product has no shard need; the absence is now the decision."

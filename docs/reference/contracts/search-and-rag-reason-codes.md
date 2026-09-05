@@ -5,7 +5,7 @@ status: stable
 description: 'Degradation signaling contract for gRPC and `rag_meta`.'
 ---
 
-# Search & RAG reason codes (degradation signaling)
+# Search & RAG Reason Codes (Degradation)
 
 JustSearch surfaces explicit mode + reason metadata so clients can distinguish “keyword-only”, “semantic”, and fallback behavior without log-grepping or guesswork.
 

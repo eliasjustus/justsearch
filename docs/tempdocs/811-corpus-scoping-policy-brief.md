@@ -1,6 +1,12 @@
 ---
 title: "811 — Corpus scoping & internal-documents policy (T-C): decision brief"
 status: "investigation complete 2026-08-06; recommendations C-1a/C-2a/C-3-keep adopted by default under the owner's autonomous-proceed directive; IMPLEMENTED: D-1/D-2/chunk-collection (#379), C-1a pill (#372), C-2a tagging+removal (#380), C-4 count fix (searchableDocuments, 2026-08-06); HELD pending T-A's #377: Library Other-sources section; C-3 remains owner-overridable"
+created: 2026-08-06
+updated: 2026-08-06
+related: [809, 810, 585, 629, 553]
+---
+
+# 811 — Corpus scoping & internal-documents policy (T-C)
 
 > **Correction (2026-08-06, from C-2a implementation):** §investigation item 2 wrongly
 > states the MCP `justsearch_ingest` tool reaches `KnowledgeSearchController.handleIngest`.
@@ -9,12 +15,6 @@ status: "investigation complete 2026-08-06; recommendations C-1a/C-2a/C-3-keep a
 > shared `IngestCollectionPolicy` (#380). Related follow-up logged: watched-root scans drop
 > their own collection (`RootLifecycleOps.ScanRootFn` has no collection parameter), so a
 > root's own scan writes untagged docs while the registry reports its label.
-created: 2026-08-06
-updated: 2026-08-06
-related: [809, 810, 585, 629, 553]
----
-
-# 811 — Corpus scoping & internal-documents policy (T-C)
 
 Thread T-C of the human-validation campaign (finding 5 in tempdoc 809; charter in 810).
 Ground truth below was gathered by a read-only source investigation on 2026-08-06 against
