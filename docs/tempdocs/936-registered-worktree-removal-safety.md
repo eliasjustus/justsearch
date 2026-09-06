@@ -119,3 +119,23 @@ All destructive verification occurs only in newly created disposable fixture roo
 
 Planning completed after current world-state refresh (45 registered checkouts; #936
 next free). Implementation and verification remain unchecked above.
+
+### Parent design probes (2026-09-06)
+
+- A disposable real Git repository with two external worktrees (paths containing
+  spaces) verified that after controlled filesystem deletion,
+  `git worktree remove --force -- <target>` removes only that registration and
+  retains an unrelated missing/prunable registration. This can replace global prune.
+- Read of agent-spawn-sweep.cjs found gatherAgentSpawnOrientation writes refusal
+  markings despite being advisory. Dry-run must use the raw reader and pure evaluator
+  or another verified zero-write path, not this assembly. Worker notified.
+- Existing process-record.readRegister is bounded and surfaces most errors, but its
+  dirent filtering deserves care for symlinks. Reusing a reader does not transfer a
+  stronger safety claim than its actual behavior supports.
+- The independent Sol exploration found a documented self-removal incident in
+  .claude/rules/agent-lessons.md:26. Admission must also refuse when the target contains
+  process.cwd() or the executing script's own checkout. The existing holder scanner
+  deliberately excludes the invoking chain and cannot establish cwd-only ownership.
+- Preview Git probes must disable optional index locks/refresh writes; filesystem
+  snapshots in regression fixtures should cover index/refs/runtime metadata as well
+  as target content. New tests must be discovered by an existing suite.
