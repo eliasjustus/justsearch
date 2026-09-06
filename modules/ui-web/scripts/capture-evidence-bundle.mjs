@@ -541,10 +541,13 @@ async function main() {
   const relBundle = path.relative(repoRoot, bundleDir);
   const printable = relBundle && !relBundle.startsWith('..') ? toPosix(relBundle) : bundleDir;
   process.stdout.write(printable + '\n');
-  process.exit(status === 'passed' ? 0 : 1);
+  // Let Node drain fetch/Undici teardown and the stdout pipe before exiting. Forced
+  // process.exit() on affected Windows Node releases can race delayed libuv cleanup
+  // (and produced UV_HANDLE_CLOSING after this bundle was written successfully).
+  process.exitCode = status === 'passed' ? 0 : 1;
 }
 
 main().catch((err) => {
   logErr(`capture crashed: ${err?.stack || err?.message || String(err)}`);
-  process.exit(2);
+  process.exitCode = 2;
 });

@@ -105,8 +105,13 @@ Every step fails closed, and the evidence JSON is written even on an unexpected 
 `required_reviewers` protection rule. A `workflow_call` into it would park awaiting a human
 approval, so a reusable-workflow design could never run unattended. Using two already published
 release assets is both autonomous and literally what tempdoc 617 §9 item 3 asks for. The
-`candidate_source: run-artifact` path covers the pre-publication case without that constraint,
-because a `build-installer.yml` artifact is downloaded rather than produced in-lane.
+`candidate_source: run-artifact` path covers the pre-publication consumer path, but producing that
+artifact remains owner-mediated: when the protected Environment normally admits only `main` and
+`v*`, add an exact branch deployment policy for the candidate, verify the pending run's head SHA,
+approve that one run, and remove the temporary policy as soon as the job starts. The build can remain
+unsigned, meaning that it does not invoke the provider signer or spend a signing; approval still makes
+the Environment's referenced Authenticode secrets available to the reviewed job. The Environment also
+supplies the updater-signing material required by a valid candidate artifact.
 
 ## Related
 

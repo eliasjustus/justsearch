@@ -1,9 +1,9 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: IMPLEMENTED (2026-09-03) — redesigned release-hardening and read-only planner slices complete; owner production/publication actions and 617 live updater evidence remain open
+status: MERGED (2026-09-06) — release hardening and packaged-verifier cleanup are on main; WinGet submission withdrawn; 617 updater evidence and real model promotion remain open
 created: 2026-09-02
-updated: 2026-09-03
+updated: 2026-09-06
 lane: 887 L16
 model: gpt-5.6-sol (takeover, design, derisk, implementation)
 parent: 887-improvement-landscape-register
@@ -732,3 +732,63 @@ Residual owner actions:
    before a real model promotion.
 7. Complete tempdoc 617's exact published-installer N→N+1 normal, interrupted, and reconciliation
    lanes; neither a fresh install nor successful publication substitutes for those observations.
+
+## Operational follow-through (2026-09-03)
+
+PR `#629` merged through the protected queue with green merge-group and post-merge CI. The
+`release-signing` Environment and transferred-repository descriptor are configured, a non-qualifying
+WinGet Sandbox probe passed, and the later upstream WinGet submission was withdrawn by owner choice.
+An owner-authorized non-release run proved the protected signer and final executable census without
+publishing a release. Its packaged consumer then exposed a Windows Node teardown failure after writing
+valid evidence; the follow-up drains handles naturally and passes both public Windows CI and an
+unsigned complete packaged-verifier run. The detailed run IDs, hashes, observations, and failure
+chronology moved to `905-evidence/operational-follow-through-2026-09.md` when the tempdoc-size gate
+required bulk evidence to leave this main record.
+
+Residual owner-dependent work is limited to mirror-signer validation during its next necessary
+refresh, provider-authoritative admission before later paid dispatches, tempdoc 617's exact N→N+1
+updater lanes, and a future approved model candidate. Scoop remains deliberately deferred.
+
+## Publication completion plan (2026-09-06)
+
+The packaged-verifier cleanup was published without reopening superseded distribution choices or
+spending another signing credit. Detailed publication evidence is in the evidence sidecar.
+
+- [x] Incorporate current `origin/main` and prove the clean content diff is limited to the capture
+  repair, regression, publication-preflight corrections, operator guidance, and this record.
+- [x] Re-run the focused regression and full caught-up verification. The Windows Gradle-launcher
+  repair and clean-candidate guard exposed by that process are covered by tests. All local publication
+  subsets passed; detailed commands, counts, and the generated-output secret-scan diagnosis are in the
+  evidence sidecar.
+- [x] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
+  verifier job to pass. This closes the capability-realization gap on the exact consumer path without
+  invoking the provider signer or consuming a metered signing. The job still requires the protected
+  Environment because a valid candidate also uses its updater-signing material; admit only this exact
+  branch, retain required review, and remove the temporary deployment policy as soon as the job starts.
+  Run `34027668827` first proved that the normal `main`/`v*` deployment policy rejected the branch
+  before any job step. The owner-authorized retry, run `34027810568`, was admitted through a temporary
+  exact-branch policy only after its pending deployment was verified at head
+  `eae13b529c919c5e32f545249943760fd0a5a255`; the exception was removed as soon as the job started,
+  leaving only `main` and `v*`. The build log states that signing was not requested, the release step
+  was skipped, and both `Windows NSIS Installer` and `Verify installer (packaged)` passed. The latter
+  completed the EvidenceBundle validation that had failed during teardown in the earlier paid run.
+- [x] Scan the complete public diff for credentials, private identifiers, machine-local paths, stale
+  quantitative claims, and unrelated changes. The final ten-file scope contains only the capture fix,
+  its CI regression, the publication-preflight corrections, canonical operator guidance, and this
+  record. Targeted pattern inspection, `git diff --check`, and the committed-candidate secret scan are
+  clean; provider account details were removed rather than published. Closed WinGet PR `#429017`
+  remains closed, and no Scoop artifact was added. Independent refute-first review found and closed
+  the public-provider-detail, unsigned-secret-boundary, and dirty-candidate scan issues. One accepted
+  low-risk residual remains: the child-process regression exercises the successful runtime path while
+  static assertions cover both exit assignments; it does not dynamically force exit statuses 1 and 2
+  or impose a child timeout. That broader harness hardening is not required to reproduce and prevent
+  the observed Windows teardown failure.
+- [x] Open fresh PR `#692` because closed PR `#631` described an older docs-only head; use the current
+  public squash-body contract and separate review record, and pass both strict publication checks.
+- [x] Enqueue through the protected merge queue, verify the landed tree by diff, and confirm both
+  merge-group and post-merge `main` CI before task cleanup.
+
+No implementation teardown remains. The only superseded publication artifact is closed PR #631;
+it stays closed as history rather than being repurposed. The withdrawn WinGet submission, deferred
+Scoop channel, updater evidence lanes in tempdoc 617, and future real model promotion remain outside
+this publication.

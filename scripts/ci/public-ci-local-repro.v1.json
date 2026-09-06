@@ -76,7 +76,7 @@
     {
       "check": "Secret scan",
       "mode": "local-subset",
-      "commands": ["gitleaks dir . --config .gitleaks.toml --redact"]
+      "commands": ["gitleaks git . --config .gitleaks.toml --redact --log-opts=HEAD"]
     },
     {
       "check": "jseval Python suite",
