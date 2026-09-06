@@ -10,10 +10,13 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE_ROOT = path.resolve(HERE, '..', '..');
+const require = createRequire(import.meta.url);
+const { recordMergeLink } = require(path.join(SOURCE_ROOT, 'scripts', 'dev', 'remove-worktree.cjs'));
 const CLI_FILES = [
   'scripts/dev/remove-worktree.cjs',
   'scripts/dev/lib/process-identity.cjs',
@@ -116,6 +119,18 @@ function refExists(repo, ref) {
   return spawnSync('git', ['show-ref', '--verify', '--quiet', ref], { cwd: repo }).status === 0;
 }
 
+function captureErrors(action) {
+  const original = console.error;
+  const lines = [];
+  console.error = (...args) => lines.push(args.join(' '));
+  try {
+    action();
+  } finally {
+    console.error = original;
+  }
+  return lines.join('\n');
+}
+
 async function waitForFile(file, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -205,6 +220,7 @@ try {
   await check('an exact external path with spaces removes its captured codex branch, preserves guessed branch and junction target', () => {
     const result = runCli(primary, target, ['--allow-ignored', '--delete-branch']);
     assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /merge attribution requires an explicit known --session-id/i);
     assert.equal(fs.existsSync(target), false);
     assert.equal(refExists(primary.repo, 'refs/heads/codex/936-safe'), false);
     assert.equal(refExists(primary.repo, guessedBranch), true, 'similarly named guessed branch must survive');
@@ -320,6 +336,80 @@ try {
     assert.equal(after.some((item) => path.resolve(item) === path.resolve(staleA)), false);
     assert.equal(after.some((item) => path.resolve(item) === path.resolve(staleB)), true);
     assert.equal(refExists(primary.repo, 'refs/heads/codex/stale-unrelated'), true);
+  });
+
+  await check('merge attribution requires an explicit known session before lookup or writing', () => {
+    const mergeCommit = git(primary.repo, 'rev-parse', 'HEAD').trim();
+    let lookups = 0;
+    const writes = [];
+    const apparentlyMerged = () => {
+      lookups += 1;
+      return mergeCommit;
+    };
+    const telemetryWriter = (command, args, options) => {
+      writes.push({ command, args, options });
+      return { status: 0, stdout: 'fixture telemetry writer accepted merge link', stderr: '' };
+    };
+
+    const missingOutput = captureErrors(() => recordMergeLink({
+      repoRoot: primary.repo,
+      branch: 'codex/apparently-merged',
+      mergeCommitArg: null,
+      sessionIdArg: null,
+      mergeCommitLookup: apparentlyMerged,
+      spawnProcess: telemetryWriter,
+    }));
+    assert.equal(lookups, 0, 'missing --session-id must skip even an apparently merged PR lookup');
+    assert.equal(writes.length, 0, 'missing --session-id must not invoke the telemetry writer');
+    assert.match(missingOutput, /requires an explicit known --session-id/i);
+
+    const unknownOutput = captureErrors(() => recordMergeLink({
+      repoRoot: primary.repo,
+      branch: 'codex/apparently-merged',
+      mergeCommitArg: null,
+      sessionIdArg: 'unknown',
+      mergeCommitLookup: apparentlyMerged,
+      spawnProcess: telemetryWriter,
+    }));
+    assert.equal(lookups, 0, '--session-id unknown must skip the merged PR lookup');
+    assert.equal(writes.length, 0, '--session-id unknown must not invoke the telemetry writer');
+    assert.match(unknownOutput, /requests unattributed teardown/i);
+
+    const lookupOutput = captureErrors(() => recordMergeLink({
+      repoRoot: primary.repo,
+      branch: 'codex/apparently-merged',
+      mergeCommitArg: null,
+      sessionIdArg: 'session-936-lookup',
+      mergeCommitLookup: apparentlyMerged,
+      spawnProcess: telemetryWriter,
+    }));
+    assert.equal(lookups, 1, 'known explicit session retains merged PR lookup');
+    assert.equal(writes.length, 1, 'known session with a merged PR invokes the writer once');
+    assert.deepEqual(writes[0].args.slice(1), [
+      mergeCommit,
+      '--session-id',
+      'session-936-lookup',
+    ]);
+    assert.match(lookupOutput, /fixture telemetry writer accepted merge link/i);
+
+    const recordedOutput = captureErrors(() => recordMergeLink({
+      repoRoot: primary.repo,
+      branch: 'codex/known-session',
+      mergeCommitArg: mergeCommit,
+      sessionIdArg: 'session-936-known',
+      mergeCommitLookup: () => { throw new Error('provided merge SHA must bypass lookup'); },
+      spawnProcess: telemetryWriter,
+    }));
+    assert.equal(writes.length, 2, 'known session with a provided merge SHA invokes the writer once');
+    assert.equal(writes[1].command, 'node');
+    assert.deepEqual(writes[1].args, [
+      path.join(primary.repo, 'scripts', 'agent-analytics', 'record-merge.mjs'),
+      mergeCommit,
+      '--session-id',
+      'session-936-known',
+    ]);
+    assert.equal(writes[1].options.cwd, primary.repo);
+    assert.match(recordedOutput, /fixture telemetry writer accepted merge link/i);
   });
 
   const liveChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });

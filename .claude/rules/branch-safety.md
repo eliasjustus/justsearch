@@ -167,8 +167,10 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
    state, preserves junction targets, and removes only the selected Git
    registration. See the canonical worktree mechanics in
    `docs/reference/contributing/common-workflows.md`.
-   This teardown also records the `session_id → merge_commit` link; backfill
-   with `node scripts/agent-analytics/record-merge.mjs` if needed.
+   Merge attribution is opt-in: pass a known `--session-id` to let teardown
+   record the `session_id → merge_commit` link. Omission or the `unknown`
+   sentinel skips both the merged-PR lookup and telemetry writer. Backfill with
+   `node scripts/agent-analytics/record-merge.mjs` once both identities are known.
 
 ### Publishing docs-only changes (history granularity) <!-- rule:docs-ride-along -->
 

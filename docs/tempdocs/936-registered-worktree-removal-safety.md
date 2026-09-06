@@ -234,3 +234,28 @@ Implementation, review, appropriate verification, and local integration are comp
 The next user request authorizes publication and selection/removal of stale worktrees.
 The discovery limits above remain
 explicit rather than being treated as a complete process/editor inventory.
+
+### Publication-blocking attribution follow-up (2026-09-06)
+
+A bulk cleanup of an old merged worktree proved that teardown could append a false
+`session_id → merge_commit` fact when `--session-id` was absent: `remove-worktree.cjs`
+looked up the branch's merged PR, then let `record-merge.mjs` fall back through ambient
+session authorities. Merge attribution is now opt-in. Missing `--session-id` and the
+supported `unknown` sentinel return before either the PR lookup or telemetry writer;
+an explicit known session retains the supplied-SHA and merged-PR paths. Helper caller
+identity still uses the existing resolver independently.
+
+Focused evidence is the causal case in
+`scripts/agent-analytics/936-remove-worktree-cli.test.mjs`: an apparently merged branch
+cannot trigger the lookup or mocked isolated telemetry writer without a known explicit
+session, `unknown` also skips both, and a known session records the provided real-fixture
+Git SHA with an explicit `--session-id`. `node
+scripts/agent-analytics/936-remove-worktree-cli.test.mjs` passed **21/21**. Focused ESLint
+on the two changed scripts passed with zero warnings using the supplied lockfile-matched
+verification dependencies. The docs-maintenance sequence regenerated `docs/llms.txt` and
+five Claude skills with no resulting generated diff; llms/skills check mode, canonical
+links, module dependency docs, runtime config docs, `docs-validate`, and prompt-surface
+inventory all passed (130 surfaces, zero suspicious tokens). Manual search found no
+`remove-worktree` guidance in a corresponding `.agents/skills` copy. `git diff --check`
+also passed. No Gradle, dev stack, shared cleanup, telemetry writer, PR, or push ran in
+this worker.

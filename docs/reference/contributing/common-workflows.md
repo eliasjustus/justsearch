@@ -160,7 +160,7 @@ the shell's current directory outside the target. Preview the exact registered t
 
 ```powershell
 node scripts/dev/remove-worktree.cjs <registered-path> --dry-run
-node scripts/dev/remove-worktree.cjs <registered-path> --allow-ignored --delete-branch
+node scripts/dev/remove-worktree.cjs <registered-path> --allow-ignored --delete-branch --session-id SESSION_ID
 ```
 
 Git registration is the authority, so linked worktrees may live under any parent directory and
@@ -176,6 +176,13 @@ captured HEAD and no worktree uses it; detached HEAD skips branch deletion. The 
 merge state or provide a general force bypass. Editor/task discovery is necessarily incomplete,
 and a process can start before its registration write becomes visible, so close target-scoped
 tools and tasks before removal; an observed in-progress registration write blocks teardown.
+
+Merge attribution is opt-in. A known explicit `--session-id` lets teardown use a supplied
+`--merge-commit` or query the branch's merged PR, then invoke `record-merge.mjs` with that exact
+session. Omit `--session-id`, or pass the supported `unknown` sentinel, for unattributed cleanup;
+both forms skip the merged-PR lookup and telemetry writer. Environment variables, the
+`current-session-id` pointer, and the worktree hash remain helper caller-identity fallbacks, but
+they never establish merge attribution during teardown.
 
 **Shared models / runtime resolution.** The dev-runner resolves `JUSTSEARCH_MODELS_DIR` from the
 **main** checkout automatically (tempdoc 618 §2). Runtime resolution is **GPU-only by design as

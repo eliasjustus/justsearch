@@ -15,7 +15,7 @@
  *
  * Usage:
  *   node scripts/dev/remove-worktree.cjs <worktree-path> [--dry-run] [--allow-ignored]
- *     [--delete-branch]
+ *     [--delete-branch] [--merge-commit <sha>] [--session-id <id|unknown>]
  *
  * Safety: admission comes from the owning repository's exact registered-worktree list, not a
  * pathname convention. Main, aliases, nested registrations, locks, changes, and relevant live or
@@ -770,8 +770,26 @@ function mergeCommitFromPr(repoRoot, branch) {
   }
 }
 
-function recordMergeLink({ repoRoot, branch, mergeCommitArg, sessionIdArg }) {
-  const commit = mergeCommitArg || (branch ? mergeCommitFromPr(repoRoot, branch) : null);
+function recordMergeLink({
+  repoRoot,
+  branch,
+  mergeCommitArg,
+  sessionIdArg,
+  mergeCommitLookup = mergeCommitFromPr,
+  spawnProcess = spawnSync,
+}) {
+  const sessionId = String(sessionIdArg || '').trim();
+  if (!sessionId || sessionId === 'unknown') {
+    console.error(
+      '[remove-worktree] record-merge SKIPPED: ' +
+        (sessionId === 'unknown'
+          ? '--session-id unknown requests unattributed teardown.'
+          : 'merge attribution requires an explicit known --session-id.'),
+    );
+    return;
+  }
+
+  const commit = mergeCommitArg || (branch ? mergeCommitLookup(repoRoot, branch) : null);
 
   if (!commit) {
     // Deliberately NOT falling back to repoRoot HEAD — that is the bug.
@@ -786,10 +804,14 @@ function recordMergeLink({ repoRoot, branch, mergeCommitArg, sessionIdArg }) {
     return;
   }
 
-  const args = [path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs'), commit];
-  if (sessionIdArg) args.push('--session-id', sessionIdArg);
+  const args = [
+    path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs'),
+    commit,
+    '--session-id',
+    sessionId,
+  ];
   try {
-    const rec = spawnSync('node', args, { cwd: repoRoot, encoding: 'utf8' });
+    const rec = spawnProcess('node', args, { cwd: repoRoot, encoding: 'utf8' });
     const out = (rec.stdout || rec.stderr || '').trim();
     if (out) console.error(`[remove-worktree] ${out}`);
   } catch (err) {
@@ -803,7 +825,8 @@ function parseArgs(argv) {
     fail(
       'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--dry-run] [--allow-ignored] [--delete-branch]' +
         ' [--merge-commit <sha>] [--session-id <id>]' +
-        ' (--session-id overrides; otherwise resolved from CLAUDE_CODE_SESSION_ID /' +
+        ' (merge attribution requires an explicit known --session-id; unknown skips it.' +
+        ' Helper caller identity still falls back to CLAUDE_CODE_SESSION_ID /' +
         ' JUSTSEARCH_AGENT_SESSION_ID / tmp/agent-telemetry/current-session-id)',
     );
   }
@@ -966,8 +989,8 @@ async function main({ argv = process.argv, repoRoot = path.resolve(__dirname, '.
   removeExactRegistration(repoRoot, admission.abs);
   if (options.deleteBranch) deleteCapturedBranch(repoRoot, admission.entry);
 
-  // Record the identity-attributed merge link only after removal. A GitHub query can block, so
-  // placing it between final admission and filesystem deletion would reopen the TOCTOU window.
+  // Record the identity-attributed merge link only after removal and only when the caller opted in
+  // with a known `--session-id`. Missing/unknown identity returns before the GitHub query or writer.
   // `--merge-commit` wins; otherwise a merged PR lookup may establish the squash commit.
   recordMergeLink({
     repoRoot,
@@ -997,4 +1020,5 @@ module.exports = {
   ancestorPids,
   looksLikeOwnInvocation,
   filterHolders,
+  recordMergeLink,
 };
