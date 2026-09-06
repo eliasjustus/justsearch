@@ -16,13 +16,19 @@ JustSearch ships:
 
 - A **Windows NSIS installer** (`*-setup.exe`) that installs the Tauri desktop app.
 - A bundled **headless backend bundle** (Java + Worker) inside the Tauri resources.
-- A bundled **CPU-only** `llama-server` runtime payload (pinned upstream llama.cpp build) used for Online mode by default.
-- An **in-app “Install AI” (v1 flow)** that downloads and verifies pinned GGUF model files (after explicit consent).
+- A bundled `llama-server` runtime payload (pinned upstream llama.cpp build). The binary itself is
+  CPU-capable, but chat (Online mode) requires a supported NVIDIA GPU: no install path ever offers a
+  chat/GGUF model without a CUDA-functional GPU (`InstallPlanner`'s skip reason is literally "CPU
+  chat is not supported in this build" — see `Necessity.java`). Without one, JustSearch has no
+  chat/RAG capability and is search-only; see `docs/explanation/05-ai-architecture.md`.
+- An **in-app “Install AI” (v1 flow)** that downloads and verifies pinned GGUF model files (after
+  explicit consent) — only offered when a supported NVIDIA GPU is detected.
 - **Offline AI Pack import (v2+)** for models packs and **runtime packs** (zip or folder), allowlist-gated by manifest digest.
 - **Enterprise policy (v2)** loaded from machine/user policy files, exposed via `GET /api/policy/effective`.
 - Diagnostics export (`POST /api/diagnostics/export`) to bundle logs + policy + pack state for support.
 
-v3 adds **GPU Booster Pack** support (runtime variant packs + activation) while keeping CPU as the safe default.
+v3 adds **GPU Booster Pack** support (runtime variant packs + activation) on top of the same GPU
+requirement for chat; CPU remains the default and only path for search/embeddings, not for chat.
 
 ## 2. Key directories (“AI Home”)
 
@@ -225,9 +231,11 @@ Also capture snapshots:
 
 ## 7. Known limitations (intentional)
 
-- **CPU-only runtime in v1**: Online mode runs on CPU by default.
+- **Chat requires a supported NVIDIA GPU**: the bundled `llama-server` binary is CPU-capable, but no
+  install path offers a chat/GGUF model without a CUDA-functional GPU. Without one, Online mode/chat
+  is unavailable and JustSearch is search-only (search and embeddings still run on CPU).
 - **Runtime packs are installed but not auto-activated**: activation is explicit and gated by policy + self-test (v3).
-- **GPU “booster” is NVIDIA-only (v3)**: hardware-awareness chooses a CUDA-capable runtime via an allowlisted offline pack only when the machine can use it (CPU remains the default safe path).
+- **GPU “booster” is NVIDIA-only (v3)**: hardware-awareness chooses a CUDA-capable runtime via an allowlisted offline pack; CPU is the default and only path for search/embeddings, not an alternate path for chat.
 - **Windows Sandbox GPU validation is environment-dependent**: CUDA tooling may be missing even when a GPU is visible. Prefer real NVIDIA hardware for definitive performance/VRAM validation; see `docs/explanation/16-gpu-booster-pack.md`.
 
 ## 8. System flow (diagram)
