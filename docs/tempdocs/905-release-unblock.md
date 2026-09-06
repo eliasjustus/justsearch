@@ -3,7 +3,7 @@ title: "Release hardening, package projections, changelog-driven notes, and mode
 type: tempdocs
 status: MERGED (2026-09-03) — release hardening is on main; protected installer signing proven; packaged-verifier cleanup fix pending; WinGet submission withdrawn; 617 updater evidence and real model promotion remain open
 created: 2026-09-02
-updated: 2026-09-04
+updated: 2026-09-06
 lane: 887 L16
 model: gpt-5.6-sol (takeover, design, derisk, implementation)
 parent: 887-improvement-landscape-register
@@ -829,3 +829,33 @@ license, quality, and publication authority. Re-signing unchanged
 mirrors solely to exercise the same Environment would waste roughly 120 metered signatures, so the
 repository-scoped rollback copies remain until the next necessary mirror refresh. Scoop remains
 deliberately deferred.
+
+## Publication completion plan (2026-09-06)
+
+The implementation and operational follow-through above are complete. The remaining work is the
+publication of the packaged-verifier cleanup without reopening superseded distribution choices or
+spending another signing credit.
+
+- [ ] Incorporate current `origin/main` into `codex/905-operational-closeout`, confirm the merge is
+  clean, and prove the resulting content diff is limited to the capture fix, its Windows regression,
+  CI wiring, and this tempdoc's operational record.
+- [ ] Re-run the focused evidence-capture regression and the repository's current full verification
+  suite against the caught-up candidate. Re-run all current publication and public-content gates;
+  do not rely on the September 3 green run after `main` has moved.
+- [ ] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
+  verifier job to pass. This closes the capability-realization gap on the exact consumer path without
+  using the provider credential or consuming an eSigner signing.
+- [ ] Scan the complete public diff for credentials, private identifiers, machine-local paths, stale
+  quantitative claims, and unrelated changes. Keep the old WinGet PR closed, keep Scoop deferred,
+  and keep repository-scoped signing-secret rollback copies until the next necessary mirror refresh.
+- [ ] Open a fresh pull request because closed PR #631 describes an older docs-only head. Use the
+  current public squash-body contract, create the separate review record, and pass both strict
+  publication checks before enqueueing.
+- [ ] After required checks pass, enqueue through the protected merge queue. Verify the landed content
+  by diff, confirm merge-group and post-merge `main` CI, then remove only this task's worktree and local
+  branch after the publication is proven.
+
+No implementation teardown remains. The only superseded publication artifact is closed PR #631;
+it stays closed as history rather than being repurposed. The withdrawn WinGet submission, deferred
+Scoop channel, updater evidence lanes in tempdoc 617, and future real model promotion remain outside
+this publication.
