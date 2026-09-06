@@ -293,7 +293,7 @@ Owner-only steps (require repo permissions):
    > a failure there as a post-publish signal: check that job's run log for what specifically
    > failed, then ship a follow-up patch release, or manually un-publish
    > (`gh release edit <tag> --draft`) if the defect is severe enough to pull the asset.
-
+   >
    > **Where the release sequence comes from.** The sequence shipped inside `release.v1.json`
    > is derived by `scripts/ci/derive-release-sequence.mjs`: `max(sequence` over every published
    > release's `release.v1.json` asset`) + 1`, never below a checked-in floor of **41** (v0.2.0's
