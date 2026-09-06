@@ -26,10 +26,11 @@ The `WorkerSignalBus` uses a tiny 64-byte shared memory segment specifically str
 
 | Offset | Size | Purpose | Writer | Reader |
 | :--- | :--- | :--- | :--- | :--- |
-| `0-7` | 8 bytes | **Last Activity (ms)** | Main | Worker |
+| `0-7` | 8 bytes | **Last Activity (ms)** — *retired* (tempdoc 885; no writer or reader remains, the offset is kept so the layout does not shift) | - | - |
 | `8-15` | 8 bytes | **Main Heartbeat (ms)** | Main | Worker |
 | `16` | 1 byte | **Shutdown Signal** | Main | Worker |
-| `17-19` | 3 bytes | *reserved* | - | - |
+| `17` | 1 byte | **Energy Reduced** (`1` while the OS reports battery/energy-saver; Worker defers GPU backfill via `shouldYieldGpuBackfill()`) | Main (`WorkerSpawner` power poll, 15 s) | Worker |
+| `18-19` | 2 bytes | *reserved* | - | - |
 | `20-23` | 4 bytes | **gRPC Port** | Worker | Main |
 | `24` | 1 byte | **GPU Active** | Main | Worker |
 | `25-26` | 2 bytes | **Magic Bytes** (`0x534A` = "JS") | Writer at open | Validator at open |
@@ -345,10 +346,12 @@ Aligned 4/8-byte fields are "effectively atomic" on 64-bit x86/ARM platforms. Th
 | MarkVduProcessing | STANDARD | Mark VDU item in-progress |
 | RecoverVduProcessing | VDU_OPERATION | Recover stuck VDU items |
 
-### HealthService (Dual Namespace)
+### HealthService
 | Namespace | Methods | Notes |
 | :--- | :--- | :--- |
-| `io.justsearch.ipc` | `Check` (returns `worker_state` enum) | Primary surface |
-| `io.justsearch.ipc.v1` | `Liveness`, `Readiness`, `Version` | Cleaner design, AI Worker surface |
+| `io.justsearch.ipc` | `Check` (returns `worker_state` enum) | The only health RPC (`indexing.proto`, `service HealthService`) |
 
-**Note:** Dual namespace is historical; not recommended to merge (high cost, breaking change).
+**Note:** `io.justsearch.ipc.v1` carries no health RPCs — its one service is `InfraDiagnosticsService`
+(`infra_diagnostics.proto`, two diagnostics RPCs). An earlier revision of this table listed
+`Liveness` / `Readiness` / `Version` under that namespace; they never existed in either proto file
+(verified 2026-09-06, tempdoc 917 brief correction 4).

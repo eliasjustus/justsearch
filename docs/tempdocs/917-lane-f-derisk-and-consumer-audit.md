@@ -1,7 +1,8 @@
 ---
 title: Lane F — De-risk and Consumer Audit (PR 1 pre-work)
 type: tempdocs
-status: "AUDIT (2026-09-03) — read-only consumer audit for lane F PR 1; lane F NOT started; go/no-go pending"
+status: "DERISK DONE (2026-09-06) — the four derisk items below are run and recorded (§Derisk results); the brief is refreshed as 917-evidence/lane-F-brief-v2.md; lane F NOT started; go/no-go is the owner's. Earlier: AUDIT (2026-09-03) — read-only consumer audit for lane F PR 1"
+updated: 2026-09-06
 created: 2026-09-03
 author: Claude (audit agent, session_01CgW4Ut1yU1DQ86bXivJdUJ)
 category: engine / process-boundary
@@ -371,7 +372,7 @@ correctly identifies that production and test-chaos maintain argv construction s
    exactly one (`WorkerSpawner.buildCommand()`); the test/chaos side has three separate builder
    methods in one class (`WorkerProcessManager`), not one.
 
-## Derisk (pending)
+## Derisk (listed 2026-09-03; run 2026-09-06 — results in §Derisk results below)
 
 Not run in this pass (read-only audit only); the orchestrator should run next, in order:
 1. **Head heap-flag sensitivity** — measure current Head RSS/GC-pause profile at `-Xmx512m`
@@ -390,6 +391,135 @@ Not run in this pass (read-only audit only); the orchestrator should run next, i
    `indexerWorkerMustNotDependOnAppServices` are today unconditional `noClasses()` rules that
    PR1's chosen composition module will violate by construction unless the rule is rewritten,
    not merely allowlisted.
+
+## Derisk results (2026-09-06)
+
+Run in `.claude/worktrees/lane-f-derisk` (branch `worktree-lane-f-derisk`, base `e5bdc2d1` =
+`origin/main` after the lane D close-out). Items 2–4 were read-only audits by three subagents whose
+load-bearing citations the orchestrator re-verified against source; item 1 is a live measurement.
+The refreshed brief that folds all of this in is `917-evidence/lane-F-brief-v2.md`.
+
+### 1. Head heap-flag baseline (measured)
+
+Stack launched from this worktree by `dev-runner.cjs` with the production Head flags pinned
+(`JUSTSEARCH_HEAD_HEAP=512m` → `-Xmx512m`, `-XX:+UseSerialGC`, `-XX:TieredStopAtLevel=1`,
+`-XX:-UsePerfData`; no dev AOT cache, so no `-XX:AOTCache`) plus `-Xlog:gc*,safepoint`. Effective
+flags read back with `jcmd VM.flags`: `MaxHeapSize=536870912`, `InitialHeapSize=532676608`,
+`TieredStopAtLevel=1`, `UseSerialGC`; code cache reserved 48 MiB (the C1-only default). Phases:
+idle → ingest of 93 docs (`docs/explanation` + `docs/reference`, 1,236 chunks) through full
+enrichment → 60 sequential `POST /api/knowledge/search` during enrichment and 60 after → one
+agent turn on the compact model (`ai_activate`, tool call + answer, 14 s) → warm restart.
+Working set sampled every 2 s (`tmp/head-rss-sampler.ps1`), GC from the log, run of 942 s.
+
+| measure | value |
+|---|---|
+| Head working set, idle (first 60 s) | 377 MB (flat) |
+| Head working set, ingest + enrichment | p50 416 · max 423 MB |
+| Head working set, search + agent turn | p50 425 · max 436 MB |
+| Live heap after GC | 13 → 68 MB, of 491 MB committed |
+| GC pauses, 942 s | 8 total ≈ 0.24 s stopped: 4 young (p50 10 ms, max 34 ms), 4 full |
+| Full-GC causes | 2 × `Metadata GC Threshold` at 1 s (23, 24 ms); 2 × `CodeCache GC Threshold` (71 ms @157 s, 61 ms @745 s) |
+| Restart (warm) full GCs | 3 × `Metadata GC Threshold` in the first 18 s (22, 24, 40 ms) |
+| Code cache at end | 14.5 MiB used / 19.4 MiB max of 48 MiB; 11,337 nmethods (all C1) |
+| Threads (Head, idle) | 241 |
+| Startup, warm (`--skip-build`, hot-reload on) | HTTP + head READY 3.1 s, worker READY 8.0 s from launcher spawn |
+| Search p50 / p95 during enrichment (TEXT mode, vector leg skipped) | 258 / 485 ms |
+| Search p50 / p95 after enrichment (hybrid + CE, overlapping the agent turn, llama-server resident) | 1,598 / 1,920 ms — confounded, not a clean before/after |
+| Worker working set, idle | ≈ 4.07 GB (the extraction child, ≈ 216 MB, was caught under the same label) |
+
+Noise: another agent's Gradle build (spotbugs, worktree 888) ran concurrently for part of the
+window; the `LambdaMartBenchmarkTest` p50-latency assertion (5.77 ms vs a 5 ms threshold) failed
+once in this worktree's `build -x test` under that load and is a timing test, not a lane F item.
+
+What it means for PR 2:
+- **SerialGC at 512 MB is not the Head's problem.** The heap is ≥ 85 % empty at every phase; RSS is
+  non-heap (metaspace, code cache, 241 threads, Netty/gRPC buffers). The merged engine's heap
+  should be sized from the Worker's side (≈ 4 GB working set today), not from "Head + Worker heaps".
+- **Every full GC was a non-heap threshold**, so the PR 2 flag set should carry `-XX:MetaspaceSize`
+  (≈ 128 m) and drop `-XX:TieredStopAtLevel=1` (the 48 MiB C1-only code cache is what triggers the
+  `CodeCache GC Threshold` full GCs; tiered default reserves 240 MiB). Both are cheap and measurable.
+- **The startup baseline for "measure before/after" is 3.1 s / 8.0 s warm on the dev path.** The
+  production Tauri path with the AOT cache is still to be measured inside PR 2 (the dev runner has
+  no dev AOT cache on this machine).
+- Search latency after enrichment is dominated by the cross-encoder and GPU contention, not by the
+  Head; the C1-vs-C2 question the brief raises needs a paired run with the agent idle.
+
+### 2. MMF layout residue — decision
+
+`OFFSET_ENERGY_REDUCED = 17` is a **live policy signal**, not process plumbing: `WorkerSpawner`
+polls `GetSystemPowerStatus` every 15 s (`WorkerSpawner.java:709-729`) and writes the byte
+(`MainSignalBus.java:193`); the Worker composes it with `main_gpu_active` into
+`shouldYieldGpuBackfill()` (`WorkerSignalBus.java:100-102`), which `EmbeddingBackfillOps`,
+`BgeM3BackfillOps` and `BackfillScheduler` use to pause GPU backfill. Deleting the bus without
+re-homing it leaves the interface default `false` and silently removes energy-aware throttling.
+The Head already consumes the same gauge in-process (`ServicePhase.java:197`,
+`VduOfflineTriggerSampler.java:96` via `KnowledgeServerBootstrap.energyState()`), so no new
+construct is needed. **Decision: PR 1 re-homes `energy_reduced` together with `main_gpu_active`
+as one in-process power/GPU gauge, and PR 3's sweep lists that re-homing as a precondition.** The
+other fields (activity, heartbeat, shutdown, port, header, reload) are pure two-process plumbing
+and vanish with the second process. The layout test already names `energy_reduced` as a disjoint
+range (`MmfWorkerSignalLayoutV1Test.java:44-46`); the cross-process compatibility test never
+exercised byte 17. The stale table in `docs/explanation/02-process-coordination.md` is fixed in
+this PR (row 17 added, reserved range 18-19, the phantom `Liveness`/`Readiness`/`Version` rows
+removed — only `Check` exists).
+
+### 3. tempdoc 885 cross-check — three constructs 917 missed
+
+Read in full (3,878 lines). Confirmed unchanged: `ForegroundLoadInterceptor` (delete in PR 3),
+`ForegroundLoad` + `IndexingPacing` (keep), the dead activity byte, `main_gpu_active`'s six readers.
+Missed by 917 and now in the brief: (a) `CoreStatus.signal_bus_activity_ts`
+(`indexing.proto:677`) — declared, unpopulated since 885, to be removed in lane F's one wire
+change; (b) `justsearch.indexing.foreground_duty_pct` (`EnvRegistry.java:1270`) and
+`ForegroundPacingConfigForwardingTest` — a Head→Worker config-forwarding round-trip that collapses
+to one read; (c) the `FetchDocuments` byte-budget pager (`BoundedDocumentFetch`,
+`GplJobCoordinator`, `RemoteDocumentService`) whose proto-side fix 885 deferred to lane F — PR 1
+must decide whether the cap survives without a wire ceiling. Also: `NrtOnDemandPolicy` /
+`RuntimeSession.withForegroundActive` is a second consumer of `ForegroundLoad` across the
+`adapters-lucene` ↔ `worker-services` module seam (not a process seam), so the gauge's final shape
+has two consumers, not one. Excluded on purpose: the extraction sandbox pool (a different, kept
+boundary), the job queue / retry ladder, NRT/commit cadence internals.
+
+### 4. PR 1 module composition and ArchUnit — design
+
+**Derisk item 4 as written was directionally wrong.** `worker-services`, `worker-core` and
+`indexer-worker` share the package root `io.justsearch.indexerworker..`, and every rule is
+package-keyed, so `indexerWorkerMustNotDependOnUi` / `...AppServices` only constrain arrows *out
+of* worker code. A composition module in a new package depending *on* worker-services trips
+neither; what bites is `onlyAppLauncherMayDependOnUi` (`LayeringEnforcementTest.java:94-106`)
+plus `BoundaryRulesTest.launcherMayOnlyDependOnAppApi`: nothing may compile against `ui`. Chosen
+shape: new `modules/app-engine` (package `io.justsearch.app.engine`), edges `ui → app-engine →
+{app-services, worker-services, worker-core}` (all downward, no cycle — `worker-services` has no
+main-source edge to `app-services` or `ui`, and `app-services` none to worker-*), hosting a
+`grpc-inprocess` server over the three `Grpc*Service` impls and handing `RemoteKnowledgeClient` an
+in-process channel through one new constructor (its port discovery is baked into `MainSignalBus`
+today — a required PR 1 edit). Reusing `modules/ui` is rejected: it puts every Worker service on the
+request-handler module and makes the new "only app-engine composes both halves" rule unwritable.
+ArchUnit diff: the two worker-isolation rules keep their predicates (comment/`as` reworded, no
+longer "separate process"), and a new rule 6b forbids any class outside `io.justsearch.app.engine..`
+/ `io.justsearch.indexerworker..` / `io.justsearch.adapters..` from depending on
+`io.justsearch.indexerworker.{server,services,loop}..` — green today (no `ui`/`app-services` main
+class has a bytecode edge into worker code; only javadoc links and one string literal). This rule
+is the retargeted invariant #1 pin; `IndexWriterOwnershipTest` stays at two Lucene-owner packages.
+`app-engine` must be added to `app-launcher`'s `runtimeOnly` set and to `dead-code-audit`'s module
+list or the rules pass vacuously (acceptance: inject an `app.engine → ui` edge, see red, revert).
+Risks recorded in the brief: Lucene lands on the Head classpath in `single` mode (the process half
+of invariant #1 moves to rule 6b + a PR 3 ADR); `DevReloadManager`/JDWP target the Worker JVM only,
+so `single` mode is `hotReload:false` until PR 2 retargets it; the execution/operation-surface
+gates auto-scan `modules/`, so `app-engine` must not import `SearchTrace` / `IndexingJobView`.
+
+## Brief corrections (cont., 2026-09-06)
+
+6. **`lib.rs` applies `-XX:TieredStopAtLevel=1` unconditionally**, also when the AOT cache is
+   present (`modules/shell/src-tauri/src/lib.rs:744,749-751`), whereas the dev runner drops it
+   when AOT is on because C1-only compilation wastes the pre-linked profiles
+   (`scripts/dev/dev-runner.cjs:731,1728-1729`). The brief's PR 2 "drop TieredStopAtLevel=1"
+   item is therefore also a production bug fix, independent of the merge.
+7. **The ArchUnit blocker is `onlyAppLauncherMayDependOnUi`, not the worker-isolation rules**
+   (§4 above); "add a layer" means a new module in a new package, and the rules' premise wording
+   ("runs in separate process") is what changes, not their predicates.
+8. **The brief's "6 `main_gpu_active` readers" is right; "merge the Worker's argv" needs the
+   energy byte too** — `energy_reduced` (byte 17) is a second live policy signal the Worker reads
+   and the brief never names (§2).
 
 ## Report-back
 
