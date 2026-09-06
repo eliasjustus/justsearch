@@ -491,8 +491,9 @@ export function dispatchEffectToChrome(
       });
       return true;
     case 'undo-operation':
-      // §32 U2 — Shell jf-undo-operation listener calls OperationClient.undo
-      // → POST /api/undo/{operationId}.
+      // §32 U2 — Shell jf-undo-operation listener calls
+      // OperationClient.undoWithConsent → POST /api/undo/{operationId}, taking
+      // the same trust-gate ceremony the forward invoke does (tempdoc 875 §C.7).
       dispatchDomEvent('jf-undo-operation', {
         operationId: effect.operationId,
         executionId: effect.executionId,

@@ -15,6 +15,7 @@ import io.justsearch.agent.api.registry.InvocationProvenance;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.agent.api.registry.TransportTag;
 import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.util.List;
 import java.util.Map;
@@ -96,7 +97,13 @@ final class OperationsControllerTest {
   @Test
   @DisplayName("undo resolves an agent wire-name (Fix F) — not 422")
   void undoResolvesAgentWireName() throws Exception {
-    when(dispatcher.undo(any(), eq("exec-1"))).thenReturn(OperationResult.success("undone"));
+    // Tempdoc 875 §C.7: the route now calls the provenance-carrying overload, because a reversal
+    // must meet the same trust lattice its forward form met and the 2-arg form carries neither the
+    // caller's transport nor a confirmation token. Stubbing the 2-arg form here would stub a method
+    // the controller no longer calls (the mock would return null) — the arity moved with
+    // production; this test's subject, wire-name resolution, did not.
+    when(dispatcher.undo(any(), eq("exec-1"), any(InvocationProvenance.class), any()))
+        .thenReturn(OperationResult.success("undone"));
 
     // The "undo the AI" affordance journals the agent TOOL wire-name (dots/dashes ->
     // underscores), e.g. "core.ping-backend" -> "core_ping_backend". Resolving by op-id
@@ -107,7 +114,38 @@ final class OperationsControllerTest {
     verify(ctx).status(200);
     JsonNode response = capture(ctx);
     assertTrue(response.get("success").asBoolean());
-    verify(dispatcher).undo(any(), eq("exec-1"));
+
+    // The provenance the gate will judge must actually reach the dispatcher — a null or a
+    // hardcoded system-internal here would make the reversal un-gateable at the HTTP edge, which
+    // is the exact defect §C.7 closes.
+    ArgumentCaptor<InvocationProvenance> prov =
+        ArgumentCaptor.forClass(InvocationProvenance.class);
+    verify(dispatcher).undo(any(), eq("exec-1"), prov.capture(), any());
+    assertEquals(
+        TransportTag.BUTTON,
+        prov.getValue().transport(),
+        "no transport header ⇒ the same BUTTON default the invoke path uses");
+  }
+
+  /**
+   * Tempdoc 875 §C.7: the reversal's transport is the CALLER's, not a constant. If this route
+   * laundered every undo into BUTTON (TRUSTED), an agent-loop reversal would be judged in the
+   * strongest lattice row there is — the gate would be present but reading the wrong cell.
+   */
+  @Test
+  @DisplayName("undo declares the caller's transport, so the lattice judges the right source tier")
+  void undoCarriesTheDeclaredTransport() throws Exception {
+    when(dispatcher.undo(any(), eq("exec-1"), any(InvocationProvenance.class), any()))
+        .thenReturn(OperationResult.success("undone"));
+    Context ctx = mockContext("core.ping-backend", "{\"executionId\":\"exec-1\"}");
+    when(ctx.header("X-JustSearch-Transport")).thenReturn("AGENT_LOOP");
+
+    controller.handleUndo(ctx);
+
+    ArgumentCaptor<InvocationProvenance> prov =
+        ArgumentCaptor.forClass(InvocationProvenance.class);
+    verify(dispatcher).undo(any(), eq("exec-1"), prov.capture(), any());
+    assertEquals(TransportTag.AGENT_LOOP, prov.getValue().transport());
   }
 
   @Test
@@ -232,7 +270,7 @@ final class OperationsControllerTest {
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     InvocationProvenance captured = provenance.getValue();
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, captured.transport());
+        TransportTag.BUTTON, captured.transport());
     assertEquals(io.justsearch.agent.api.registry.ExecutorTag.UI, captured.executor());
     assertTrue(captured.initiator().isEmpty(), "v1 HTTP endpoint has no initiator context");
     assertNotNull(captured.occurredAt());
@@ -270,7 +308,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_BAR, provenance.getValue().transport());
+        TransportTag.URL_BAR, provenance.getValue().transport());
   }
 
   @Test
@@ -286,7 +324,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.PALETTE, provenance.getValue().transport());
+        TransportTag.PALETTE, provenance.getValue().transport());
   }
 
   @Test
@@ -302,7 +340,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_DEEPLINK,
+        TransportTag.URL_DEEPLINK,
         provenance.getValue().transport());
   }
 
@@ -319,7 +357,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_BAR, provenance.getValue().transport());
+        TransportTag.URL_BAR, provenance.getValue().transport());
   }
 
   @Test
@@ -335,7 +373,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, provenance.getValue().transport());
+        TransportTag.BUTTON, provenance.getValue().transport());
   }
 
   @Test
@@ -351,6 +389,6 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, provenance.getValue().transport());
+        TransportTag.BUTTON, provenance.getValue().transport());
   }
 }

@@ -44,7 +44,9 @@ import java.util.function.Consumer;
  *
  * <p>Per §E.3: {@link #undo(Operation, String)} checks
  * {@code op.policy().undoSupported()} before delegating; operations without undo
- * support fail fast with a typed denial, never reaching the handler.
+ * support fail fast with a typed denial, never reaching the handler. Per tempdoc 875 §C.7 it
+ * then meets the SAME trust lattice a forward dispatch meets — a reversal is an operation and
+ * inherits the risk class of its forward form.
  */
 public final class OperationExecutorImpl implements OperationDispatcher {
 
@@ -526,10 +528,48 @@ public final class OperationExecutorImpl implements OperationDispatcher {
 
   @Override
   public OperationResult undo(Operation op, String executionId) {
+    // Legacy 2-arg overload — defaults to system-internal provenance and no confirmation
+    // token, exactly as the 2-arg dispatch does. Callers that know their transport should
+    // use the 4-arg overload so the gate sees the real source tier.
+    return undo(
+        op, executionId, InvocationProvenance.systemInternal(clock.instant()), Optional.empty());
+  }
+
+  /**
+   * Tempdoc 875 §C.7 — <em>the reversal of an operation is an operation and inherits its risk
+   * class.</em> Before this, {@code undo} checked {@code undoSupported} and delegated: the trust
+   * lattice that every forward dispatch meets never ran, so the reverse of a HIGH-risk operation
+   * was dispatched with no gate at all — in exactly the arm where the reversal can be MORE
+   * destructive than the forward op (a COPY-undo is a recursive delete).
+   *
+   * <p>The gate here is the SAME computation, not a parallel one: {@link #enforceTrustLattice}
+   * with the operation's own declared risk (unchanged — this does not alter what is permitted on
+   * the forward path), the caller's transport, and the reversal's canonical arguments
+   * ({@link OperationDispatcher#undoArguments}). It is therefore satisfied by exactly what
+   * satisfies the forward gate: a durable grant inside its risk ceiling AND argument scope, or a
+   * capsule bound to this (operation, undo-arguments). A reversal carries no path arguments of
+   * its own, so an argument scope that governs the operation cannot prove containment for it and
+   * fails closed — a standing "allow always" grant never silently authorizes the undo of a
+   * containment-governed operation; the user is asked.
+   */
+  @Override
+  public OperationResult undo(
+      Operation op,
+      String executionId,
+      InvocationProvenance provenance,
+      Optional<String> confirmationToken) {
     Objects.requireNonNull(op, "op");
     Objects.requireNonNull(executionId, "executionId");
+    Objects.requireNonNull(provenance, "provenance");
+    Objects.requireNonNull(confirmationToken, "confirmationToken");
     if (!op.policy().undoSupported()) {
       return OperationResult.failure("Undo not supported by " + op.id().value());
+    }
+    // Same order as dispatch: transport-spoofing defense, then the lattice.
+    validateProvenance(op, provenance);
+    if (intentGateEvaluator != null) {
+      enforceTrustLattice(
+          op, OperationDispatcher.undoArguments(executionId), provenance, confirmationToken);
     }
     if (capabilityResolver != null) {
       var missingCap = checkCapabilities(op);
@@ -552,13 +592,11 @@ public final class OperationExecutorImpl implements OperationDispatcher {
     try {
       result = handler.undo(executionId);
     } catch (RuntimeException e) {
-      emitHistory(op, startTime, OperationOutcome.FAILURE, e.getMessage(),
-          InvocationProvenance.systemInternal(startTime), Optional.empty());
+      emitHistory(op, startTime, OperationOutcome.FAILURE, e.getMessage(), provenance, Optional.empty());
       throw e;
     }
     OperationOutcome outcome = result.success() ? OperationOutcome.UNDONE : OperationOutcome.FAILURE;
-    emitHistory(op, startTime, outcome, null,
-        InvocationProvenance.systemInternal(startTime), Optional.empty());
+    emitHistory(op, startTime, outcome, null, provenance, Optional.empty());
     return result;
   }
 

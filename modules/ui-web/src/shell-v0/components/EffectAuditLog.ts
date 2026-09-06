@@ -894,7 +894,7 @@ export class EffectAuditLog extends JfElement {
   // §32 U2 — "Undo" affordance for an invoke-operation entry whose backend
   // executionId was captured (undoSupported ops). Dispatches an
   // undo-operation Effect → Shell jf-undo-operation listener → OperationClient
-  // .undo → POST /api/undo/{operationId}.
+  // .undoWithConsent → POST /api/undo/{operationId} (trust-gated; tempdoc 875 §C.7).
   private renderUndoOp(e: JournalEntry): TemplateResult | typeof nothing {
     const u = getUndoableOperation(e.id);
     if (!u) return nothing;

@@ -566,16 +566,17 @@ public final class AgentLoopService implements AgentService {
               .toList());
 
       if (baseTools.isEmpty() && request.agentProfiles().isEmpty()) {
+        String noToolsMessage = noToolsMessage(operationCatalog, request.selectedToolNames());
         emitError(
             sink,
-            "No tools available",
+            noToolsMessage,
             AgentErrorCode.NO_TOOLS,
             AgentErrorClass.PERMANENT,
             RetryAction.ABORT,
             null);
         // Tempdoc 415 F1: state-first, durability-second.
         session.markTerminated(TerminalDisposition.ERRORED, AgentErrorCode.NO_TOOLS, null);
-        checkpoint(sessionId, session, LifecycleState.ERROR.name(), "No tools available");
+        checkpoint(sessionId, session, LifecycleState.ERROR.name(), noToolsMessage);
         return;
       }
 
@@ -1047,6 +1048,50 @@ public final class AgentLoopService implements AgentService {
     agentTelemetry.recordError(code, errorClass);
     eventConsumer.accept(
         new AgentEvent.AgentError(message, code, errorClass, retryAction, retryAttempt));
+  }
+
+  /**
+   * What to tell the caller when the run's tool offering is empty, from the selection it actually
+   * sent rather than a single fixed sentence.
+   *
+   * <p>"No tools available" was true of the no-selection case and misleading of every other one:
+   * a request whose {@code tools} selection named real operations that the availability filter
+   * withheld ({@code core_search_index} while {@code index.unavailable} was asserted — the live
+   * 868 §C.3 / §D.4 report) got the same words as a request that named nothing that exists, and
+   * neither said which. Same discipline as {@link AgentStepRunner#emptyResponseMessage}: say only
+   * what the evidence licenses, because a wrong cause is acted on and an unknown one is not.
+   *
+   * <p>The selection is matched against the catalog in BOTH accepted identifier spaces — the wire
+   * name ({@code core_search_index}) and the raw {@code OperationRef} ({@code core.search-index}) —
+   * exactly as {@code AgentOperationEmitter.matchesSelection} does, so "the name is unknown" here
+   * means the same thing it means there.
+   */
+  static String noToolsMessage(OperationCatalog catalog, List<String> selectedToolNames) {
+    if (selectedToolNames == null || selectedToolNames.isEmpty()) {
+      return "No tools available";
+    }
+    List<String> known = new ArrayList<>();
+    List<String> unknown = new ArrayList<>();
+    for (String selected : selectedToolNames) {
+      boolean resolves =
+          catalog.definitions().stream()
+              .anyMatch(
+                  op ->
+                      OperationCatalog.toWireName(op.id()).equals(selected)
+                          || op.id().value().equals(selected));
+      (resolves ? known : unknown).add(selected);
+    }
+    if (known.isEmpty()) {
+      return "None of the selected tools exist: "
+          + String.join(", ", unknown)
+          + ". Use the names from GET /api/chat/agent/tools (e.g. core_search_index), or send no"
+          + " tools selection to offer the model everything available.";
+    }
+    return "The selected tools are not available right now: "
+        + String.join(", ", known)
+        + ". Tools backed by the index are withheld while it is unavailable (a restarting or"
+        + " starting Worker) — retry shortly, or send no tools selection to offer the model"
+        + " whatever is available.";
   }
 
 

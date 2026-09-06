@@ -85,6 +85,70 @@ class AgentToolErrorsTest {
   }
 
   @Test
+  @DisplayName("877 open item: a signal-bus reconnect failure is the Worker being down, not INTERNAL")
+  void signalBusDownIsServiceUnavailable() {
+    // Verbatim from the live /api/worker/restart chaos run: the model was handed
+    // "Browse error: No valid port in signal bus". RemoteKnowledgeClient.reconnect throws this
+    // before any gRPC call exists, so the transport-name arm cannot see it.
+    OperationResult r =
+        AgentToolErrors.classify(
+            "core_browse_folders",
+            "Browse error",
+            new IllegalStateException("No valid port in signal bus"));
+
+    assertEquals(ApiErrorCode.SERVICE_UNAVAILABLE, codeOf(r));
+    assertEquals(Boolean.TRUE, r.retryable().orElseThrow(), "waiting is the remedy");
+    assertFalse(
+        r.message().contains("signal bus"),
+        "the internal invariant must not reach the model: " + r.message());
+    assertTrue(r.message().contains("retry shortly"), r.message());
+    assertTrue(r.message().startsWith("Browse error: "), r.message());
+  }
+
+  @Test
+  @DisplayName("877 open item: the reconnect PID-mismatch sibling classifies identically")
+  void reconnectPidMismatchIsServiceUnavailable() {
+    OperationResult r =
+        AgentToolErrors.classify(
+            "core_search_index",
+            "Search error",
+            new IllegalStateException("PID mismatch after reconnect: expected 1, got 2"));
+
+    assertEquals(ApiErrorCode.SERVICE_UNAVAILABLE, codeOf(r));
+    assertFalse(r.message().contains("PID mismatch"), r.message());
+  }
+
+  @Test
+  @DisplayName("an unreachable Worker gets the same actionable sentence, not a transport dump")
+  void workerUnreachableMessageIsActionable() {
+    class StatusRuntimeException extends RuntimeException {
+      private static final long serialVersionUID = 1L;
+
+      StatusRuntimeException(String m) {
+        super(m);
+      }
+    }
+    OperationResult r =
+        AgentToolErrors.classify(
+            "core_browse_folders",
+            "Browse error",
+            new StatusRuntimeException("UNAVAILABLE: io exception"));
+
+    assertFalse(r.message().contains("UNAVAILABLE: io exception"), r.message());
+    assertTrue(r.message().contains("retry shortly"), r.message());
+  }
+
+  @Test
+  @DisplayName("an unrelated IllegalStateException is still INTERNAL_ERROR — the arm is narrow")
+  void unrelatedIllegalStateStaysInternal() {
+    OperationResult r =
+        AgentToolErrors.classify(
+            "core_ingest_files", "Ingest error", new IllegalStateException("port already bound"));
+    assertEquals(ApiErrorCode.INTERNAL_ERROR, codeOf(r));
+    assertEquals("Ingest error: port already bound", r.message());
+  }
+
+  @Test
   @DisplayName("future wrappers are unwrapped before classifying, or every async failure is INTERNAL")
   void futureWrappersAreUnwrapped() {
     OperationResult completion =

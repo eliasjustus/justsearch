@@ -83,6 +83,69 @@ public interface OperationDispatcher {
   /**
    * Undo a previous execution identified by {@code executionId}. Returns a typed
    * failure (not throwing) when the operation's policy does not support undo.
+   *
+   * <p>Legacy overload — supplies {@link InvocationProvenance#systemInternal} provenance
+   * and no confirmation token, exactly as the 2-arg {@link #dispatch(Operation, String)}
+   * does. Prefer the 4-arg overload from any callsite that knows its transport, so the
+   * trust gate sees the real source tier.
    */
   OperationResult undo(Operation op, String executionId);
+
+  /**
+   * Undo a previous execution, carrying the invocation-side provenance and an optional
+   * confirmation token so the reversal meets the SAME trust lattice its forward form did
+   * (tempdoc 875 §C.7: <em>the reversal of an operation is an operation and inherits its
+   * risk class</em>).
+   *
+   * <p>The implementation evaluates {@code (SourceTier × RiskTier)} with the operation's
+   * declared risk — the forward operation's risk, unchanged — and the caller's transport.
+   * A non-AUTO gate is satisfied by exactly what satisfies it on the forward path: a
+   * durable grant within its risk ceiling AND argument scope, or a consent capsule bound
+   * to ({@code op.id()}, {@link #undoArguments(String)}). Absent either, the same
+   * {@link ConfirmationRequiredException} the forward dispatch throws; on
+   * {@link GateBehavior#DENY}, the same {@link TrustGateDeniedException}.
+   *
+   * <p>Default implementation delegates to the 2-arg overload to keep test wiring and
+   * historical callsites compiling unchanged; concrete implementations override.
+   */
+  default OperationResult undo(
+      Operation op,
+      String executionId,
+      InvocationProvenance provenance,
+      java.util.Optional<String> confirmationToken) {
+    return undo(op, executionId);
+  }
+
+  /**
+   * The canonical arguments JSON of an undo invocation: {@code {"executionId":"<id>"}}.
+   *
+   * <p>One authority, because three parties must agree on the exact string — the gate's
+   * argument-scope check, the consent capsule minted at the user's approval gesture, and
+   * the capsule verification inside the dispatcher. A reversal carries no arguments of its
+   * own, so this identifies WHICH execution is being reversed and nothing else; an
+   * argument-scope implementation that cannot find its governed key in it must fail closed
+   * (which costs a confirmation, never a silent action).
+   */
+  static String undoArguments(String executionId) {
+    StringBuilder sb = new StringBuilder("{\"executionId\":\"");
+    String id = executionId == null ? "" : executionId;
+    for (int i = 0; i < id.length(); i++) {
+      char c = id.charAt(i);
+      switch (c) {
+        case '"' -> sb.append("\\\"");
+        case '\\' -> sb.append("\\\\");
+        case '\n' -> sb.append("\\n");
+        case '\r' -> sb.append("\\r");
+        case '\t' -> sb.append("\\t");
+        default -> {
+          if (c < 0x20) {
+            sb.append(String.format(java.util.Locale.ROOT, "\\u%04x", (int) c));
+          } else {
+            sb.append(c);
+          }
+        }
+      }
+    }
+    return sb.append("\"}").toString();
+  }
 }

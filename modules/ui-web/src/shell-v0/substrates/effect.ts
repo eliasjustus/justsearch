@@ -89,9 +89,10 @@ export type Effect =
   // ──────────────────────────────────────────────────────────────────
   // §32 U2 — undo a backend operation. Dispatched by the audit-log "Undo"
   // affordance for an invoke-operation entry whose executionId was captured
-  // (undoSupported ops). The Shell jf-undo-operation listener calls the
-  // backend POST /api/undo/{operationId}. Inverse is null (the undo IS the
-  // reversal).
+  // (undoSupported ops). The Shell jf-undo-operation listener calls the backend
+  // POST /api/undo/{operationId} through the shared consent ceremony, because a
+  // reversal meets the same trust lattice its forward form did (tempdoc 875 §C.7).
+  // Inverse is null (the undo IS the reversal).
   // ──────────────────────────────────────────────────────────────────
   | { readonly kind: 'undo-operation'; readonly operationId: string; readonly executionId: string }
   // ──────────────────────────────────────────────────────────────────

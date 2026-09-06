@@ -63,6 +63,15 @@ public final class AgentHistoryIndexer {
    */
   private static final int MAX_REBUILDS_PER_PASS = 200;
 
+  /**
+   * Tempdoc 909 §E item 1 — the suffix of the durable "written but not yet indexed" marker that
+   * sits beside {@code <sessionId>.md}. The Head cannot ask the index what it holds (index I/O is
+   * the Worker's), so the one thing it CAN do is remember, on its own disk, that a submit still
+   * owes. That is the bounded Head-side half; the index-side reconciliation the Worker would own
+   * is explicitly not this.
+   */
+  static final String PENDING_SUFFIX = ".md.pending";
+
   private static final Logger LOG = LoggerFactory.getLogger(AgentHistoryIndexer.class);
 
   private final Path historyDir;
@@ -157,6 +166,11 @@ public final class AgentHistoryIndexer {
    * not re-indexed. It is never deleted: an unreadable store is indistinguishable from an empty one
    * here (the same trap {@code AgentRunReconciler} documents), so a "drop what cannot be rebuilt"
    * rule would erase every good transcript on the first locked boot.
+   *
+   * <p><b>And the pending-index half</b> (tempdoc 909 §E item 1): a transcript whose bytes are fine
+   * but whose {@code submitBatch} never happened carries a {@link #PENDING_SUFFIX} marker; this
+   * pass re-submits those once a knowledge client exists and clears the marker only on success.
+   * The returned count is rebuilds only — a re-submit derives nothing.
    */
   int reconcileNow(Supplier<List<String>> sessionIds, Function<String, List<?>> eventLoader) {
     List<String> ids;
@@ -171,8 +185,27 @@ public final class AgentHistoryIndexer {
     }
     int rebuilt = 0;
     int preserved = 0;
+    int resubmitted = 0;
     for (String sessionId : ids) {
-      if (sessionId == null || sessionId.isBlank() || isReadableTranscript(transcriptPath(sessionId))) {
+      if (sessionId == null || sessionId.isBlank()) {
+        continue;
+      }
+      if (isReadableTranscript(transcriptPath(sessionId))) {
+        // Tempdoc 909 §E item 1: healthy bytes are not evidence of a healthy INDEX. A transcript
+        // written while the knowledge client was null never reached submitBatch, and every later
+        // pass used to skip it here — permanently missing from the collection. The marker is the
+        // fact that distinguishes the two, so it, not the file's readability, decides.
+        if (isPending(sessionId)) {
+          try {
+            submitAndClearPending(sessionId, transcriptPath(sessionId));
+            if (!isPending(sessionId)) {
+              resubmitted++;
+            }
+          } catch (IOException | RuntimeException e) {
+            LOG.debug(
+                "Agent-history transcript {} is still pending index: {}", sessionId, e.toString());
+          }
+        }
         continue;
       }
       if (rebuilt >= MAX_REBUILDS_PER_PASS) {
@@ -199,6 +232,12 @@ public final class AgentHistoryIndexer {
     }
     if (rebuilt > 0) {
       LOG.info("Re-derived {} agent-history transcript(s) from their runs", rebuilt);
+    }
+    if (resubmitted > 0) {
+      LOG.info(
+          "Indexed {} agent-history transcript(s) that were written while the worker was"
+              + " unavailable",
+          resubmitted);
     }
     if (preserved > 0) {
       LOG.warn(
@@ -267,13 +306,49 @@ public final class AgentHistoryIndexer {
       Files.createDirectories(historyDir);
       Path target = transcriptPath(sessionId);
       atomicWrite(target, renderTranscript(sessionId, payload, errored));
-      RemoteKnowledgeClient client = clientSupplier.get();
-      if (client != null) {
-        client.submitBatch(List.of(target), true, COLLECTION);
-      }
+      // Tempdoc 909 §E item 1: the marker is written BEFORE the submit, so every window in which
+      // the ingest can be lost — no client (Worker down / not yet connected), a throwing RPC, a
+      // crash between the two — leaves the same durable "this transcript is not indexed" fact on
+      // disk. Without it the transcript is healthy, reconciliation skips it forever, and the run
+      // is permanently missing from the agent-history collection.
+      markPending(sessionId);
+      submitAndClearPending(sessionId, target);
     } catch (Exception e) {
       // Fail-soft — a failed history index must never affect the run or the user.
       LOG.warn("Failed to index agent-history transcript for session {}", sessionId, e);
+    }
+  }
+
+  /**
+   * Submit the transcript to the {@code agent-history} collection and clear its pending marker.
+   *
+   * <p>The marker is cleared ONLY after {@code submitBatch} returns normally: no client means the
+   * ingest never happened, and a throwing RPC means it may not have. Either way the marker stays
+   * and the next reconciliation pass retries. Re-submitting an already-indexed transcript is
+   * harmless — the ingest is keyed by path and forced, so it re-indexes the same document.
+   */
+  private void submitAndClearPending(String sessionId, Path target) throws IOException {
+    RemoteKnowledgeClient client = clientSupplier.get();
+    if (client == null) {
+      return; // marker stays; a later pass with a client submits it
+    }
+    client.submitBatch(List.of(target), true, COLLECTION);
+    Files.deleteIfExists(pendingMarkerPath(sessionId));
+  }
+
+  /** The durable "written but not yet indexed" marker, a sibling of the transcript it names. */
+  private Path pendingMarkerPath(String sessionId) {
+    return historyDir.resolve(sessionId + PENDING_SUFFIX);
+  }
+
+  private boolean isPending(String sessionId) {
+    return Files.isRegularFile(pendingMarkerPath(sessionId));
+  }
+
+  private void markPending(String sessionId) throws IOException {
+    Path marker = pendingMarkerPath(sessionId);
+    if (!Files.exists(marker)) {
+      Files.writeString(marker, "", StandardCharsets.UTF_8);
     }
   }
 

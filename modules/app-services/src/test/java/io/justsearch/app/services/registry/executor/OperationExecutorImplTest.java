@@ -1534,4 +1534,274 @@ final class OperationExecutorImplTest {
         + path.toAbsolutePath().toString().replace("\\", "\\\\")
         + "\"]}";
   }
+
+  // ----------------------------------------------------------------------------------
+  // Tempdoc 875 §C.7 — the reversal of an operation is an operation and inherits its risk
+  // class. Before this, undo() checked undoSupported and delegated: enforceTrustLattice
+  // never ran, so the reverse of a HIGH-risk op was dispatched with NO gate at all.
+  // ----------------------------------------------------------------------------------
+
+  /** An undoable operation at {@code risk}; the handler records whether its undo was reached. */
+  private static Operation makeUndoableOp(OperationRef id, RiskTier risk) {
+    return new Operation(
+        id,
+        Presentation.of(
+            new I18nKey("test." + id.value()), new I18nKey("test." + id.value() + ".desc")),
+        Interface.of("{\"type\":\"object\"}", "{\"type\":\"object\"}"),
+        new OperationPolicy(
+            risk,
+            new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
+            AuditPolicy.NONE,
+            RetryPolicy.noRetry(),
+            Set.of(),
+            true),
+        OperationAvailability.empty(),
+        OperationLineage.empty(),
+        Binding.of(id),
+        new Provenance(TrustTier.CORE, "test", "1.0"),
+        Set.of(ExecutorTag.AGENT));
+  }
+
+  /** Registers a handler whose {@code undo} flips {@code reached[0]} — the "did it dispatch?" probe. */
+  private static void registerUndoProbe(HandlerRegistry handlers, OperationRef id, boolean[] reached) {
+    handlers.register(
+        id,
+        new OperationHandler() {
+          @Override
+          public OperationResult execute(String args) {
+            return OperationResult.success("ran", "exec-1");
+          }
+
+          @Override
+          public OperationResult undo(String executionId) {
+            reached[0] = true;
+            return OperationResult.success("undone " + executionId);
+          }
+        });
+  }
+
+  /**
+   * The headline: an undo whose FORWARD form the lattice would refuse is refused the same way, with
+   * the same exception class — and the handler's undo is never reached. The control in the same
+   * test is what makes it a gate rather than a coincidence: the identical dispatch of the forward
+   * op throws the identical class.
+   */
+  @Test
+  void undoOfAGatedOperationIsRefusedExactlyAsItsForwardFormIs() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.undoable-high");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    OperationDispatcher executor = latticeExecutorWithCapsule(handlers, new ConsentCapsuleService());
+    Operation op = makeUndoableOp(id, RiskTier.HIGH);
+    // BUTTON is the strongest source tier there is (TRUSTED); TRUSTED × HIGH is TYPED_CONFIRM, so
+    // even a direct user gesture must carry a capsule.
+    InvocationProvenance button =
+        InvocationProvenance.fromTransport(TransportTag.BUTTON, Optional.empty(), Instant.now());
+
+    ConfirmationRequiredException forward =
+        assertThrows(
+            ConfirmationRequiredException.class,
+            () -> executor.dispatch(op, "{}", button, Optional.empty()),
+            "control: the forward form is gated");
+    ConfirmationRequiredException reversal =
+        assertThrows(
+            ConfirmationRequiredException.class,
+            () -> executor.undo(op, "exec-1", button, Optional.empty()),
+            "the reversal inherits the forward form's risk class, so it meets the same gate");
+
+    assertEquals(
+        forward.gateBehavior(),
+        reversal.gateBehavior(),
+        "the same gate behavior, because it is the same lattice cell — not a parallel rule");
+    assertFalse(undoReached[0], "the handler's undo must never be reached through a refused gate");
+  }
+
+  /**
+   * The other half: the gate must not have turned undo off. A capsule bound to
+   * ({@code op.id()}, {@link OperationDispatcher#undoArguments}) satisfies it and the reversal runs
+   * — the same capsule mechanism the forward path uses, over the reversal's own canonical args.
+   */
+  @Test
+  void aPermittedUndoStillRuns() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.undoable-high");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    ConsentCapsuleService capsule = new ConsentCapsuleService();
+    OperationDispatcher executor = latticeExecutorWithCapsule(handlers, capsule);
+    Operation op = makeUndoableOp(id, RiskTier.HIGH);
+    InvocationProvenance button =
+        InvocationProvenance.fromTransport(TransportTag.BUTTON, Optional.empty(), Instant.now());
+
+    String token = capsule.mint(id.value(), OperationDispatcher.undoArguments("exec-1"));
+    OperationResult result = executor.undo(op, "exec-1", button, Optional.of(token));
+
+    assertTrue(result.success(), "a bound capsule authorizes the reversal: " + result.message());
+    assertEquals("undone exec-1", result.message());
+    assertTrue(undoReached[0], "the handler's undo actually ran");
+  }
+
+  /**
+   * A capsule minted for the FORWARD invocation does not authorize the reversal. Capsules are
+   * args-bound; the reversal's arguments are its own. Without this the "same gate" claim would be
+   * satisfiable by replaying the approval the user gave for the opposite action.
+   */
+  @Test
+  void aForwardCapsuleDoesNotAuthorizeTheReversal() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.undoable-high");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    ConsentCapsuleService capsule = new ConsentCapsuleService();
+    OperationDispatcher executor = latticeExecutorWithCapsule(handlers, capsule);
+    Operation op = makeUndoableOp(id, RiskTier.HIGH);
+    InvocationProvenance button =
+        InvocationProvenance.fromTransport(TransportTag.BUTTON, Optional.empty(), Instant.now());
+
+    String forwardToken = capsule.mint(id.value(), "{}");
+
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () -> executor.undo(op, "exec-1", button, Optional.of(forwardToken)),
+        "the forward invocation's capsule is bound to the forward arguments, not the reversal's");
+    assertFalse(undoReached[0], "and the handler's undo is not reached");
+  }
+
+  /** An AUTO cell (any source × LOW) is untouched: an undoable read-class op reverses freely. */
+  @Test
+  void anAutoGateLeavesUndoUnchanged() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.undoable-low");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    OperationDispatcher executor = latticeExecutorWithCapsule(handlers, new ConsentCapsuleService());
+
+    OperationResult result =
+        executor.undo(makeUndoableOp(id, RiskTier.LOW), "exec-1", agentLoop(), Optional.empty());
+
+    assertTrue(result.success(), "LOW is AUTO for every source tier — no new refusal");
+    assertTrue(undoReached[0]);
+  }
+
+  /** The DENY arm: an engaged hard stop denies the reversal exactly as it denies the forward form. */
+  @Test
+  void anEngagedHardStopDeniesTheReversalToo() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.undoable-medium");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    var executor =
+        new OperationExecutorImpl(
+            handlers,
+            null,
+            Map.of(),
+            Clock.systemUTC(),
+            new CoreTrustEvaluator(),
+            CoreIntentSourceCatalog.catalog(),
+            null,
+            new ConsentCapsuleService());
+    var hardStop = new GlobalHardStop();
+    executor.setGlobalHardStop(hardStop);
+    Operation op = makeUndoableOp(id, RiskTier.MEDIUM);
+    hardStop.engage();
+
+    assertThrows(
+        TrustGateDeniedException.class,
+        () -> executor.dispatch(op, "{}", agentLoop(), Optional.empty()),
+        "control: the forward form is denied");
+    assertThrows(
+        TrustGateDeniedException.class,
+        () -> executor.undo(op, "exec-1", agentLoop(), Optional.empty()),
+        "the emergency circuit-breaker is not a forward-only control");
+    assertFalse(undoReached[0]);
+
+    hardStop.release();
+  }
+
+  /**
+   * Tempdoc 875 C.3 applied to the reversal: a durable grant that legitimately covers a governed
+   * FORWARD invocation (paths inside the indexed roots) does NOT carry over to its undo, because a
+   * reversal has no path arguments and containment therefore cannot be proven. The user is asked
+   * instead — a prompt, never a silent reversal.
+   */
+  @Test
+  void aDurableGrantDoesNotSilentlyAuthorizeTheReversalOfAGovernedOperation(
+      @org.junit.jupiter.api.io.TempDir java.nio.file.Path root) throws Exception {
+    java.nio.file.Path inside = java.nio.file.Files.createFile(root.resolve("notes.txt"));
+    HandlerRegistry handlers = new HandlerRegistry();
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, INGEST, undoReached);
+    var grants = new io.justsearch.app.services.intent.DurableGrantStore();
+    grants.grantAllowAlways(INGEST.value(), io.justsearch.agent.api.registry.SourceTier.UNTRUSTED);
+    var scope = new io.justsearch.app.services.intent.IndexedRootGrantScope(Set.of(INGEST));
+    scope.bindIndexedRoots(() -> List.of(root));
+    OperationExecutorImpl executor = latticeExecutorWithGrants(handlers, grants, scope);
+    // Same shape as makeFamilyOp, but undoable — the family + MEDIUM risk is what the grant covers.
+    Operation governed =
+        new Operation(
+            INGEST,
+            Presentation.of(new I18nKey("test.ingest"), new I18nKey("test.ingest.desc")),
+            Interface.of("{\"type\":\"object\"}", "{\"type\":\"object\"}"),
+            new OperationPolicy(
+                    RiskTier.MEDIUM,
+                    new ConfirmStrategy.Typed(new I18nKey("test.confirm")),
+                    AuditPolicy.NONE,
+                    RetryPolicy.noRetry(),
+                    Set.of(),
+                    true)
+                .withCapabilityFamily(FAMILY),
+            OperationAvailability.empty(),
+            OperationLineage.empty(),
+            Binding.of(INGEST),
+            new Provenance(TrustTier.CORE, "test", "1.0"),
+            Set.of(ExecutorTag.AGENT));
+
+    // Control: the grant DOES cover the forward invocation whose paths are inside a root.
+    assertTrue(
+        executor
+            .dispatch(governed, pathsArgs(inside), agentLoop(), Optional.empty())
+            .success(),
+        "control: the durable grant covers the in-root forward invocation");
+
+    assertThrows(
+        ConfirmationRequiredException.class,
+        () -> executor.undo(governed, "exec-1", agentLoop(), Optional.empty()),
+        "…but it cannot cover a reversal, whose arguments name no path to contain");
+    assertFalse(undoReached[0]);
+  }
+
+  /** An operation that does not support undo still fails fast, ahead of any gate evaluation. */
+  @Test
+  void undoUnsupportedStillFailsFastAheadOfTheGate() {
+    HandlerRegistry handlers = new HandlerRegistry();
+    OperationRef id = new OperationRef("core.high-no-undo");
+    boolean[] undoReached = {false};
+    registerUndoProbe(handlers, id, undoReached);
+    OperationDispatcher executor = latticeExecutorWithCapsule(handlers, new ConsentCapsuleService());
+
+    OperationResult result =
+        executor.undo(
+            makeHighOp(id),
+            "exec-1",
+            InvocationProvenance.fromTransport(TransportTag.BUTTON, Optional.empty(), Instant.now()),
+            Optional.empty());
+
+    assertFalse(result.success());
+    assertTrue(
+        result.message().contains("Undo not supported"),
+        "a typed denial, not a confirmation prompt for something that can never run: "
+            + result.message());
+    assertFalse(undoReached[0]);
+  }
+
+  /** The canonical reversal arguments are valid JSON and escape a hostile execution id. */
+  @Test
+  void undoArgumentsAreEscapedJson() {
+    assertEquals("{\"executionId\":\"exec-1\"}", OperationDispatcher.undoArguments("exec-1"));
+    assertEquals(
+        "{\"executionId\":\"a\\\"b\\\\c\"}",
+        OperationDispatcher.undoArguments("a\"b\\c"),
+        "a quote or backslash in the id must not be able to reshape the arguments object");
+  }
 }

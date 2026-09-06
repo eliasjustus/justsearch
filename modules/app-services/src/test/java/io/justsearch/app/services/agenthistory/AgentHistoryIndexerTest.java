@@ -3,7 +3,17 @@ package io.justsearch.app.services.agenthistory;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
+import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -188,6 +198,148 @@ class AgentHistoryIndexerTest {
 
     assertEquals(0, rebuilt);
     assertTrue(Files.readString(good).contains("the original answer"));
+  }
+
+  // ===== Tempdoc 909 §E item 1 — a transcript written while the Worker is down =====
+  //
+  // The defect: writeAndIndex wrote the .md, found a null client, and returned. The bytes were
+  // healthy, so every later reconciliation pass skipped the session at the isReadableTranscript
+  // guard — the run was permanently absent from the agent-history collection with nothing on disk
+  // recording that fact. The bounded Head-side fix is a durable pending marker; the Worker-owned
+  // index-side reconciliation 909 also describes is deliberately NOT built here.
+
+  /** The marker that says "written, not yet indexed". */
+  private static Path marker(Path historyDir, String sessionId) {
+    return historyDir.resolve(sessionId + AgentHistoryIndexer.PENDING_SUFFIX);
+  }
+
+  @Test
+  @DisplayName("909: a transcript written with NO client leaves a pending marker (nothing submitted)")
+  void transcriptWrittenWithoutAClientIsMarkedPending() throws Exception {
+    Path historyDir = tempDir.resolve("h-pending");
+    var indexer = new AgentHistoryIndexer(historyDir, () -> null); // the Worker is down
+
+    indexer.reconcileNow(() -> List.of("sess-down"), id -> doneEvents("WROTE-WHILE-DOWN"));
+
+    assertTrue(Files.exists(historyDir.resolve("sess-down.md")), "the transcript is still written");
+    assertTrue(
+        Files.exists(marker(historyDir, "sess-down")),
+        "…and the fact that it never reached the index is recorded ON DISK, not just lost");
+  }
+
+  /**
+   * The right-reason control for the test above: with a client present the SAME write submits and
+   * leaves no marker. Without this, a marker that was written unconditionally would pass the test
+   * above while meaning nothing.
+   */
+  @Test
+  @DisplayName("909: the same write WITH a client submits and leaves no marker")
+  void transcriptWrittenWithAClientIsNotMarkedPending() throws Exception {
+    Path historyDir = tempDir.resolve("h-up");
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    var indexer = new AgentHistoryIndexer(historyDir, () -> client);
+
+    indexer.reconcileNow(() -> List.of("sess-up"), id -> doneEvents("WROTE-WHILE-UP"));
+
+    verify(client, times(1))
+        .submitBatch(
+            List.of(historyDir.resolve("sess-up.md")), true, AgentHistoryIndexer.COLLECTION);
+    assertFalse(
+        Files.exists(marker(historyDir, "sess-up")),
+        "a submitted transcript carries no pending marker");
+  }
+
+  /**
+   * The recovery itself, across a RESTART: the marker is durable, so a brand-new indexer instance
+   * over the same directory — which is what a later boot actually is — submits the transcript
+   * exactly once and clears the marker. A second pass after that must submit nothing, or every
+   * boot would re-ingest the entire history.
+   */
+  @Test
+  @DisplayName("909: a later pass (new instance, same dir) submits the pending transcript once and clears it")
+  void aLaterPassSubmitsThePendingTranscriptExactlyOnceAndClearsTheMarker() throws Exception {
+    Path historyDir = tempDir.resolve("h-recover");
+
+    // Boot 1: the Worker is down.
+    new AgentHistoryIndexer(historyDir, () -> null)
+        .reconcileNow(() -> List.of("sess-r"), id -> doneEvents("RECOVER-ZQX"));
+    assertTrue(Files.exists(marker(historyDir, "sess-r")), "precondition: pending after boot 1");
+
+    // Boot 2: a NEW indexer over the same directory, Worker up. The marker is the only carrier of
+    // state between the two — there is no in-memory queue to inherit.
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    var rebooted = new AgentHistoryIndexer(historyDir, () -> client);
+    int rebuilt = rebooted.reconcileNow(() -> List.of("sess-r"), id -> doneEvents("RECOVER-ZQX"));
+
+    assertEquals(0, rebuilt, "a re-submit derives nothing — the healthy bytes are reused as-is");
+    verify(client, times(1))
+        .submitBatch(List.of(historyDir.resolve("sess-r.md")), true, AgentHistoryIndexer.COLLECTION);
+    assertFalse(Files.exists(marker(historyDir, "sess-r")), "the marker is cleared after the submit");
+    assertTrue(
+        Files.readString(historyDir.resolve("sess-r.md")).contains("RECOVER-ZQX"),
+        "the ORIGINAL transcript is what got indexed, not a rewrite");
+
+    // Boot 3: nothing left to do. `verifyNoMoreInteractions` is what makes "exactly once" true
+    // across passes rather than once per pass.
+    rebooted.reconcileNow(() -> List.of("sess-r"), id -> doneEvents("RECOVER-ZQX"));
+    verifyNoMoreInteractions(client);
+  }
+
+  /**
+   * The skip that must survive the fix: a healthy transcript with NO marker is left alone — not
+   * rewritten (the 909 test above) and not re-submitted either. Otherwise the marker would have
+   * bought recovery at the price of re-ingesting every transcript on every boot.
+   */
+  @Test
+  @DisplayName("909: a healthy transcript with no marker is still skipped — no submit, no rebuild")
+  void aHealthyUnmarkedTranscriptIsStillSkipped() throws Exception {
+    Path historyDir = Files.createDirectories(tempDir.resolve("h-skip"));
+    Path good = historyDir.resolve("sess-ok.md");
+    Files.writeString(good, AgentHistoryIndexer.TRANSCRIPT_HEADER + "\n\nthe original answer\n");
+    RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
+    var indexer = new AgentHistoryIndexer(historyDir, () -> client);
+
+    int rebuilt =
+        indexer.reconcileNow(
+            () -> List.of("sess-ok"),
+            id -> {
+              throw new AssertionError("an unmarked healthy transcript must not load its events");
+            });
+
+    assertEquals(0, rebuilt);
+    verifyNoInteractions(client);
+    assertTrue(Files.readString(good).contains("the original answer"), "left byte-identical");
+  }
+
+  /**
+   * The marker outlives a failed retry. A throwing {@code submitBatch} — the Worker up but the RPC
+   * failing — must leave the marker exactly as a null client does, or a single transient failure
+   * would silently consume the recovery.
+   */
+  @Test
+  @DisplayName("909: a FAILING submit leaves the marker for the next pass")
+  void aFailingSubmitLeavesTheMarkerInPlace() throws Exception {
+    Path historyDir = tempDir.resolve("h-rpcfail");
+    new AgentHistoryIndexer(historyDir, () -> null)
+        .reconcileNow(() -> List.of("sess-f"), id -> doneEvents("RPC-FAIL-ZQX"));
+
+    RemoteKnowledgeClient failing = mock(RemoteKnowledgeClient.class);
+    when(failing.submitBatch(anyList(), anyBoolean(), anyString()))
+        .thenThrow(new IllegalStateException("worker RPC failed"));
+    new AgentHistoryIndexer(historyDir, () -> failing)
+        .reconcileNow(() -> List.of("sess-f"), id -> doneEvents("RPC-FAIL-ZQX"));
+
+    assertTrue(
+        Files.exists(marker(historyDir, "sess-f")),
+        "a throwing submit is not a successful one — the marker must survive it");
+
+    // …and the pass after that, with a working client, still recovers the transcript.
+    RemoteKnowledgeClient ok = mock(RemoteKnowledgeClient.class);
+    new AgentHistoryIndexer(historyDir, () -> ok)
+        .reconcileNow(() -> List.of("sess-f"), id -> doneEvents("RPC-FAIL-ZQX"));
+    verify(ok, times(1))
+        .submitBatch(List.of(historyDir.resolve("sess-f.md")), true, AgentHistoryIndexer.COLLECTION);
+    assertFalse(Files.exists(marker(historyDir, "sess-f")));
   }
 
   @Test

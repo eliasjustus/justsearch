@@ -7,6 +7,8 @@ import { request } from '../http';
 import { AgentSessionSnapshotSchema, parseWireContract } from '../schemas';
 import { agentHistoryResponseSchema } from '../generated/schema-types/agent-history-response.js';
 import { agentSessionsResponseSchema } from '../generated/schema-types/agent-sessions-response.js';
+import { getOperationClient } from '../../shell-v0/operations/OperationClient.js';
+import { requestAuthorization } from '../../shell-v0/operations/authorizationBroker.js';
 
 // ============================================
 // Types
@@ -127,15 +129,34 @@ export async function cancelAgentSession(
   });
 }
 
+/**
+ * Reverse a previous agent tool execution.
+ *
+ * <p>Tempdoc 875 §C.7: a reversal inherits its forward form's risk class, so the backend now
+ * runs the same trust lattice on it. This delegates to the ONE consent-capable undo path
+ * ({@link OperationClient.undoWithConsent} → `POST /api/undo/{id}`) rather than re-posting to
+ * `POST /api/chat/agent/undo`, which parses only `{toolName, executionId}`
+ * (`AgentSessionController.handleUndo`) and so carries no field a confirmation capsule could
+ * travel in — against the only undo-supported operation (`core.file-operations`, HIGH risk,
+ * TYPED_CONFIRM under every source tier) that route can now only ever answer 428.
+ *
+ * <p>`toolName` is the agent wire-name (`core_file_operations`); the operations route resolves
+ * it via `findByWireName`, which transliterates and falls back to the canonical op-id.
+ */
 export async function undoToolExecution(
   baseUrl: string,
   toolName: string,
   executionId: string,
 ): Promise<AgentUndoResult> {
-  return request<AgentUndoResult>(baseUrl, '/api/chat/agent/undo', {
-    method: 'POST',
-    body: { toolName, executionId },
+  const result = await getOperationClient(baseUrl).undoWithConsent(toolName, executionId, {
+    transport: 'BUTTON',
+    requestConsent: requestAuthorization,
   });
+  return {
+    success: result.success,
+    output: result.message,
+    ...(result.executionId !== undefined ? { executionId: result.executionId } : {}),
+  };
 }
 
 export async function getAgentHistory(

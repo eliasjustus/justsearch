@@ -477,19 +477,39 @@ export class OperationClient {
     };
   }
 
+  /**
+   * Reverse a previous execution — `POST /api/undo/{operationId}` with `{executionId}`.
+   *
+   * <p>Tempdoc 875 §C.7: a reversal is an operation and inherits its forward form's risk
+   * class, so this route runs the SAME (SourceTier × RiskTier) lattice `invoke` does and can
+   * answer 428 (CONFIRMATION_REQUIRED) or 403 (TRUST_DENIED). The 428's decision context —
+   * `pendingId`, `gateBehavior`, risk / reversibility / args summary — is carried onto the
+   * thrown {@link OperationError} exactly as {@link invoke} carries it, because
+   * {@link undoWithConsent} drives the same ceremony from it. Dropping those fields here is
+   * what made a gated undo an unexplained failure instead of a prompt.
+   *
+   * <p>`confirmationToken` is the minted capsule on the post-approval retry. The backend binds
+   * it to `OperationDispatcher.undoArguments(executionId)` — i.e. exactly `{"executionId":"…"}`
+   * — so the capsule authorizes reversing THIS execution and nothing else.
+   */
   async undo(
     operationId: string,
     executionId: string,
+    opts: { confirmationToken?: string; transport?: string } = {},
   ): Promise<OperationInvocationSuccess> {
     if (!operationId) throw new OperationError('operationId required', 'BAD_REQUEST');
     if (!executionId) throw new OperationError('executionId required', 'BAD_REQUEST');
     const url = `${this.apiBase}/api/undo/${encodeURIComponent(operationId)}`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (opts.transport) {
+      headers['X-JustSearch-Transport'] = opts.transport;
+    }
     let res: Response;
     try {
       res = await this.fetchImpl(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ executionId }),
+        headers,
+        body: JSON.stringify({ executionId, confirmationToken: opts.confirmationToken }),
       });
     } catch (err: unknown) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -507,13 +527,24 @@ export class OperationClient {
       );
     }
     if (!parsed.success) {
+      const details =
+        parsed.errorClass === 'CONFIRMATION_REQUIRED'
+          ? {
+              ...(parsed.errorDetails ?? {}),
+              riskTier: parsed.riskTier,
+              undoSupported: parsed.undoSupported,
+              argsSummary: parsed.argsSummary,
+            }
+          : parsed.errorDetails;
       throw new OperationError(
         parsed.message ?? `Undo of ${operationId} failed`,
         parsed.errorClass ?? 'UNKNOWN',
         res.status,
         parsed.errorCode,
-        parsed.errorDetails,
+        details,
         parsed.retryable,
+        parsed.pendingId,
+        parsed.gateBehavior,
       );
     }
     return {
@@ -522,6 +553,77 @@ export class OperationClient {
       executionId: parsed.executionId,
       structuredData: parsed.structuredData,
     };
+  }
+
+  /**
+   * The undo twin of {@link invokeWithConsent} — one consent flow, not two. On the backend's
+   * 428 the backend-issued {@link AuthorizationPrompt} goes to `requestConsent` (the unified
+   * `<jf-authorization-host>` ceremony via the broker); approving mints a capsule against the
+   * pending's STORED (operationId, `{"executionId":"…"}`) and the undo is re-posted with it.
+   *
+   * <p>The prompt is marked `undoSupported: false` regardless of what the 428 echoed: that
+   * field drives the ceremony's "this can't be undone" warning, and the 428 reports the
+   * FORWARD operation's reversibility (`op.policy().undoSupported()`, true for every op that
+   * can reach this route). Reversing a reversal is not offered, so telling the user this act
+   * is itself undoable would be a lie at the exact moment they are deciding.
+   *
+   * <p>An AUTO-gated undo never 428s and is a single plain {@link undo}. A 428 with no
+   * consent mode satisfied, and any 403 TRUST_DENIED, rethrow unchanged.
+   */
+  async undoWithConsent(
+    operationId: string,
+    executionId: string,
+    opts: {
+      transport?: string;
+      consented?: boolean;
+      requestConsent?: (prompt: {
+        pendingId: string;
+        operationId: string;
+        gateBehavior: string;
+        riskTier?: string;
+        undoSupported?: boolean;
+        argsSummary?: string;
+        purpose?: string;
+      }) => Promise<{ approved: boolean; allowAlways: boolean }>;
+    } = {},
+  ): Promise<OperationInvocationSuccess> {
+    const { transport } = opts;
+    try {
+      return await this.undo(operationId, executionId, { ...(transport ? { transport } : {}) });
+    } catch (err: unknown) {
+      if (
+        err instanceof OperationError &&
+        err.errorClass === 'CONFIRMATION_REQUIRED' &&
+        err.pendingId
+      ) {
+        let approved = opts.consented === true;
+        let allowAlways = false;
+        if (!approved && opts.requestConsent) {
+          const d = err.errorDetails ?? {};
+          const decision = await opts.requestConsent({
+            pendingId: err.pendingId,
+            operationId,
+            gateBehavior: err.gateBehavior ?? '',
+            ...(typeof d.riskTier === 'string' ? { riskTier: d.riskTier } : {}),
+            undoSupported: false,
+            ...(typeof d.argsSummary === 'string' && d.argsSummary
+              ? { argsSummary: d.argsSummary }
+              : {}),
+            ...(err.message ? { purpose: err.message } : {}),
+          });
+          approved = decision.approved;
+          allowAlways = decision.allowAlways;
+        }
+        if (approved) {
+          const capsule = await this.approveByPendingId(err.pendingId, allowAlways);
+          return await this.undo(operationId, executionId, {
+            confirmationToken: capsule,
+            ...(transport ? { transport } : {}),
+          });
+        }
+      }
+      throw err;
+    }
   }
 }
 
