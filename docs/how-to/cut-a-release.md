@@ -29,6 +29,12 @@ A release **candidate** is qualified before its number is finalized:
 1. **Build** the installer via `build-installer.yml` (`gh workflow run build-installer.yml --ref
    main`, or any branch ref — no tag needed for a validation candidate), then `gh run download
    <run-id>` to fetch the artifact locally.
+   The protected `release-signing` Environment normally admits only `main` and `v*`. For a branch
+   candidate, temporarily add that exact branch to the Environment's deployment policy, verify the
+   pending run's head SHA, approve the one run, and remove the temporary policy as soon as the job
+   starts. Here “unsigned” means no provider-signer invocation or spend, not absence of secret access:
+   approval makes the Environment's referenced Authenticode secrets available to the reviewed job,
+   and the workflow also needs Environment-held updater-signing material.
    **Do not attempt a local build via `package-installer-win.ps1` on a dev machine with Windows
    Smart App Control enforcing** (`Windows Security > App & browser control > Smart App Control`).
    SAC blocks unsigned cargo build-scripts, so the Tauri/Rust build fails partway through with

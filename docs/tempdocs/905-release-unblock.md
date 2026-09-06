@@ -738,44 +738,13 @@ Residual owner actions:
 - PR `justsearch-app/justsearch#629` merged through the protected merge queue as
   `7aa4a916fbee342ac4678bcf5603570f5fc1a0a0`. Merge-group CI run `33797308631` and post-merge
   `main` CI run `33797753403` passed. The published merge tree exactly matched the reviewed PR head.
-- GitHub Environment `release-signing` now requires reviewer `eliasjustus`, permits self-review so
-  the sole owner is not locked out, disables administrator bypass, and restricts deployment refs to
-  branch `main` or tags matching `v*`. No paid workflow was dispatched.
+- GitHub Environment `release-signing` now requires owner review, disables administrator bypass,
+  and restricts normal deployment refs to branch `main` or tags matching `v*`.
 - Repository variable `JUSTSEARCH_RELEASE_DESCRIPTOR_URL` now points to
   `https://github.com/justsearch-app/justsearch/releases/latest/download/release.v1.json`.
-- A credential-safe temporary helper was adapted from the earlier tempdoc-760 script. It prompts in
-  a separate terminal and targets only Environment secrets. Repository-scoped copies remain in place
-  until the Environment values are present and both workflows can be validated without guessing the
-  provider allowance. The owner retains the SSL.com username and password but reported that the
-  eSigner-specific values were lost, so the helper was closed without writing any Environment secret.
-  GitHub cannot reveal the existing encrypted repository-scoped values, and those copies were
-  deliberately left untouched. Before the helper can be rerun, use the certificate order to verify
-  the signing credential ID and recover or replace the eSigner TOTP enrollment secret. SSL.com's
-  self-service QR reset requires the 4-digit eSigner PIN; its PIN reset requires either a current OTP
-  or the current PIN. The owner then reported three unsuccessful PIN attempts followed by a provider
-  disablement message. A read-only inspection of the authenticated SSL.com order page on 2026-09-03
-  established the actual account state: the order and certificate remain `issued`, eSigner remains
-  active, the order has zero YubiKeys, and its single signing credential is explicitly selected as
-  `disabled`. The same page exposes an available `signing credential enabled` control. Its signing
-  log contains prior successful `SIGN_HASH` entries but no recorded PIN-failure or lockout event. This
-  is therefore a disabled cloud-signing credential, not a revoked certificate or missing hardware
-  token. Do not order another token or credential, and do not guess further PINs. With owner
-  confirmation at the moment of the account mutation, first try re-enabling the existing credential
-  in the portal; if the control fails or eSigner still returns the exact `key status is disabled`
-  error, SSL.com's error reference says support must re-enable it. Its public eSigner documentation
-  does not publish a three-attempt threshold, so retain the literal error for support and recover the
-  PIN/QR/TOTP enrollment path rather than rotating repository state.
-- The owner recovered the eSigner factors and re-enabled the existing credential. A second live portal
-  inspection confirmed the credential is `enabled`, the certificate remains `issued`, the current
-  plan is **Personal ID Code Signing Tier 1 Annual**, and the provider-authoritative balance is
-  **240 unused signings**. No provider-side no-overage switch was exposed; the published plan charges
-  for additional signings, so JustSearch's reviewed per-run admission value and hard signature ceiling
-  remain the no-overage enforcement. The credential-safe helper then wrote
-  `JUSTSEARCH_CODESIGN_MODE` and `JUSTSEARCH_CODESIGN_COMMAND` into the protected `release-signing`
-  Environment without echoing or persisting the owner-entered password/TOTP secret. Secret-name and
-  timestamp metadata verified both Environment entries. The temporary helper was deleted. The older
-  repository-scoped copies remain only as rollback until a real signed build validates the migrated
-  values; no signing workflow was dispatched and no signing credit was consumed during migration.
+- Environment configuration was completed through a no-echo, non-persisting credential-entry path.
+  Provider account identifiers, authentication factors, subscription details, balance, and recovery
+  history are intentionally omitted from the public record.
 - A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
   The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
   installer, verified SHA-256
@@ -791,20 +760,11 @@ Residual owner actions:
   distribution and explicitly requested withdrawal, so pull request `#429017` was closed on
   2026-09-04 before merge. No CLA was accepted and no package was published to WinGet. The local
   deterministic manifest projection remains available if that distribution choice changes later.
-- With explicit owner authorization, non-release `build-installer.yml` run `33807983478` used the
-  protected `release-signing` Environment with a reviewed provider balance of 240 and a hard ceiling
-  of 12. The signing/build job passed: the attempt journal reserved exactly **8/12** provider calls,
-  all eight were locally verified, the final installer signature passed `signtool`, the extracted
-  installer census accepted 178 MZ files with zero rejected, and no release was published. This proves
-  the migrated Environment credential for the installer workflow and bounds this run's provider usage
-  to eight signatures. An initial post-run portal read reached a signed-out session, so the temporary
-  **232** arithmetic estimate from 240 minus eight was explicitly non-authoritative. A signed-in
-  follow-up on 2026-09-04 used the provider's documented `END ENTITY CERTIFICATES` usage surface and
-  showed **240 unused signings** on the active Tier 1 Annual plan. The provider ledger also shows the
-  September 3 signing activity. SSL.com's published pricing says the first 30 days include unlimited
-  signings, so the unchanged paid allowance indicates that this run used the introductory unlimited
-  period rather than the annual pool. The authoritative current balance is therefore 240; the 232
-  estimate is retired and must not be used for admission.
+- With explicit owner authorization, non-release `build-installer.yml` run `33807983478` exercised
+  the protected Environment under the workflow's fail-closed signing ceiling. The signing/build job,
+  local signature verification, and extracted-installer executable census passed, and no release was
+  published. This proves the installer workflow can use the Environment-backed signer without putting
+  provider account state into the repository.
 - The separate packaged-verification job then passed its fresh-install, restart/session-token, and
   upgrade-arrival product legs before its EvidenceBundle Node process aborted during stdout teardown
   with Windows exit `0xC0000409` / libuv `UV_HANDLE_CLOSING`. The bundle path had already been emitted;
@@ -822,13 +782,10 @@ Residual owner actions:
   with Node `24.14.0`; this validates the harness correction without consuming another signing credit.
 
 Residual owner-dependent work is now limited to validation of the mirror signer during its next
-natural upstream refresh before deleting repository-scoped credential copies, a fresh
-provider-authoritative remaining-signature read before every later paid dispatch, tempdoc 617's exact
-N→N+1 updater lanes, and a future model candidate with approved immutable assets, provenance,
-license, quality, and publication authority. Re-signing unchanged
-mirrors solely to exercise the same Environment would waste roughly 120 metered signatures, so the
-repository-scoped rollback copies remain until the next necessary mirror refresh. Scoop remains
-deliberately deferred.
+natural upstream refresh, provider-authoritative admission before every later paid dispatch, tempdoc
+617's exact N→N+1 updater lanes, and a future model candidate with approved immutable assets,
+provenance, license, quality, and publication authority. Do not re-sign unchanged mirrors solely for
+validation; wait for the next necessary refresh. Scoop remains deliberately deferred.
 
 ## Publication completion plan (2026-09-06)
 
@@ -856,10 +813,11 @@ spending another signing credit.
   jseval completed with 3,094 passed and 12 skipped tests.
 - [ ] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
   verifier job to pass. This closes the capability-realization gap on the exact consumer path without
-  using the provider credential or consuming an eSigner signing.
+  invoking the provider signer or consuming a metered signing. The job still requires the protected
+  Environment because a valid candidate also uses its updater-signing material; admit only this exact
+  branch, retain required review, and remove the temporary deployment policy as soon as the job starts.
 - [ ] Scan the complete public diff for credentials, private identifiers, machine-local paths, stale
-  quantitative claims, and unrelated changes. Keep the old WinGet PR closed, keep Scoop deferred,
-  and keep repository-scoped signing-secret rollback copies until the next necessary mirror refresh.
+  quantitative claims, and unrelated changes. Keep the old WinGet PR closed and keep Scoop deferred.
 - [ ] Open a fresh pull request because closed PR #631 describes an older docs-only head. Use the
   current public squash-body contract, create the separate review record, and pass both strict
   publication checks before enqueueing.
