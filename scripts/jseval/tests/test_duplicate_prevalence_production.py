@@ -1617,13 +1617,14 @@ def test_programmatic_request_rejects_unapproved_terminal_exclusion(tmp_path):
 
 
 def test_windows_worker_path_key_uses_lowercase_not_casefold(monkeypatch):
-    monkeypatch.setattr(production.os, "name", "nt")
     value = f"Corpus{os.sep}\N{LATIN CAPITAL LETTER SHARP S}{os.sep}report.pdf"
+    path = Path(value)
+    monkeypatch.setattr(production.os, "name", "nt")
     normalized = os.path.normpath(value.replace("/", os.sep))
 
     assert production._worker_path_key(value) == normalized.lower()
     assert production._worker_path_key(value) != normalized.casefold()
-    assert production._path_hash(Path(value)) == hashlib.sha256(
+    assert production._path_hash(path) == hashlib.sha256(
         normalized.lower().encode("utf-8")
     ).hexdigest()
 

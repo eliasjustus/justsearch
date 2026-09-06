@@ -37,6 +37,8 @@ public final class FormatCapabilityFixtureFactory {
       Set.of("ppt/slides/slide1.xml", "ppt/notesSlides/notesSlide1.xml");
   private static final Pattern PPTX_END_PARAGRAPH_LANGUAGE =
       Pattern.compile("<a:endParaRPr lang=\"[^\"]+\"/>");
+  private static final Pattern PPTX_XML_DECLARATION_LINE_BREAK =
+      Pattern.compile("^(<\\?xml[^>]*\\?>)\\r?\\n");
 
   public enum FormatId {
     EML,
@@ -465,10 +467,16 @@ public final class FormatCapabilityFixtureFactory {
   }
 
   private static byte[] normalizePptxEntry(String name, byte[] content) {
-    if (!PPTX_LOCALE_NORMALIZED_ENTRIES.contains(name)) {
+    if (!name.endsWith(".xml") && !name.endsWith(".rels")) {
       return content;
     }
     String xmlContent = new String(content, StandardCharsets.UTF_8);
+    // POI/XMLBeans uses the host line separator after XML declarations. Preserve the existing
+    // pinned CRLF fixture bytes on every host, including parts copied from POI's bundled template.
+    xmlContent = PPTX_XML_DECLARATION_LINE_BREAK.matcher(xmlContent).replaceFirst("$1\r\n");
+    if (!PPTX_LOCALE_NORMALIZED_ENTRIES.contains(name)) {
+      return xmlContent.getBytes(StandardCharsets.UTF_8);
+    }
     long localeDerivedAttributes = PPTX_END_PARAGRAPH_LANGUAGE.matcher(xmlContent).results().count();
     if (localeDerivedAttributes != 1) {
       throw new IllegalStateException(

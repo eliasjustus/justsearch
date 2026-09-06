@@ -18,6 +18,7 @@ import io.justsearch.indexerworker.fixtures.FormatCapabilityFixtureFactory.Gener
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -41,6 +43,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -81,6 +84,45 @@ final class PolicyDrivenFormatCapabilityTest {
           FormatCapabilityFixtureFactory.generate(id).bytes(),
           FormatCapabilityFixtureFactory.generate(id).bytes(),
           () -> id + " recipe must be byte-identical across generations");
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"LF", "CRLF"})
+  void pptxRecipeHasPinnedBytesAcrossJvmLineSeparators(String separatorName) throws Exception {
+    Path fixture = tempDir.resolve(separatorName + ".pptx");
+    Path log = tempDir.resolve(separatorName + ".log");
+    List<String> command = new ArrayList<>(
+        PersistentExtractionSandboxTest.javaCommand(PptxFixtureProbe.class));
+    command.add(fixture.toString());
+    command.add(separatorName);
+    Process child = new ProcessBuilder(command)
+        .redirectErrorStream(true)
+        .redirectOutput(log.toFile())
+        .start();
+    try {
+      assertTrue(child.waitFor(20, TimeUnit.SECONDS), "PPTX fixture probe did not exit");
+      assertEquals(0, child.exitValue(), Files.readString(log));
+      assertEquals(
+          FormatCapabilityExpectedState.forFormat(FormatId.PPTX_WITH_NOTES).sha256(),
+          sha256(Files.readAllBytes(fixture)),
+          () -> separatorName + " must preserve the pinned PPTX fixture bytes");
+    } finally {
+      if (child.isAlive()) {
+        child.destroyForcibly();
+        child.waitFor(5, TimeUnit.SECONDS);
+      }
+    }
+  }
+
+  public static final class PptxFixtureProbe {
+    private PptxFixtureProbe() {}
+
+    public static void main(String[] args) throws Exception {
+      System.setProperty("line.separator", "LF".equals(args[1]) ? "\n" : "\r\n");
+      Files.write(
+          Path.of(args[0]),
+          FormatCapabilityFixtureFactory.generate(FormatId.PPTX_WITH_NOTES).bytes());
     }
   }
 

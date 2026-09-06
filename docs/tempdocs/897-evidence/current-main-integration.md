@@ -545,3 +545,26 @@ not a backend wait; this sample does not explain every earlier timing difference
 command in the repository publication inventory completed successfully. Windows-native, Rust shell
 and CLA checks remain hosted obligations, not local waivers. Publication state and exact GitHub checks
 are recorded in the managed PR review record; the public squash body contains only durable outcomes.
+
+Initial publication candidate `3058c10af` opened [PR #694](https://github.com/justsearch-app/justsearch/pull/694).
+[Hosted run 34040156568](https://github.com/justsearch-app/justsearch/actions/runs/34040156568) exposed two
+Linux portability defects that local Windows verification did not catch. The Python regression test
+constructed a native `Path` after changing global `os.name` to simulate Windows; constructing it before
+the monkeypatch preserves its lowercase-versus-casefold assertion on either host. Production logic is
+unchanged. All 78 production-measurement tests pass (`897-ci-path-portability.log`).
+
+The PPTX oracle assertion failed before extraction: POI/XMLBeans used host-specific newlines after XML
+declarations. Changing only the JVM line separator reproduced Linux's exact `a192e65c…` hash locally.
+The fixture now normalizes declaration newlines to the existing pinned CRLF bytes; its `36b0eb0b…`
+hash, recipe, contents and expected extraction oracle remain unchanged. New isolated child-JVM tests
+first reproduced the LF failure with CRLF passing, then both passed after normalization
+(`897-pptx-line-separator-negative.log`, `897-pptx-line-separator-fixed.log`). The complete format test
+class passed. No runtime, search-policy or quality baseline changed, so this repair does not invalidate
+the earlier live corpus/model evidence. Hosted failures were investigated and fixed rather than retried
+without a change or classified as unrelated flakes.
+
+Post-fix build/PMD passed in 16 seconds and the full Java test command passed in 3m 10s, rerunning
+the affected worker-services suite and reusing unchanged verified module outputs
+(`897-ci-portability-build.log`, `897-ci-portability-java.log`). Independent refute-first review
+confirmed the child-process regressions exercise both separators against the unchanged oracle, and
+the Python test retains its original semantics; no blockers remained.
