@@ -276,3 +276,32 @@ skill synchronization, canonical links and prompt-surface inventory checks passe
 The full jseval suite passed **3433 tests**, with 15 skipped and 83 warnings, in 522.75 s
 (`scripts/jseval/tmp/897-pre-ingest-full-pytest.log`). No Java/runtime code changed after the
 recorded full build, module tests, installed-Worker matrix and four SciFact gates.
+
+## Effort retrospective — 2026-09-06
+
+The work combines three independently understandable deliverables: deterministic format capability,
+a provenance-bound duplicate measurement instrument (including calibration and result identity), and
+production corpus campaigns. Seven implementation slices under one tempdoc obscured those completion
+boundaries. A future lane should close reusable instrumentation separately from long-running evidence,
+while keeping product repairs explicitly owned and preserving the campaign's acceptance criteria.
+
+The largest identifiable avoidable costs were late scale validation (the first Enron attempt reached
+about 23 GB RSS before the bounded census/sample redesign), reworking all-human adjudication after
+model-assisted triage was accepted, late integration across 34 task paths changed upstream, and late
+runtime-isolation checks. The five-help incident and online-inference VDU deferral should have been
+prevented by a small full-inference preflight before the 620-file campaign. Both are now documented;
+the foreign-index guard also prevents the observed late cohort-rejection failure class.
+
+Review found real snapshot, authentication, deadline and readiness defects after broad test runs.
+Each subsequent full rerun was warranted by changed code, but an earlier independent production-surface
+review and runtime smoke would likely have reduced the number of cycles. Preserve the negative
+regressions and independent review; move them earlier rather than relaxing acceptance.
+
+Comparison boundaries matter: 916 explicitly parked its Part 3 experiment with 4,122 chunk embeddings
+pending; 931's initial wave skipped campaigns estimated above two hours; 930 explicitly excluded VDU.
+Those decisions are recorded in their respective tempdocs. 915/931 also split substantial work across
+multiple PRs. Neither completion labels nor commit/line counts establish relative active agent-hours.
+897's elapsed duration includes pauses, production compute, repeated runs and integration work; no
+complete cross-tempdoc effort ledger was collected here. The source record supports these causal
+findings, not a numerical allocation of total effort. The takeover request correctly warned about
+stale assumptions; no user-prompt correction was needed.
