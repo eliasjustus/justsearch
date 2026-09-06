@@ -270,7 +270,7 @@ final class OperationsControllerTest {
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     InvocationProvenance captured = provenance.getValue();
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, captured.transport());
+        TransportTag.BUTTON, captured.transport());
     assertEquals(io.justsearch.agent.api.registry.ExecutorTag.UI, captured.executor());
     assertTrue(captured.initiator().isEmpty(), "v1 HTTP endpoint has no initiator context");
     assertNotNull(captured.occurredAt());
@@ -308,7 +308,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_BAR, provenance.getValue().transport());
+        TransportTag.URL_BAR, provenance.getValue().transport());
   }
 
   @Test
@@ -324,7 +324,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.PALETTE, provenance.getValue().transport());
+        TransportTag.PALETTE, provenance.getValue().transport());
   }
 
   @Test
@@ -340,7 +340,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_DEEPLINK,
+        TransportTag.URL_DEEPLINK,
         provenance.getValue().transport());
   }
 
@@ -357,7 +357,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.URL_BAR, provenance.getValue().transport());
+        TransportTag.URL_BAR, provenance.getValue().transport());
   }
 
   @Test
@@ -373,7 +373,7 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, provenance.getValue().transport());
+        TransportTag.BUTTON, provenance.getValue().transport());
   }
 
   @Test
@@ -389,6 +389,6 @@ final class OperationsControllerTest {
         ArgumentCaptor.forClass(InvocationProvenance.class);
     verify(dispatcher).dispatch(any(), any(), provenance.capture(), any());
     assertEquals(
-        io.justsearch.agent.api.registry.TransportTag.BUTTON, provenance.getValue().transport());
+        TransportTag.BUTTON, provenance.getValue().transport());
   }
 }
