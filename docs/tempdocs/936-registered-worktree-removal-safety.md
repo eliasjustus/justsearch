@@ -86,7 +86,8 @@ Preserve identity-attributed merge recording without writing it during a refused
 - [x] D. Parent integrates explicit paths and performs a critical pass; independent Sol
   reviewer attempts to refute path/branch/runtime safety and the tests' causal validity.
 - [x] E. Fix findings through Sol worker, run appropriate checks, record evidence, and
-  commit the completed result locally. No PR/push/actual cleanup without further request.
+  commit the completed result locally. No PR/push/existing-user-worktree cleanup without
+  further request; retire the temporary implementation worktree after verified integration.
 
 ## Acceptance and required verification
 
@@ -172,8 +173,9 @@ entry becomes visible. Closing that interval requires a broader lifecycle lock/d
 outside this change. Visible pending writes, malformed records, permission/I/O uncertainty, and
 unreachable relevant processes all block removal. Editor and task discovery likewise cannot prove
 the absence of unregistered holders, so canonical guidance tells operators to close target-scoped
-tools and run from outside the target. No Gradle, frontend, live-model, publication, push, or real
-worktree-removal action was appropriate or performed for this CLI-only change.
+tools and run from outside the target. No Gradle, frontend, live-model, publication, push, or
+existing-user-worktree removal was performed. Parent integration and retirement of the temporary
+implementation worktree are recorded below.
 
 ### Parent design probes (2026-09-06)
 
@@ -194,3 +196,38 @@ worktree-removal action was appropriate or performed for this CLI-only change.
 - Preview Git probes must disable optional index locks/refresh writes; filesystem
   snapshots in regression fixtures should cover index/refs/runtime metadata as well
   as target content. New tests must be discovered by an existing suite.
+
+### Parent integration and closeout (2026-09-06)
+
+- Integrated Sol implementation commit `69a898c95b052bf4d62562895ce989a0802c5d68`
+  as `03ec538c1` on `codex/936-worktree-removal`. The only cherry-pick conflict was
+  this tempdoc; both the parent design probes and worker results were preserved.
+  `git diff --exit-code 69a898c95 HEAD -- . ':!docs/tempdocs/936-registered-worktree-removal-safety.md'`
+  exited zero, proving the integrated code, tests, and canonical docs match the reviewed commit.
+- Independent Sol review closed with no unresolved material correctness or data-loss findings.
+  Parent separately checked main identity, runtime-owned path overlap, query-only preview,
+  scoped registration removal, and the evidence behind the regressions.
+- After confirming the worker was finished, its checkout was clean, and its content was
+  integrated, ran the new CLI from this retained worktree against only
+  `F:/justsearch-public-worktrees/936-removal-implementation`: first
+  `--dry-run --allow-ignored --delete-branch`, then `--allow-ignored --delete-branch`.
+  Both exited zero. Before/after Git registration comparison showed exactly that one
+  registration removed; its actual `codex/936-removal-implementation` branch was deleted.
+  The target directory was absent afterward and the junction target
+  `F:/justsearch-public/node_modules` remained present. No merge fact was invented for
+  this unpublished temporary branch; the tool correctly reported merge recording skipped.
+- `node scripts/agent-analytics/world-state.mjs --json` at
+  `2026-09-06T02:35:29.682Z` reported 48 registered worktrees, including this retained
+  checkout: clean, 3 commits ahead, 0 behind, unpushed, ACTIVE (before this final evidence
+  commit). This branch is intentionally retained locally for review; publication needs
+  separate authorization. No existing user worktree or main-checkout source was changed.
+- Closeout used the existing `runAgentSpawnSweep` assembly with occasion `session-closeout`,
+  this task's session id, `ownSessionOnly: true`, and `prune: false`: zero records, kills,
+  or markings. The wrapper CLI always prunes globally, so the scoped assembly preserved
+  the task's shared-state boundary. The retained worktree has a dependency junction to
+  main's existing `node_modules` so its Node tooling is runnable without duplicate installs.
+
+Implementation, review, appropriate verification, and local integration are complete.
+Remaining work is optional publication and separately authorized selection/removal of existing
+worktrees; neither is part of this implementation task. The discovery limits above remain
+explicit rather than being treated as a complete process/editor inventory.
