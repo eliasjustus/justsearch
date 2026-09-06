@@ -249,3 +249,30 @@ proves delivered-order top-ten accounting while recall retains TREC ordering. Ad
 to the existing declared-terminal-exclusion test: all three fixture sources remain byte-exact eligible,
 while only two successful extractions are content-exact eligible. Production suite: **64 passed**,
 3.55 s (`897-production-denominator-regression.log`).
+
+## Reject incompatible indexes before ingestion — 2026-09-06
+
+The bundled-help incident also exposed a late diagnostic: strict capture rejected extras only after
+the full ingest/enrichment campaign. `ingest_and_wait_for_snapshot` now reads one immutable complete
+parent-id export before root registration and rejects identities outside the declared successful
+corpus. It accepts empty indexes and valid partial resumes. Malformed/incomplete exports, normalized
+identity collisions and indexed terminal exclusions fail before mutation. The inspection client closes
+on every exit; inspection, registration and readiness consume one deadline and use the same session
+token. Final capture retains the complete identity, source-hash and revision checks, including changes
+that race with the early inspection.
+
+The foreign-document regression failed against the preceding implementation (`DID NOT RAISE`,
+`897-pre-ingest-negative-before.log`) and passes with the guard. The focused production, schema and
+wait-command suites passed **170 tests** in 10.61 s (`897-pre-ingest-focused.log`). The active isolated
+realdocs run had already independently proved an empty index before ingestion; its final capture
+contract is unchanged by this early diagnostic.
+
+Independent refute-first review of the actual diff found no blockers across mutation ordering,
+partial resumes, terminal exclusions, normalized collisions, transport failure, client closure and
+deadline/authentication reuse. A read-only invocation of the new guard against the active partial
+realdocs index passed; it performed no registration or other backend mutation. Canonical index,
+skill synchronization, canonical links and prompt-surface inventory checks passed.
+
+The full jseval suite passed **3433 tests**, with 15 skipped and 83 warnings, in 522.75 s
+(`scripts/jseval/tmp/897-pre-ingest-full-pytest.log`). No Java/runtime code changed after the
+recorded full build, module tests, installed-Worker matrix and four SciFact gates.

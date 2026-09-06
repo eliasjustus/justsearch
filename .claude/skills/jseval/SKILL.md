@@ -262,7 +262,11 @@ an analyzable document or emits the declaration's path, digest, or error text.
 
 Immediate production capture remains read-only. A positive `--wait-timeout-seconds` waits through the
 existing readiness engine before strict capture; `--ingest` explicitly registers the source root on that
-already-owned backend and requires a positive wait. This path awaits VDU and subsequent enabled enrichment
+already-owned backend and requires a positive wait. Before registration it inspects the complete existing
+document-id set and rejects foreign identities, malformed exports, or indexed terminal exclusions. Empty
+indexes and valid partial corpus resumes are accepted; final capture still verifies all identities and
+source revisions. Inspection, registration, and readiness share the requested time budget and session token.
+This path awaits VDU and subsequent enabled enrichment
 stages, including the declared terminal-failure disposition that ordinary pipeline readiness cannot accept.
 Chunk completion requires zero pending/failed dense work and complete enabled chunk-SPLADE accounting;
 the search-readiness tolerance of 99.9% cannot hide an unfinished production chunk. Registration forwards

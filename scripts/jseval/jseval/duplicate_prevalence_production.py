@@ -762,19 +762,30 @@ def ingest_and_wait_for_snapshot(
 ) -> readiness.ReadinessResult:
     """Explicitly ingest the raw root and wait for strict production readiness.
 
-    This helper only mutates the backend when called.  It deliberately leaves
-    source/index reconciliation to :func:`capture_snapshot`, which runs after
-    readiness and therefore remains the final identity and provenance gate.
+    Reject unrelated existing identities before registration. A matching partial
+    corpus may resume; complete source/index reconciliation remains the final
+    :func:`capture_snapshot` identity and provenance gate after readiness.
     """
 
     checked_request = ProductionAnalysisRequest(_checked_source_spec(request.source), request.config)
     _validate_timeout(timeout_seconds)
-    _raw_identity, root, _expected, _declared = _manifest_capture_inputs(checked_request)
+    _raw_identity, root, expected, declared = _manifest_capture_inputs(checked_request)
     deadline = time.monotonic() + timeout_seconds
+    session_token = os.environ.get(SESSION_TOKEN_ENV)
     try:
+        inspection = ProductionHttpClient(
+            checked_request.source.base_url,
+            session_token=session_token,
+            timeout_seconds=min(30.0, _validate_timeout(deadline - time.monotonic())),
+        )
+        try:
+            _validate_pre_ingest_cohort(inspection, set(expected) - set(declared))
+        finally:
+            inspection.close()
         ingest_module.add_watched_root(
-            checked_request.source.base_url, root, timeout_sec=timeout_seconds,
-            session_token=os.environ.get(SESSION_TOKEN_ENV),
+            checked_request.source.base_url, root,
+            timeout_sec=_validate_timeout(deadline - time.monotonic()),
+            session_token=session_token,
         )
         return wait_for_snapshot_ready(
             checked_request,
@@ -983,6 +994,20 @@ def _listed_documents(payload: Mapping[str, Any], expected_count: int) -> tuple[
     if len(set(normalized)) != expected_count:
         raise ProductionDuplicatePrevalenceError("document IDs collide after Worker normalization")
     return tuple(doc_ids)
+
+
+def _validate_pre_ingest_cohort(client: SnapshotClient, expected_ids: set[str]) -> None:
+    """Classify every existing parent before any root-registration mutation."""
+
+    payload = client.list_document_ids(0, MAX_DOCUMENTS)
+    count = payload.get("totalCount")
+    if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= MAX_DOCUMENTS:
+        raise ProductionDuplicatePrevalenceError("existing document count is invalid or exceeds the snapshot ceiling")
+    existing = _listed_documents(payload, count)
+    if any(_worker_path_key(doc_id) not in expected_ids for doc_id in existing):
+        raise ProductionDuplicatePrevalenceError(
+            "existing index contains documents outside the declared corpus; use an isolated corpus runtime"
+        )
 
 
 def _await_expected_document_cohort(

@@ -7,6 +7,7 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -341,7 +342,15 @@ def test_production_readiness_structural_schema_error_is_not_swallowed():
         )
 
 
-def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, monkeypatch):
+@pytest.fixture
+def existing_index_client(monkeypatch):
+    client = Mock(spec=production.ProductionHttpClient)
+    client.list_document_ids.return_value = {"docIds": [], "totalCount": 0, "tookMs": 0}
+    monkeypatch.setattr(production, "ProductionHttpClient", Mock(return_value=client))
+    return client
+
+
+def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, monkeypatch, existing_index_client):
     root = tmp_path / "raw"
     _write_corpus(root)
     request = _request(root)
@@ -361,6 +370,7 @@ def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, m
 
     assert production.prepare_request(request) == request
     assert roots == []
+    production.ProductionHttpClient.assert_not_called()
 
     def ready_wait(_base, check_fn, *_args, **kwargs):
         snapshot = _production_ready_status(3)
@@ -381,7 +391,7 @@ def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, m
     assert roots == [root.resolve()]  # Waiting on existing data never ingests again.
 
 
-def test_ingest_and_wait_timeout_reports_blocking_reason(tmp_path, monkeypatch):
+def test_ingest_and_wait_timeout_reports_blocking_reason(tmp_path, monkeypatch, existing_index_client):
     root = tmp_path / "raw"
     _write_corpus(root)
     monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path, **kwargs: None)
@@ -404,7 +414,7 @@ def test_ingest_and_wait_timeout_reports_blocking_reason(tmp_path, monkeypatch):
         )
 
 
-def test_ingest_wait_keeps_polling_through_pending_vdu_and_reenrichment(tmp_path, monkeypatch):
+def test_ingest_wait_keeps_polling_through_pending_vdu_and_reenrichment(tmp_path, monkeypatch, existing_index_client):
     root = tmp_path / "raw"
     _write_corpus(root)
     monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path, **kwargs: None)
@@ -428,6 +438,139 @@ def test_ingest_wait_keeps_polling_through_pending_vdu_and_reenrichment(tmp_path
         _request(root), timeout_seconds=1.0, on_snapshot=lambda _t, value: seen.append(value)
     )
     assert [snapshot["pendingVduCount"] for snapshot in seen] == [1, 0]
+
+
+def test_ingest_rejects_foreign_index_document_before_registering_root(tmp_path, monkeypatch, existing_index_client):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    foreign = _worker_id(tmp_path / "SSOT" / "docs" / "help" / "guide.md")
+    existing_index_client.list_document_ids.return_value = {
+        "docIds": [foreign], "totalCount": 1, "tookMs": 0,
+    }
+    add_root = Mock()
+    wait = Mock(return_value=production.readiness.ReadinessResult(passed=True))
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+    monkeypatch.setattr(production, "wait_for_snapshot_ready", wait)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="outside the declared corpus") as error:
+        production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5)
+
+    assert foreign not in str(error.value)
+    add_root.assert_not_called()
+    wait.assert_not_called()
+    existing_index_client.close.assert_called_once()
+
+
+@pytest.mark.parametrize("existing_count", [0, 1, 3])
+def test_ingest_accepts_empty_or_matching_partial_index(tmp_path, monkeypatch, existing_index_client, existing_count):
+    root = tmp_path / "raw"
+    documents = _write_corpus(root)
+    existing_index_client.list_document_ids.return_value = {
+        "docIds": list(documents)[:existing_count], "totalCount": existing_count, "tookMs": 0,
+    }
+    add_root = Mock()
+    wait = Mock(return_value=production.readiness.ReadinessResult(passed=True))
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+    monkeypatch.setattr(production, "wait_for_snapshot_ready", wait)
+
+    assert production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5).passed
+    existing_index_client.list_document_ids.assert_called_once_with(0, production.MAX_DOCUMENTS)
+    existing_index_client.close.assert_called_once()
+    add_root.assert_called_once()
+    wait.assert_called_once()
+
+
+@pytest.mark.parametrize("payload", [
+    {"docIds": [], "totalCount": True, "tookMs": 0},
+    {"docIds": [], "totalCount": 1, "tookMs": 0},
+    {"docIds": [], "totalCount": 0},
+    {"docIds": [], "totalCount": 50001, "tookMs": 0},
+])
+def test_ingest_rejects_incomplete_existing_index_export(tmp_path, monkeypatch, existing_index_client, payload):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    existing_index_client.list_document_ids.return_value = payload
+    add_root = Mock()
+    wait = Mock(return_value=production.readiness.ReadinessResult(passed=True))
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+    monkeypatch.setattr(production, "wait_for_snapshot_ready", wait)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError):
+        production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5)
+    add_root.assert_not_called()
+    wait.assert_not_called()
+    existing_index_client.close.assert_called_once()
+
+
+def test_ingest_rejects_normalized_aliases_before_registering(tmp_path, monkeypatch, existing_index_client):
+    root = tmp_path / "raw"
+    doc_id = next(iter(_write_corpus(root)))
+    alias = str(Path(doc_id).parent) + os.sep + "." + os.sep + Path(doc_id).name
+    assert alias != doc_id
+    existing_index_client.list_document_ids.return_value = {
+        "docIds": [doc_id, alias], "totalCount": 2, "tookMs": 0,
+    }
+    add_root = Mock()
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="collide"):
+        production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5)
+    add_root.assert_not_called()
+    existing_index_client.close.assert_called_once()
+
+
+def test_ingest_rejects_declared_terminal_identity_still_in_index(tmp_path, monkeypatch, existing_index_client):
+    root = tmp_path / "raw"
+    doc_id = next(iter(_write_corpus(root)))
+    excluded = Path(doc_id)
+    declaration = production.TerminalExclusionSpec(
+        excluded.relative_to(root.resolve()).as_posix(),
+        hashlib.sha256(excluded.read_bytes()).hexdigest(),
+        "FAILED", "Sandbox parser failed", "corrupt-or-unsupported-parser-input",
+    )
+    existing_index_client.list_document_ids.return_value = {
+        "docIds": [doc_id], "totalCount": 1, "tookMs": 0,
+    }
+    add_root = Mock()
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="outside the declared corpus"):
+        production.ingest_and_wait_for_snapshot(_request_with_exclusion(root, declaration), timeout_seconds=5)
+    add_root.assert_not_called()
+    existing_index_client.close.assert_called_once()
+
+
+def test_ingest_precheck_transport_failure_prevents_registration(tmp_path, monkeypatch, existing_index_client):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    existing_index_client.list_document_ids.side_effect = production.httpx.ConnectError("unavailable")
+    add_root = Mock()
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="production ingest HTTP request failed"):
+        production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5)
+    add_root.assert_not_called()
+    existing_index_client.close.assert_called_once()
+
+
+def test_ingest_precheck_exhausting_deadline_prevents_registration(tmp_path, monkeypatch, existing_index_client):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    clock = [0.0]
+    monkeypatch.setattr(production.time, "monotonic", lambda: clock[0])
+
+    def export(*_args):
+        clock[0] = 5.0
+        return {"docIds": [], "totalCount": 0, "tookMs": 0}
+
+    existing_index_client.list_document_ids.side_effect = export
+    add_root = Mock()
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="positive"):
+        production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5)
+    add_root.assert_not_called()
+    existing_index_client.close.assert_called_once()
 
 
 @pytest.mark.parametrize("stale_revision", [False, True])
@@ -1581,25 +1724,36 @@ def test_production_wait_rejects_malformed_chunk_values(field, value):
         production._required_production_readiness_reasons(status, expected_indexed_count=3, expected_failed_count=0)
 
 
-def test_production_ingest_forwards_boot_token_and_remaining_wait_budget(tmp_path, monkeypatch):
+def test_production_ingest_forwards_boot_token_and_remaining_wait_budget(tmp_path, monkeypatch, existing_index_client):
     root = tmp_path / "raw"
     _write_corpus(root)
     clock = [10.0]
     monkeypatch.setattr(production.time, "monotonic", lambda: clock[0])
     monkeypatch.setenv(production.SESSION_TOKEN_ENV, "test-boot-token")
 
+    def list_existing(offset, limit):
+        assert offset == 0 and limit == production.MAX_DOCUMENTS
+        clock[0] += 1
+        return {"docIds": [], "totalCount": 0, "tookMs": 0}
+
+    existing_index_client.list_document_ids.side_effect = list_existing
+
     def add_root(base, path, *, timeout_sec, session_token):
-        assert path == root.resolve() and timeout_sec == 5
+        assert path == root.resolve() and timeout_sec == 4
         assert session_token == "test-boot-token"
         clock[0] += 2
 
     def wait(request, *, timeout_seconds, on_snapshot):
-        assert timeout_seconds == 3
+        assert timeout_seconds == 2
         return production.readiness.ReadinessResult(passed=True)
 
     monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
     monkeypatch.setattr(production, "wait_for_snapshot_ready", wait)
     assert production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5).passed
+    production.ProductionHttpClient.assert_called_once_with(
+        _request(root).source.base_url, session_token="test-boot-token", timeout_seconds=5,
+    )
+    existing_index_client.close.assert_called_once()
 
 
 def test_production_wait_rejects_chunk_splade_failure_below_rounded_readiness_threshold():
