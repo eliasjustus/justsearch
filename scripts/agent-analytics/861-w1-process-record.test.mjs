@@ -180,6 +180,18 @@ await check('the GENERIC readRegister (no validator) accepts a portless record f
   assert.equal(scoped[0].ok, false, 'the SAME file, read by foreign/\'s scoped reader, is rejected');
 });
 
+await check('a symlink-shaped *.json entry is surfaced as unreadable instead of silently skipped', async () => {
+  const dir = await makeRegisterDir({});
+  const linkTarget = await fsp.mkdtemp(path.join(os.tmpdir(), 'jsdev-861-w1-link-target-'));
+  dirsToClean.push(linkTarget);
+  await fsp.symlink(linkTarget, path.join(dir, 'redirect.json'), process.platform === 'win32' ? 'junction' : 'dir');
+  const entries = await readRegister({ dir });
+  assert.equal(entries.length, 1, 'a *.json symlink must remain visible to safety callers');
+  assert.equal(entries[0].ok, false);
+  assert.equal(entries[0].recordId, 'redirect');
+  assert.match(entries[0].reason, /symlink/);
+});
+
 await check('validateForeignRecord is the sole source of foreign/\'s ports.api requirement', () => {
   assert.equal(validateForeignRecord(AGENT_SPAWN_SHAPED_REC()).ok, false);
   assert.equal(validateForeignRecord(FOREIGN_REC()).ok, true);

@@ -17,9 +17,8 @@
  *      (`filterHolders`/`reportHolders`, unit-tested separately in `remove-worktree.test.mjs`)
  *      is untouched, and normal deletion still works.
  *
- * A plain directory under `.claude/worktrees/` stands in for a worktree — the safety gate only
- * checks the path prefix, and `recordMergeLink`'s git probe degrades gracefully (SKIPPED) when
- * the directory is not a real git worktree, so this does not need a real `git worktree add`.
+ * The fixture installs the production CLI and its local dependencies into a disposable Git
+ * repository, then creates real linked worktrees. No shared JustSearch registration is touched.
  *
  * Run with: `node scripts/agent-analytics/861-w5-remove-worktree-teardown.test.mjs`
  */
@@ -39,7 +38,19 @@ const { readProcessTable, normalizeCreationTime } = require('../dev/lib/process-
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '..', '..');
-const REMOVE_WORKTREE = path.join(REPO_ROOT, 'scripts', 'dev', 'remove-worktree.cjs');
+let removeWorktreeCli = null;
+const CLI_FILES = [
+  'scripts/dev/remove-worktree.cjs',
+  'scripts/dev/lib/process-identity.cjs',
+  'scripts/dev/lib/process-record.cjs',
+  'scripts/dev/lib/agent-spawn-record.cjs',
+  'scripts/dev/lib/agent-spawn-reaper.cjs',
+  'scripts/dev/lib/agent-spawn-sweep.cjs',
+  'scripts/dev/lib/ownership-verdict.cjs',
+  'scripts/dev/justsearch-dev-mcp/observations.mjs',
+  'scripts/dev/justsearch-dev-mcp/files.mjs',
+  'scripts/dev/justsearch-dev-mcp/paths.mjs',
+];
 
 let passed = 0;
 const failures = [];
@@ -54,6 +65,38 @@ async function check(label, fn) {
 
 function killIfAlive(pid) {
   try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+}
+
+function git(repo, ...args) {
+  const result = spawnSync('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+  });
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed:\n${result.stdout || ''}${result.stderr || ''}`);
+  return result.stdout || '';
+}
+
+async function installFixtureRepo(scratch) {
+  const repo = path.join(scratch, 'owner repo');
+  await fsp.mkdir(repo, { recursive: true });
+  git(repo, 'init', '-b', 'main');
+  git(repo, 'config', 'user.email', 'fixture@example.invalid');
+  git(repo, 'config', 'user.name', 'Fixture');
+  await fsp.writeFile(path.join(repo, 'tracked.txt'), 'fixture');
+  git(repo, 'add', 'tracked.txt');
+  git(repo, 'commit', '-m', 'fixture');
+  for (const rel of CLI_FILES) {
+    const destination = path.join(repo, ...rel.split('/'));
+    await fsp.mkdir(path.dirname(destination), { recursive: true });
+    await fsp.copyFile(path.join(REPO_ROOT, ...rel.split('/')), destination);
+  }
+  return repo;
+}
+
+function addFixtureWorktree(repo, target, branch) {
+  git(repo, 'worktree', 'add', '-b', branch, target, 'HEAD');
+  return target;
 }
 
 async function findOwnChildRow(pid) {
@@ -77,7 +120,7 @@ async function findOwnChildRow(pid) {
  *  the flag entirely — the documented invocation — so `resolveCallerSessionId` falls through to
  *  whatever `env` supplies (F-2a/F-3's actual fix). */
 function runRemoveWorktree(targetDir, { env, sessionIdFlag = 'caller-session' } = {}) {
-  const args = [REMOVE_WORKTREE, targetDir];
+  const args = [removeWorktreeCli, targetDir];
   if (sessionIdFlag) args.push('--session-id', sessionIdFlag);
   const res = spawnSync('node', args, {
     encoding: 'utf8',
@@ -94,12 +137,11 @@ async function main() {
   }
 
   const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w5-teardown-'));
+  const repo = await installFixtureRepo(scratch);
+  removeWorktreeCli = path.join(repo, 'scripts', 'dev', 'remove-worktree.cjs');
   const stateRoot = path.join(scratch, 'state');
-  // The safety gate requires the target path contain `.claude/worktrees/` — reproduce that shape
-  // inside the scratch dir rather than touching a real worktree.
   const fixtureWorktree = path.join(scratch, '.claude', 'worktrees', 'w5-teardown-fixture');
-  await fsp.mkdir(fixtureWorktree, { recursive: true });
-  await fsp.writeFile(path.join(fixtureWorktree, 'marker.txt'), 'fixture worktree content');
+  addFixtureWorktree(repo, fixtureWorktree, 'fixture/w5-holder');
 
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
 
@@ -141,7 +183,7 @@ async function main() {
     await check('the target directory is LEFT INTACT after a refusal (the §2-bis (c) fix)', async () => {
       const stillThere = await fsp.stat(fixtureWorktree).then((s) => s.isDirectory(), () => false);
       assert.equal(stillThere, true, 'a refused teardown must not leave a half-deleted directory');
-      const markerStillThere = await fsp.stat(path.join(fixtureWorktree, 'marker.txt')).then(() => true, () => false);
+      const markerStillThere = await fsp.stat(path.join(fixtureWorktree, 'tracked.txt')).then(() => true, () => false);
       assert.equal(markerStillThere, true);
     });
 
@@ -162,8 +204,7 @@ async function main() {
   await check('with an empty (no-record) register, teardown proceeds normally (no regression)', async () => {
     const emptyStateRoot = path.join(scratch, 'empty-state');
     const target = path.join(scratch, '.claude', 'worktrees', 'w5-teardown-no-register');
-    await fsp.mkdir(target, { recursive: true });
-    await fsp.writeFile(path.join(target, 'marker.txt'), 'x');
+    addFixtureWorktree(repo, target, 'fixture/w5-empty');
 
     const { status, output } = runRemoveWorktree(target, { env: { JUSTSEARCH_DEV_RUNNER_STATE_ROOT: emptyStateRoot } });
     assert.equal(status, 0, `expected exit 0, got ${status}. Output:\n${output}`);
@@ -176,11 +217,10 @@ async function main() {
   // ── F-2a: CLAUDE_CODE_SESSION_ID alone (no --session-id flag) resolves the caller's OWN
   // session, so its own live spawn reaps instead of falling through to CONTENTION. ────────────
   await check('F-2a: the documented invocation (no --session-id) still reaps the caller\'s own live spawn via CLAUDE_CODE_SESSION_ID', async () => {
-    const sameSessionRoot = await fsp.mkdtemp(path.join(os.tmpdir(), '861-w5-f2a-'));
+    const sameSessionRoot = path.join(scratch, 'same-session');
     const sameSessionState = path.join(sameSessionRoot, 'state');
     const sameSessionWorktree = path.join(sameSessionRoot, '.claude', 'worktrees', 'w5-f2a-fixture');
-    await fsp.mkdir(sameSessionWorktree, { recursive: true });
-    await fsp.writeFile(path.join(sameSessionWorktree, 'marker.txt'), 'x');
+    addFixtureWorktree(repo, sameSessionWorktree, 'fixture/w5-same-session');
 
     const ownChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
     try {
@@ -216,7 +256,6 @@ async function main() {
       assert.equal(gone, true, 'a correctly-attributed own-session holder must not block its own worktree\'s teardown');
     } finally {
       killIfAlive(ownChild.pid);
-      await fsp.rm(sameSessionRoot, { recursive: true, force: true }).catch(() => {});
     }
   });
 
