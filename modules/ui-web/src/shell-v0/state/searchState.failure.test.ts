@@ -85,7 +85,32 @@ describe('search failure consumer (906)', () => {
     expect(getSearchState().errorInfo).toBeNull();
   });
 
-  it('keeps cancellation silent', async () => {
+  it.each(['transport', 'body'] as const)('ignores an AbortError from the current generation at the %s boundary', async (boundary) => {
+    let rejectAbort!: (reason: unknown) => void;
+    const pending = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+    const json = vi.fn(() => pending);
+    const fetchMock = boundary === 'transport'
+      ? vi.fn(() => pending)
+      : vi.fn().mockResolvedValue({ ok: false, status: 502, json });
+    vi.stubGlobal('fetch', fetchMock);
+    setQuery('current');
+    submitSearch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    if (boundary === 'body') expect(json).toHaveBeenCalledOnce();
+    const beforeAbort = getSearchState();
+    expect(beforeAbort.isSearching).toBe(true);
+
+    // Do not clear/resubmit/reset: generation must stay current so its guard cannot hide
+    // a missing AbortError branch. Advance microtasks without firing the slow-search timer.
+    rejectAbort(new DOMException('cancelled', 'AbortError'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSearchState().error).toBeNull();
+    expect(getSearchState().errorInfo).toBeNull();
+    expect(getSearchState()).toBe(beforeAbort);
+  });
+
+  it('clearing the query keeps a superseded cancellation silent and resets loading', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('cancelled', 'AbortError')));
     setQuery('old'); submitSearch(); setQuery('');
     await vi.runAllTimersAsync();
