@@ -65,24 +65,27 @@ does not silently select a more expensive model.
   codex-cli` output independently reported exactly
   `explorer | gpt-5.6-luna | high` and
   `complex_worker | gpt-5.6-sol | medium`.
-- `record.test.mjs` passed 18 assertions, `codex-adapter.test.mjs` passed 27,
+- `record.test.mjs` passed 18 assertions, `codex-adapter.test.mjs` passed 36,
   and `spawn-economics.test.mjs` passed 18. The Codex parity gate passed all
   eight checks and the live MCP projection passed all 16 applicable assertions.
 - Documentation index, skill synchronization, canonical links, module graph,
   runtime configuration matrix, Markdown lint, prompt-surface inventory, and
-  `git diff --check` passed. The prompt inventory reported 164 surfaces and no
+  `git diff --check` passed. The prompt inventory reported 131 surfaces and no
   suspicious tokens.
+- The full agent-analytics runner passed all 52 test files. Frontend typecheck
+  passed, and the frontend unit suite passed all 469 files and 6,287 tests.
+- Hosted PR CI, merge-group CI run `34007839088`, and published-main CI run
+  `34008180922` passed. PR #689 merged through the queue as squash commit
+  `7df0bae06075edab27dea01a479d23ed24fea7e4`.
 
 ## Verification residuals
 
-- The full agent-analytics runner passed 64 of 65 files. Its known
-  wall-clock-sensitive `world-state.test.mjs` timed out at the 10-second CLI
-  budget, including when rerun alone, while 40-plus registered worktrees were
-  present. None of the changed analytics tests failed.
 - `check-tempdoc-numbers.mjs` reported an existing cross-worktree collision for
   tempdoc 919. Tempdoc 937 was not involved in the collision.
-- No product dev stack, Java build, frontend build, merge, or publication was
-  required for this project-agent configuration and analytics change.
+- No product dev stack was required. Local Gradle verification was unavailable
+  because tempdoc 919 owned the repository's single Gradle lane with a
+  long-running headless evaluation; the hosted build, integration, and unit-test
+  lanes supplied the full isolated JVM proof before merge.
 
 ## Remaining work
 
