@@ -16,11 +16,12 @@ const row = (over: Partial<IngestionRollup> = {}): IngestionRollup => ({
   lastObservedAtMs: 1700000000000, ...over,
 });
 const response = (rows: IngestionRollup[]) => new Response(JSON.stringify({ rollups: rows, count: rows.length }));
-const host = (fetch: (...args: any[]) => Promise<Response>) => ({ data: { fetch } }) as unknown as PluginHostApi;
+type HostFetch = PluginHostApi['data']['fetch'];
+const host = (fetch: HostFetch) => ({ data: { fetch } }) as unknown as PluginHostApi;
 async function pump(el: IngestionSummary): Promise<void> {
   for (let i = 0; i < 30; i++) { await Promise.resolve(); await el.updateComplete; }
 }
-async function mount(fetch: (...args: any[]) => Promise<Response>): Promise<IngestionSummary> {
+async function mount(fetch: HostFetch): Promise<IngestionSummary> {
   const el = document.createElement('jf-ingestion-summary') as IngestionSummary;
   el.host_ = host(fetch);
   document.body.append(el);
@@ -222,11 +223,11 @@ describe('IngestionSummary: real component transport and presentation', () => {
 
   it('supersedes an old host even when its transport ignores cancellation', async () => {
     let resolve!: (response: Response) => void;
-    const oldFetch = vi.fn(() => new Promise<Response>((r) => { resolve = r; }));
+    const oldFetch = vi.fn<HostFetch>(() => new Promise<Response>((r) => { resolve = r; }));
     const el = await mount(oldFetch);
     const nextFetch = vi.fn(async () => response([row({ count: 5 })]));
     el.host_ = host(nextFetch); await pump(el);
-    expect((oldFetch.mock.calls[0] as any)[1].signal.aborted).toBe(true);
+    expect(oldFetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
     resolve(response([row({ count: 100 })])); await pump(el);
     expect(text(el)).toContain('5 recorded indexing outcomes');
     expect(text(el)).not.toContain('100 recorded');

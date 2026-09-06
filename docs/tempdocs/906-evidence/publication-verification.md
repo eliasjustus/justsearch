@@ -45,3 +45,13 @@ real justsearch_answer consumer with failed futures, not a claimed live outage.
 A second live stack was not taken from the concurrently active 919 task.
 No new paid utility benchmark was run; this is bounded failure wording/metadata,
 not a retrieval-quality or autonomous-agent retry benchmark claim.
+
+## PR 688 lint correction
+
+Hosted Public claims found three explicit-any annotations in the ingestion test
+helpers. The publication preflight inventory did not include frontend lint, so
+the earlier local checks did not cover this rule. Helpers now use the existing
+PluginHostApi data.fetch type; cancellation and stale-response assertions retain
+their intent. Product code is unchanged. Full frontend lint, typecheck and all
+15 IngestionSummary tests pass (906-publish-ui-lint.log,
+906-publish-typecheck-final.log, 906-publish-ingestion-test-final.log).
