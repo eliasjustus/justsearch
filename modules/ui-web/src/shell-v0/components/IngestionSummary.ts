@@ -20,13 +20,15 @@ export class IngestionSummary extends JfElement {
     host_: { attribute: false },
     rows: { state: true },
     loading: { state: true },
+    announceLoading: { state: true },
     error: { state: true },
     expanded: { state: true },
   };
-  static transientState = { loading: false, error: false };
+  static transientState = { loading: false, announceLoading: false, error: false };
   declare host_: PluginHostApi | undefined;
   declare rows: IngestionRollup[] | null;
   declare loading: boolean;
+  declare announceLoading: boolean;
   declare error: boolean;
   declare expanded: boolean;
   private unsubscribe: (() => void) | null = null;
@@ -40,6 +42,7 @@ export class IngestionSummary extends JfElement {
     super();
     this.rows = null;
     this.loading = true;
+    this.announceLoading = true;
     this.error = false;
     this.expanded = false;
   }
@@ -65,7 +68,7 @@ export class IngestionSummary extends JfElement {
     // Ride the existing status tick; do not create another repeating poller.
     this.unsubscribe = subscribeAiState(() => {
       if (!this.loading && Date.now() - this.lastAttempt >= LIVE_REFRESH_MIN_MS) {
-        void this.refresh();
+        void this.refresh({ background: true });
       }
     });
   }
@@ -95,7 +98,7 @@ export class IngestionSummary extends JfElement {
     this.loading = false;
   }
 
-  private async refresh(): Promise<void> {
+  private async refresh({ background = false }: { background?: boolean } = {}): Promise<void> {
     if (!this.isConnected || this.request) return;
     this.currentHost = this.host_;
     if (!this.host_) { this.loading = false; this.error = true; return; }
@@ -103,6 +106,9 @@ export class IngestionSummary extends JfElement {
     const controller = new AbortController();
     this.request = controller;
     this.lastAttempt = Date.now();
+    // Background polling must not repeatedly announce loading and the same result.
+    // Keep the live region stable until the outcome count or fetch-error state changes.
+    this.announceLoading = !background;
     this.loading = true;
     try {
       // Host data.fetch is Library's authorized transport. Bound both response and body reads.
@@ -152,7 +158,7 @@ export class IngestionSummary extends JfElement {
         Could not refresh indexing activity. Check that JustSearch is running, then retry the refresh.
         ${this.rows ? 'Showing the last loaded summary.' : ''}
       </jf-error-alert>` : nothing}
-      <p role="status" aria-live="polite">${this.loading
+      <p role="status" aria-live="polite">${this.loading && this.announceLoading
         ? (this.rows ? 'Refreshing indexing activity…' : 'Loading indexing activity…')
         : this.rows ? (total === 0 ? 'No indexing outcomes in retained history.'
           : `${total.toLocaleString()} recorded indexing ${total === 1 ? 'outcome' : 'outcomes'}${this.error ? ' in the last loaded summary' : ''}.`)

@@ -155,6 +155,53 @@ describe('IngestionSummary: real component transport and presentation', () => {
     expect(button(el, 'Retry activity refresh').disabled).toBe(false);
   });
 
+  it('keeps the live region stable during slow and unchanged background requests, but announces changes and failures', async () => {
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn().mockResolvedValueOnce(response([row({ count: 3 })]))
+      .mockImplementationOnce(() => new Promise<Response>((r) => { resolve = r; }))
+      .mockResolvedValueOnce(response([row({ count: 5 })]))
+      .mockResolvedValueOnce(new Response('', { status: 503 }));
+    const el = await mount(fetch);
+    const status = el.shadowRoot!.querySelector('[role="status"]')!;
+    const initial = status.textContent;
+    const announcements: string[] = [];
+    const observer = new MutationObserver(() => { announcements.push(status.textContent!); });
+    observer.observe(status, { childList: true, characterData: true, subtree: true });
+    try {
+      vi.advanceTimersByTime(4000); __tickClockForTest(); await pump(el);
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(status.textContent).toBe(initial);
+      vi.advanceTimersByTime(3000); await pump(el);
+      expect(status.textContent).toBe(initial);
+      resolve(response([row({ count: 3 })])); await pump(el);
+      expect(status.textContent).toBe(initial);
+      expect(announcements).toEqual([]);
+
+      vi.advanceTimersByTime(4000); __tickClockForTest(); await pump(el);
+      expect(status.textContent).toContain('5 recorded indexing outcomes');
+      expect(announcements).toEqual(['5 recorded indexing outcomes.']);
+      vi.advanceTimersByTime(4000); __tickClockForTest(); await pump(el);
+      expect(status.textContent).toContain('in the last loaded summary');
+      expect(el.shadowRoot!.querySelector('jf-error-alert')).not.toBeNull();
+      expect(announcements).toHaveLength(2);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
+  it('announces loading for an explicit refresh and restores the result after an unchanged response', async () => {
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn().mockResolvedValueOnce(response([row({ count: 3 })]))
+      .mockImplementationOnce(() => new Promise<Response>((r) => { resolve = r; }));
+    const el = await mount(fetch);
+    const status = el.shadowRoot!.querySelector('[role="status"]')!;
+    await activate(el, 'Refresh activity');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(status.textContent).toBe('Refreshing indexing activity…');
+    resolve(response([row({ count: 3 })])); await pump(el);
+    expect(status.textContent).toBe('3 recorded indexing outcomes.');
+  });
+
   it('aborts on disconnect, unsubscribes ticks, clears timers and rejects late data after reconnect', async () => {
     let resolve!: (response: Response) => void;
     const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>((r) => { resolve = r; }))
