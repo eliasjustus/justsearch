@@ -28,7 +28,10 @@ The frozen Enron eligible-body census measures 77.009% raw-body exact and 77.626
 membership among 352,208 eligible messages. Its frozen uniform 5,000-document sample has 5.46%
 near-duplicate component membership at the frozen calibration-selected 0.90 threshold, with model-assisted
 holdout limitations and component-resampling stability uncertainty. These are research email-body proxies.
-Fresh realdocs extraction and legal query-visible redundancy remain pending in 897's current execution.
+Fresh legal production capture reconciles 199 documents with zero byte/content-exact duplicates.
+All four retrieval modes ran comparably; final-hybrid content-exact redundancy is zero affected queries
+out of 200 and zero redundant delivered hits out of 2,000 at depth ten. The projection reports the final
+mode, not separate leg redundancy aggregates. Realdocs completion remains pending in 897's execution.
 
 **Recommendation: keep product dedup deferred.** No authorized personal-corpus prevalence and query-visible
 redundancy pair exists. The historical statements below about typical personal-file/query behavior remain

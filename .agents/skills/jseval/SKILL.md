@@ -282,6 +282,15 @@ for this wait/ingest path must reside outside the raw corpus so the watcher cann
 remain blank rather than being reported as zero. The caller owns stack startup, inference activation,
 clean data-directory selection, and shutdown through the dev-stack workflow.
 
+For a corpus requiring VDU, activate the intended model profile through the dev MCP, then use
+`api_call {method:"POST", path:"/api/inference/mode", body:{mode:"indexing"}}` on the owned run.
+Leaving interactive inference online defers automatic VDU. In indexing mode the production
+scheduler waits for five minutes without search, suggestion, or folder-listing activity and for
+normal energy availability, then starts the visual batch and parks inference for subsequent
+enrichment. Status/readiness observation does not constitute user activity. The duplicate capture
+command waits for this lifecycle; it does not change inference mode itself. Resume a preserved
+index with a positive wait and omit `--ingest` when its watched root is already registered.
+
 `/api/status`, `/api/debug/state`, and the Worker's complete id set must agree with that disposition
 accounting. The evaluation-only document-id export is one immutable request: callers must send offset zero and
 a limit no greater than 50,000, and the endpoint rejects continuation offsets rather than pretending that
@@ -590,7 +599,8 @@ near-duplicate threshold but does not itself decorate result identities with con
 near-duplicate labels remain outside this contract. This
 section is intentionally separate from recall: recall and failure buckets continue to use qrels and
 the score-ranked TREC artifact, while redundancy uses the API's delivered `predictedDocIds` order
-truncated to ten. It reports delivered hits, unique clusters, redundant hits, and affected queries.
+truncated to ten. It reports delivered hits, unique clusters, redundant hits, and affected queries
+for the projection's selected final mode; it does not emit separate per-leg redundancy aggregates.
 An absent sidecar—or an identity-only sidecar not yet decorated by confirmed analysis—omits the
 section. Once cluster assignments are present, wrong schema, corpus mismatch, missing/extra hits,
 ambiguous assignments, or order mismatches fail the projection instead of producing a partial rate.

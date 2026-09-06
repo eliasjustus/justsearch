@@ -118,3 +118,89 @@ SciFact started from a fresh isolated eval backend with all four modes, CE, comp
 and index settling. Its observed 5184-document count is 5183 corpus documents plus the canonical
 `materialize.py` sentinel; this was checked against the materialized file inventory and existing sentinel
 tests before interpreting results. No corpus contamination was inferred from that expected extra file.
+
+
+## SciFact regression gates — 2026-09-06
+
+Run `897-scifact-current-main/20260906T093231_scifact` completed 300 queries in each of four modes,
+with CE applied to all 300 eligible queries in every mode and no silent drops. Hybrid nDCG@10 is
+0.7542743135; vector 0.7433, lexical 0.7253, SPLADE 0.5689. `index_state_at_query.settled=true`:
+force-settle removed 308 deleted slots, leaving 6739/6739 live index documents (parent plus chunks),
+100% parent SPLADE and chunk-vector coverage. Chunk-SPLADE remains at the current default OFF.
+The summary records commit `d64e2c04a`; Worker/Head code is the integrated implementation.
+
+| Gate | Measured | Authoritative bound | Result |
+|---|---:|---:|---|
+| Relevance | hybrid nDCG@10 0.754274 | floor 0.737191 | PASS |
+| Performance | CE p50 143 ms; retrieval p50 3 ms; primary 108.2 docs/s; enrichment 18.6 docs/s | all nine pinned checks inside their relative bands | PASS |
+| Recall leak | 0.0300 | limit 0.076667 | PASS |
+| Union recall | 0.9300 | floor 0.883333 | PASS |
+
+Commands: `jseval --json <gate> --dataset beir/scifact --run-dir
+ tmp/897-scifact-current-main/20260906T093231_scifact --report-out tmp/897-scifact-<gate>.json`
+for `relevance-gate`, `perf-gate`, `leak-gate`, and `union-recall-gate`. Each exited zero with actual
+pinned checks, not an unpinned-dataset skip. No CLI override or ambient engine/chunk/CE override was
+present, and no baseline file changed. Performance bands project the older canonical release
+(`bef184e333`, June 24); this gate pass is not a paired causal throughput-improvement claim for 897.
+
+Summary SHA-256: `bafcb268fe055daa1b8cfa769e24ccada7ba46b7960be09543f94bc91259cabe`.
+Gate report SHA-256 values:
+- `relevance-gate`: `38c6ffa8a8eb6e4f8adbbceff2f0f1c3791c52c8d9aa48891995d28cac14ada4`.
+- `perf-gate`: `024c953f88de384de430d2c284976fe0621ffb0a0f0e779bb1a6f2965074efbf`.
+- `leak-gate`: `032dbd5540923b069f08be4993d767d05367fc78da50b46f3071de978b745a52`.
+- `union-recall-gate`: `b82084f9a7e44f22321598d607297afe1aaeda366ec6df347e163d49ee96d3e0`.
+
+## Realdocs resumption — 2026-09-06
+
+Owned run `048e9843-f54d-400b-86d5-83e33b09b3d8` resumed the same returned data directory with
+`clean=none`, current installed distributions, standard chat profile and a 7200-second lease.
+The raw corpus and index were not reset. A new strict `duplicate-prevalence` wait omits `--ingest`
+because the root is already watched; its log is `897-realdocs-resumed.log` and its aggregate timeline
+destination is `897-realdocs-resumed-timeline.tsv`, both under ignored `scripts/jseval/tmp/`.
+
+The previous online inference posture deferred automatic VDU by design. Primary authorities are
+`VduPacingPolicy.java:42-49` (online/energy/idle admission), `BrainRuntimeServiceImpl.java:112-126`
+(indexing mode records chat-disabled intent), and `OfflineCoordinator.java:97-145` (VDU procedure
+temporarily owns inference, then reconciles to recorded intent). Through the owned MCP, activation
+selected standard and `POST /api/inference/mode` recorded `indexing`. At 09:49 UTC, status showed
+`vduProcessing=true` with 120 visual documents pending; inference reported the standard 9B model,
+vision capability and generation 4. Online mode during the VDU procedure is expected and does not
+self-interrupt the batch. Realdocs ingestion had reached 555 searchable documents at that point.
+The canonical jseval reference and both skill surfaces now describe this required operational step.
+Independent final recheck found no remaining readiness or workflow blocker. It reran the exact
+pending-zero/completed-999/coverage-99.9 chunk-SPLADE regression (1 passed, 63 deselected), and
+verified the spec-off VDU procedure contract against `RuntimeReconcilerTest.java:149-162` and its
+production implementation. Canonical/Codex/Claude workflow paragraphs are identical.
+
+## Legal production and final-result redundancy — 2026-09-06
+
+Run `897-legal-current-main/20260906T093958_mixed_legal-clerc-200` completed from a fresh index with
+`--modes lexical,vector,splade,hybrid --pipeline --start-backend --clean --fresh-index --settle-index`
+and the strict legal production input spec. All 199 source files reconciled to 199 indexed observations,
+zero failures/partials/exclusions. Settling removed 380 deleted slots (4701 to 4321 total index docs);
+the stable capture was revalidated after queries. Byte/content-exact membership is zero of 199;
+all components are singletons. The 2000-draw component stability intervals are [0,0], not uncertainty
+bounds on another population. Near duplicates remain `UNDECIDED`: the 198-document exhaustive slice
+had no positive pairs, making candidate recall undefined rather than 100%.
+
+Each mode ran 200 queries comparably, with zero errors. The sidecar accounts for all 8000 delivered
+top-ten hits (2000 per mode). The existing staged-recall projection reports final-hybrid redundancy:
+zero of 200 affected queries, zero of 2000 redundant hits, mean 10 unique clusters/query, and zero
+delivered-hit reconciliation mismatches. It does not emit separate leg redundancy aggregates; no
+per-leg redundancy rate is claimed. Hybrid CE applied to 199/200 queries; the remaining skip was
+the intentional `NAVIGATIONAL_QUERY` policy, with zero silent drops. Individual leg modes use their
+explicit CE-not-applicable pipelines. nDCG@10: lexical 0.6873, vector 0.6215, SPLADE 0.0592,
+hybrid 0.5766. These contextual numbers are not new baselines or causal improvement claims.
+
+Independent read-only artifact review verified aggregate and sidecar self-hashes, summary anchors,
+corpus/extraction identity, denominator and hit reconciliation, and privacy contracts. The aggregate
+contains no source identities or text; the opaque sidecar remains local. Ordinary summary/manifest
+runtime path metadata makes the whole run unsuitable for an aggregate-only publication claim.
+All campaign outputs remain ignored and uncommitted.
+
+Canonical aggregate hash: `eb378f9117eaae5598a06aecbe7e3d7e0e96c920c2bdd780707cfbe269d44bfb`.
+File SHA-256 values:
+- `duplicate_prevalence.v1.json`: `ba8267a708d89550339818b0f009ebe57e86b69263a89936b157462145938a20`.
+- `result_identity.v1.json`: `3b762b05bda6fd06a73348871e6b1aec91566313b731bc8aafe2fcea4c16d336`.
+- `summary.json`: `eb1c1bc5e8f6584538f8f8276fbe00e610547c106e75e53154b838eb9c1fc70a`.
+- `projections/staged_recall_accounting.json`: `41e3c00b9a54afa587e8940c3c5e7ed1802acabd5fd3ea1db04b779866cf4c71`.

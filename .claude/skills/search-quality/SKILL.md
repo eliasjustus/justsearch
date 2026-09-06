@@ -683,7 +683,8 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
 | Ten deterministic format cases through installed Worker ingestion/search | Marker and structure assertions characterize support and explicit MIME/embedded-identity/flattening gaps | Capability characterization, not a prevalence or source-diverse robustness estimate |
 | CMU Enron eligible-body census, n=352,208 | Raw-body exact 77.009%; normalized-body exact 77.626% | Source-body proxy, not file-byte/Tika/personal-drive prevalence |
 | Frozen uniform Enron sample, n=5,000 | Selected threshold 0.90 yields 5.46% in non-singleton near-duplicate components; 95% component stability interval 4.506–6.391% | Model-assisted calibration/holdout; conditional sample result, not archive prevalence |
-| Production realdocs and legal | Current-main recapture is pending; prior legal census was 199 docs with zero byte/content-exact duplicates | Realdocs has no queries; legal query-visible redundancy remains unmeasured |
+| Legal production capture, n=199 | Zero byte/content-exact duplicates; final-hybrid redundancy: 0/200 affected queries, 0/2,000 redundant delivered hits@10 | Four modes ran comparably; redundancy aggregate describes final hybrid only; near duplicates remain undecided |
+| Production realdocs | Current-main completion and capture are pending | Ingest-only cohort; no query set |
 
 The new `duplicate-prevalence` instrument binds raw manifests, production extraction revisions and
 aggregate denominators. Its result-set component extends `staged_recall_accounting` with a private,

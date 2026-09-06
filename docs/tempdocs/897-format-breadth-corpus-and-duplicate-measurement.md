@@ -46,7 +46,7 @@ is warranted; retire any extra coordination once the existing owner guarantees t
   tests; preserve completed adjudication and explicitly bound any still-unmeasured cohort.
 - [ ] I4: validate a fresh inference-capable production path, then complete realdocs extraction/VDU and
   subsequent enrichment; emit a reconciled aggregate with exact terminal exclusions.
-- [ ] I5: capture legal query-visible redundancy with all retrieval modes and stable snapshot identity;
+- [x] I5: run all legal retrieval modes and capture final-hybrid redundancy with stable snapshot identity;
   run comparable SciFact regression gates against authoritative floors without baseline changes.
 - [ ] I6: reconcile acceptance and §M, update 639/register/canonical docs, regenerate/check documentation,
   finish independent review and commit the authorized work. No PR, push, merge or publication.
@@ -747,7 +747,7 @@ The separate 33-file sibling has one source per format (16 EML, 9 RTF, 8 ZIP): c
 | CMU Enron eligible-body proxy — full exact census | 352,208 | 77.009% | 77.626% | unmeasured | n/a | no query set | `scripts/jseval/897-run-2026-09-04/enron-duplicate-prevalence.v1.json`; SHA-256 `4ebf994d…e492c` |
 | CMU Enron — frozen uniform analyzer sample | 5,000 | 4.46% descriptive | 4.54% descriptive | 5.46% at threshold `0.90` (sample only); model-assisted holdout precision `1.0`, recall `0.985507`, F1 `0.992701`; archive prevalence unmeasured | n/a | no query set | selected aggregate `2807b0dd…83da6`; frozen decision `66fcd1e8…10a907` |
 | `mixed/realdocs-v1` production extraction | 620 source / 619 indexed / 1 exact terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | extraction defects fixed; inference-disabled eval backend left 121 VDU pending, so no aggregate |
-| `mixed/legal-clerc-200` production extraction | 199 | 0.0% | 0.0% | `UNDECIDED`; sweep observed no confirmed edge | unmeasured | 200 / unmeasured | ignored aggregate SHA-256 `cd410c97…af8ac7`; canonical hash `7312e6cc…b19131` |
+| `mixed/legal-clerc-200` production extraction | 199 | 0.0% | 0.0% | `UNDECIDED`; sweep observed no confirmed edge | unmeasured | hybrid: 0/200 affected; 0/2,000 redundant delivered hits@10 | current-main aggregate SHA-256 `ba8267a7…938a20`; canonical `eb378f91…d44bfb`; projection `41e3c00b…cf4c71` |
 
 ## Historical close state (2026-09-04; current state is above)
 
