@@ -71,6 +71,16 @@ function severityToClass(severity: Severity | undefined): 'error' | 'warning' | 
   return 'info';
 }
 
+/** Health has the termination reason, not the answer text. Do not claim that a
+ * step-limited run produced an answer (or that a completed answer is correct). */
+const COMPLETION_DETAILS: Readonly<Record<string, string>> = {
+  COMPLETED: 'The agent finished its response.',
+  MAX_ITERATIONS: 'The agent reached its step limit. Its response may be incomplete.',
+  BUDGET_EDGE_FINALIZE: 'The agent reached its response budget and produced a final response.',
+  ERRORED: 'The agent stopped because an error occurred.',
+  CANCELLED: 'The run was cancelled.',
+};
+
 /**
  * Per-variant message extraction. Returns an empty string when the
  * variant carries no human-readable message; the row degrades to
@@ -91,7 +101,11 @@ function bodyToMessage(body: HealthEvent['body']): string {
         if (msg) return msg;
         const disposition =
           typeof attrs['disposition'] === 'string' ? (attrs['disposition'] as string) : null;
-        if (disposition) return `disposition: ${disposition}`;
+        if (disposition) {
+          return Object.hasOwn(COMPLETION_DETAILS, disposition)
+            ? COMPLETION_DETAILS[disposition]!
+            : 'The run ended, but its outcome could not be identified.';
+        }
         // Last resort: flatten the attributes map.
         const flat = Object.entries(attrs)
           .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)

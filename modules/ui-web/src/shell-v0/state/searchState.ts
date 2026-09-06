@@ -22,6 +22,8 @@
  */
 
 import { authorizedFetch } from '../api/authorizedFetch.js';
+import { createApiError } from '../../api/http.js';
+import { localizeError } from '../../i18n/errorCatalog.js';
 import type { SelectedItem } from './inspectorState.js';
 // Tempdoc 549 (Slice 1) — query-level search trace (SearchIntrospection) is
 // captured into search state so the SearchSurface can mount the explain panel
@@ -84,6 +86,8 @@ export interface SearchState {
   /** Wall-clock ms of the pass that produced the current results (577 Phase 4 — honest latency). */
   processingTimeMs: number | null;
   error: string | null;
+  /** Validated failure facts; retryability remains the server's decision, including unknown. */
+  errorInfo?: ReturnType<typeof createApiError> | null;
   /**
    * Tempdoc 549 — the unified stage-keyed search trace: the single canonical
    * artifact the explain panel renders. Supersedes the retired `introspection` (E4) and the
@@ -254,6 +258,41 @@ interface SearchResponse {
   facetsTruncated?: boolean;
   searchTrace?: unknown;
   facets?: SearchFacetCounts;
+}
+
+/** The search transport stays authorizedFetch; the general HTTP client's automatic retries
+ * are inappropriate here. Decode only the failure envelope at this existing issuance seam. */
+async function readSearchFailure(res: Response): Promise<ReturnType<typeof createApiError>> {
+  let raw: unknown;
+  try {
+    raw = await res.json();
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
+    // Proxies may return HTML or an empty body. Neither is user-facing error prose.
+  }
+  const data = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown> : {};
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value : undefined;
+  const code = text(data.errorCode);
+  const wireKey = text(data.i18nKey);
+  const message = localizeError({
+    code,
+    i18nKey: wireKey?.startsWith('errors.') ? wireKey : undefined,
+    // ApiErrorHandler supplies sanitized English when the catalog is unavailable.
+    message: code ? text(data.error) ?? 'Search could not be completed.' : 'Search could not be completed.',
+  }).message;
+  return createApiError(message, code, res.status, text(data.requestId), text(data.errorClass),
+    typeof data.retryable === 'boolean' ? data.retryable : undefined);
+}
+
+function searchFailureMessage(error: ReturnType<typeof createApiError>): string {
+  const recovery = error.retryable === true
+    ? 'Try searching again. If the problem continues, open Health for details.'
+    : error.retryable === false
+      ? 'Review the query and any restrictions. Open Health for details before trying again.'
+      : 'Open Health to check the connection and service status before trying again.';
+  return `${error.message} ${recovery}`;
 }
 
 /** Validate the raw per-hit trace JSON into HitStage[] via the generated Zod (564 Phase 3). */
@@ -479,6 +518,7 @@ export function setQuery(q: string): void {
       isSearching: false,
       processingTimeMs: null,
       error: null,
+      errorInfo: null,
       searchTrace: null,
       retrievalMs: null,
       slowSearch: false,
@@ -616,6 +656,7 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
     isRefining: refiningBehindResults,
     slowSearch: false,
     error: null,
+    errorInfo: null,
   };
   emit();
   if (slowTimer !== null) window.clearTimeout(slowTimer);
@@ -643,7 +684,10 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
     });
     if (gen !== generation) return; // superseded while in flight — drop silently
     if (!res.ok) {
-      state = { ...state, isSearching: false, isRefining: false, slowSearch: false, error: `HTTP ${res.status}` };
+      const errorInfo = await readSearchFailure(res);
+      if (gen !== generation) return; // also guard the asynchronous body read
+      state = { ...state, isSearching: false, isRefining: false, slowSearch: false,
+        error: searchFailureMessage(errorInfo), errorInfo };
       emit();
       return;
     }
@@ -709,14 +753,14 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
     openedThisQuery = false;
     emit();
   } catch (err) {
-    if ((err as Error).name === 'AbortError') return;
+    if (err instanceof Error && err.name === 'AbortError') return;
     if (gen !== generation) return;
     state = {
       ...state,
       isSearching: false,
       isRefining: false,
       slowSearch: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: 'Search could not be completed. Open Health to check the connection and service status before trying again.',
     };
     emit();
   }

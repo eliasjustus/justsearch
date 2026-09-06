@@ -511,6 +511,9 @@ export class OperationClient {
         parsed.message ?? `Undo of ${operationId} failed`,
         parsed.errorClass ?? 'UNKNOWN',
         res.status,
+        parsed.errorCode,
+        parsed.errorDetails,
+        parsed.retryable,
       );
     }
     return {

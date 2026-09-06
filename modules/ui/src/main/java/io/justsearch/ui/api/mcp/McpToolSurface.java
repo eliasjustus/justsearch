@@ -7,6 +7,7 @@ import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.services.HeadAssembly;
 import io.justsearch.app.api.RetrieveContextParams;
@@ -15,17 +16,21 @@ import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.KnowledgeStatus;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
+import io.justsearch.ui.api.ApiErrorHandler;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -482,7 +487,8 @@ public final class McpToolSurface {
       return inputValidator
           .validate(cacheKey, schemaJson, argsJson)
           .<Map<String, Object>>map(
-              result -> errorContent("Invalid arguments for " + cacheKey + ": " + result.message()))
+              result -> errorContent("Invalid arguments for " + cacheKey + ": " + result.message(),
+                  ApiErrorCode.INVALID_REQUEST))
           .orElse(null);
     } catch (Exception e) {
       // Serialization failure on our OWN schema/args maps would be a substrate bug, not a caller
@@ -522,7 +528,7 @@ public final class McpToolSurface {
       return content;
     } catch (Exception e) {
       log.warn("MCP runtime manifest serialization failed", e);
-      return errorContent(toolFailureMessage("Runtime manifest", e));
+      return toolFailureContent("Runtime manifest", e);
     }
   }
 
@@ -533,9 +539,7 @@ public final class McpToolSurface {
     var suggestions = alts.stream().map(a -> a.refId()).toList();
     var msg = "Unknown tool: " + name
         + ". Did you mean: " + String.join(", ", suggestions) + "?";
-    var content = new LinkedHashMap<String, Object>();
-    content.put("content", List.of(Map.of("type", "text", "text", msg)));
-    content.put("isError", true);
+    var content = new LinkedHashMap<String, Object>(errorContent(msg));
     content.put("suggestions", suggestions);
     return content;
   }
@@ -548,7 +552,7 @@ public final class McpToolSurface {
   private Map<String, Object> callAnswer(Map<String, Object> args) {
     HeadAssembly facade = appFacadeLookup.get();
     if (facade == null || facade.workers().documents() == null) {
-      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     }
     try {
       String query = (String) args.getOrDefault("query", "");
@@ -615,7 +619,7 @@ public final class McpToolSurface {
           false);
     } catch (Exception e) {
       log.warn("MCP answer failed", e);
-      return errorContent(toolFailureMessage("Answer", e));
+      return toolFailureContent("Answer", e);
     }
   }
 
@@ -874,7 +878,7 @@ public final class McpToolSurface {
   @SuppressWarnings("unchecked")
   private Map<String, Object> callSearch(Map<String, Object> args) {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       String query = (String) args.getOrDefault("query", "");
@@ -959,7 +963,7 @@ public final class McpToolSurface {
       // stays available at TRACE, matching SearchExecutor:160-168's deliberate split.
       log.warn("MCP search failed: {}: {}", e.getClass().getSimpleName(), withoutQuotedQuery(e.getMessage()));
       log.trace("MCP search failure detail", e);
-      return errorContent(toolFailureMessage("Search", e));
+      return toolFailureContent("Search", e);
     }
   }
 
@@ -1401,7 +1405,7 @@ public final class McpToolSurface {
 
   private Map<String, Object> callStatus() {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       var status = adapter.status();
@@ -1434,7 +1438,7 @@ public final class McpToolSurface {
           "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
     } catch (Exception e) {
       log.warn("MCP status failed", e);
-      return errorContent(toolFailureMessage("Status", e));
+      return toolFailureContent("Status", e);
     }
   }
 
@@ -1461,7 +1465,8 @@ public final class McpToolSurface {
               .validate(op, argsJson)
               .<Map<String, Object>>map(
                   result ->
-                      errorContent("Invalid arguments for " + opIdValue + ": " + result.message()))
+                      errorContent("Invalid arguments for " + opIdValue + ": " + result.message(),
+                          ApiErrorCode.INVALID_REQUEST))
               .orElse(null);
       if (invalid != null) {
         return invalid;
@@ -1483,13 +1488,17 @@ public final class McpToolSurface {
         }
         return Map.of("content", content, "isError", false);
       } else {
-        return Map.of(
-            "content", List.of(Map.of("type", "text", "text", opResult.message())), "isError",
-            true);
+        var failure = new LinkedHashMap<String, Object>();
+        failure.put("error", ApiErrorHandler.sanitizeMessage(opResult.message()));
+        opResult.errorCode().ifPresent(code -> failure.put("errorCode", code));
+        opResult.retryable().ifPresent(retryable -> failure.put("retryable", retryable));
+        // OperationResult carries no API error class. Preserve its optional facts without
+        // guessing a classification for a handler-specific or absent code.
+        return errorContent(failure);
       }
     } catch (Exception e) {
       log.warn("MCP operation dispatch error for {}", opIdValue, e);
-      return errorContent(toolFailureMessage("Operation " + opIdValue, e));
+      return toolFailureContent("Operation " + opIdValue, e);
     }
   }
 
@@ -2019,37 +2028,61 @@ public final class McpToolSurface {
   }
 
   static Map<String, Object> errorContent(String message) {
-    return Map.of("content", List.of(Map.of("type", "text", "text", message)), "isError", true);
+    return errorContent(Map.of("error", ApiErrorHandler.sanitizeMessage(message)));
   }
 
-  // =========================================================================
-  // Tempdoc 725 W3: error-result legibility. DESCRIPTIVE grammar only — an error result states
-  // what happened and where a status check can be found; it never issues an imperative ("now
-  // call X").
-  // =========================================================================
+  static Map<String, Object> errorContent(String message, ApiErrorCode code) {
+    Map<String, Object> apiError = ApiErrorHandler.toResponse(code, message);
+    var failure = new LinkedHashMap<String, Object>();
+    for (String key : List.of("error", "errorCode", "errorClass", "retryable")) {
+      failure.put(key, apiError.get(key));
+    }
+    return errorContent(failure);
+  }
 
-  /**
-   * The 3 "backend not reachable" tool/call sites (justsearch_answer, justsearch_search,
-   * justsearch_status) share this exact wording: the condition, plus a descriptive pointer to
-   * where live component state can be checked.
-   */
+  /** Both MCP delivery tiers describe the same known facts; absent metadata stays absent. */
+  private static Map<String, Object> errorContent(Map<String, Object> failure) {
+    var text = new StringBuilder((String) failure.get("error"));
+    if (failure.containsKey("errorCode")) {
+      text.append("\nError code: ").append(failure.get("errorCode")).append('.');
+    }
+    if (failure.containsKey("errorClass")) {
+      text.append(" Error class: ").append(failure.get("errorClass")).append('.');
+    }
+    if (failure.containsKey("retryable")) {
+      text.append(" Retryable: ").append(failure.get("retryable")).append('.');
+      if (Boolean.FALSE.equals(failure.get("retryable"))) {
+        text.append(" Automatic retry is not recommended.");
+      }
+    }
+    return Map.of(
+        "content", List.of(Map.of("type", "text", "text", text.toString())),
+        "structuredContent", failure,
+        "isError", true);
+  }
+
+  /** Shared condition and descriptive status pointer for the three unavailable-backend sites. */
   private static final String KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE =
-      "Knowledge server is not available (worker offline or still starting). This is usually"
-          + " transient during startup; state is reported by the justsearch_status tool.";
+      "Knowledge server is not available (worker offline or still starting)."
+          + " State is reported by the justsearch_status tool.";
 
-  /**
-   * Uniform message for the 5 generic {@code catch (Exception e)} tool/call sites: the tool name,
-   * the exception's simple class name and message (never swallowed into a bare, unattributed
-   * string), plus the same descriptive status-tool pointer the availability message above uses.
-   */
-  private static String toolFailureMessage(String tool, Exception e) {
+  /** Project the existing API classification and sanitizer, without a parallel retry policy. */
+  private static Map<String, Object> toolFailureContent(String tool, Exception e) {
+    // Future.get/join transport the cause in wrappers with no failure policy of their own.
+    // Use the same cause for wording and classification, retaining the fallback for absent
+    // or non-Exception causes. Identity tracking also bounds malformed cyclic cause chains.
+    Set<Exception> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    while ((e instanceof ExecutionException || e instanceof CompletionException)
+        && e.getCause() instanceof Exception cause && seen.add(e)) {
+      e = cause;
+    }
     String detail = e.getMessage() != null ? e.getMessage() : "no additional detail";
-    return tool
+    String message = tool
         + " failed: "
         + e.getClass().getSimpleName()
         + ": "
         + detail
-        + ". This may be transient; current component state is available via the"
-        + " justsearch_status tool.";
+        + ". Current component state is available via the justsearch_status tool.";
+    return errorContent(message, ApiErrorHandler.resolve(e));
   }
 }

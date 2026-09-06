@@ -43,7 +43,7 @@ is the row of constituent versions below. The current build:
 
 | Runtime Contract | manifest schema | lifecycle schema | MCP protocol | MCP tool surface |
 |---|---|---|---|---|
-| `0.2.0` | `1` | `1` | `2025-11-25` | `0.6.0` |
+| `0.2.0` | `1` | `1` | `2025-11-25` | `0.7.0` |
 
 **Skew rule.** A client built for Runtime Contract vN works against a runtime
 advertising vN. Older clients degrade gracefully: the manifest is

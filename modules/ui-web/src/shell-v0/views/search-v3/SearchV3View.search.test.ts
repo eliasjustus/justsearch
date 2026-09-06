@@ -26,6 +26,7 @@ import { MAIN_EMPTY, MAIN_UNREACHABLE, SV3_COMMAND_SEARCH_TEXT } from './fixture
 import { __resetConversationListForTest } from '../../state/conversationListStore.js';
 import { __resetDraftProvidersForTest } from '../../controllers/draftPersistence.js';
 import { __resetDraftKeptForTest } from '../../controllers/draftKeptHint.js';
+import { __seedForTest as seedErrorCatalog, __resetForTest as resetErrorCatalog } from '../../../i18n/errorCatalog.js';
 
 type Mounted = HTMLElement & { updateComplete: Promise<unknown> };
 
@@ -66,6 +67,7 @@ afterEach(() => {
   for (const child of [...document.body.children]) child.remove();
   // The store is a module singleton: one case's results would otherwise be the next case's state.
   resetSearchState();
+  resetErrorCatalog();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -295,7 +297,7 @@ describe('the four outcomes are distinct, and each says only what it knows', () 
     expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-unreachable"]')).toBeNull();
   });
 
-  it('says the backend was unreachable when the request never landed', async () => {
+  it('explains a transport failure with safe recovery guidance', async () => {
     fetchMock.mockRejectedValue(new Error('Failed to fetch'));
     const el = await mount();
     await send(el, 'northfield');
@@ -306,7 +308,9 @@ describe('the four outcomes are distinct, and each says only what it knows', () 
       unreachable.shadowRoot?.querySelector('[data-testid="sv3-empty-title"]')?.textContent?.trim(),
     ).toBe(MAIN_UNREACHABLE.title);
     // The store's own words for the failure, kept as checkable detail beside the state.
-    expect(textOf(main, 'sv3-main-failure-detail')).toContain('Failed to fetch');
+    expect(textOf(main, 'sv3-main-failure-detail')).toContain('Open Health to check the connection');
+    expect(textOf(main, 'sv3-main-failure-detail')).not.toContain('Failed to fetch');
+    expect(unreachable.getAttribute('role')).toBe('alert');
     // ...and it is NOT the zero state: claiming "nothing matched" here would invent a fact about a
     // corpus nothing was ever asked of.
     expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeNull();
@@ -320,10 +324,25 @@ describe('the four outcomes are distinct, and each says only what it knows', () 
     const main = await settle(el);
 
     await emptyElementOf(main, 'sv3-main-unreachable');
-    expect(textOf(main, 'sv3-main-failure-detail')).toContain('502');
+    expect(textOf(main, 'sv3-main-failure-detail')).toContain('Search could not be completed. Open Health');
     // The two states must be distinguishable on screen, not merely in the code that picked them.
     expect(MAIN_UNREACHABLE.title).not.toBe(MAIN_EMPTY.title);
     expect(MAIN_UNREACHABLE.description).not.toBe(MAIN_EMPTY.description);
+  });
+
+  it('906: a typed 502 explanation reaches the live failure surface', async () => {
+    seedErrorCatalog({ 'errors.INDEX_UNAVAILABLE': 'The search index is not available.' });
+    fetchMock.mockResolvedValue({ ok: false, status: 502, json: async () => ({
+      error: 'wire fallback', errorCode: 'INDEX_UNAVAILABLE', i18nKey: 'errors.INDEX_UNAVAILABLE', retryable: true,
+    }) });
+    const el = await mount();
+    await send(el, 'northfield');
+    const main = await settle(el);
+    const failure = await emptyElementOf(main, 'sv3-main-unreachable');
+    expect(failure.getAttribute('role')).toBe('alert');
+    expect(textOf(main, 'sv3-main-failure-detail')).toContain('The search index is not available. Try searching again.');
+    expect(main.shadowRoot?.querySelector('[data-testid="sv3-main-empty"]')).toBeNull();
+    expect(searches()).toHaveLength(1);
   });
 
   it('recovers: a second send replaces the failure with the results it gets', async () => {

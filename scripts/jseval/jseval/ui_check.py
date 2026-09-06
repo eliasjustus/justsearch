@@ -729,6 +729,93 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
                       "comfortable": "Comfortable", "rich": "Spacious"}
     _MODE_LABEL = {"simple": "Simple", "advanced": "Detailed"}
 
+    async def setup_health_completion(page):
+        # Exercise the real Health SSE consumer and Lit projection with a finite
+        # transport fixture. No private component state is patched.
+        cases = [
+            ("COMPLETED", "completed", "INFO", "The agent finished its response."),
+            ("MAX_ITERATIONS", "max-iterations", "WARNING", "The agent reached its step limit."),
+            ("BUDGET_EDGE_FINALIZE", "budget-edge-finalize", "WARNING", "The agent reached its response budget"),
+            ("ERRORED", "errored", "ERROR", "The agent stopped because an error occurred."),
+            ("CANCELLED", "cancelled", "WARNING", "The run was cancelled."),
+        ]
+        events = [{
+            "id": f"agent.session.{suffix}", "timestamp": "2026-09-06T00:00:00Z",
+            "source": {"serviceName": "head", "serviceInstanceId": "failure-ux-test", "serviceVersion": "test"},
+            "severity": severity,
+            "i18nKey": f"health-events.agent.session.{suffix}.message",
+            "body": {"kind": "lifecycle", "attributes": {"disposition": code}},
+        } for code, suffix, severity, _ in cases]
+
+        async def health_stream(route):
+            frame = {"frameKind": "LIFECYCLE", "payload": {
+                "kind": "snapshot", "conditions": [], "occurrences": events,
+            }}
+            await route.fulfill(status=200, content_type="text/event-stream",
+                                body="data: " + json.dumps(frame) + "\n\n")
+
+        await page.route("**/api/health/events/stream", health_stream)
+        await _goto_surface(page, S.RAIL_SURFACE_HEALTH)
+        for code, suffix, severity, wording in cases:
+            row = page.locator(f'.event-row[title="agent.session.{suffix}"]')
+            await row.wait_for(state="visible", timeout=15_000)
+            text = await row.inner_text()
+            assert wording in text, f"Missing completion explanation: {code}: {text}"
+            assert code not in text, f"Raw completion code: {text}"
+            assert await row.get_attribute("data-severity") == severity
+        await page.locator('.event-row[title="agent.session.max-iterations"]').scroll_into_view_if_needed()
+
+    async def setup_search_failure(page):
+        async def failed_search(route):
+            await route.fulfill(status=502, content_type="application/json", body=json.dumps({
+                "error": "The search index is not available.",
+                "errorCode": "INDEX_UNAVAILABLE", "errorClass": "TRANSIENT",
+                "retryable": True, "i18nKey": "errors.INDEX_UNAVAILABLE",
+            }))
+        await page.route("**/api/knowledge/search", failed_search)
+        await _goto_surface(page, "core.search-v3-surface")
+        window = page.locator("jf-sv3-window")
+        await window.wait_for(state="visible", timeout=15_000)
+        composer = window.locator("jf-sv3-composer textarea")
+        await composer.fill("failure presentation check")
+        await window.get_by_role("button", name="Open command palette", exact=True).click()
+        async with page.expect_response("**/api/knowledge/search", timeout=15_000) as response:
+            await window.locator("jf-sv3-palette").get_by_role(
+                "option", name="Search this text", exact=True
+            ).click()
+        assert (await response.value).status == 502
+        alert = page.locator('[data-testid="sv3-main-unreachable"]')
+        await alert.wait_for(state="visible", timeout=15_000)
+        text = await alert.inner_text()
+        assert "The search index is not available." in text, text
+        assert "HTTP 502" not in text, text
+        assert "Try searching again" in text, text
+        assert await alert.get_attribute("role") == "alert"
+        await alert.scroll_into_view_if_needed()
+
+    async def setup_library_ingestion(page):
+        rollups = [
+            ("SUCCESS_FULL", "SUCCESS", "NONE", 7),
+            ("SKIPPED_POLICY", "UNCHANGED", "NONE", 3),
+            ("PARSER_FAILED", "PARSER_FAILED", "NONE", 2),
+            ("DEFERRED_POLICY", "CLOUD_PLACEHOLDER", "DEFER_WITHOUT_ATTEMPT", 4),
+        ]
+        async def summary(route):
+            await route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                "rollups": [{"outcomeClass": outcome, "reasonCode": reason,
+                    "retryPolicy": retry, "count": count, "lastObservedAtMs": 1700000000000}
+                    for outcome, reason, retry, count in rollups], "count": len(rollups),
+            }))
+        await page.route("**/api/diagnostics/ingestion/summary*", summary)
+        await _goto_surface(page, S.RAIL_SURFACE_LIBRARY)
+        panel = page.locator('[data-testid="ingestion-summary"]')
+        await panel.get_by_text("16 recorded indexing outcomes.", exact=True).wait_for(timeout=15_000)
+        for label in ("Content indexed", "File unchanged since its last index",
+                      "Content extraction failed", "Cloud-only file is not available locally"):
+            await panel.get_by_text(label, exact=True).wait_for()
+        assert "CLOUD_PLACEHOLDER" not in await panel.inner_text()
+        await panel.scroll_into_view_if_needed()
+
     def _density_setup(density: str):
         async def setup(page):
             # tempdoc 615 §6.1b: density is a LIVE Settings control (the Accessibility section's
@@ -1901,6 +1988,9 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
     ]
 
     return [
+        Step("health-completion", setup=setup_health_completion, isolated=True),
+        Step("search-failure", setup=setup_search_failure, isolated=True),
+        Step("library-ingestion", setup=setup_library_ingestion, isolated=True),
         # --- Shared-browser chain (demo flow) ---
         Step("search-results",       setup=setup_search_results),
         Step("command-mode",         setup=setup_command_mode,       depends_on="search-results"),

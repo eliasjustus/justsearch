@@ -133,6 +133,14 @@ Visible only in Detailed mode and only when at least one root exists. A glass ca
 
 ### Error handling
 
+The Folders view includes an **Indexing activity** summary of retained ingestion
+outcomes, grouped by reason and outcome class. Its total counts recorded events,
+not distinct files or current search readiness. Known reasons have readable labels;
+unknown reasons remain visible with neutral wording. The summary distinguishes
+loading, empty, fetch failure and last-loaded data, and offers an explicit refresh.
+It does not resolve filename hashes or retry ingestion jobs. Leaving Folders stops
+its refresh subscription and cancels an in-flight request.
+
 Errors display as a floating toast at `absolute top-16 right-6`, animated in from the right. Red styling (`bg-red-500/15 text-red-300`), with a dismiss × button that calls `clearError`. There is no auto-dismiss timer — the toast persists until the user clicks × or `clearError` is called as a side effect of another operation (e.g., a successful add/remove).
 
 ### No-connection state
@@ -325,28 +333,17 @@ Verified with real NVML data during the tempdoc 364 verification pass.
 
 ### Health events
 
-Events are derived from system state by `deriveHealthEvents.ts`. Up to 8 events are shown, priority-ordered (errors first).
+The live Health surface consumes typed conditions and occurrences from
+`/api/health/events/stream`. Agent completion details explain completed, step-limit,
+budget-limit, errored and cancelled outcomes in plain language, preserving the
+event's existing title and severity. A step-limit explanation does not claim that
+an answer exists; an unknown disposition produces an honest generic explanation.
+Explicit lifecycle messages take precedence over these fallback details.
 
-| Event ID | Level | Message |
-|----------|-------|---------|
-| `api-error` | error | Passthrough from API error |
-| `index-unavailable` | error | Indexer unavailable |
-| `index-start-error` | error | Indexer failed to start |
-| `schema-rebuilding` | info | Index is rebuilding |
-| `schema-blocked` | error | Legacy index format / schema mismatch detected |
-| `reindex-required` | warning | Reindex recommended |
-| `embedding-blocked` | warning | Embedding model mismatch detected |
-| `queue-db-unhealthy` | error | Queue DB unhealthy |
-| `queue-db-check-failed` | warning | Queue DB integrity check failed |
-| `last-failed-job` | warning | Last job failed |
-| `next-retry` | info | Retry scheduled |
-
-When no events exist, a green "All systems operational / No issues detected" card is shown with a CheckCircle icon.
-
-Each event card has severity-colored styling:
-- Error: red background, XCircle icon
-- Warning: amber background, AlertTriangle icon
-- Info: glass surface, Activity icon
+Recent events shows the latest 30 received events in reverse order through the
+shared `jf-health-event` activity-row renderer. Each row preserves its producer's
+severity and uses the existing status-tone mapping. An empty list says "No events
+yet."; it does not imply that every subsystem is healthy.
 
 ### Quick actions
 
