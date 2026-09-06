@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
+import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.WorkerServices;
 import io.justsearch.app.services.HeadAssembly;
@@ -24,6 +26,10 @@ import java.util.Locale;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Tempdoc 725 (design #2, increment W3) — pins the error-result legibility grammar across {@link
@@ -36,7 +42,7 @@ import org.junit.jupiter.api.Test;
  * exception path requires a Jackson serialization failure on the (real, final) {@code
  * RuntimeManifest} record, which the other 4 sites' straightforward mock-throws don't need —
  * confirmed instead that {@code log.warn} was added and the message uses {@link
- * McpToolSurface}'s shared {@code toolFailureMessage} helper (same as the other 4 sites).
+ * McpToolSurface}'s shared {@code toolFailureContent} helper (same as the other 4 sites).
  */
 @DisplayName("McpToolSurface: error-result legibility (tempdoc 725 W3)")
 final class McpErrorLegibilityTest {
@@ -211,6 +217,124 @@ final class McpErrorLegibilityTest {
         text.startsWith("Operation core.ingest-files failed: IllegalStateException: boom."),
         text);
     assertTrue(text.contains(STATUS_POINTER), text);
+    assertNoImperativeCallInstruction(text);
+  }
+
+  private static java.util.stream.Stream<Arguments> classifiedFailures() {
+    return java.util.stream.Stream.of(
+        Arguments.of(new UnsupportedOperationException("unsupported operation"), ApiErrorCode.NOT_SUPPORTED),
+        Arguments.of(new IllegalArgumentException("invalid query"), ApiErrorCode.INVALID_REQUEST),
+        Arguments.of(io.grpc.Status.UNAVAILABLE.withDescription("worker restarting").asRuntimeException(),
+            ApiErrorCode.SERVICE_UNAVAILABLE),
+        Arguments.of(io.grpc.Status.DEADLINE_EXCEEDED.asRuntimeException(), ApiErrorCode.TIMEOUT),
+        Arguments.of(new RuntimeException("unclassified exception"), ApiErrorCode.INTERNAL_ERROR));
+  }
+
+  @ParameterizedTest
+  @MethodSource("classifiedFailures")
+  @DisplayName("search: typed failures retain the API policy in both serialized delivery tiers")
+  void classifiedSearchFailure(Exception failure, ApiErrorCode expectedCode) {
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenThrow(failure);
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    McpToolSurface surface = new McpToolSurface(
+        List.of(OperationCatalog.of("core", List.of())), mock(OperationDispatcher.class),
+        () -> ctrl, () -> null, FIXED_CLOCK);
+
+    var result = surface.callTool("justsearch_search", Map.of("query", "q"), "s1");
+    assertFailureFacts(result, expectedCode);
+    assertFalse(textOf(result).contains("may be transient"));
+  }
+
+  @Test
+  void exceptionDetailsAreSanitizedInBothTiers() {
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.status()).thenThrow(new IllegalStateException("Cannot read C:\\private\\notes.txt"));
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    McpToolSurface surface = new McpToolSurface(
+        List.of(OperationCatalog.of("core", List.of())), mock(OperationDispatcher.class),
+        () -> ctrl, () -> null, FIXED_CLOCK);
+
+    var result = surface.callTool("justsearch_status", Map.of(), "s1");
+    String wire = JsonMapper.builder().build().writeValueAsString(result);
+    assertFalse(wire.contains("private"), wire);
+    assertTrue(wire.contains("[path]"), wire);
+    assertFailureFacts(result, ApiErrorCode.INVALID_STATE);
+  }
+
+  @Test
+  void boundaryValidationHasKnownNonRetryableFacts() {
+    var result = surfaceWithNoBackend().callTool(
+        "justsearch_search", Map.of("query", 42), "s1");
+    assertTrue(textOf(result).contains("Invalid arguments"));
+    assertFailureFacts(result, ApiErrorCode.INVALID_REQUEST);
+  }
+
+  @Test
+  void unavailableBackendHasExistingTransientClassification() {
+    var result = surfaceWithNoBackend().callTool("justsearch_status", Map.of(), "s1");
+    assertFailureFacts(result, ApiErrorCode.SERVICE_UNAVAILABLE);
+  }
+
+  @Test
+  void unclassifiedOperationResultDoesNotInventRetryability() {
+    var result = operationFailure(OperationResult.failure("Ingestion could not finish"));
+    var structured = structuredOf(result);
+    assertEquals(Map.of("error", "Ingestion could not finish"), structured);
+    assertEquals("Ingestion could not finish", textOf(result));
+    assertEquals(Boolean.TRUE, result.get("isError"));
+  }
+
+  @Test
+  void operationResultPreservesOptionalFactsWithoutClassifyingHandlerCode() {
+    var result = operationFailure(OperationResult.failure(
+        "Blocked by library policy", "HANDLER_POLICY", Map.of(), false));
+    var structured = structuredOf(result);
+    assertEquals("HANDLER_POLICY", structured.get("errorCode"));
+    assertEquals(Boolean.FALSE, structured.get("retryable"));
+    assertFalse(structured.containsKey("errorClass"));
+    assertTrue(textOf(result).contains("Error code: HANDLER_POLICY"));
+    assertTrue(textOf(result).contains("Retryable: false"));
+  }
+
+  @Test
+  void unknownToolRemainsUnclassified() {
+    var result = surfaceWithNoBackend().callTool("unrecognized", Map.of(), "s1");
+    var structured = structuredOf(result);
+    assertEquals(1, structured.size());
+    assertEquals(structured.get("error"), textOf(result));
+    assertEquals(Boolean.TRUE, result.get("isError"));
+  }
+
+  private static Map<String, Object> operationFailure(OperationResult failure) {
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    when(dispatcher.dispatch(any(), any(), any())).thenReturn(failure);
+    McpToolSurface surface = new McpToolSurface(
+        List.of(new AgentToolsOperationCatalog()), dispatcher, () -> null, () -> null, FIXED_CLOCK);
+    return surface.callTool("justsearch_ingest", Map.of("paths", List.of("C:/tmp/notes")), "s1");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> structuredOf(Map<String, Object> result) {
+    // Read what a client receives, including actual JSON booleans, rather than only the Java map.
+    var mapper = JsonMapper.builder().build();
+    Map<String, Object> wire = mapper.readValue(mapper.writeValueAsString(result), Map.class);
+    return (Map<String, Object>) wire.get("structuredContent");
+  }
+
+  private static void assertFailureFacts(Map<String, Object> result, ApiErrorCode code) {
+    var structured = structuredOf(result);
+    assertEquals(Boolean.TRUE, result.get("isError"));
+    assertEquals(code.name(), structured.get("errorCode"));
+    assertEquals(code.errorClass().name(), structured.get("errorClass"));
+    assertEquals(code.isRetryable(), structured.get("retryable"));
+    String text = textOf(result);
+    assertTrue(text.startsWith((String) structured.get("error")), text);
+    assertTrue(text.contains("Error code: " + code.name()), text);
+    assertTrue(text.contains("Error class: " + code.errorClass().name()), text);
+    assertTrue(text.contains("Retryable: " + code.isRetryable()), text);
     assertNoImperativeCallInstruction(text);
   }
 
