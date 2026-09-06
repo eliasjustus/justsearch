@@ -602,8 +602,11 @@ longer applies once a PR is enqueued). Practical sequence:
   scripts/ci/run-publish-preflight.mjs --check` proves that every required
   status context is classified in the versioned local-reproduction inventory.
   `--list` shows which contexts have a deterministic local subset and which are
-  honestly hosted-only; `--run` executes the local subsets. Hosted-only never
-  waives the corresponding GitHub check.
+  honestly hosted-only; `--run` executes the local subsets. The execution mode
+  requires a clean candidate—including no staged, unstaged, or non-ignored
+  untracked files—so commit the complete candidate first. This lets the secret
+  lane scan committed Git content without inspecting ignored build output made
+  by earlier lanes. Hosted-only never waives the corresponding GitHub check.
 - **Enqueue with `node scripts/dev/run-gh.mjs enqueue <N>`.** The repository-owned
   gateway checks the live `PR_TITLE` / `PR_BODY` squash projection and exact managed
   review record, then issues the ordinary strategy-free queue request. Direct

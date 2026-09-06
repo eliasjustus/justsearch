@@ -2,7 +2,11 @@
 
 import assert from 'node:assert/strict';
 
-import { commandForPlatform, executeLocalSubsets } from './run-publish-preflight.mjs';
+import {
+  assertCleanCandidate,
+  commandForPlatform,
+  executeLocalSubsets,
+} from './run-publish-preflight.mjs';
 import { validatePublicCiLocalRepro } from './lib/public-ci-local-repro.mjs';
 
 const signalPolicy = {
@@ -29,6 +33,7 @@ assert.match(validatePublicCiLocalRepro({
 
 const calls = [];
 const status = executeLocalSubsets(validManifest, {
+  checkCandidate() {},
   cwd: 'fixture',
   run(command, options) {
     calls.push({ command, options });
@@ -42,5 +47,23 @@ assert.ok(calls.every((call) => call.options.cwd === 'fixture' && call.options.s
 assert.equal(commandForPlatform('./gradlew.bat checkLicense', 'win32'), '.\\gradlew.bat checkLicense');
 assert.equal(commandForPlatform('./gradlew.bat checkLicense', 'linux'), './gradlew.bat checkLicense');
 assert.equal(commandForPlatform('node scripts/ci/check.mjs', 'win32'), 'node scripts/ci/check.mjs');
+
+const gitStatusCalls = [];
+assert.throws(
+  () => assertCleanCandidate({
+    cwd: 'dirty-fixture',
+    run(command, args, options) {
+      gitStatusCalls.push({ command, args, options });
+      return { status: 0, stdout: '?? candidate-secret.txt\n' };
+    },
+  }),
+  /requires a clean candidate/,
+);
+assert.deepEqual(gitStatusCalls[0].args, ['status', '--porcelain=v1', '--untracked-files=all']);
+assert.equal(gitStatusCalls[0].options.cwd, 'dirty-fixture');
+assert.doesNotThrow(() => assertCleanCandidate({
+  cwd: 'clean-fixture',
+  run() { return { status: 0, stdout: '' }; },
+}));
 
 console.log('test-run-publish-preflight: PASS');
