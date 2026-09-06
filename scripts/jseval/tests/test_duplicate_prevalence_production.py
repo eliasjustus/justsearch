@@ -1608,3 +1608,12 @@ def test_production_wait_rejects_chunk_splade_failure_below_rounded_readiness_th
     assert "chunk_splade_not_fully_complete" in production._required_production_readiness_reasons(
         status, expected_indexed_count=1000, expected_failed_count=0,
     )
+
+
+def test_production_wait_early_backend_failure_is_not_reported_as_elapsed_timeout(tmp_path, monkeypatch):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    monkeypatch.setattr(production.readiness, "_poll_until_stable", lambda *a, **kw:
+        production.readiness.ReadinessResult(passed=False, failure_reasons=["backend_unreachable: 5 failures"]))
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="failed before its 7200s deadline"):
+        production.wait_for_snapshot_ready(_request(root), timeout_seconds=7200)

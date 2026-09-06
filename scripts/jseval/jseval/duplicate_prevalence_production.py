@@ -743,6 +743,11 @@ def wait_for_snapshot_ready(
     )
     if not result.passed:
         reasons = ", ".join(result.failure_reasons[:3]) or "readiness predicate did not pass"
+        if any(reason.startswith(("backend_unreachable", "backend_process_died"))
+               for reason in result.failure_reasons):
+            raise ProductionDuplicatePrevalenceError(
+                f"production snapshot readiness failed before its {timeout:g}s deadline: {reasons}"
+            )
         raise ProductionDuplicatePrevalenceError(
             f"production snapshot readiness timed out after {timeout:g}s: {reasons}"
         )

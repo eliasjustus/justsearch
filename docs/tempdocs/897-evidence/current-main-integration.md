@@ -106,3 +106,15 @@ Full jseval verification after all production-wait hardening: **3420 passed, 15 
 (`897-pytest-production-hardening.log`). All focused and full suites are green; only live corpus/gate
 evidence remains open. A diagnostic of a temporary realdocs count plateau confirmed continued progress
 (365 searchable documents, 65 pending VDU, healthy index at the later snapshot), not established deadlock.
+
+The realdocs run was deliberately stopped with `clean=none` after more than 400 documents so the
+retrieval regression gates could run before its long VDU phase. Its 848-row aggregate timeline remains
+ignored; the early backend failure is not a completed capture or a two-hour elapsed timeout. The adapter
+now distinguishes an early unreachable-backend failure from deadline exhaustion (64 production tests
+passed in 1.82 s, `897-production-early-failure-test.log`). Resume the same preserved runtime after the
+SciFact/legal campaigns and perform a new strict capture.
+
+SciFact started from a fresh isolated eval backend with all four modes, CE, complete pipeline readiness
+and index settling. Its observed 5184-document count is 5183 corpus documents plus the canonical
+`materialize.py` sentinel; this was checked against the materialized file inventory and existing sentinel
+tests before interpreting results. No corpus contamination was inferred from that expected extra file.
