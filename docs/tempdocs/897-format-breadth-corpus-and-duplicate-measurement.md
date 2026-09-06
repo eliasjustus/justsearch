@@ -40,7 +40,7 @@ The settle/capture/query/revalidate regression proves the ordering earns its kee
 is warranted; retire any extra coordination once the existing owner guarantees the same ordering.
 
 - [x] I1: reconcile textual and semantic integration conflicts; preserve all current-main behavior.
-- [ ] I2: validate focused/full jseval, affected Java and installed-Worker tests, build, PMD and projections;
+- [x] I2: validate focused/full jseval, affected Java and installed-Worker tests, build, PMD and projections;
   independently review the combined production changes before corpus execution.
 - [x] I3: reconcile calibrated-decision consumption and supported result-redundancy scope with executable
   tests; preserve completed adjudication and explicitly bound any still-unmeasured cohort.

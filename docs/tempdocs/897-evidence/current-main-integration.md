@@ -101,3 +101,8 @@ standard `Qwen_Qwen3.5-9B-Q4_K_M.gguf` through the owned activation tool. Activa
 `ai_runtime_status.active` confirmed `chatProfile=standard`, `mmprojActive=true`, CUDA and full GPU
 layers. Pre-switch visual status still showed pending work and `vduProcessing=false`; final model
 provenance must be checked again when the production capture completes.
+
+Full jseval verification after all production-wait hardening: **3420 passed, 15 skipped**, 484.52 s
+(`897-pytest-production-hardening.log`). All focused and full suites are green; only live corpus/gate
+evidence remains open. A diagnostic of a temporary realdocs count plateau confirmed continued progress
+(365 searchable documents, 65 pending VDU, healthy index at the later snapshot), not established deadlock.
