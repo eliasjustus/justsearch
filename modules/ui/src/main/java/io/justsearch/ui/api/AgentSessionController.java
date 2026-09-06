@@ -270,6 +270,15 @@ final class AgentSessionController {
           "success", result.success(),
           "output", result.message(),
           "executionId", result.executionId().orElse("")));
+    } catch (io.justsearch.agent.api.registry.ConfirmationRequiredException e) {
+      // Tempdoc 875 §C.7: the reversal now meets the same lattice its forward form did. This
+      // surface carries no confirmation token, so a gated undo is a typed 428 the caller can
+      // act on — not an opaque 500.
+      ctx.status(428).json(ApiErrorHandler.toResponse(ApiErrorCode.CONFIRMATION_REQUIRED,
+          e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
+    } catch (io.justsearch.agent.api.registry.TrustGateDeniedException e) {
+      ctx.status(403).json(ApiErrorHandler.toResponse(ApiErrorCode.TRUST_DENIED,
+          e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
     } catch (Exception e) {
       LOG.error("Undo failed", e);
       ctx.status(500).json(ApiErrorHandler.toResponse(ApiErrorCode.INTERNAL_ERROR, e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));

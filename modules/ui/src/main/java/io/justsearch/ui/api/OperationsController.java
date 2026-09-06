@@ -249,6 +249,7 @@ public final class OperationsController {
     }
 
     String executionId;
+    Optional<String> confirmationToken;
     try {
       String body = ctx.body();
       if (body == null || body.isBlank()) {
@@ -262,15 +263,41 @@ public final class OperationsController {
         return;
       }
       executionId = eidNode.asText();
+      // Tempdoc 875 §C.7: undo now meets the trust lattice, so it accepts the same
+      // confirmationToken the invoke path does — the FE re-posts with a minted capsule
+      // after the 428 below.
+      var tokenNode = parsed.get("confirmationToken");
+      confirmationToken =
+          tokenNode != null && tokenNode.isTextual() && !tokenNode.asText().isBlank()
+              ? Optional.of(tokenNode.asText())
+              : Optional.empty();
     } catch (Exception e) {
       writeError(ctx, 400, "Invalid undo request body: " + e.getMessage(), "BAD_REQUEST");
       return;
     }
 
     Operation op = resolved.get();
+    InvocationProvenance provenance = resolveProvenance(ctx);
     OperationResult result;
     try {
-      result = dispatcher.undo(op, executionId);
+      result = dispatcher.undo(op, executionId, provenance, confirmationToken);
+    } catch (io.justsearch.agent.api.registry.ConfirmationRequiredException e) {
+      // Same typed 428 the invoke path emits — the capsule the FE mints must bind to the
+      // reversal's canonical arguments, which is what is echoed here.
+      writeConfirmationRequired(
+          ctx,
+          op,
+          e,
+          OperationDispatcher.undoArguments(executionId),
+          provenance.transport());
+      return;
+    } catch (io.justsearch.agent.api.registry.TrustGateDeniedException e) {
+      writeError(
+          ctx,
+          403,
+          "Trust gate denied undo of operation " + op.id().value() + ": " + e.getMessage(),
+          io.justsearch.app.api.ApiErrorCode.TRUST_DENIED.name());
+      return;
     } catch (RuntimeException e) {
       log.warn("Undo handler threw for id={}, executionId={}", op.id().value(), executionId, e);
       writeError(ctx, 500, "Undo handler threw: "
