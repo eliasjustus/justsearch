@@ -812,13 +812,29 @@ spending another signing credit.
   unit tests, and the complete publication preflight passed. The preflight included all deterministic
   public-claims, notice/license, build, PMD, JVM unit-shard, 663-commit secret-scan, and jseval lanes;
   jseval completed with 3,094 passed and 12 skipped tests.
-- [ ] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
+- [x] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
   verifier job to pass. This closes the capability-realization gap on the exact consumer path without
   invoking the provider signer or consuming a metered signing. The job still requires the protected
   Environment because a valid candidate also uses its updater-signing material; admit only this exact
   branch, retain required review, and remove the temporary deployment policy as soon as the job starts.
-- [ ] Scan the complete public diff for credentials, private identifiers, machine-local paths, stale
-  quantitative claims, and unrelated changes. Keep the old WinGet PR closed and keep Scoop deferred.
+  Run `34027668827` first proved that the normal `main`/`v*` deployment policy rejected the branch
+  before any job step. The owner-authorized retry, run `34027810568`, was admitted through a temporary
+  exact-branch policy only after its pending deployment was verified at head
+  `eae13b529c919c5e32f545249943760fd0a5a255`; the exception was removed as soon as the job started,
+  leaving only `main` and `v*`. The build log states that signing was not requested, the release step
+  was skipped, and both `Windows NSIS Installer` and `Verify installer (packaged)` passed. The latter
+  completed the EvidenceBundle validation that had failed during teardown in the earlier paid run.
+- [x] Scan the complete public diff for credentials, private identifiers, machine-local paths, stale
+  quantitative claims, and unrelated changes. The final ten-file scope contains only the capture fix,
+  its CI regression, the publication-preflight corrections, canonical operator guidance, and this
+  record. Targeted pattern inspection, `git diff --check`, and the committed-candidate secret scan are
+  clean; provider account details were removed rather than published. Closed WinGet PR `#429017`
+  remains closed, and no Scoop artifact was added. Independent refute-first review found and closed
+  the public-provider-detail, unsigned-secret-boundary, and dirty-candidate scan issues. One accepted
+  low-risk residual remains: the child-process regression exercises the successful runtime path while
+  static assertions cover both exit assignments; it does not dynamically force exit statuses 1 and 2
+  or impose a child timeout. That broader harness hardening is not required to reproduce and prevent
+  the observed Windows teardown failure.
 - [ ] Open a fresh pull request because closed PR #631 describes an older docs-only head. Use the
   current public squash-body contract, create the separate review record, and pass both strict
   publication checks before enqueueing.
