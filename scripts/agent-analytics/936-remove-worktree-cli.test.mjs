@@ -17,6 +17,9 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE_ROOT = path.resolve(HERE, '..', '..');
 const require = createRequire(import.meta.url);
 const { recordMergeLink } = require(path.join(SOURCE_ROOT, 'scripts', 'dev', 'remove-worktree.cjs'));
+const { readProcessTable } = require(path.join(SOURCE_ROOT, 'scripts', 'dev', 'lib', 'process-identity.cjs'));
+const FIXTURE_PROCESS_TABLE_ENV = 'JUSTSEARCH_936_FIXTURE_PROCESS_TABLE_PIDS';
+const PROCESS_IDENTITY_REL = 'scripts/dev/lib/process-identity.cjs';
 const CLI_FILES = [
   'scripts/dev/remove-worktree.cjs',
   'scripts/dev/lib/process-identity.cjs',
@@ -64,6 +67,28 @@ async function installProductionCli(repo) {
     await fsp.mkdir(path.dirname(destination), { recursive: true });
     await fsp.copyFile(path.join(SOURCE_ROOT, ...rel.split('/')), destination);
   }
+  const processIdentity = path.join(repo, ...PROCESS_IDENTITY_REL.split('/'));
+  const productionProcessIdentity = path.join(path.dirname(processIdentity), 'process-identity.production.cjs');
+  await fsp.rename(processIdentity, productionProcessIdentity);
+  await fsp.writeFile(processIdentity, `'use strict';
+// Test-only contract injection inside this disposable copied CLI; production stays the fallback.
+const production = require('./process-identity.production.cjs');
+const encodedPids = process.env.${FIXTURE_PROCESS_TABLE_ENV};
+if (encodedPids === undefined) {
+  module.exports = production;
+} else {
+  const pids = JSON.parse(encodedPids);
+  if (!Array.isArray(pids) || pids.length === 0 || pids.some((pid) => !Number.isInteger(pid) || pid <= 0)) {
+    throw new Error('${FIXTURE_PROCESS_TABLE_ENV} must encode a non-empty array of positive integer pids');
+  }
+  module.exports = {
+    ...production,
+    readProcessTable() {
+      return { ok: true, table: pids.map((pid) => ({ ProcessId: pid })), readAt: Date.now() };
+    },
+  };
+}
+`, 'utf8');
   return path.join(repo, 'scripts', 'dev', 'remove-worktree.cjs');
 }
 
@@ -74,7 +99,7 @@ async function makeRepo(label) {
   git(repo, 'init', '-b', 'main');
   git(repo, 'config', 'user.email', 'fixture@example.invalid');
   git(repo, 'config', 'user.name', 'Fixture');
-  await fsp.writeFile(path.join(repo, '.gitignore'), 'ignored/\nnode_modules/\n', 'utf8');
+  await fsp.writeFile(path.join(repo, '.gitignore'), 'ignored/\nnode_modules\n', 'utf8');
   await fsp.writeFile(path.join(repo, 'tracked.txt'), 'base\n', 'utf8');
   git(repo, 'add', '.gitignore', 'tracked.txt');
   git(repo, 'commit', '-m', 'fixture');
@@ -95,17 +120,26 @@ function addWorktree(fixture, relativeName, branch, { detached = false, parent =
   return target;
 }
 
-function runCli(fixture, target, args = [], { stateRoot = path.join(fixture.root, 'isolated-state'), env = {} } = {}) {
+function runCli(fixture, target, args = [], {
+  stateRoot = path.join(fixture.root, 'isolated-state'),
+  env = {},
+  processTablePids,
+} = {}) {
+  const childEnv = {
+    ...process.env,
+    JUSTSEARCH_DEV_RUNNER_STATE_ROOT: stateRoot,
+    CLAUDE_CODE_SESSION_ID: '936-cli-fixture',
+    ...env,
+  };
+  delete childEnv[FIXTURE_PROCESS_TABLE_ENV];
+  if (processTablePids !== undefined) {
+    childEnv[FIXTURE_PROCESS_TABLE_ENV] = JSON.stringify(processTablePids);
+  }
   const result = spawnSync(process.execPath, [fixture.cli, target, ...args], {
     cwd: fixture.repo,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
-    env: {
-      ...process.env,
-      JUSTSEARCH_DEV_RUNNER_STATE_ROOT: stateRoot,
-      CLAUDE_CODE_SESSION_ID: '936-cli-fixture',
-      ...env,
-    },
+    env: childEnv,
   });
   return { status: result.status, output: `${result.stdout || ''}${result.stderr || ''}` };
 }
@@ -184,6 +218,23 @@ async function snapshot(fixture, target, stateRoot) {
 
 const fixtures = [];
 try {
+  await check('native process-table evidence stays fail-closed off Windows and observes this test on Windows', () => {
+    const nonWindows = readProcessTable({ platform: 'linux' });
+    assert.equal(nonWindows.ok, false);
+    assert.match(nonWindows.reason, /implemented for win32 only \(platform=linux\)/i);
+
+    if (process.platform === 'win32') {
+      const native = readProcessTable();
+      assert.equal(native.ok, true, native.reason);
+      assert.equal(native.table.some((row) => Number(row?.ProcessId) === process.pid), true,
+        `native process table did not contain test pid ${process.pid}`);
+    } else {
+      const native = readProcessTable();
+      assert.equal(native.ok, false);
+      assert.match(native.reason, new RegExp(`implemented for win32 only \\(platform=${process.platform}\\)`, 'i'));
+    }
+  });
+
   const primary = await makeRepo('primary');
   fixtures.push(primary);
   const target = addWorktree(primary, 'external target with spaces', 'codex/936-safe');
@@ -415,6 +466,29 @@ try {
   const liveChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
   try {
     await new Promise((resolve) => setTimeout(resolve, 500));
+    await check('the copied CLI retains native platform process-table behavior without fixture evidence', async () => {
+      const nativeTarget = addWorktree(primary, 'native runtime target', 'codex/native-runtime');
+      const nativeState = path.join(primary.root, 'native-runtime-state');
+      const runId = 'native-live';
+      await fsp.mkdir(path.join(nativeState, 'runs', runId), { recursive: true });
+      await fsp.writeFile(path.join(nativeState, 'active.json'), JSON.stringify({
+        kind: 'backend-shared-lease.v1', schemaVersion: 1, runId,
+        provenance: { repoRoot: nativeTarget, distFromRoot: nativeTarget },
+      }));
+      await fsp.writeFile(path.join(nativeState, 'runs', runId, 'run.json'), JSON.stringify({
+        schemaVersion: 1, runId, repoRoot: nativeTarget, dataDir: nativeTarget, apiPortActual: 65534,
+        pids: { runnerPid: liveChild.pid, backendRootPid: liveChild.pid, frontendRootPid: liveChild.pid },
+      }));
+      const result = runCli(primary, nativeTarget, [], { stateRoot: nativeState });
+      assert.equal(result.status, 1, result.output);
+      if (process.platform === 'win32') {
+        assert.match(result.output, /shared runtime.*active.*references/i);
+      } else {
+        assert.match(result.output, /process liveness is unknown.*implemented for win32 only/i);
+      }
+      assert.equal(fs.existsSync(nativeTarget), true);
+    });
+
     await check('stale ownership lease cannot excuse a live target-referencing shared runtime', async () => {
       const runtimeTarget = addWorktree(primary, 'shared runtime target', 'codex/shared-runtime');
       const runtimeState = path.join(primary.root, 'shared-runtime-state');
@@ -429,7 +503,10 @@ try {
         schemaVersion: 1, runId, repoRoot: runtimeTarget, dataDir: runtimeTarget, apiPortActual: 65534,
         pids: { runnerPid: liveChild.pid, backendRootPid: liveChild.pid, frontendRootPid: liveChild.pid },
       }));
-      const result = runCli(primary, runtimeTarget, [], { stateRoot: runtimeState });
+      const result = runCli(primary, runtimeTarget, [], {
+        stateRoot: runtimeState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(result.status, 1, result.output);
       assert.match(result.output, /shared runtime.*active.*references/i);
       assert.equal(fs.existsSync(runtimeTarget), true);
@@ -449,7 +526,10 @@ try {
         apiPortActual: 65534,
         pids: { runnerPid: liveChild.pid, backendRootPid: liveChild.pid, frontendRootPid: liveChild.pid },
       }));
-      const dataResult = runCli(primary, dataTarget, ['--allow-ignored'], { stateRoot: dataState });
+      const dataResult = runCli(primary, dataTarget, ['--allow-ignored'], {
+        stateRoot: dataState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(dataResult.status, 1, dataResult.output);
       assert.match(dataResult.output, /shared runtime.*active.*references/i);
       assert.equal(fs.existsSync(dataTarget), true);
@@ -469,7 +549,10 @@ try {
         resourceClaims: { dataDir: sharedOwnedRoot }, apiPortActual: 65534,
         pids: { runnerPid: liveChild.pid, backendRootPid: liveChild.pid, frontendRootPid: liveChild.pid },
       }));
-      const nestedDataResult = runCli(primary, nestedDataTarget, [], { stateRoot: nestedDataState });
+      const nestedDataResult = runCli(primary, nestedDataTarget, [], {
+        stateRoot: nestedDataState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(nestedDataResult.status, 1, nestedDataResult.output);
       assert.match(nestedDataResult.output, /shared runtime.*active.*references/i);
       assert.equal(fs.existsSync(nestedDataTarget), true);
@@ -486,7 +569,10 @@ try {
         schemaVersion: 1, runId: unknownRunId, repoRoot: primary.repo, apiPortActual: 65534,
         pids: { runnerPid: liveChild.pid, backendRootPid: liveChild.pid, frontendRootPid: liveChild.pid },
       }));
-      const unknownResult = runCli(primary, unknownTarget, [], { stateRoot: unknownState });
+      const unknownResult = runCli(primary, unknownTarget, [], {
+        stateRoot: unknownState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(unknownResult.status, 1, unknownResult.output);
       assert.match(unknownResult.output, /unknown owned-path relation.*run\.dataDir is missing/i);
       assert.equal(fs.existsSync(unknownTarget), true);
@@ -504,7 +590,10 @@ try {
         ports: { api: 65534 }, repoRoot: blocked, dataDir: blocked,
       };
       await fsp.writeFile(recordFile, JSON.stringify(record));
-      const blockedResult = runCli(primary, blocked, [], { stateRoot: foreignState });
+      const blockedResult = runCli(primary, blocked, [], {
+        stateRoot: foreignState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(blockedResult.status, 1, blockedResult.output);
       assert.match(blockedResult.output, /foreign runtime.*owns a path/i);
       assert.equal(fs.existsSync(blocked), true);
@@ -512,7 +601,10 @@ try {
       record.repoRoot = primary.repo;
       record.dataDir = path.join(blocked, 'ignored', 'live-index');
       await fsp.writeFile(recordFile, JSON.stringify(record));
-      const ownedDataResult = runCli(primary, blocked, ['--allow-ignored'], { stateRoot: foreignState });
+      const ownedDataResult = runCli(primary, blocked, ['--allow-ignored'], {
+        stateRoot: foreignState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(ownedDataResult.status, 1, ownedDataResult.output);
       assert.match(ownedDataResult.output, /foreign runtime.*owns a path/i);
 
@@ -521,21 +613,30 @@ try {
       const nestedOwnedTarget = addWorktree(primary, 'index', 'codex/foreign-nested-data', { parent: foreignOwnedRoot });
       record.dataDir = foreignOwnedRoot;
       await fsp.writeFile(recordFile, JSON.stringify(record));
-      const nestedOwnedResult = runCli(primary, nestedOwnedTarget, [], { stateRoot: foreignState });
+      const nestedOwnedResult = runCli(primary, nestedOwnedTarget, [], {
+        stateRoot: foreignState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(nestedOwnedResult.status, 1, nestedOwnedResult.output);
       assert.match(nestedOwnedResult.output, /foreign runtime.*owns a path/i);
       assert.equal(fs.existsSync(nestedOwnedTarget), true);
 
       delete record.dataDir;
       await fsp.writeFile(recordFile, JSON.stringify(record));
-      const unknownResult = runCli(primary, unknown, [], { stateRoot: foreignState });
+      const unknownResult = runCli(primary, unknown, [], {
+        stateRoot: foreignState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(unknownResult.status, 1, unknownResult.output);
       assert.match(unknownResult.output, /unknown owned-path relation.*dataDir is missing/i);
       assert.equal(fs.existsSync(unknown), true);
 
       record.dataDir = primary.repo;
       await fsp.writeFile(recordFile, JSON.stringify(record));
-      const allowedResult = runCli(primary, allowed, [], { stateRoot: foreignState });
+      const allowedResult = runCli(primary, allowed, [], {
+        stateRoot: foreignState,
+        processTablePids: [liveChild.pid],
+      });
       assert.equal(allowedResult.status, 0, allowedResult.output);
       assert.match(allowedResult.output, /proven unrelated provenance/i);
       assert.equal(fs.existsSync(allowed), false);
@@ -676,7 +777,10 @@ try {
         schemaVersion: 1, producer: 'fixture', recordId: 'timeout', pid: 2147483647,
         ports: { api: port }, repoRoot: timeoutTarget, dataDir: timeoutTarget,
       }));
-      const result = runCli(primary, timeoutTarget, ['--dry-run'], { stateRoot: timeoutState });
+      const result = runCli(primary, timeoutTarget, ['--dry-run'], {
+        stateRoot: timeoutState,
+        processTablePids: [server.pid],
+      });
       assert.equal(result.status, 1, result.output);
       assert.match(result.output, /API probe is TIMED_OUT/i);
       assert.equal(fs.existsSync(timeoutTarget), true);
@@ -723,7 +827,7 @@ try {
         schemaVersion: 1, runId, repoRoot: target, dataDir: target, apiPortActual: 65534,
         pids: { runnerPid: child.pid, backendRootPid: child.pid, frontendRootPid: child.pid },
       }));
-      const result = runCli(mutant, target, [], { stateRoot });
+      const result = runCli(mutant, target, [], { stateRoot, processTablePids: [child.pid] });
       assert.equal(result.status, 0, result.output);
       assert.equal(fs.existsSync(target), false, 'mutant proves the live-runtime blocker prevents deletion');
     } finally {
