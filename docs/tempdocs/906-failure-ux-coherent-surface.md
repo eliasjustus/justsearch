@@ -1,7 +1,7 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "IMPLEMENTED — §W fixed (2026-09-06); publication candidate verification pending"
+status: "VERIFIED — accepted §U scope and §W fix complete; publication in progress (2026-09-06)"
 created: 2026-09-02
 updated: 2026-09-06
 lite-class: false
@@ -315,7 +315,7 @@ and a public MCP contract change. Those are not all justified by the same eviden
 
 Investigation baseline: local main commit
 `8da7a24d94421656653e6fade63c79c9b3b47823`, isolated in
-`F:/justsearch-worktrees/906-takeover`, branch `codex/906-takeover`. The worktree was
+the dedicated `906-takeover` worktree, branch `codex/906-takeover`. The worktree was
 created after running `node scripts/agent-analytics/world-state.mjs`; its directory,
 branch, clean state and tempdoc-bearing base were checked before editing. The local
 checkout and `origin/main` diverged, so this is a verdict about that explicit local
@@ -439,106 +439,8 @@ audit was performed in this takeover.
 
 ### Experiments and verification record
 
-All probes ran under Node `v24.12.0` from the investigation worktree. T-E1 used the
-already-installed TypeScript compiler in the main checkout read-only; no repository
-source was transformed on disk and no request reached a backend.
-
-**T-E1 — actual search-store execution, mocked transport and timers.** Run this
-JavaScript with `node` (set `TYPESCRIPT_LIB` to an installed TypeScript package):
-
-```js
-const fs = require('node:fs');
-const vm = require('node:vm');
-const ts = require(process.env.TYPESCRIPT_LIB);
-const assert = require('node:assert/strict');
-let calls = 0, reads = 0;
-const out = {};
-const authorizedFetch = async () => {
-  calls++;
-  return { ok: false, status: 502, json: async () => {
-    reads++;
-    return { error: 'The search index is unavailable.',
-      errorCode: 'INDEX_UNAVAILABLE', i18nKey: 'errors.INDEX_UNAVAILABLE',
-      retryable: true };
-  } };
-};
-const context = {
-  exports: out, AbortController, performance, console,
-  window: { setTimeout: () => 1, clearTimeout: () => {} },
-  require: (id) => {
-    if (id.includes('authorizedFetch')) return { authorizedFetch };
-    if (id.includes('searchFiltersState')) return {
-      getFilters: () => ({}), hasActiveFilter: () => false,
-      getFacetSelections: () => ({}) };
-    if (id.includes('schema-types')) return {};
-    throw new Error('Unexpected dependency ' + id);
-  },
-};
-const source = fs.readFileSync(
-  'modules/ui-web/src/shell-v0/state/searchState.ts', 'utf8');
-vm.runInNewContext(ts.transpileModule(source, { compilerOptions: {
-  module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
-} }).outputText, context);
-out.setQuery('takeover-probe');
-out.submitSearch();
-setImmediate(() => {
-  assert.equal(calls, 1);
-  assert.equal(reads, 0);
-  assert.equal(out.getSearchState().error, 'HTTP 502');
-  console.log({ calls, errorBodyReads: reads, error: out.getSearchState().error });
-});
-```
-
-Observed: `{ calls: 1, errorBodyReads: 0, error: 'HTTP 502' }`. The one-request
-assertion ensures this cannot pass merely because search was never invoked. This
-is evidence of current defective behavior, not a regression test of a fix.
-
-**T-E2 — source census.** Node regex extraction of API lines matching
-`^\s*([A-Z][A-Z0-9_]*)\(ErrorClass\.`, bare agent constants including the final
-undelimited member, `public static final String` ingestion values, and the draft's
-`REASON_CODE_LABELS` keys yielded:
-
-```text
-API codes: 130; agent codes: 14; shared names: INTERNAL_ERROR
-Ingestion codes: 24; draft labels: 9; obsolete draft labels: 0
-Missing draft labels (15): SUCCESS_EMPTY, EXTRACTION_DROPOUT_PENDING_FALLBACK,
-EXTRACTION_DROPOUT_UNRECOVERED, NON_REGULAR_SOURCE, MISSING_AT_PROCESSING,
-DELETED_OR_MISSING, STALE_AFTER_EXTRACTION, DELETED_AFTER_SNAPSHOT,
-SIZE_CHANGED_AFTER_SNAPSHOT, FILE_KEY_CHANGED_AFTER_SNAPSHOT, UNREADABLE,
-IO_ERROR, SANDBOX_FAILED, WRITE_FAILED, WRITE_UNAVAILABLE_DRAINING
-```
-
-Implementation correction (2026-09-06): this probe undercounted the baseline.
-There were already **26** constants; its line-oriented extraction missed multiline
-declarations `MODIFIED_TIME_CHANGED_AFTER_SNAPSHOT` and
-`SOURCE_KIND_CHANGED_AFTER_SNAPSHOT`. The raw probe output above is retained as
-history, not the current census. §U3 and its regression test cover all 26.
-
-**T-E3 — extractor suitability.** Import `extractEnumConstants` and
-`checkCorrespondence` from `scripts/ci/check-search-degradation-reason-codes.mjs`
-and pass the three current Java sources named in correction 5. Observed:
-
-```text
-ApiErrorCode: 0 extracted
-AgentErrorCode: 13 extracted; UNSUPPORTED_RESUME_STATE omitted
-TerminalDisposition: 4 extracted; CANCELLED omitted
-checkCorrespondence({enumCodes: new Set(), wordingCodes: new Set(),
-  noWordingExempt: [], feDerived: []}): []
-```
-
-**Existing checks run, all passed:**
-
-- `node scripts/ci/check-readiness-reason-codes.mjs`: 56 emittable codes,
-  50 wording rows; producer-reference direction passed across 1,654 Java sources.
-- `node scripts/ci/check-search-degradation-reason-codes.mjs`: query degradation
-  28 codes / 17 worded / 11 exempt; cross-encoder skip 12 / 5 / 7.
-- `node --test scripts/ci/check-readiness-reason-codes.test.mjs`: one test file
-  passed, with its 19 internal assertions.
-
-These green checks coexist with T-E1 because they verify different seams. They
-are not end-to-end UX evidence. Full application compilation, Vitest, Java tests,
-live MCP/agent queries and measured screen accessibility remain unrun because no
-product or gate implementation was performed.
+The dated experiment details are preserved in
+[the takeover verification record](906-evidence/takeover-verification.md).
 
 ### What this displaces, what remains, and handoff
 
@@ -639,7 +541,7 @@ separate terminal-disposition semantics and the event's severity/title.
 - [x] U5 — Integration/teardown/docs: remove superseded raw-string paths in the
   touched consumers; update canonical behavior docs and 889 ownership, without
   claiming deferred features shipped. Regenerate/check affected documentation.
-- [ ] U6 — Verification and independent review: frontend typecheck, full unit
+- [x] U6 — Verification and independent review: frontend typecheck, full unit
   suite, relevant UI gates; affected Java tests and required build/multi-module
   tests with serialized Gradle use. Validate real Lit UI through browser/harness
   with measured accessibility evidence, exercise MCP live and a real model query
@@ -856,3 +758,25 @@ and documentation regeneration/link checks passed.
 U6 remains pending final verification on the candidate caught up with origin/main.
 The publication branch must contain only this tempdoc's changes; the original
 implementation branch's unrelated local ancestry is not a publication candidate.
+
+## §X. Publication candidate verification — 2026-09-06
+
+The owner authorized publication. `codex/906-publish` starts at origin/main
+`b96cd9998` and carries only the 13 commits implementing this tempdoc. Independent
+Sol range-diff review found no lost change; current-main Detailed terminology and
+uiModeState registrations are preserved. Product code was verified at `16bdb8254`.
+The remaining changes only move historical evidence and record this verification.
+
+- Build, including integration checks, passed; full Java unit tests and license
+  validation passed. All 23 MCP failure-classification tests pass.
+- Frontend typecheck, all 6,333 tests in 472 files, and all 27 current UI gates pass.
+- Python suite: 3,094 passed, 12 skipped; all eight generated-file sets match.
+- Three maintained browser scenarios pass with no captured axe violations or
+  document overflow; the full accessibility sweep reports no new violations.
+- Documentation, tempdoc numbering/size, script lint, runtime/configuration and
+  architecture checks pass. The branch secret scan reports no leaks.
+
+Reproducible commands, log names and limitations are in
+[the publication verification record](906-evidence/publication-verification.md).
+U1–U6 and W1 are complete. Remaining publication work is the PR checks, merge
+queue and confirmation of public CI on main. Existing §V limits still apply.
