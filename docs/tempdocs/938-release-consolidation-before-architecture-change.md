@@ -415,3 +415,5 @@ Owner decision: version 0.3.0, Search v3 promoted by a dedicated agent (Appendix
 | 8, 9, 10, 11 | owner: sandbox `upgrade-from-release` round, tag dispatch, post-publish README, branch disposition (§D). | open |
 
 Not verified live: none of the backend fixes were exercised against a running stack (dev stack leased elsewhere); unit, controller-level (real Javalin) and full-suite tests only. The sandbox round is the live tier for them.
+
+Follow-up routed here (not release-blocking): `POST /api/chat/agent/undo` (`AgentSessionController`) parses only `{toolName, executionId}`, so it can carry no consent capsule and can now only answer 428 for the one gated undo-capable operation; the FE's `undoToolExecution` had zero callers and now delegates to the shared `POST /api/undo/{id}` path. Retire the route with a sweep (api-contract-map, apiRoutes registry, its charset test moves to a sibling route) in a follow-up PR.
