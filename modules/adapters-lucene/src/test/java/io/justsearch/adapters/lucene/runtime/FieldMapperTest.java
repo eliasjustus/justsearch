@@ -2,6 +2,7 @@ package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -70,7 +71,7 @@ class FieldMapperTest {
   void mapsTextStored() {
     FieldMapper fm = new FieldMapper(createTestCatalog());
     Map<String, Object> in = Map.of("title", "Hello");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertEquals("Hello", doc.get("title")); // stored text accessible
   }
 
@@ -82,7 +83,7 @@ class FieldMapperTest {
             "path", "/tmp/file.txt",
             SchemaFields.DOC_ID, "doc-1",
             SchemaFields.DOC_UID, "doc-1#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertEquals("/tmp/file.txt", doc.get("path")); // stored keyword accessible
     assertTrue(doc.getFields().stream().anyMatch(f -> f.name().equals("path")));
   }
@@ -93,7 +94,7 @@ class FieldMapperTest {
     Map<String, Object> in = new HashMap<>();
     in.put("size_bytes", 123L);
     in.put("ocr_present", true);
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     // Not stored by default; verify fields were added
     assertTrue(doc.getFields().size() >= 2);
   }
@@ -104,9 +105,57 @@ class FieldMapperTest {
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
     float[] vec = new float[4];
     Map<String, Object> in = Map.of("vector", vec);
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
+  }
+
+  /**
+   * Tempdoc 931 §C.3: a non-finite vector used to reach Lucene's {@code KnnFloatVectorField},
+   * which throws — and the throw aborted the caller's whole batch ({@code
+   * IndexingCoordinator.indexBatch} builds every document before it writes any), so one degenerate
+   * embedding cost every other document in it. The vector is still refused; the document is not.
+   */
+  @Test
+  void dropsNonFiniteVectorsWithoutLosingTheDocument() {
+    FieldMapper fm = new FieldMapper(createTestCatalog(4));
+
+    for (float[] degenerate :
+        List.of(
+            new float[] {Float.NaN, 0.0f, 0.0f, 0.0f},
+            new float[] {0.0f, Float.POSITIVE_INFINITY, 0.0f, 0.0f})) {
+      FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
+      Map<String, Object> in = new HashMap<>();
+      in.put("doc_id", "doc-0");
+      in.put("title", "kept");
+      in.put("vector", degenerate);
+
+      Document doc = fm.toDocument(in, report);
+
+      assertNull(doc.getField("vector"), "the unusable vector must not reach Lucene");
+      assertNotNull(doc.getField("doc_id"), "every other field of the document survives");
+      assertNotNull(doc.getField("title"), "every other field of the document survives");
+      assertEquals(1, report.count(), "the drop is counted for the caller's batch WARN + metric");
+      assertEquals(List.of("doc-0/vector"), report.sampleDocIds());
+      assertNotNull(report.lastReason(), "the rejection reason is carried for the WARN");
+    }
+  }
+
+  /**
+   * A healthy vector is untouched by the drop path — the report stays empty. A zero vector is
+   * healthy under the catalog's Euclidean similarity (Lucene accepts it), so it is written, not
+   * dropped; that changes only if a normalizing similarity is adopted.
+   */
+  @Test
+  void aUsableVectorIsNotReportedAsDropped() {
+    FieldMapper fm = new FieldMapper(createTestCatalog(4));
+
+    for (float[] usable : List.of(new float[] {3f, 4f, 0f, 0f}, new float[4])) {
+      FieldMapper.DroppedVectorReport report = new FieldMapper.DroppedVectorReport();
+      Document doc = fm.toDocument(Map.of("doc_id", "doc-0", "vector", usable), report);
+      assertNotNull(doc.getField("vector"));
+      assertEquals(0, report.count());
+    }
   }
 
   @Test
@@ -115,7 +164,7 @@ class FieldMapperTest {
     FieldMapper fm = new FieldMapper(createTestCatalog(4));
     float[] vec = new float[100];
     Map<String, Object> in = Map.of("vector", vec);
-    IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> fm.toDocument(in));
+    IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> fm.toDocument(in, null));
     assertTrue(ex.getMessage().contains("dimension mismatch"),
         "Error should mention dimension mismatch");
   }
@@ -124,7 +173,7 @@ class FieldMapperTest {
   void unknownFieldsYieldFallbackStored() {
     FieldMapper fm = new FieldMapper(createTestCatalog());
     Map<String, Object> in = Map.of("unknown_field", "v");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertTrue(doc.getFields().size() >= 1); // fallback _ingest_ts stored field
   }
 
@@ -134,7 +183,7 @@ class FieldMapperTest {
     // Note: mime has roles: ["filter", "facet"], so it gets StringField (Fix #5)
     // StringField.stringValue() is available in memory, but Store.NO means not persisted
     Map<String, Object> in = Map.of("mime", "pdf");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     // Verify field was added (StringField + SortedDocValuesField)
     assertTrue(doc.getFields().stream().anyMatch(f -> f.name().equals("mime")));
   }
@@ -143,7 +192,7 @@ class FieldMapperTest {
   void booleanNumericMapping() {
     FieldMapper fm = new FieldMapper(createTestCatalog());
     Map<String, Object> in = Map.of("ocr_present", 0); // numeric -> false
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
   }
@@ -156,7 +205,7 @@ class FieldMapperTest {
     in.put("ocr_present", "true"); // string parse to boolean
     in.put(SchemaFields.DOC_ID, "doc-parse");
     in.put(SchemaFields.DOC_UID, "doc-parse#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertTrue(doc.getFields().size() >= 2);
   }
 
@@ -171,7 +220,7 @@ class FieldMapperTest {
             "vector", lst,
             SchemaFields.DOC_ID, "doc-vector",
             SchemaFields.DOC_UID, "doc-vector#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
     assertNotNull(doc);
     assertTrue(doc.getFields().size() >= 1);
   }
@@ -181,7 +230,7 @@ class FieldMapperTest {
     FieldMapper fm = new FieldMapper(createTestCatalog());
     Document doc =
         fm.toDocument(
-            Map.of(SchemaFields.DOC_ID, "doc-42", SchemaFields.DOC_UID, "doc-42#0"));
+            Map.of(SchemaFields.DOC_ID, "doc-42", SchemaFields.DOC_UID, "doc-42#0"), null);
     List<IndexableField> fields = Arrays.asList(doc.getFields(SchemaFields.DOC_ID));
     assertTrue(fields.stream().anyMatch(f -> f.fieldType().indexOptions() != IndexOptions.NONE));
     assertTrue(fields.stream().anyMatch(f -> f.fieldType().docValuesType() != DocValuesType.NONE));
@@ -192,7 +241,7 @@ class FieldMapperTest {
     FieldMapper fm = new FieldMapper(createTestCatalog());
     Document doc =
         fm.toDocument(
-            Map.of(SchemaFields.DOC_ID, "doc-uid", SchemaFields.DOC_UID, "doc-uid#0"));
+            Map.of(SchemaFields.DOC_ID, "doc-uid", SchemaFields.DOC_UID, "doc-uid#0"), null);
     List<IndexableField> fields = Arrays.asList(doc.getFields(SchemaFields.DOC_UID));
     assertTrue(fields.stream().allMatch(f -> f.fieldType().indexOptions() == IndexOptions.NONE));
     assertTrue(fields.stream().anyMatch(f -> f.fieldType().docValuesType() != DocValuesType.NONE));
@@ -220,8 +269,8 @@ class FieldMapperTest {
     float[] vec4 = new float[4];
     Map<String, Object> in = Map.of("vector", vec4);
 
-    assertNotNull(dim4Mapper.toDocument(in), "4-dim vector should work with dim=4 catalog");
-    assertThrows(IllegalArgumentException.class, () -> dim16Mapper.toDocument(in),
+    assertNotNull(dim4Mapper.toDocument(in, null), "4-dim vector should work with dim=4 catalog");
+    assertThrows(IllegalArgumentException.class, () -> dim16Mapper.toDocument(in, null),
         "4-dim vector should fail with dim=16 catalog");
   }
 
@@ -234,7 +283,7 @@ class FieldMapperTest {
         "mime", "application/pdf",
         SchemaFields.DOC_ID, "doc-filter",
         SchemaFields.DOC_UID, "doc-filter#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Verify StringField was added (has IndexOptions != NONE)
     List<IndexableField> mimeFields = Arrays.asList(doc.getFields("mime"));
@@ -279,7 +328,7 @@ class FieldMapperTest {
         "vdu_status", "PENDING",
         SchemaFields.DOC_ID, "doc-vdu-1",
         SchemaFields.DOC_UID, "doc-vdu-1#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // vdu_status should be stored
     assertEquals("PENDING", doc.get("vdu_status"), "vdu_status should be stored");
@@ -302,7 +351,7 @@ class FieldMapperTest {
         "vdu_retry_count", 2,
         SchemaFields.DOC_ID, "doc-retry",
         SchemaFields.DOC_UID, "doc-retry#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Should be stored
     assertEquals("2", doc.get("vdu_retry_count"), "vdu_retry_count should be stored");
@@ -321,7 +370,7 @@ class FieldMapperTest {
         "vdu_processed", true,
         SchemaFields.DOC_ID, "doc-processed",
         SchemaFields.DOC_UID, "doc-processed#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Should be stored as "1" (true)
     String stored = doc.get("vdu_processed");
@@ -337,7 +386,7 @@ class FieldMapperTest {
         "vdu_enrichment", enrichmentJson,
         SchemaFields.DOC_ID, "doc-enrichment",
         SchemaFields.DOC_UID, "doc-enrichment#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Should be stored (text field)
     assertEquals(enrichmentJson, doc.get("vdu_enrichment"),
@@ -351,7 +400,7 @@ class FieldMapperTest {
         "vdu_page_count", 5,
         SchemaFields.DOC_ID, "doc-pages",
         SchemaFields.DOC_UID, "doc-pages#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     assertEquals("5", doc.get("vdu_page_count"), "vdu_page_count should be stored");
   }
@@ -363,7 +412,7 @@ class FieldMapperTest {
         "embedding_status", "PENDING",
         SchemaFields.DOC_ID, "doc-embed",
         SchemaFields.DOC_UID, "doc-embed#1");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Should be stored
     assertEquals("PENDING", doc.get("embedding_status"), "embedding_status should be stored");
@@ -390,7 +439,7 @@ class FieldMapperTest {
     in.put("embedding_status", "PENDING");
     in.put("embedding_retry_count", 0);
 
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     assertEquals("COMPLETED", doc.get("vdu_status"));
     assertEquals("1", doc.get("vdu_retry_count"));
@@ -411,7 +460,7 @@ class FieldMapperTest {
     in.put(SchemaFields.DOC_ID, "doc-mv");
     in.put(SchemaFields.DOC_UID, "doc-mv#1");
     in.put("tags", List.of("Alice", "Bob"));
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     // Should have 2 StringField entries (filter role) and 2 SortedSetDocValuesField entries
     long stringFieldCount = doc.getFields().stream()
@@ -437,7 +486,7 @@ class FieldMapperTest {
     in.put(SchemaFields.DOC_ID, "doc-single");
     in.put(SchemaFields.DOC_UID, "doc-single#1");
     in.put("tags", "OnlyOne");
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     long dvCount = doc.getFields().stream()
         .filter(f -> f.name().equals("tags") && f.fieldType().docValuesType() == DocValuesType.SORTED_SET)
@@ -457,7 +506,7 @@ class FieldMapperTest {
     in.put(SchemaFields.DOC_ID, "doc-empty");
     in.put(SchemaFields.DOC_UID, "doc-empty#1");
     in.put("tags", List.of());
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     long tagFields = doc.getFields().stream().filter(f -> f.name().equals("tags")).count();
     assertEquals(0, tagFields, "Empty list should produce no tag fields");
@@ -480,7 +529,7 @@ class FieldMapperTest {
     in.put(SchemaFields.DOC_ID, "doc-nulls");
     in.put(SchemaFields.DOC_UID, "doc-nulls#1");
     in.put("tags", values);
-    Document doc = fm.toDocument(in);
+    Document doc = fm.toDocument(in, null);
 
     long dvCount = doc.getFields().stream()
         .filter(f -> f.name().equals("tags") && f.fieldType().docValuesType() == DocValuesType.SORTED_SET)
@@ -519,7 +568,7 @@ class FieldMapperTest {
       in.put(SchemaFields.DOC_ID, "doc-splade");
       in.put(SchemaFields.DOC_UID, "doc-splade#1");
       in.put("splade", Map.of("weather", 4.5f, "forecast", 2.1f, "rain", 0.8f));
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
 
       long featureCount = doc.getFields().stream()
           .filter(f -> f.name().equals("splade") && f instanceof FeatureField)
@@ -534,7 +583,7 @@ class FieldMapperTest {
       in.put(SchemaFields.DOC_ID, "doc-clamp");
       in.put(SchemaFields.DOC_UID, "doc-clamp#1");
       in.put("splade", Map.of("extreme", 100.0f, "normal", 5.0f));
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
 
       // Both tokens should be indexed (extreme is clamped, not dropped)
       long featureCount = doc.getFields().stream()
@@ -550,7 +599,7 @@ class FieldMapperTest {
       in.put(SchemaFields.DOC_ID, "doc-zero");
       in.put(SchemaFields.DOC_UID, "doc-zero#1");
       in.put("splade", Map.of("valid", 1.0f, "zero", 0.0f));
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
 
       long featureCount = doc.getFields().stream()
           .filter(f -> f.name().equals("splade") && f instanceof FeatureField)
@@ -565,7 +614,7 @@ class FieldMapperTest {
       in.put(SchemaFields.DOC_ID, "doc-empty-splade");
       in.put(SchemaFields.DOC_UID, "doc-empty-splade#1");
       in.put("splade", Map.of());
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
 
       long featureCount = doc.getFields().stream()
           .filter(f -> f.name().equals("splade") && f instanceof FeatureField)
@@ -580,7 +629,7 @@ class FieldMapperTest {
       in.put(SchemaFields.DOC_ID, "doc-null-splade");
       in.put(SchemaFields.DOC_UID, "doc-null-splade#1");
       in.put("splade", null);
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
 
       long featureCount = doc.getFields().stream()
           .filter(f -> f.name().equals("splade") && f instanceof FeatureField)
@@ -599,7 +648,7 @@ class FieldMapperTest {
           "vdu_status", status,
           SchemaFields.DOC_ID, "doc-" + status.toLowerCase(java.util.Locale.ROOT),
           SchemaFields.DOC_UID, "doc-" + status.toLowerCase(java.util.Locale.ROOT) + "#1");
-      Document doc = fm.toDocument(in);
+      Document doc = fm.toDocument(in, null);
       assertEquals(status, doc.get("vdu_status"),
           "Status " + status + " should be stored correctly");
     }

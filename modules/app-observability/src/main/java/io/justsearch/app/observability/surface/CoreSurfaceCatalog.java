@@ -163,22 +163,11 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   public static final String SYSTEM_MOUNT_TAG = "jf-system-surface";
 
   /**
-   * Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard: a read-only DEVELOPER projection of
-   * the discipline-gate kernel (gate roster · exception ceiling · mutation-strength floors · class-size
-   * debt) served by {@code GET /api/governance/state}. DEEPLINK (off-rail, reached by URL / command
-   * palette) — a dev/operator legibility tool, not a workspace surface. Empty consumes ⟹ PRODUCT
-   * altitude (no altitude-conflict; the state is fetched out-of-band, cf. SystemSelfView / Activity).
-   */
-  public static final SurfaceRef GOVERNANCE_SURFACE_ID = new SurfaceRef("core.governance-surface");
-
-  public static final String GOVERNANCE_MOUNT_TAG = "jf-governance-view";
-
-  /**
    * Tempdoc 583 §D.3b — the API explorer: a read-only DEVELOPER projection of the self-describing
    * route manifest ({@code GET /api/meta/routes}, §D.3a) — the live HTTP surface grouped by cohort
    * with each route's required capability. DEEPLINK (off-rail, reached by URL / command palette) — a
-   * dev/operator legibility tool, sibling of the governance dashboard. Empty consumes ⟹ PRODUCT
-   * altitude (the manifest is fetched out-of-band, cf. GovernanceView).
+   * dev/operator legibility tool. Empty consumes ⟹ PRODUCT altitude (the manifest is fetched
+   * out-of-band, cf. SystemSelfView / Activity).
    */
   public static final SurfaceRef API_EXPLORER_SURFACE_ID =
       new SurfaceRef("core.api-explorer-surface");
@@ -186,12 +175,9 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   public static final String API_EXPLORER_MOUNT_TAG = "jf-api-explorer-view";
 
   /**
-   * Slice 491 §9.D Phase E C3 — Ask surface (RAG-grounded Q&A via the
-   * {@code core.rag-ask} ConversationShape). New rail entry ratified
-   * 2026-05-14 per §9.F: every USER-audience shape projects to a
-   * discoverable surface; Ask is conceptually a top-level user action
-   * (talk to the local AI about your docs), distinct from Brain (which
-   * configures the AI runtime).
+   * Slice 491 §9.D Phase E C3 — compatibility address for grounded Ask
+   * ({@code core.rag-ask}). The unified Search surface is the canonical
+   * rail destination; this DEEPLINK surface preserves mode-specific links.
    */
   public static final SurfaceRef ASK_SURFACE_ID = new SurfaceRef("core.ask-surface");
 
@@ -205,7 +191,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
    */
   public static final String CHAT_SHAPE_MOUNT_TAG = "jf-chat-shape-mount";
 
-  /** ConversationShape consumed by the Ask surface. */
+  /** ConversationShape selected by the Ask compatibility surface. */
   private static final ConversationShapeRef SHAPE_RAG_ASK =
       new ConversationShapeRef("core.rag-ask");
 
@@ -350,9 +336,12 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
   /** Slice 449 phase 7c — TABULAR Resource that backs Library's row data. */
   private static final ResourceRef RES_INDEXED_ROOTS = new ResourceRef("core.indexed-roots");
 
-  /** Slice 451 phase 9 — Help's only backend interaction. */
+  /** Slice 451 phase 9 — Help's full diagnostics-bundle interaction. */
   private static final OperationRef OP_EXPORT_DIAGNOSTICS =
       new OperationRef("core.export-diagnostics");
+  /** Tempdoc 899 D5 — Help's bounded, transient bug-report summary interaction. */
+  private static final OperationRef OP_COPY_DIAGNOSTIC_SUMMARY =
+      new OperationRef("core.copy-diagnostic-summary");
 
   /** Slice 452 phase 9 — Brain's set of consumed Operations. */
   private static final OperationRef OP_START_AI_INSTALL = new OperationRef("core.start-ai-install");
@@ -405,7 +394,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
               Placement.DEEPLINK,
               new SurfaceConsumes(
                   /* resources */ Set.of(),
-                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS),
+                  /* operations */ Set.of(OP_EXPORT_DIAGNOSTICS, OP_COPY_DIAGNOSTIC_SUMMARY),
                   /* prompts */ Set.of(),
                   /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
               HELP_MOUNT_TAG,
@@ -441,23 +430,6 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                   /* prompts */ Set.of(),
                   /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
               PRESENTATION_EDITOR_MOUNT_TAG,
-              Provenance.core("1.0")),
-          // Tempdoc 576 §15 / 530 Layer 3-4 — the governance dashboard (read-only DEVELOPER projection
-          // of the discipline-gate kernel; GET /api/governance/state). DEEPLINK, empty consumes ⟹
-          // PRODUCT altitude (the state is fetched out-of-band, like SystemSelfView's live authorities).
-          new Surface(
-              GOVERNANCE_SURFACE_ID,
-              Presentation.of(
-                  new I18nKey("registry-surface.governance-surface.label"),
-                  new I18nKey("registry-surface.governance-surface.description")),
-              Audience.DEVELOPER,
-              Placement.DEEPLINK,
-              new SurfaceConsumes(
-                  /* resources */ Set.of(),
-                  /* operations */ Set.of(),
-                  /* prompts */ Set.of(),
-                  /* diagnosticChannels */ Set.<DiagnosticChannelRef>of()),
-              GOVERNANCE_MOUNT_TAG,
               Provenance.core("1.0")),
           // Tempdoc 583 §D.3b — the API explorer (read-only route-manifest projection). DEEPLINK
           // dev/operator tool; empty consumes ⟹ PRODUCT altitude (manifest fetched out-of-band).
@@ -539,7 +511,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                               "/docIds", "unified-chat", "docIds"),
                           new io.justsearch.agent.api.registry.StateBinding(
                               "/affordance", "unified-chat", "affordance"))))),
-          // Slice 491 §9.D Phase E C3 — Ask surface. New rail entry for the
+          // Slice 491 §9.D Phase E C3 — Ask compatibility surface for the
           // RAG-grounded Q&A shape. Audience composition rule (slice 449 §0
           // D2): provenance CORE → no floor lift; consumes no DiagnosticChannels
           // → no channel-floor lift; effective audience = USER. The mount
@@ -561,7 +533,7 @@ public final class CoreSurfaceCatalog implements SurfaceCatalog {
                   /* conversationShapes */ Set.of(SHAPE_RAG_ASK)),
               CHAT_SHAPE_MOUNT_TAG,
               Provenance.core("1.0"),
-              // Slice 496 §3.A: state schema so the Ask surface accepts
+              // Slice 496 §3.A: state schema so the Ask compatibility surface accepts
               // pre-filled context from other surfaces via the existing
               // store/snapshot/NavigationHandler system. The FE 'ask' store
               // (askChatState.ts) receives {query, docIds} from the snapshot.

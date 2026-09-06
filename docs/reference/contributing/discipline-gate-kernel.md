@@ -3,7 +3,7 @@ title: Discipline-Gate Kernel
 type: reference
 status: stable
 created: 2026-05-20
-description: "Substrate for ratchet-style hygiene gates (npm-audit, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634."
+description: "Substrate for ratchet-style hygiene gates (npm-advisory identities, consumer-drift, ssot-catalog-sync, test-efficacy, …). Tempdoc 530. The size/count ratchets (class-size, clone, ui-bundle, exception-count) were removed for go-public — tempdoc 634; five more were replaced by commodity tools — tempdoc 930 chunk F."
 ---
 
 # Discipline-Gate Kernel
@@ -199,16 +199,47 @@ dropped id would report a pass for a gate that never ran).
 
 | Gate id | Baseline | Source | Auto-rebalance |
 |---|---|---|---|
-| `npm-audit` | `scripts/ci/npm-audit-ratchet-baseline.v1.json` | `tmp/npm-audit-report.json` | yes (writes lower counts) |
-| `prose-tier-register` | `docs/reference/contributing/tier-register.md` | the register itself + `governance/registry.v1.json` | no (meta-gate; tier changes require a declared changeset) |
+| `npm-audit` (historical id) | `scripts/ci/github-advisory-baseline.v1.json` | `tmp/github-advisory-report.json` | yes (removes resolved/improved identities) |
 | `consumer-drift` | `gates/consumer-drift/slots.json` | per-slot `includeGlobs` (production callsites) | no (a populated slot's floor is raised by adding consumers, not by editing the baseline) |
 | `ssot-catalog-sync` | `gates/ssot-catalog-sync/mirrors.json` | the declared root↔classpath catalog file pairs | no (the invariant is "copies match"; fix by syncing, not editing a baseline) |
 | `test-efficacy` | `gates/test-efficacy/strength-baseline.v1.json` | `tmp/pit-strength-report.v1.json` (produced by `scripts/ci/report-pit-strength.mjs --run`) | yes (raises `minStrength`, lowers `maxNoCoverage`) |
 
-(The registry holds further gate kinds — `todo-fixme`, `ts-any`, `test-to-code`,
-`module-deps`, `adr-coverage`, `tempdoc-wiring`, `wire`, `dead-code` — listed in
-`governance/registry.v1.json`; the table above names the representative
-ratchet-file gates.)
+(The registry holds further gate kinds — `module-deps`, `adr-coverage`,
+`tempdoc-wiring`, `wire`, `dead-code`, `atom-fork-ratchet` and the register
+gates — listed in `governance/registry.v1.json`; the table above names the
+representative ratchet-file gates.)
+
+### Retired to commodity tools (tempdoc 930 chunk F)
+
+Five gates left the kernel because an off-the-shelf tool already did the job,
+and one was dropped outright. Nothing here is a coverage reduction the kernel
+still owns — each row names where the property now lives:
+
+| Retired gate | Where the property lives now |
+|---|---|
+| `ts-any` | ESLint `@typescript-eslint/no-explicit-any: error` in `modules/ui-web/eslint.config.js`, with `modules/ui-web/eslint-suppressions.json` (ESLint bulk suppressions) as the ratchet. The lint parses, so it cannot score the English word "any" in a comment — the false-positive class the gate shipped with. |
+| `todo-fixme` | Four surfaces, no gap left. **ui-web**: ESLint `no-warning-comments` in `modules/ui-web/eslint.config.js` (CI `Public claims`, step "Frontend lint", `npm --prefix modules/ui-web run lint`, now `eslint . --max-warnings=0` so an unused `eslint-disable` fails too). **`scripts/**` + `packaging/**` JS**: ESLint `no-warning-comments` in the root `eslint.config.mjs` (step "Script lint", `npm run lint:scripts`), ratcheted by the root `eslint-suppressions.json` — 1 marker pinned. **`*.ps1`**: `scripts/ci/check-ps1-warning-comments.mjs` (same step, `npm run lint:ps1`), which ESLint cannot parse; ratcheted by `scripts/ci/ps1-warning-comments-suppressions.json` — 1 marker pinned. **Java**: the PMD `CommentContent` rule, carried by all three rulesets in `config/pmd/` (`ruleset.xml`, `ruleset-cli-tools.xml`, `ruleset-tests.xml` — kept identical on this rule by `scripts/ci/check-pmd-ruleset-sync.mjs`); `pmdAll` runs in `check`/`build` by default and as the `Static analysis (PMD, all source sets)` step of CI's required `Build (no model blobs)` check. All four parse, so unlike the gate's regex they cannot score the marker word inside a string literal, an identifier or a URL. Follow-up 2 of tempdoc 930 §22.2 wired PMD over `main` (clearing 130 pre-existing violations of the ruleset's other rules); follow-up 3 wired the script and PowerShell surfaces; follow-up 10 extended PMD to every Java TEST source set (clearing 569 more, and finding 2 parked markers there), so no Java surface is left uncovered. |
+| `dead-code-jvm` | ArchUnit's own `FreezingArchRule` in `WholeProgramDeadCodeTest`, whose committed store `modules/dead-code-audit/archunit_store/` IS the former `gates/dead-code-jvm/baseline.txt`. It fails in the test task that already builds the classpath instead of in a CI step reading a JSON side effect. |
+| `style-literal-ratchet` | `scripts/ci/check-style-literal-ratchet.mjs`, unchanged and still baselined — it moved from the `ui-web-gates` recipe's kernel-gate line to its script line, so `run-ui-web-gates.mjs` still runs it. Only the kernel wrapper went. |
+| `test-to-code` | Nothing. A per-module test-LOC/main-LOC ratio was a proxy metric with no defect record behind it; `test-efficacy` (PIT mutation strength) measures the property it was standing in for. |
+| `prose-tier-register` | Nothing. The register doc it guarded (the prose-rule enforcement-tier table) was deleted with it; its 18 changesets are preserved under `docs/tempdocs/930-evidence/retired-changesets/prose-tier-register/`. |
+
+`npm-audit` was examined for the same treatment and **kept**: `npm audit
+--audit-level=high` exits non-zero on today's lockfiles (11 high advisories in
+the root tree), and ADR-0044's 2026-09-04 amendment rejects npm's bulk-advisory
+POST transport on measured evidence. The commodity replacement is not available.
+
+The historical **`npm-audit`** gate id reads exact versions from the root, `ui-web`,
+shell, runtime-client, and wire-contract package locks and queries GitHub's Global
+Security Advisories API with bounded, retryable, paginated GETs. Its baseline is a
+set of accepted high/critical GHSA identities plus each accepted severity. A new
+identity or upward severity change cannot be cancelled by a different advisory
+disappearing, which was possible under the superseded count baseline. Provider or
+target unavailability fails closed. Matching workflow installs use `--audit=false`
+because npm's install-time advisory POST is duplicate evidence with an independent
+transport timeout; `check-workflow-npm-audit-policy.mjs` prevents an implicit audit
+from returning. Repository vulnerability alerts and automated security updates
+provide ambient monitoring; the kernel gate remains the per-PR lockfile fact.
 
 The **`test-efficacy`** gate (tempdoc 555) ratchets per-seam mutation **test-strength**
 (killed/covered, with `TIMED_OUT` as killed) plus a per-seam `maxNoCoverage` ceiling, over the
@@ -218,7 +249,7 @@ into `check` or the public hosted `CI` fact lanes. Produce fresh evidence manual
 `node scripts/ci/report-pit-strength.mjs --run`, then run
 `node scripts/governance/run.mjs --gate test-efficacy --mode gate`. The cheap
 `scripts/ci/check-logic-seams.mjs` register-integrity validator runs in the normal gate job
-(every CI run + locally). The `seam-hint` PostToolUse hook is the authoring-time oracle.
+(every CI run + locally) — run it directly at authoring time after editing a registered seam.
 
 The kernel briefly carried a non-ratchet, coverage-style gate, `independent-review`
 (tempdoc 550 thesis V), plus a presentation-work sibling `ux-audit-closure`
@@ -266,9 +297,8 @@ reading an older tempdoc that says to sanity-check a gate with
 workaround is what it was working around.
 
 If the baseline file itself was
-relaxed in the PR — an npm-audit severity count increased, a
-prose-tier-register row's tier
-changed, a consumer-drift slot's `expectedMin` lowered or a slot removed
+relaxed in the PR — an npm advisory identity or severity was accepted, a
+consumer-drift slot's `expectedMin` lowered or a slot removed
 (`silent-floor-drop` / `silent-slot-removal`) — the gate fails with the gate's
 `silent-<change>` rule unless a classified changeset is present.
 
@@ -284,18 +314,19 @@ actually enforces today, stated with its gaps rather than as a slogan:
   changeset, `declared-growth-without-repin` with one. No gaps.
 - **A pin RAISE without a changeset fails only where a baseline-shift block
   exists** — `config-surface`, `dead-code`, `module-deps`, `npm-audit`,
-  `test-efficacy`, `todo-fixme`. It is **not** detected by `ts-any`,
-  `test-to-code`, `dead-code-jvm`, `style-literal-ratchet` or
-  `atom-fork-ratchet`, which have no such block: raising a `ts-any` row 1 → 9
-  by hand yields only `rebalance-available`.
+  `test-efficacy`. It is **not** detected by `atom-fork-ratchet`, which has no
+  such block: raising one of its rows by hand yields only `rebalance-available`.
+  (Tempdoc 930 chunk F retired four of the five gates that used to sit on this
+  gap — `ts-any`, `test-to-code`, `dead-code-jvm`, `style-literal-ratchet` — so
+  it now has one occupant, not five.)
 - **Even where the block exists, a NEW row is not a raise.** The comparison is
   per row against the same row at the PR base, and `priorPin === undefined`
-  skips (`dead-code/enforcer.mjs`, `todo-fixme/enforcer.mjs`) — deliberately, so
-  a genuinely new file is not read as "everything grew", but it does mean a row
-  added at any value is unchecked baseline-side.
+  skips (`dead-code/enforcer.mjs`) — deliberately, so a genuinely new file is
+  not read as "everything grew", but it does mean a row added at any value is
+  unchecked baseline-side.
 
 So the closure is complete on the live-value axis and partial on the
-baseline-edit axis. Extending baseline-shift detection to the five gates that
+baseline-edit axis. Extending baseline-shift detection to the gate that
 lack it is tracked in tempdoc 918 §G.
 
 ## Truth-table shape contract
@@ -314,9 +345,11 @@ Gates that don't conform fail-fast before they run.
   the substrate (`scripts/governance/lib/`) but the kernels are
   semantically distinct.
 - **It does not enforce the meta-loop** (every prose rule named in
-  `CLAUDE.md` / `.claude/rules/` is tagged with its enforcement tier).
-  That data is seeded at `docs/reference/contributing/tier-register.md`; the gate that
-  validates it is a follow-up slice per tempdoc 530.
+  `CLAUDE.md` / `.claude/rules/` is tagged with its enforcement tier). The
+  `prose-tier-register` gate and its register tried to, and tempdoc 930 §19.3 F3
+  retired both: 18 changesets of bookkeeping, no defect the tier tag prevented.
+  What survives is the `hook-integrity` gate, which checks the thing the tier
+  claim was a proxy for — that a hook actually loads and bites.
 - **It is not a substitute for human-judgment audits** (527-style
   substrate-consumer audits). The kernel catches *recurring gross failures*;
   the human still calibrates edges.
@@ -353,5 +386,4 @@ a row with a met flip condition should be flipped or its condition honestly revi
 - tempdoc 530 (class-size ratchet automation) — design tempdoc
 - Current gate registry entries describe the active enforcement surfaces.
 - `scripts/governance/gates/wire/` — the wire-Category gate (formerly `scripts/contract-governance/`, retired Pass-7 Phase F)
-- `docs/reference/contributing/tier-register.md` — prose-rule enforcement-tier register
 - tempdoc 683 — the hardening batch that introduced the softness portfolio

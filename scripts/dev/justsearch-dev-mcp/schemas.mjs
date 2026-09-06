@@ -1,4 +1,4 @@
-import * as z from 'zod/v4';
+import { z } from './runtime.generated.mjs';
 
 export const CleanModeSchema = z.enum(['none', 'soft', 'hard']);
 export const OutputModeSchema = z.enum(['full', 'compact']);
@@ -655,21 +655,38 @@ const ForeignRunSchema = z
   })
   .passthrough();
 
+const ProbeObservationSchema = z
+  .object({
+    state: z.enum(['REACHABLE', 'REFUSED', 'TIMED_OUT', 'ERROR']),
+    statusCode: z.number().int().nullable().optional(),
+    error: ToolErrorSchema.optional(),
+  })
+  .passthrough();
+
 export const QuickHealthOutputSchema = z
   .object({
-    running: z.boolean(),
+    // Tempdoc 925: false is reserved for proven absence/stoppage. Unknown record/probe state is
+    // null so a consumer cannot translate an unreadable register into "the stack is free".
+    running: z.boolean().nullable(),
+    runState: z.enum(['ACTIVE', 'ABSENT', 'UNKNOWN']),
+    runStateError: ToolErrorSchema.optional(),
     runId: z.string().meta({ format: 'uuid' }).nullable(),
     apiPort: z.number().int().positive().nullable(),
     uiPort: z.number().int().positive().nullable(),
     httpReady: z.boolean().nullable(),
     workerReady: z.boolean().nullable(),
     aiActive: z.boolean().nullable(),
+    probes: z.object({
+      api: ProbeObservationSchema.optional(),
+      worker: ProbeObservationSchema.optional(),
+      inference: ProbeObservationSchema.optional(),
+    }).optional(),
     // Tempdoc 844 B3: backends observed but NOT owned by this dev-runner. The tri-state is
     // load-bearing — `null` = probing was off or the probe failed (I did not look), `[]` = I looked
     // and found nothing, a non-empty array = these are running and none of them is my run.
     foreignRuns: z.array(ForeignRunSchema).nullable(),
     foreignRunsNotice: z.string().optional(),
-    inferenceOrphan: z.boolean().optional(),
+    inferenceOrphan: z.boolean().nullable().optional(),
     ownership: OwnershipProjectionSchema.optional(),
     freshness: FreshnessSchema.optional(),
     model: QuickHealthModelSchema.optional(),
@@ -716,6 +733,8 @@ export const PreflightInputSchema = z.object({
 export const PreflightOutputSchema = z
   .object({
     ready: z.boolean(),
+    // Compatibility booleans remain for older harnesses. `checkStates` is authoritative because
+    // false cannot distinguish a verified failure from an observation error.
     checks: z.object({
       workerDist: z.boolean(),
       headDist: z.boolean(),
@@ -724,6 +743,14 @@ export const PreflightOutputSchema = z
       noInferenceOrphan: z.boolean(),
       // Tempdoc 618 §3: is the llama-server runtime resolvable for `ai_activate`?
       llamaVariantResolvable: z.boolean(),
+    }),
+    checkStates: z.object({
+      workerDist: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
+      headDist: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
+      noStaleRun: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
+      modelsDir: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
+      noInferenceOrphan: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
+      llamaVariantResolvable: z.enum(['PASS', 'FAIL', 'UNKNOWN', 'SKIPPED']),
     }),
     // Tempdoc 844 B1: which checkout the dist checks actually looked at, so the answer is
     // self-describing rather than implicitly "wherever this server happens to run".

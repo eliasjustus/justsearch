@@ -465,7 +465,7 @@ public final class SearchResponseBuilder {
 
     // Tempdoc 775 step 1: flag-gated answer-bearing EvidenceSpan selection for the delivery excerpt.
     // Default off → the IDF-only computeExcerptRegions path below runs unchanged (byte-for-byte).
-    io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig =
+    ResolvedConfig resolvedConfig =
         resolvedConfigSupplier != null ? resolvedConfigSupplier.get() : null;
     EvidenceSpanSelector evidenceSelector =
         buildEvidenceSelector(resolvedConfig, includeExcerpts, analyzer);
@@ -645,6 +645,22 @@ public final class SearchResponseBuilder {
   }
 
   private void resolveParentMetadata(String parentDocId, SearchResult.Builder resultBuilder) {
+    // Tempdoc 915 Phase 2 PR-B: feedback is keyed by the stable parent UID. Chunk-only hits cannot
+    // obtain it from the chunk stored-field allowlist, so carry it through the existing parent
+    // metadata enrichment and generic fields map. This is not a new protobuf or frontend field;
+    // whole-document hits already carry the same stored field.
+    String docUid = documentFieldOps.getDocumentField(parentDocId, SchemaFields.DOC_UID);
+    if (docUid != null && !docUid.isEmpty()) {
+      resultBuilder.putFields(SchemaFields.DOC_UID, docUid);
+    }
+    // Tempdoc 931 §C.6: feedback is keyed by (uid, content revision), so the revision travels the
+    // same route as the uid. A whole-document hit already carries it through the stored-field
+    // projection; only a chunk hit needs it lifted from its parent.
+    String contentRevision =
+        documentFieldOps.getDocumentField(parentDocId, SchemaFields.CONTENT_SHA256);
+    if (contentRevision != null && !contentRevision.isEmpty()) {
+      resultBuilder.putFields(SchemaFields.CONTENT_SHA256, contentRevision);
+    }
     String title = documentFieldOps.getDocumentField(parentDocId, SchemaFields.TITLE);
     if (title != null && !title.isEmpty()) {
       resultBuilder.putFields(SchemaFields.TITLE, title);
@@ -672,7 +688,7 @@ public final class SearchResponseBuilder {
    * treats a comma-joined value as one whole unit: coarser budget accounting, never a cut name.
    */
   private Map<String, Map<String, String>> resolveChunkParentEntities(
-      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      ResolvedConfig resolvedConfig,
       List<LuceneRuntimeTypes.SearchHit> hits) {
     if (resolvedConfig == null
         || resolvedConfig.search().mcpEntityCarriage() == null
@@ -726,7 +742,7 @@ public final class SearchResponseBuilder {
    * which case the delivery excerpt falls back to the byte-for-byte IDF-only path.
    */
   private EvidenceSpanSelector buildEvidenceSelector(
-      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      ResolvedConfig resolvedConfig,
       boolean includeExcerpts,
       Analyzer analyzer) {
     if (resolvedConfig == null || !includeExcerpts || analyzer == null) return null;
@@ -740,15 +756,15 @@ public final class SearchResponseBuilder {
         signal, terms -> textQueryOps.getTermDocFreqs(SchemaFields.CONTENT, terms), numDocs);
   }
 
-  /** Concatenates a hit's stored NER entity-text fields for the NER-membership entity signal. */
-  private static String concatDocEntityText(Map<String, String> fields) {
+  /** Concatenates a hit's stored raw NER fields for the NER-membership entity signal. */
+  static String concatDocEntityText(Map<String, String> fields) {
     if (fields == null || fields.isEmpty()) return "";
     StringBuilder sb = new StringBuilder();
     for (String f :
         List.of(
-            SchemaFields.ENTITY_PERSONS_TEXT,
-            SchemaFields.ENTITY_ORGANIZATIONS_TEXT,
-            SchemaFields.ENTITY_LOCATIONS_TEXT)) {
+            SchemaFields.ENTITY_PERSONS_RAW,
+            SchemaFields.ENTITY_ORGANIZATIONS_RAW,
+            SchemaFields.ENTITY_LOCATIONS_RAW)) {
       String v = fields.get(f);
       if (v != null && !v.isBlank()) sb.append(v).append(' ');
     }

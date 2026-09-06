@@ -47,6 +47,8 @@ import io.justsearch.ipc.ClearFailedJobsRequest;
 import io.justsearch.ipc.ClearFailedJobsResponse;
 import io.justsearch.ipc.ResetIndexRequest;
 import io.justsearch.ipc.ResetIndexResponse;
+import io.justsearch.ipc.SettleIndexRequest;
+import io.justsearch.ipc.SettleIndexResponse;
 import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.UpdatePathsRequest;
@@ -100,7 +102,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private static final Logger log = LoggerFactory.getLogger(GrpcIngestService.class);
   /** Maximum chars stored in `content_preview` (result list snippet field). */
   private static final int CONTENT_PREVIEW_MAX_CHARS =
-      io.justsearch.indexerworker.rag.ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
+      ChunkDocumentWriter.CONTENT_PREVIEW_MAX_CHARS;
 
   /** Maximum files allowed in a single batch request. */
   private static final int MAX_BATCH_SIZE = 10_000;
@@ -121,7 +123,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private final JobQueue jobQueue;
   private final IndexingLoop indexingLoop;
-  private final WorkerSignalBus signalBus;
   /** Tempdoc 885 item 3: foreground-contention duty cycle for the prune / sync walks. */
   private final IndexingPacing indexingPacing;
   private final io.justsearch.adapters.lucene.runtime.RunningRuntime ingestLifecycle;
@@ -132,6 +133,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final IngestSwitchBufferOps switchBufferOps;
   private final MigrationControlOps migrationOps;
   private final WorkerUpgradeQuiescence upgradeQuiescence;
+  private final IndexSettleOps settleOps;
   private RootWatcherRegistry rootWatcherRegistry = new RootWatcherRegistry();
 
   // Tempdoc 419 / T5.3 (ADR-0028): scoped reverse-lookup store. Defaults to NOOP so any
@@ -139,6 +141,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   // injects the real SqlitePathResolutionStore via setPathResolutionStore at boot.
   private io.justsearch.indexerworker.path.PathResolutionStore pathResolutionStore =
       io.justsearch.indexerworker.path.PathResolutionStore.NOOP;
+  private io.justsearch.indexerworker.identity.DocumentIdentityStore documentIdentityStore =
+      io.justsearch.indexerworker.identity.DocumentIdentityStore.UNAVAILABLE;
 
   private static final String VDU_MAX_RETRIES_EXCEEDED_ERROR = "Max retries exceeded";
   private static final String VDU_MAX_RETRIES_EXCEEDED_ENRICHMENT =
@@ -170,7 +174,6 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       Runnable restartWorkerCallback) {
     this.jobQueue = jobQueue;
     this.indexingLoop = indexingLoop;
-    this.signalBus = signalBus;
     this.indexingPacing =
         java.util.Objects.requireNonNull(indexingPacing, "indexingPacing");
     this.ingestLifecycle = ingestLifecycle;
@@ -178,6 +181,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
     this.upgradeQuiescence =
         new WorkerUpgradeQuiescence(jobQueue, indexingLoop, this.indexGenerationManager);
+    this.settleOps =
+        new IndexSettleOps(ingestLifecycle, this.indexGenerationManager, this.upgradeQuiescence);
     io.justsearch.adapters.lucene.runtime.IndexCountOps ingestCountOps =
         ingestLifecycle != null ? ingestLifecycle.indexCountOps() : null;
     io.justsearch.adapters.lucene.runtime.IndexCountOps searchCountOps =
@@ -212,7 +217,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         ingestLifecycle != null ? ingestLifecycle.pruneOps() : null,
         ingestLifecycle != null ? ingestLifecycle.commitOps() : null,
         jobQueue,
-        this.indexingPacing);
+        this.indexingPacing,
+        // Read through a supplier: the identity store is wired by setDocumentIdentityStore AFTER
+        // this constructor runs, so capturing the field here would capture the UNAVAILABLE sentinel.
+        new ConfirmedDeletionMarker(() -> this.documentIdentityStore));
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
   }
@@ -246,7 +254,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private static void respondUpgrade(
       StreamObserver<UpgradeQuiescenceResponse> responseObserver,
-      java.util.function.Supplier<UpgradeQuiescenceResponse> action) {
+      Supplier<UpgradeQuiescenceResponse> action) {
     try {
       responseObserver.onNext(action.get());
       responseObserver.onCompleted();
@@ -401,6 +409,20 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void setResolvedConfigSupplier(
       Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier) {
     statusOps.setResolvedConfigSupplier(supplier);
+    this.resolvedConfigSupplier = supplier;
+  }
+
+  // Tempdoc 931 §E item 8: kept here too (not only forwarded to statusOps) so the VDU chunk
+  // regeneration path can read rag.chunk_splade.enabled from the LIVE config on every write.
+  private volatile Supplier<io.justsearch.configuration.resolved.ResolvedConfig>
+      resolvedConfigSupplier;
+
+  /** {@code rag.chunk_splade.enabled}; absent config reads as the flag's own default (false). */
+  private boolean chunkSpladeEnabled() {
+    Supplier<io.justsearch.configuration.resolved.ResolvedConfig> supplier = resolvedConfigSupplier;
+    io.justsearch.configuration.resolved.ResolvedConfig config =
+        supplier == null ? null : supplier.get();
+    return config != null && config.rag() != null && config.rag().chunkSpladeEnabled();
   }
 
   private <T> boolean replyIfIndexRuntimeUnavailable(
@@ -470,6 +492,14 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void runIndexGc(IndexGcRequest request, StreamObserver<IndexGcResponse> responseObserver) {
     try (var ignored = openRequestMdc()) {
       migrationOps.runIndexGc(request, responseObserver);
+    }
+  }
+
+  @Override
+  public void settleIndex(
+      SettleIndexRequest request, StreamObserver<SettleIndexResponse> responseObserver) {
+    try (var ignored = openRequestMdc()) {
+      settleOps.settleIndex(request, responseObserver);
     }
   }
 
@@ -754,6 +784,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // Overwrite content, language, embedding status; regenerate chunks
         String preview = contentPreview(extractedContent);
         updates.put(SchemaFields.CONTENT, extractedContent);
+        // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+        updates.put(
+            SchemaFields.CONTENT_SHA256,
+            io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
         updates.put(SchemaFields.CONTENT_PREVIEW, preview);
         updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
         updates.put(SchemaFields.VDU_PROCESSED, "true");
@@ -802,6 +836,10 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           if (!extractedContent.isBlank()) {
             String preview = contentPreview(extractedContent);
             updates.put(SchemaFields.CONTENT, extractedContent);
+            // Tempdoc 931 §C.6: the content revision moves with the content it describes.
+            updates.put(
+                SchemaFields.CONTENT_SHA256,
+                io.justsearch.indexing.chunking.ChunkParentRevision.sha256Hex(extractedContent));
             updates.put(SchemaFields.CONTENT_PREVIEW, preview);
             updates.put(SchemaFields.LANGUAGE, resolveLanguage(preview));
             updates.put(SchemaFields.EXTRACTION_METHOD, SchemaFields.EXTRACTION_METHOD_VDU);
@@ -898,7 +936,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       return 0;
     }
     return ChunkDocumentWriter.regenerateChunksFromExistingParent(
-        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId, content);
+        ingestLifecycle.documentFieldOps(), ingestLifecycle.indexingCoordinator(), parentDocId,
+        content, chunkSpladeEnabled());
   }
 
   @Override
@@ -1477,16 +1516,43 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
       return;
     }
 
+    // Rename is a two-authority mutation (identity store plus Lucene). Unlike simple path
+    // upserts/deletes, the existing switch buffer cannot replay both halves atomically. Refuse
+    // during the narrow cutover fence before touching either authority and let the caller retry.
+    if (switchBufferOps.isSwitching()) {
+      IngestSwitchBufferOps.replySwitchingUnavailable(responseObserver);
+      return;
+    }
+
     try {
       int updatedCount = 0;
       List<String> failedPaths = new ArrayList<>();
 
       for (PathMapping mapping : request.getMappingsList()) {
-        String oldPath = PathNormalizer.normalizePath(mapping.getOldPath());
-        String newPath = PathNormalizer.normalizePath(mapping.getNewPath());
+        String rawOldPath = mapping.getOldPath();
+        String rawNewPath = mapping.getNewPath();
+        if (rawOldPath.isBlank() || rawNewPath.isBlank()) {
+          failedPaths.add(rawOldPath);
+          continue;
+        }
+        String oldPath = PathNormalizer.normalizeKey(Path.of(rawOldPath));
+        String newPath = PathNormalizer.normalizeKey(Path.of(rawNewPath));
+
+        String oldPathHash =
+            io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(oldPath);
+        String newPathHash =
+            io.justsearch.indexerworker.identity.DocumentIdentityStore.pathHash(newPath);
+        var identityRekey =
+            documentIdentityStore.rekey(oldPathHash, newPathHash, System.currentTimeMillis());
 
         int count = ingestLifecycle.indexingCoordinator().updateDocumentPaths(oldPath, newPath);
-        if (count > 0) {
+        // Green may not contain the document yet while Blue still serves it. Moving the durable
+        // identity is therefore a successful rename even when this generation has no Lucene row.
+        // Store-first is deliberate: if Lucene throws after the move, the RPC fails and retry or
+        // boot reconciliation converges from the store-authoritative uid without ever re-minting.
+        if (identityRekey
+                != io.justsearch.indexerworker.identity.DocumentIdentityStore.RekeyResult.NOT_FOUND
+            || count > 0) {
           updatedCount++;
         } else {
           failedPaths.add(mapping.getOldPath());
@@ -1783,6 +1849,15 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   public void setPathResolutionStore(io.justsearch.indexerworker.path.PathResolutionStore store) {
     this.pathResolutionStore =
         store == null ? io.justsearch.indexerworker.path.PathResolutionStore.NOOP : store;
+  }
+
+  /** Wires the durable authority that preserves document identity across path renames. */
+  public void setDocumentIdentityStore(
+      io.justsearch.indexerworker.identity.DocumentIdentityStore store) {
+    this.documentIdentityStore =
+        store == null
+            ? io.justsearch.indexerworker.identity.DocumentIdentityStore.UNAVAILABLE
+            : store;
   }
 
   @Override

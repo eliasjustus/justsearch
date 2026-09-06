@@ -126,7 +126,6 @@ async function presentAndExecute(
   try {
     detail = await client.peekPending(pendingId);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('Tempdoc 655: failed to fetch pending authorization detail', err);
     return;
   }
@@ -169,7 +168,6 @@ async function presentAndExecute(
   try {
     stillPending = await client.peekPending(pendingId);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('Tempdoc 655 fix pass: re-peek before approve failed, proceeding anyway', err);
   }
   if (!stillPending) {
@@ -212,7 +210,6 @@ async function presentAndExecute(
  * the time the outcome is known).
  */
 function reportExecutionFailure(prompt: AuthorizationPrompt, reason: string): void {
-  // eslint-disable-next-line no-console
   console.warn('Tempdoc 655 fix pass: pending authorization approved but execution failed', reason);
   emitEphemeralToast({
     message: `Approval for '${prompt.operationId}' failed: ${reason}`,

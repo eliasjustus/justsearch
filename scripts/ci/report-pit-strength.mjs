@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * report-pit-strength — produces the `pit-strength-report.v1` artifact the test-efficacy gate reads
- * (tempdoc 555 Pillar C), mirroring scripts/ci/report-npm-audit.mjs (which runs the tool itself).
+ * (tempdoc 555 Pillar C), mirroring the CI report-producer pattern (which runs the tool itself).
  *
  * For each seam in governance/logic-seams.v1.json it parses that seam's module PIT `mutations.xml`
  * (modules/<module>/build/reports/pitest/mutations.xml) and emits, per seam:
@@ -13,7 +13,7 @@
  * NON_VIABLE / MEMORY_ERROR / RUN_ERROR are tooling artifacts and excluded from every count.
  *
  * With `--run`, this first executes the pitest task for each seam module (deriving the module set
- * from the register) so the report is always fresh + complete (F1) — the report-npm-audit pattern.
+ * from the register) so the report is always fresh + complete (F1).
  *
  * Usage: node scripts/ci/report-pit-strength.mjs [--run] [--register <path>] [--out <path>]
  *   --register defaults to governance/logic-seams.v1.json; pass another logic-seam register to

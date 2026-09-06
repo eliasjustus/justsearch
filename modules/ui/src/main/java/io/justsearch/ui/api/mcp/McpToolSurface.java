@@ -7,6 +7,7 @@ import io.justsearch.agent.api.registry.Operation;
 import io.justsearch.agent.api.registry.OperationCatalog;
 import io.justsearch.agent.api.registry.OperationDispatcher;
 import io.justsearch.agent.api.registry.OperationResult;
+import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.services.HeadAssembly;
 import io.justsearch.app.api.RetrieveContextParams;
@@ -15,14 +16,21 @@ import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.KnowledgeStatus;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
+import io.justsearch.ui.api.ApiErrorHandler;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -151,6 +159,8 @@ public final class McpToolSurface {
       pendingAuthorizationStore;
   private final io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
       pendingAuthorizationChanges;
+  private final List<ToolDefinition> toolDefinitions;
+  private final Map<String, ToolLifecycle> lifecycleCatalog;
   // Tempdoc 655: boundary schema validation, applied uniformly to all 6 tools regardless of
   // which backend path (direct in-process call vs. Operation dispatch) ultimately serves them —
   // stateless/cache-only, so a private instance per surface is fine.
@@ -198,6 +208,47 @@ public final class McpToolSurface {
       io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore,
       io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
           pendingAuthorizationChanges) {
+    this(
+        operationCatalogs,
+        dispatcher,
+        knowledgeLookup,
+        appFacadeLookup,
+        clock,
+        manifestPublisherLookup,
+        pendingAuthorizationStore,
+        pendingAuthorizationChanges,
+        PRODUCTION_TOOL_DEFINITIONS,
+        PRODUCTION_TOOL_LIFECYCLE);
+  }
+
+  /** Test seam for lifecycle projection and closed-world catalog validation. */
+  McpToolSurface(List<ToolDefinition> toolDefinitions, List<ToolLifecycle> lifecycleEntries) {
+    this(
+        List.of(),
+        null,
+        () -> null,
+        () -> null,
+        Clock.systemUTC(),
+        () -> null,
+        null,
+        null,
+        toolDefinitions,
+        lifecycleEntries);
+  }
+
+  private McpToolSurface(
+      List<OperationCatalog> operationCatalogs,
+      OperationDispatcher dispatcher,
+      java.util.function.Supplier<KnowledgeSearchController> knowledgeLookup,
+      java.util.function.Supplier<HeadAssembly> appFacadeLookup,
+      Clock clock,
+      java.util.function.Supplier<io.justsearch.ui.runtime.RuntimeManifestPublisher>
+          manifestPublisherLookup,
+      io.justsearch.app.services.intent.PendingAuthorizationStore pendingAuthorizationStore,
+      io.justsearch.app.observability.operations.PendingAuthorizationChangeRegistry
+          pendingAuthorizationChanges,
+      List<ToolDefinition> toolDefinitions,
+      List<ToolLifecycle> lifecycleEntries) {
     this.operationCatalogs = List.copyOf(operationCatalogs);
     this.dispatcher = dispatcher;
     this.knowledgeLookup = knowledgeLookup;
@@ -207,6 +258,8 @@ public final class McpToolSurface {
         manifestPublisherLookup != null ? manifestPublisherLookup : () -> null;
     this.pendingAuthorizationStore = pendingAuthorizationStore;
     this.pendingAuthorizationChanges = pendingAuthorizationChanges;
+    this.toolDefinitions = List.copyOf(Objects.requireNonNull(toolDefinitions));
+    this.lifecycleCatalog = validateLifecycleCatalog(this.toolDefinitions, lifecycleEntries);
   }
 
   // =========================================================================
@@ -215,46 +268,13 @@ public final class McpToolSurface {
 
   public Map<String, Object> listTools() {
     return Map.of(
-        "tools",
-        List.of(
-            tool("justsearch_answer", ANSWER_DESC, ANSWER_SCHEMA, Map.of("readOnlyHint", true)),
-            tool("justsearch_search", SEARCH_DESC, SEARCH_SCHEMA, Map.of("readOnlyHint", true)),
-            tool(
-                "justsearch_browse",
-                BROWSE_DESC,
-                schema(
-                    orderedMap(
-                        "parent_path",
-                            prop("string", "Folder path to browse (empty for top-level roots)"),
-                        "list_files",
-                            prop("boolean", "List individual files instead of subfolders")),
-                    List.of()),
-                Map.of("readOnlyHint", true)),
-            tool(
-                "justsearch_ingest",
-                INGEST_DESC,
-                schema(
-                    orderedMap(
-                        "paths",
-                            propStringArray("Absolute file or folder paths to index"),
-                        // Tempdoc 811 (C-2a) — optional collection tag. Server-side validation in
-                        // IngestTool is the guard; this schema only advertises the argument.
-                        "collection",
-                            prop(
-                                "string",
-                                "Optional collection tag for the indexed documents. Omit to inherit"
-                                    + " the containing indexed root's collection, or 'mcp-ingest'"
-                                    + " for paths outside every indexed root. The app-internal"
-                                    + " collections 'justsearch-help' and 'agent-history' are"
-                                    + " rejected.")),
-                    List.of("paths")),
-                orderedMap("readOnlyHint", false, "idempotentHint", true)),
-            tool("justsearch_status", STATUS_DESC, STATUS_SCHEMA, Map.of("readOnlyHint", true)),
-            tool(
-                "justsearch_runtime_manifest",
-                RUNTIME_MANIFEST_DESC,
-                RUNTIME_MANIFEST_SCHEMA,
-                Map.of("readOnlyHint", true))));
+        "tools", toolDefinitions.stream().map(this::projectToolDefinition).toList());
+  }
+
+  /** Experimental MCP extensions advertised by the transport during initialize. */
+  Map<String, Object> experimentalCapabilities() {
+    return Map.of(
+        "io.justsearch/tool-lifecycle", Map.of("version", TOOL_LIFECYCLE_EXTENSION_VERSION));
   }
 
   private static final String RUNTIME_MANIFEST_DESC =
@@ -353,6 +373,53 @@ public final class McpToolSurface {
 
   private static final Map<String, Object> RUNTIME_MANIFEST_SCHEMA = schema(Map.of(), List.of());
 
+  private static final String TOOL_LIFECYCLE_EXTENSION_VERSION = "1.0";
+
+  private static final List<ToolDefinition> PRODUCTION_TOOL_DEFINITIONS =
+      List.of(
+          new ToolDefinition(
+              "justsearch_answer", ANSWER_DESC, ANSWER_SCHEMA, Map.of("readOnlyHint", true)),
+          new ToolDefinition(
+              "justsearch_search", SEARCH_DESC, SEARCH_SCHEMA, Map.of("readOnlyHint", true)),
+          new ToolDefinition(
+              "justsearch_browse",
+              BROWSE_DESC,
+              schema(
+                  orderedMap(
+                      "parent_path",
+                          prop("string", "Folder path to browse (empty for top-level roots)"),
+                      "list_files", prop("boolean", "List individual files instead of subfolders")),
+                  List.of()),
+              Map.of("readOnlyHint", true)),
+          new ToolDefinition(
+              "justsearch_ingest",
+              INGEST_DESC,
+              schema(
+                  orderedMap(
+                      "paths", propStringArray("Absolute file or folder paths to index"),
+                      // Tempdoc 811 (C-2a) — optional collection tag. Server-side validation in
+                      // IngestTool is the guard; this schema only advertises the argument.
+                      "collection",
+                          prop(
+                              "string",
+                              "Optional collection tag for the indexed documents. Omit to inherit"
+                                  + " the containing indexed root's collection, or 'mcp-ingest'"
+                                  + " for paths outside every indexed root. The app-internal"
+                                  + " collections 'justsearch-help' and 'agent-history' are"
+                                  + " rejected.")),
+                  List.of("paths")),
+              orderedMap("readOnlyHint", false, "idempotentHint", true)),
+          new ToolDefinition(
+              "justsearch_status", STATUS_DESC, STATUS_SCHEMA, Map.of("readOnlyHint", true)),
+          new ToolDefinition(
+              "justsearch_runtime_manifest",
+              RUNTIME_MANIFEST_DESC,
+              RUNTIME_MANIFEST_SCHEMA,
+              Map.of("readOnlyHint", true)));
+
+  /** No production tool is deprecated; fake lifecycle rows are injected only by focused tests. */
+  private static final List<ToolLifecycle> PRODUCTION_TOOL_LIFECYCLE = List.of();
+
   // =========================================================================
   // tools/call — route to service layer
   // =========================================================================
@@ -420,7 +487,8 @@ public final class McpToolSurface {
       return inputValidator
           .validate(cacheKey, schemaJson, argsJson)
           .<Map<String, Object>>map(
-              result -> errorContent("Invalid arguments for " + cacheKey + ": " + result.message()))
+              result -> errorContent("Invalid arguments for " + cacheKey + ": " + result.message(),
+                  ApiErrorCode.INVALID_REQUEST))
           .orElse(null);
     } catch (Exception e) {
       // Serialization failure on our OWN schema/args maps would be a substrate bug, not a caller
@@ -430,9 +498,8 @@ public final class McpToolSurface {
     }
   }
 
-  private static final List<String> KNOWN_TOOLS = List.of(
-      "justsearch_answer", "justsearch_search", "justsearch_browse",
-      "justsearch_ingest", "justsearch_status", "justsearch_runtime_manifest");
+  private static final List<String> KNOWN_TOOLS =
+      PRODUCTION_TOOL_DEFINITIONS.stream().map(ToolDefinition::name).toList();
 
   // =========================================================================
   // RuntimeManifest: redacted JSON snapshot of the producer-published manifest
@@ -461,7 +528,7 @@ public final class McpToolSurface {
       return content;
     } catch (Exception e) {
       log.warn("MCP runtime manifest serialization failed", e);
-      return errorContent(toolFailureMessage("Runtime manifest", e));
+      return toolFailureContent("Runtime manifest", e);
     }
   }
 
@@ -472,9 +539,7 @@ public final class McpToolSurface {
     var suggestions = alts.stream().map(a -> a.refId()).toList();
     var msg = "Unknown tool: " + name
         + ". Did you mean: " + String.join(", ", suggestions) + "?";
-    var content = new LinkedHashMap<String, Object>();
-    content.put("content", List.of(Map.of("type", "text", "text", msg)));
-    content.put("isError", true);
+    var content = new LinkedHashMap<String, Object>(errorContent(msg));
     content.put("suggestions", suggestions);
     return content;
   }
@@ -487,7 +552,7 @@ public final class McpToolSurface {
   private Map<String, Object> callAnswer(Map<String, Object> args) {
     HeadAssembly facade = appFacadeLookup.get();
     if (facade == null || facade.workers().documents() == null) {
-      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     }
     try {
       String query = (String) args.getOrDefault("query", "");
@@ -554,7 +619,7 @@ public final class McpToolSurface {
           false);
     } catch (Exception e) {
       log.warn("MCP answer failed", e);
-      return errorContent(toolFailureMessage("Answer", e));
+      return toolFailureContent("Answer", e);
     }
   }
 
@@ -813,7 +878,7 @@ public final class McpToolSurface {
   @SuppressWarnings("unchecked")
   private Map<String, Object> callSearch(Map<String, Object> args) {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       String query = (String) args.getOrDefault("query", "");
@@ -898,7 +963,7 @@ public final class McpToolSurface {
       // stays available at TRACE, matching SearchExecutor:160-168's deliberate split.
       log.warn("MCP search failed: {}: {}", e.getClass().getSimpleName(), withoutQuotedQuery(e.getMessage()));
       log.trace("MCP search failure detail", e);
-      return errorContent(toolFailureMessage("Search", e));
+      return toolFailureContent("Search", e);
     }
   }
 
@@ -1340,7 +1405,7 @@ public final class McpToolSurface {
 
   private Map<String, Object> callStatus() {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE, ApiErrorCode.SERVICE_UNAVAILABLE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       var status = adapter.status();
@@ -1373,7 +1438,7 @@ public final class McpToolSurface {
           "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
     } catch (Exception e) {
       log.warn("MCP status failed", e);
-      return errorContent(toolFailureMessage("Status", e));
+      return toolFailureContent("Status", e);
     }
   }
 
@@ -1400,7 +1465,8 @@ public final class McpToolSurface {
               .validate(op, argsJson)
               .<Map<String, Object>>map(
                   result ->
-                      errorContent("Invalid arguments for " + opIdValue + ": " + result.message()))
+                      errorContent("Invalid arguments for " + opIdValue + ": " + result.message(),
+                          ApiErrorCode.INVALID_REQUEST))
               .orElse(null);
       if (invalid != null) {
         return invalid;
@@ -1422,13 +1488,17 @@ public final class McpToolSurface {
         }
         return Map.of("content", content, "isError", false);
       } else {
-        return Map.of(
-            "content", List.of(Map.of("type", "text", "text", opResult.message())), "isError",
-            true);
+        var failure = new LinkedHashMap<String, Object>();
+        failure.put("error", ApiErrorHandler.sanitizeMessage(opResult.message()));
+        opResult.errorCode().ifPresent(code -> failure.put("errorCode", code));
+        opResult.retryable().ifPresent(retryable -> failure.put("retryable", retryable));
+        // OperationResult carries no API error class. Preserve its optional facts without
+        // guessing a classification for a handler-specific or absent code.
+        return errorContent(failure);
       }
     } catch (Exception e) {
       log.warn("MCP operation dispatch error for {}", opIdValue, e);
-      return errorContent(toolFailureMessage("Operation " + opIdValue, e));
+      return toolFailureContent("Operation " + opIdValue, e);
     }
   }
 
@@ -1796,15 +1866,114 @@ public final class McpToolSurface {
     return List.of();
   }
 
-  private static Map<String, Object> tool(
-      String name, String description, Map<String, Object> inputSchema,
-      Map<String, Object> annotations) {
+  private Map<String, Object> projectToolDefinition(ToolDefinition definition) {
+    ToolLifecycle lifecycle = lifecycleCatalog.get(definition.name());
     var t = new LinkedHashMap<String, Object>();
-    t.put("name", name);
-    t.put("description", description);
-    t.put("inputSchema", inputSchema);
-    if (!annotations.isEmpty()) t.put("annotations", annotations);
+    t.put("name", definition.name());
+    t.put(
+        "description",
+        lifecycle == null
+            ? definition.description()
+            : lifecycle.descriptionPrefix() + definition.description());
+    t.put("inputSchema", definition.inputSchema());
+    if (!definition.annotations().isEmpty()) {
+      t.put("annotations", definition.annotations());
+    }
+    if (lifecycle != null) {
+      t.put("_meta", lifecycle.metadata());
+    }
     return t;
+  }
+
+  private static Map<String, ToolLifecycle> validateLifecycleCatalog(
+      List<ToolDefinition> toolDefinitions, List<ToolLifecycle> lifecycleEntries) {
+    Objects.requireNonNull(lifecycleEntries, "lifecycleEntries");
+
+    var liveToolCounts = new LinkedHashMap<String, Integer>();
+    for (ToolDefinition definition : toolDefinitions) {
+      liveToolCounts.merge(definition.name(), 1, Integer::sum);
+    }
+    liveToolCounts.forEach(
+        (name, count) -> {
+          if (count != 1) {
+            throw new IllegalArgumentException(
+                "MCP tool declaration must resolve exactly once: " + name + " resolved " + count
+                    + " times");
+          }
+        });
+
+    var catalog = new LinkedHashMap<String, ToolLifecycle>();
+    for (ToolLifecycle lifecycle : lifecycleEntries) {
+      Objects.requireNonNull(lifecycle, "lifecycle entry");
+      if (catalog.putIfAbsent(lifecycle.toolName(), lifecycle) != null) {
+        throw new IllegalArgumentException(
+            "Duplicate MCP lifecycle catalog key: " + lifecycle.toolName());
+      }
+      int resolutions = liveToolCounts.getOrDefault(lifecycle.toolName(), 0);
+      if (resolutions != 1) {
+        throw new IllegalArgumentException(
+            "MCP lifecycle catalog key must resolve exactly once: "
+                + lifecycle.toolName()
+                + " resolved "
+                + resolutions
+                + " times");
+      }
+    }
+    return Collections.unmodifiableMap(catalog);
+  }
+
+  record ToolDefinition(
+      String name,
+      String description,
+      Map<String, Object> inputSchema,
+      Map<String, Object> annotations) {
+    ToolDefinition {
+      name = requireNonBlank(name, "tool name");
+      description = requireNonBlank(description, "tool description");
+      inputSchema = immutableOrderedMap(inputSchema, "tool inputSchema");
+      annotations = immutableOrderedMap(annotations, "tool annotations");
+    }
+  }
+
+  record ToolLifecycle(
+      String toolName, Instant deprecatedSince, Instant sunsetAt, String replacement) {
+    ToolLifecycle {
+      toolName = requireNonBlank(toolName, "lifecycle tool name");
+      Objects.requireNonNull(deprecatedSince, "deprecatedSince");
+      replacement = requireNonBlank(replacement, "lifecycle replacement");
+      if (sunsetAt != null && !sunsetAt.isAfter(deprecatedSince)) {
+        throw new IllegalArgumentException("sunsetAt must be after deprecatedSince for " + toolName);
+      }
+    }
+
+    private String descriptionPrefix() {
+      return "Deprecated since " + deprecatedSince + "; use " + replacement + " instead. ";
+    }
+
+    private Map<String, Object> metadata() {
+      var metadata = new LinkedHashMap<String, Object>();
+      metadata.put("io.justsearch/deprecated", true);
+      metadata.put("io.justsearch/deprecatedSince", deprecatedSince.toString());
+      if (sunsetAt != null) {
+        metadata.put("io.justsearch/sunsetAt", sunsetAt.toString());
+      }
+      metadata.put("io.justsearch/replacement", replacement);
+      return Collections.unmodifiableMap(metadata);
+    }
+  }
+
+  private static String requireNonBlank(String value, String fieldName) {
+    Objects.requireNonNull(value, fieldName);
+    if (value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must not be blank");
+    }
+    return value;
+  }
+
+  private static Map<String, Object> immutableOrderedMap(
+      Map<String, Object> source, String fieldName) {
+    return Collections.unmodifiableMap(
+        new LinkedHashMap<>(Objects.requireNonNull(source, fieldName)));
   }
 
   private static Map<String, Object> schema(
@@ -1859,37 +2028,61 @@ public final class McpToolSurface {
   }
 
   static Map<String, Object> errorContent(String message) {
-    return Map.of("content", List.of(Map.of("type", "text", "text", message)), "isError", true);
+    return errorContent(Map.of("error", ApiErrorHandler.sanitizeMessage(message)));
   }
 
-  // =========================================================================
-  // Tempdoc 725 W3: error-result legibility. DESCRIPTIVE grammar only — an error result states
-  // what happened and where a status check can be found; it never issues an imperative ("now
-  // call X").
-  // =========================================================================
+  static Map<String, Object> errorContent(String message, ApiErrorCode code) {
+    Map<String, Object> apiError = ApiErrorHandler.toResponse(code, message);
+    var failure = new LinkedHashMap<String, Object>();
+    for (String key : List.of("error", "errorCode", "errorClass", "retryable")) {
+      failure.put(key, apiError.get(key));
+    }
+    return errorContent(failure);
+  }
 
-  /**
-   * The 3 "backend not reachable" tool/call sites (justsearch_answer, justsearch_search,
-   * justsearch_status) share this exact wording: the condition, plus a descriptive pointer to
-   * where live component state can be checked.
-   */
+  /** Both MCP delivery tiers describe the same known facts; absent metadata stays absent. */
+  private static Map<String, Object> errorContent(Map<String, Object> failure) {
+    var text = new StringBuilder((String) failure.get("error"));
+    if (failure.containsKey("errorCode")) {
+      text.append("\nError code: ").append(failure.get("errorCode")).append('.');
+    }
+    if (failure.containsKey("errorClass")) {
+      text.append(" Error class: ").append(failure.get("errorClass")).append('.');
+    }
+    if (failure.containsKey("retryable")) {
+      text.append(" Retryable: ").append(failure.get("retryable")).append('.');
+      if (Boolean.FALSE.equals(failure.get("retryable"))) {
+        text.append(" Automatic retry is not recommended.");
+      }
+    }
+    return Map.of(
+        "content", List.of(Map.of("type", "text", "text", text.toString())),
+        "structuredContent", failure,
+        "isError", true);
+  }
+
+  /** Shared condition and descriptive status pointer for the three unavailable-backend sites. */
   private static final String KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE =
-      "Knowledge server is not available (worker offline or still starting). This is usually"
-          + " transient during startup; state is reported by the justsearch_status tool.";
+      "Knowledge server is not available (worker offline or still starting)."
+          + " State is reported by the justsearch_status tool.";
 
-  /**
-   * Uniform message for the 5 generic {@code catch (Exception e)} tool/call sites: the tool name,
-   * the exception's simple class name and message (never swallowed into a bare, unattributed
-   * string), plus the same descriptive status-tool pointer the availability message above uses.
-   */
-  private static String toolFailureMessage(String tool, Exception e) {
+  /** Project the existing API classification and sanitizer, without a parallel retry policy. */
+  private static Map<String, Object> toolFailureContent(String tool, Exception e) {
+    // Future.get/join transport the cause in wrappers with no failure policy of their own.
+    // Use the same cause for wording and classification, retaining the fallback for absent
+    // or non-Exception causes. Identity tracking also bounds malformed cyclic cause chains.
+    Set<Exception> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    while ((e instanceof ExecutionException || e instanceof CompletionException)
+        && e.getCause() instanceof Exception cause && seen.add(e)) {
+      e = cause;
+    }
     String detail = e.getMessage() != null ? e.getMessage() : "no additional detail";
-    return tool
+    String message = tool
         + " failed: "
         + e.getClass().getSimpleName()
         + ": "
         + detail
-        + ". This may be transient; current component state is available via the"
-        + " justsearch_status tool.";
+        + ". Current component state is available via the justsearch_status tool.";
+    return errorContent(message, ApiErrorHandler.resolve(e));
   }
 }

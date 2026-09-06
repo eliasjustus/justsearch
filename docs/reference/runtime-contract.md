@@ -43,7 +43,7 @@ is the row of constituent versions below. The current build:
 
 | Runtime Contract | manifest schema | lifecycle schema | MCP protocol | MCP tool surface |
 |---|---|---|---|---|
-| `0.2.0` | `1` | `1` | `2025-11-25` | `0.6.0` |
+| `0.2.0` | `1` | `1` | `2025-11-25` | `0.7.0` |
 
 **Skew rule.** A client built for Runtime Contract vN works against a runtime
 advertising vN. Older clients degrade gracefully: the manifest is
@@ -56,6 +56,51 @@ maintain — the manifest advertises the live versions, and a client reads them.
 > the stability of a server's tool set (MCP has no shipped tool-surface
 > versioning; proposals point at per-tool SemVer). JustSearch versions its own
 > tool surface here, SemVer-shaped, so the promise is explicit.
+
+## Generated Node client
+
+`packages/runtime-client` contains the pack-ready `@justsearch/runtime-client` reference package.
+Version `0.1.0` is ESM-only, supports Node 20 and newer at runtime, and exposes six read-only JSON
+operations from the public-contract surface:
+
+- runtime manifest and its `/.well-known` mirror;
+- runtime readiness and liveness;
+- lifecycle health and status.
+
+The client is generated from `packages/runtime-client/openapi/runtime-client.openapi.json`. That
+document is a self-contained projection of the routes registered by the real Javalin route
+registrars, filtered by `RouteContractPolicy`; it is not a second hand-authored API inventory.
+The policy also derives each route's security declaration from `ApiSecurityFilters`, so the SDK
+metadata cannot silently relax the local API trust boundary.
+
+The package deliberately excludes mutations, MCP, token bootstrap, `HEAD` probe aliases, and the
+manifest SSE stream. MCP clients should use the official MCP TypeScript SDK. The async client
+factory fails closed before returning a client: it rejects non-loopback base URLs, disables HTTP
+redirects, reads the runtime manifest, and requires an advertised Runtime Contract version accepted
+by `assertRuntimeContractCompatible` (currently exactly `0.2.0`). A new runtime-contract version
+therefore requires an explicit client compatibility decision rather than an optimistic range.
+
+Regenerate and verify from the repository root:
+
+```text
+./gradlew :modules:ui:generateRuntimeClientOpenApi -PskipWebBuild=true
+npm ci --prefix packages/runtime-client --ignore-scripts
+npm --prefix packages/runtime-client run generate
+npm --prefix packages/runtime-client run check:regen
+npm --prefix packages/runtime-client test
+npm --prefix packages/runtime-client run check:pack
+```
+
+CI performs generation drift checks with the repository Node toolchain and executes the built
+client at the Node 20 runtime floor. The packed README links to the runtime-manifest discovery
+contract and tells native callers to pass its `head.apiBaseUrl` value to the client factory. Package
+publication runs a fail-closed `prepublishOnly` lifecycle that checks generated-source coherence,
+builds and tests the client, and verifies the tarball contents before npm can publish it. That
+publication preflight requires the Node 22.18+ generation toolchain even though the resulting client
+supports Node 20 at runtime.
+
+npm publication remains a founder action; a green package gate or dry-run does not imply that this
+repository has published the package.
 
 ## Stability policy
 
@@ -92,10 +137,12 @@ not per release. Mirrors the internal `contracts/wire/CHANGELOG.md` convention.
 
 ## Surface classification
 
-The v1 boundary. This table is authored here (not yet mechanically projected
-per-route — the manifest's `audience` axis already classifies the contract's
-discovery transports, and a per-route classification gate is a possible future
-step, not required for a three-surface core).
+The v1 boundary. This table defines the promise, while `RouteContractPolicy`
+mechanically classifies the HTTP rows represented in the route manifest. Route-manifest schema
+`2.0` projects each covered route's `stability` (`public-contract`, `reference-client`, or
+`internal`) together with its schemas, SDK operation identity, and any lifecycle metadata. The
+policy is intentionally a covered subset of the live router, not a claim that every internal route
+is part of the Runtime Contract.
 
 | Tier | Surfaces | Promise |
 |---|---|---|

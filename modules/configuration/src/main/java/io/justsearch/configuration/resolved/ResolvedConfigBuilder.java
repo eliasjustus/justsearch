@@ -177,7 +177,7 @@ public final class ResolvedConfigBuilder {
    * Only populated when {@link #buildPhaseActive} is true (during {@code build*()}).
    * Exposed via {@link #resolvedKeys()} for architectural tests (tempdoc 347 D7).
    */
-  private final java.util.Set<String> resolvedKeys = new java.util.LinkedHashSet<>();
+  private final Set<String> resolvedKeys = new java.util.LinkedHashSet<>();
 
   /** True during the build*() phase of {@link #build()}. Guards resolvedKeys population. */
   private boolean buildPhaseActive;
@@ -585,7 +585,7 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_delivery.budget_bytes",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
     // 789 Phase 2: the three agent-delivery framings — probe substrate, ALL default OFF. Nothing
     // in the delivered response changes until an arm turns one on.
@@ -609,7 +609,7 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_framing.thin_result_floor_bytes",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_THIN_RESULT_FLOOR_BYTES));
     // 771 item (b): entity carriage — default OFF, so an unconfigured process delivers exactly the
     // pre-771 response.
@@ -625,14 +625,14 @@ public final class ResolvedConfigBuilder {
     putDefault(
         "search.mcp_delivery.entity_carriage_max_chars",
         Integer.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search
+            ResolvedConfig.Search
                 .DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
     putYamlDouble(
         "search.mcp_framing.weak_score_floor", searchRoot, "mcp_framing.weak_score_floor");
     putDefault(
         "search.mcp_framing.weak_score_floor",
         Double.toString(
-            io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
+            ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -909,7 +909,7 @@ public final class ResolvedConfigBuilder {
    *
    * @return unmodifiable set of resolved keys (empty before {@code build()} is called)
    */
-  public java.util.Set<String> resolvedKeys() {
+  public Set<String> resolvedKeys() {
     return java.util.Collections.unmodifiableSet(resolvedKeys);
   }
 
@@ -1443,7 +1443,6 @@ public final class ResolvedConfigBuilder {
         resolveString("justsearch.index.collection", "default"),
         resolveBoolean("justsearch.search.query_classification.enabled", true),
         resolveDouble("justsearch.search.title_boost", 3.0),
-        resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         // 775 §I / founder flip decision (2026-07-22): both evidence flags default-ON. The
         // putDefault above is the effective source; this fallback matches it for the no-putDefault
@@ -1579,7 +1578,13 @@ public final class ResolvedConfigBuilder {
         // The safety-net commit timer's period. Same channel and same reason as the three above:
         // CommitOps runs in the Worker, so a raw sysprop read there would never see a Head-side
         // value. The default reproduces the constant it replaces exactly.
-        resolveInt("index.commit.timer_interval_ms", 10_000));
+        resolveInt("index.commit.timer_interval_ms", 10_000),
+        // Tempdoc 931 §C.6 — the document-identity deletion grace. Same channel and same reason as
+        // the four above: the identity store lives in the Worker, so a raw sysprop read there would
+        // never see a Head-side value.
+        resolveLong(
+            "index.identity.deletion_grace_ms",
+            ResolvedConfig.Index.DEFAULT_IDENTITY_DELETION_GRACE_MS));
   }
 
   private ResolvedConfig.Collections buildCollections() {
@@ -1713,6 +1718,11 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.HybridSearch(
         resolveInt("index.hybrid.rrf_k", 60),
         resolveInt("index.hybrid.vector_skip_min_chars", 4),
+        Math.max(
+            0.0,
+            Math.min(
+                1.0,
+                resolveDouble("index.hybrid.vector_skip_min_df_fraction", 0.25))),
         Math.max(1, resolveInt("index.hybrid.candidate_limit_max", 100)),
         Math.max(1, resolveInt("index.hybrid.text_candidate_multiplier", 10)),
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),

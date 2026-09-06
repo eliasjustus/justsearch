@@ -64,6 +64,7 @@ final class SyncDirectoryOps {
   private final JobQueue jobQueue;
   private final IndexingPacing indexingPacing;
   private final CloudPlaceholderRecorder cloudPlaceholderRecorder;
+  private final ConfirmedDeletionMarker deletionMarker;
 
   SyncDirectoryOps(
       ReadPathOps readPathOps,
@@ -71,12 +72,27 @@ final class SyncDirectoryOps {
       CommitOps commitOps,
       JobQueue jobQueue,
       IndexingPacing indexingPacing) {
+    this(readPathOps, pruneOps, commitOps, jobQueue, indexingPacing, null);
+  }
+
+  SyncDirectoryOps(
+      ReadPathOps readPathOps,
+      PruneOps pruneOps,
+      CommitOps commitOps,
+      JobQueue jobQueue,
+      IndexingPacing indexingPacing,
+      ConfirmedDeletionMarker deletionMarker) {
     this.readPathOps = readPathOps;
     this.pruneOps = pruneOps;
     this.commitOps = commitOps;
     this.jobQueue = jobQueue;
     this.indexingPacing = indexingPacing;
     this.cloudPlaceholderRecorder = jobQueue == null ? null : new CloudPlaceholderRecorder(jobQueue);
+    this.deletionMarker =
+        deletionMarker != null
+            ? deletionMarker
+            : new ConfirmedDeletionMarker(
+                io.justsearch.indexerworker.identity.DocumentIdentityStore.UNAVAILABLE);
   }
 
   /**
@@ -221,10 +237,14 @@ final class SyncDirectoryOps {
     // Tempdoc 885 item 3: the throttle callback the prune already invokes every N documents is now
     // the pacing tick. It always returns false — under a duty cycle the prune is slowed, never
     // abandoned half-done as it was when user activity aborted it.
+    // Tempdoc 931 §C.6 — a confirmed deletion point: the prune removes a document precisely because
+    // its backing file no longer exists on disk (PruneOps' own Files.exists check), and the guard
+    // above has already refused to run at all when the whole root is unavailable.
     return pruneOps.pruneByPathPrefix(
         rootPath,
         force ? () -> false : indexingPacing::paceAndContinue,
-        SYNC_PRUNE_THROTTLE_BATCH_SIZE);
+        SYNC_PRUNE_THROTTLE_BATCH_SIZE,
+        deletionMarker::markIfAbsent);
   }
 
   private Set<String> indexedPathsForSync(String rootPath, boolean force) {

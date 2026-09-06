@@ -33,7 +33,6 @@ _GROUP_MODULES = (
     "ui",
     "eval_cmds",
     "utility",
-    "calibrate",
     "release",
     "ops",
     "index_cache_cmd",

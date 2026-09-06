@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "$comment": "Region -> just-in-time delivery register (tempdoc 620 Move 2). Promotes scripts/agent-analytics/lib/governed-regions.mjs into data, the promotion that file's predecessor anticipated ('promote to governance/consult-register.v1.json only if it grows'). Consumed by consult-doc-hint.mjs (PreToolUse 'Consult' -> pushes governing docs when a region is edited) and maintain-doc-hint.mjs (Stop 'Maintain' -> blocks once if a region's governing doc went un-updated). Schema per row: pathIncludes (array of path substrings; matches if the edited path contains any) + region (label) + docs ([{path, why}] surfaced by consult) + maintain (optional bool; when true, maintain-doc-hint blocks turn-end if none of the docs were updated this session. Omit for consult-only DELIVERY rows that push a doc to read without demanding you maintain it -- e.g. the 616 read-0x architecture docs) + recipe (optional array of step strings; surfaced by consult as a numbered just-in-time procedure -- the relocation home for path-triggerable workflow recipes evicted from the always-loaded layer, e.g. common-workflows.md's gRPC/REST/config/agent-tool recipes, tempdoc 620 Phase 2; a recipe row typically sets docs:[] so it never blocks at Stop). A delivery row is how the always-loaded layer evicts region-specific context: load it only when the region is touched.",
+  "$comment": "Region -> governing-doc register (tempdoc 620 Move 2). CONSULT IT WHEN YOU EDIT A PATH IT COVERS: the row names the docs to read and, where present, the recipe to run. Tempdoc 930 row 4 retired the two hooks that used to push rows automatically (a PreToolUse consult hint and a Stop maintain block), so this register is now read, not delivered. Machine consumer: scripts/ci/run-ui-web-gates.mjs parses the `ui-web-gates` row's recipe as the single authority for the ui-web gate set (its command count is floor-checked, so the recipe prose must keep parsing). Schema per row: pathIncludes (array of path substrings; matches if the edited path contains any) + region (label) + docs ([{path, why}] to read before editing) + maintain (optional bool; when true, the row's docs are expected to be updated in the same PR as a change to the region) + recipe (optional array of step strings -- a numbered just-in-time procedure, the relocation home for path-triggerable workflow recipes evicted from the always-loaded layer, e.g. common-workflows.md's gRPC/REST/config/agent-tool recipes, tempdoc 620 Phase 2; a recipe row typically sets docs:[]). A delivery row is how the always-loaded layer evicts region-specific context: read it only when the region is touched.",
   "regions": [
     {
       "id": "shell-v0",
@@ -34,11 +34,12 @@
       "region": "the ui-web frontend (pre-merge gate set)",
       "docs": [],
       "recipe": [
-        "Any modules/ui-web/src/** edit — run the ui-web gate set before merge (node scripts/ci/<name>.mjs): check-presentation-purity, check-observed-state-collapse, check-theme-token-closure, gen-token-names --check, gen-component-vocabulary --check, strip-token-fallbacks --check modules/ui-web/src, check-color-tokens, check-a11y-closure, check-controls-a11y, check-adaptive-closure, check-layout-purity, check-surface-composition, check-message-single-model, check-run-renderers, check-inflight-liveness, check-composition-surfaces, check-declared-surfaces, check-live-channels, check-contrast-matrix, check-accent-as-text, check-offline-single-sense, check-printable-keybinding-policy (with its self-test: node scripts/ci/check-printable-keybinding-policy.test.mjs).",
-        "Plus the kernel gates: node scripts/governance/run.mjs --gate ambient-purity,style-literal-ratchet,atom-fork-ratchet,modality-contract,transient-arbitration,modal-arbitration --mode gate (`--gate` is repeatable, so one invocation with several `--gate <id>` flags also works; `node scripts/ci/run-ui-web-gates.mjs` expands this list and runs the whole set, tempdoc 872).",
+        "Any modules/ui-web/src/** edit — run the ui-web gate set before merge (node scripts/ci/<name>.mjs): check-adaptive-closure, check-layout-purity, check-surface-composition, check-message-single-model, check-run-renderers, check-inflight-liveness, check-composition-surfaces, check-declared-surfaces, check-live-channels, check-contrast-matrix, check-style-literal-ratchet.",
+        "Tempdoc 930 row 9 (chunk H) retired the recipe's 12 static a11y/contrast/token oracles (full list: tempdoc 930 section 19.3 finding F10) in favor of measured axe (ui-shot + governance/ui-a11y-baseline.v1.json) and review, since every traced a11y/contrast catch came from one of those, never from a static oracle. check-contrast-matrix (the four-palette sweep) and every register-backed check stay in the recipe above. gen-token-names and gen-component-vocabulary remain as codegen scripts (their generated files are still compiled against) — only their --check gate registration was removed.",
+        "Plus the kernel gates: node scripts/governance/run.mjs --gate ambient-purity,atom-fork-ratchet,modality-contract,transient-arbitration,modal-arbitration --mode gate (`--gate` is repeatable, so one invocation with several `--gate <id>` flags also works; `node scripts/ci/run-ui-web-gates.mjs` expands this list and runs the whole set, tempdoc 872).",
         "modules/ui-web/src/shell-v0/** edits additionally: check-steering-arbitration, check-search-issuance, check-verdict-derivation, check-ai-verdict-derivation, check-message-classes, check-capability-availability, check-realized-capability, check-consequence-classification, check-folder-status-derivation.",
         "shell-v0/views/** edits additionally: check-surface-task-state-retention, check-thread-event-kinds.",
-        "Frontend typecheck + unit tests: cd modules/ui-web && npm run typecheck && npm run test:unit:run. (Relocated from the CLAUDE.md Pre-merge table — tempdoc 681; check-premerge-table validates these refs here.)"
+        "Frontend lint + typecheck + unit tests: cd modules/ui-web && npm run lint && npm run typecheck && npm run test:unit:run. (Relocated from the CLAUDE.md Pre-merge table — tempdoc 681; check-premerge-table validates these refs here.) `npm run lint` is `eslint . --max-warnings=0` — tempdoc 930 §22.2 follow-up 8 made warnings and unused `eslint-disable` directives fail, so the ts-any/todo-fixme successors cannot rot back into advisories. It is NOT parsed into this runner's command list: it needs `npm ci --prefix modules/ui-web`, and this runner deliberately runs in CI ABOVE that install. CI runs it as the separate \"Frontend lint\" step."
       ]
     },
     {
@@ -191,7 +192,11 @@
       "id": "dev-mcp-surface",
       "pathIncludes": [
         "scripts/dev/justsearch-dev-mcp/",
-        "scripts/dev/justsearch-dev-mcp.mjs"
+        "scripts/dev/justsearch-dev-mcp.mjs",
+        "scripts/dev/generate-dev-mcp-runtime.mjs",
+        "scripts/dev/generate-dev-mcp-runtime.test.mjs",
+        "scripts/dev/test-dev-mcp-bootstrap.mjs",
+        "scripts/dev/test-dev-mcp-observations.mjs"
       ],
       "region": "the justsearch-dev MCP surface (the agent-facing dev tools)",
       "maintain": true,
@@ -204,6 +209,9 @@
       "recipe": [
         "Adding, removing or renaming a tool / an endpoint key / an allowlist entry: update docs/reference/contributing/mcp-dev-tools.md in the same change (the tool table AND the `exposes exactly these **N** tools` count).",
         "Then run `node scripts/ci/check-dev-mcp-doc-sync.mjs` — it spawns the server, calls tools/list, and compares all three inventories in both directions. It needs no dev stack.",
+        "Changing the SDK/Zod runtime boundary or root MCP dependencies: run `node scripts/dev/generate-dev-mcp-runtime.mjs`, then `node scripts/dev/generate-dev-mcp-runtime.mjs --check` and `node scripts/dev/generate-dev-mcp-runtime.test.mjs`. Commit both generated outputs, including the legal projection.",
+        "Changing bootstrap/import behavior: run `node scripts/dev/test-dev-mcp-bootstrap.mjs`; it proves the exact committed launcher in a dependency-free Git fixture and checks stable negative diagnostics with no stdout.",
+        "Changing file/socket observation behavior or quick_health/preflight truth states: run `node scripts/dev/test-dev-mcp-observations.mjs` in addition to the handler-level suites.",
         "If you changed the gate itself, run its co-located test too: `node scripts/ci/check-dev-mcp-doc-sync.test.mjs`.",
         "Changing tool BEHAVIOUR (projection, probes, error codes, dist resolution): run `node scripts/dev/test-dev-mcp-surface-honesty.mjs` (pure units) and `node scripts/dev/test-dev-mcp-projection-live.mjs` (real handlers over stdio against a throwaway loopback backend). Neither needs a dev stack.",
         "Tempdoc 844 §12.2 is the standing criterion for this surface: a dev tool must not report state it did not verify, and must not report success it did not confirm — an explicit unknown (`null`) beats a confident default (`[]`, `false`, `OK`)."

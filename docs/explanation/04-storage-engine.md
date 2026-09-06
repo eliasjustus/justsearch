@@ -5,7 +5,7 @@ status: stable
 description: "Lucene internals, schema (SSOT), and locking strategies."
 ---
 
-# 04. Storage Engine (Lucene)
+# Storage Engine
 
 JustSearch wraps **Apache Lucene 10** as its core storage engine. We do not use higher-level wrappers like Elasticsearch or Solr; we interact directly with the Lucene API (`IndexWriter`, `IndexSearcher`) for maximum performance and minimal footprint.
 
@@ -49,8 +49,9 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | Field | Type | Purpose |
 | :--- | :--- | :--- |
 | `doc_id` | keyword | Primary Key (Normalized file path). |
-| `doc_uid` | keyword | Unique ID (UUID) assigned at ingest/reindex (useful tie-breaker in some pipelines; not stable across full reindex). |
+| `doc_uid` | keyword | Stable, content-independent identity plus the search-after tie-breaker. Parent UIDs survive reindex and supported renames; chunk UIDs derive from the parent UID and chunk ordinal. |
 | `content` | text | Main searchable text (tokenized). |
+| `content_sha256` | keyword (stored only) | SHA-256 of this parent document's stored `content` — its CONTENT REVISION. Not indexed, not DocValues. Same digest definition as `chunk_parent_content_sha256`, so parent and chunk revisions are directly comparable. |
 | `content_preview` | text | Small stored snippet source (first few KB) for fast results list rendering. |
 | `title` | text | Optional extracted title (stored). |
 | `path` | keyword | Normalized path (stored). |
@@ -66,9 +67,10 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `is_chunk` | boolean | "true" if this is a chunk, absent otherwise. |
 | `chunk_index` | int | Sequential index of the chunk (0, 1, 2...). |
 | `chunk_total` | int | Total number of chunks for the parent document. |
-| `chunk_content` | text | Searchable chunk text used for BM25 chunk retrieval. |
+| `chunk_content` | text (indexed, not stored) | Searchable chunk text used for BM25 retrieval; read paths reconstruct it from the stored parent `content` and chunk offsets. |
 | `chunk_start_char` | int | Start character offset (0-based) into the parent document’s extracted text. |
 | `chunk_end_char` | int | End character offset (exclusive, 0-based) into the parent document’s extracted text. |
+| `chunk_parent_content_sha256` | keyword (stored only) | SHA-256 of the parent `content` revision the offsets above address. Not indexed, not DocValues. |
 | `chunk_start_line` | int | Optional start line number (1-based) for citation/navigation UX. |
 | `chunk_end_line` | int | Optional end line number (1-based) for citation/navigation UX. |
 | `chunk_heading_text` | keyword | Optional nearest preceding Markdown heading text (empty when N/A). |
@@ -76,18 +78,72 @@ Data in Lucene is schema-less by default, but JustSearch enforces a strict schem
 | `chunk_vector` | floats | 768-dim chunk embeddings (HNSW) used for chunk-level hybrid retrieval. |
 | `chunk_embedding_status` | keyword | Chunk embedding generation status (`PENDING|COMPLETED|FAILED`). |
 | `chunk_embedding_retry_count` | long | Retry count for chunk embedding poison-pill protection. |
-| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity facet values (filter/facet). |
-| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity facet values (filter/facet). |
-| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity facet values (filter/facet). |
-| `entity_persons_text` | text (ICU-analyzed, stored) | Person entities for BM25 scoring. |
-| `entity_organizations_text` | text (ICU-analyzed, stored) | Organization entities for BM25 scoring. |
-| `entity_locations_text` | text (ICU-analyzed, stored) | Location entities for BM25 scoring. |
+| `entity_persons_raw` | keyword (SortedSetDocValues) | Person entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_organizations_raw` | keyword (SortedSetDocValues) | Organization entity values for filtering, faceting, and NER-membership evidence selection. |
+| `entity_locations_raw` | keyword (SortedSetDocValues) | Location entity values for filtering, faceting, and NER-membership evidence selection. |
 | `meta_source` | keyword (stored, DocValues) | Document source for filter/facet. |
 | `meta_author` | keyword (stored, DocValues) | Document author for filter/facet. |
 | `meta_category` | keyword (stored, DocValues) | Document category for filter/facet. |
 | `meta_published_at` | long (stored, DocValues) | Publication timestamp for filter/sort. |
 | `extraction_method` | keyword | Extraction tier used (e.g., STRUCTURED_TIKA, FLAT_TIKA). |
 | `extraction_quality_score` | double | Numeric quality score 0.0–1.0 for provenance. |
+
+### Document identity
+
+The Worker keeps the parent mapping `path_hash → doc_uid` in the path-free
+`document_identity` table inside `jobs.db`. Admission resolves that mapping before extraction, so a
+normal rewrite, delete-and-reindex, or Blue/Green rebuild writes the same UID. The serving index
+seeds the table from its stored parent `doc_id` and `doc_uid` fields before indexing starts. That
+scan is a seeding step, not a per-boot pass: it runs only when the table is empty or when
+`document_identity_import` holds no row for the serving generation — after the first import every
+parent resolves its uid through the store, so the only states left to repair are an index older than
+the store and a wiped or restored `jobs.db`. It streams parents into SQLite in transactions of 1,000
+rather than materialising the corpus, and a live parent whose `doc_id`/`doc_uid` docvalues are
+missing or blank is counted in `parents_skipped` (one WARN) and re-mints at its next admission
+instead of failing the boot. SQLite identity failures are fail-closed: the queue retries the
+document rather than minting from a second authority.
+
+Chunk documents use `parentDocUid + "#" + chunkIndex`, making chunk regeneration deterministic
+without adding a second schema field. API-driven moves re-key the parent mapping before Lucene path
+fields are rewritten. Filesystem-watcher renames still arrive as delete plus create events and do not
+currently carry rename identity.
+
+The Head's authored feedback streams use the same stable parent identity. New
+`FeatureSnapshot.HitFeatures.docId` and `ResultDisposition.docId` values are parent UIDs; the snapshot
+also retains a path-oriented `sourceDocId` solely to correlate the unchanged search UI and agent
+citation events before persistence. Chunk-only search results receive the parent UID through the
+Worker's existing parent-metadata enrichment. Missing or conflicting UID evidence produces no new
+feedback row rather than falling back to a path key. Pre-Phase-2 NDJSON rows omit `sourceDocId` and
+remain readable and re-projectable with their legacy path keys; there is no path-to-UID backfill.
+The derived `real-feedback-triples.ndjson` file keeps the trainer-compatible JSON property name
+`doc_id`, whose value is the stable UID for new real-feedback labels.
+
+#### Identity versus content revision
+
+Identity answers *which document this is*; the content revision answers *which version of it*.
+Feedback captures the pair `(doc_uid, content_revision)`, where the revision is the parent's
+`content_sha256`. The Head injects both into the Worker projection for capture and strips them from
+the HTTP response unless the caller requested them by name; a chunk hit receives its parent's
+revision through the same parent-metadata enrichment that supplies the parent UID. Identity survives
+edits and verified moves, while the revision advances on every content change, so `LabelProjection`
+can tell a label that still describes the current text from one that does not: a disposition whose
+revision differs from the newest revision observed for that document is projected as STALE — kept,
+but written with its score multiplied by `STALE_LABEL_WEIGHT` (0.5) and a `stale: true` property, and
+counted in `LabelProjection.Result.staleTriples`. A null revision is UNKNOWN, never a mismatch, so
+rows written before the field and documents indexed before it are never down-weighted.
+
+#### Confirmed deletion and the identity grace window
+
+Identity rows are never dropped on deletion. Instead, the points where the Worker removed a document
+BECAUSE the file is verified absent — the periodic sync's orphan prune, the indexing loop's
+missing-source delete, and the filesystem watcher's DELETE event — set a nullable `deleted_at` on the
+row (schema V13). Every one of them re-verifies absence at the mark, so an unreadable file, a dead
+mount, or a cloud placeholder records nothing; removals that are policy rather than deletion (an
+un-watched root, a dropped collection, an exclude rule) never mark at all. `resolve` then reads the
+mark against `index.identity.deletion_grace_ms` (default 30 days): inside the window the mark is
+cleared and the uid is kept, because a file reappearing that soon is the same document returning;
+past it a new uid is minted onto the same row and `first_seen_at` resets, so a replacement file
+cannot inherit the previous document's feedback. A verified rename clears the mark outright.
 
 **Notes on new field groups:**
 
@@ -100,6 +156,42 @@ Large documents are split into overlapping chunks (default 500 tokens) to suppor
 *   **Storage:** Chunks are stored as separate Lucene documents.
 *   **Linkage:** They are linked to the original file via `parent_doc_id`.
 *   **Retrieval:** Searches can target `is_chunk:true` to find specific relevant passages rather than whole files.
+
+`chunk_content` contributes analyzed postings but is deliberately not stored a second time. A read
+that explicitly projects it loads each distinct parent at most once and returns the exact Java
+UTF-16 substring `content.substring(chunk_start_char, chunk_end_char)`—including original CRLF,
+fence, whitespace, and non-BMP characters, with no trimming or normalization. Missing parents and
+invalid or out-of-range offsets fail closed without fabricated text (batch/generic projections omit
+the value; the chunk-search envelope retains its existing empty-string fallback). Read-modify-write
+operations apply the catalog policy `rederive-parent-slice` so unrelated updates do not erase the
+chunk's indexed postings.
+
+Offsets alone do not say *which* parent revision they address, so every chunk also carries
+`chunk_parent_content_sha256` — the SHA-256 of the exact parent `content` string it was cut from.
+The parent write and the chunk regeneration that follows it are two separate coordinator calls, so
+an NRT refresh in between exposes the new parent content beside the not-yet-regenerated chunks; an
+equal-or-longer rewrite fits the old offsets and would silently re-slice the wrong text. Before
+re-deriving, the read-modify-write path hashes the parent it read and compares: a missing or
+differing hash refuses the rewrite with an `IOException`, the same fail-closed path as a missing
+parent. Refusing loses nothing — such a chunk is stale by definition and regeneration deletes it.
+
+The read path applies the same test. Every reconstruction — `getDocumentContent` on a chunk id, the
+`chunk_content` projection on a search hit, the chunk-search envelope — routes through one guard
+that returns the slice only when the parent's current revision equals the chunk's
+`chunk_parent_content_sha256`. On a mismatch, or for a legacy chunk carrying no revision at all,
+the chunk is omitted exactly the way a missing parent is: the point lookup returns nothing, the hit
+arrives without `chunk_content` so its excerpt is empty rather than borrowed, and a RAG context
+drops the passage instead of citing text from a revision the user never saw. Each refused
+reconstruction increments `index.runtime.chunk_revision_mismatch_total`, so the parent-rewrite
+window is visible rather than silent. The comparison reads the parent's stored `content_sha256`
+where it exists and hashes the parent's content only for documents indexed before that field, once
+per parent per read rather than once per chunk.
+
+Because it is a stored field, adding it moved `index_fingerprint`, so it lands with the reindex
+that bundle already required. One degenerate embedding no longer costs a batch either: a zero-
+magnitude or non-finite dense vector is dropped from that one document (its `embedding_status`
+becomes `FAILED` and `index.runtime.vector_dropped_total` counts it) instead of aborting every
+document written alongside it.
 
 Chunk-level vector retrieval uses **field separation**:
 - Full documents embed into `vector`

@@ -33,7 +33,7 @@ class CommitMetadataIntegrationTest {
     CommitMetadataSource meta = new SsotCommitMetadataSource();
     CommitMetadataValidator validator = new JsonSchemaCommitMetadataValidator();
 
-    var r = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, validator).atPath(dir).open();
+    var r = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), meta, validator).atPath(dir).open();
     r.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "commit-1", SchemaFields.DOC_UID, "commit-1#0")));
@@ -57,6 +57,18 @@ class CommitMetadataIntegrationTest {
       String expectedFingerprint = String.valueOf(meta.build().get("index_fingerprint"));
       assertEquals(expectedFingerprint, ud.get("index_fingerprint"));
       assertEquals("COMPLETE", ud.get("build_state"));
+
+      // Tempdoc 931 §C.5: the canonical inputs the digest hashes are stamped beside it, verbatim.
+      // Verbatim is the whole contract — the fallback comparison a later boot runs when its own
+      // digest is uncomputable reads these bytes, so a re-rendered or abbreviated copy would make
+      // every input look changed. Also pinned against the SSOT commit-metadata schema, which is
+      // additionalProperties:false: the JsonSchemaCommitMetadataValidator above would have rejected
+      // the commit outright if the key were not declared there.
+      String expectedInputs = String.valueOf(meta.build().get("index_fingerprint_inputs"));
+      assertEquals(expectedInputs, ud.get("index_fingerprint_inputs"));
+      assertTrue(
+          ud.get("index_fingerprint_inputs").contains("\"rendering_version\""),
+          "the stamped value is the canonical rendering, not a summary of it");
     }
   }
 
@@ -81,7 +93,7 @@ class CommitMetadataIntegrationTest {
         };
     CommitMetadataValidator validator = metadata -> {};
 
-    var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), supplier, validator).atPath(dir).open();
+    var runtime = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), supplier, validator).atPath(dir).open();
     runtime.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(
@@ -120,7 +132,7 @@ class CommitMetadataIntegrationTest {
     CommitMetadataSource source = () -> Map.of("index_fingerprint", "ignored");
     CommitMetadataValidator validator = metadata -> validatorCalls.incrementAndGet();
     try {
-      var runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), source, validator).atPath(dir).open();
+      var runtime = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), source, validator).atPath(dir).open();
       runtime.indexingCoordinator().indexSingle(
           new IndexDocument(
               Map.of(SchemaFields.DOC_ID, "commit-0", SchemaFields.DOC_UID, "commit-0#0")));
@@ -153,7 +165,7 @@ class CommitMetadataIntegrationTest {
     CommitMetadataValidator validator = new RequiredFieldsCommitMetadataValidator();
     Path dir = Files.createTempDirectory("lucene-invalid-meta");
     var runtime =
-        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), badSource, validator).atPath(dir).open();
+        IndexSchema.fromCatalog(FieldCatalogDef.forTesting(4), badSource, validator).atPath(dir).open();
     runtime.indexingCoordinator().indexSingle(
         new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "invalid-1", SchemaFields.DOC_UID, "invalid-1#0")));

@@ -385,12 +385,6 @@ public enum EnvRegistry {
     /** 306: title field boost in BM25 DisjunctionMaxQuery (default: 3.0 via builder, 0 to disable). */
     SEARCH_TITLE_BOOST("justsearch.search.title_boost", "JUSTSEARCH_SEARCH_TITLE_BOOST", LifecycleStage.PERMANENT),
 
-    /** 326: NER entity field boost in BM25 DisjunctionMaxQuery (default: 2.0, 0 to disable). */
-    SEARCH_ENTITY_BOOST(
-        "justsearch.search.entity_boost",
-        "JUSTSEARCH_SEARCH_ENTITY_BOOST",
-        LifecycleStage.PERMANENT),
-
     /** 343: enable/disable chunk-aware merge in search (default: true via builder). */
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED", LifecycleStage.PERMANENT),
@@ -1030,7 +1024,12 @@ public enum EnvRegistry {
     RAG_MMR_MAX_CANDIDATES("rag.mmr.max_candidates", "JUSTSEARCH_RAG_MMR_MAX_CANDIDATES", LifecycleStage.PERMANENT),
     /** Enable chunk-level vector retrieval for RAG. */
     RAG_CHUNK_VECTORS_ENABLED("rag.chunk_vectors.enabled", "JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED", LifecycleStage.PERMANENT),
-    /** Enable chunk-level SPLADE enrichment (tempdoc 712; default false, evidence-gated). */
+    /**
+     * Controls the chunk-SPLADE stage on BOTH the write side (backfill lanes encode chunk docs'
+     * {@code chunk_content}, and {@code ChunkDocumentWriter} enrols the chunk on
+     * {@code splade_status}) and the query-side leg ({@code SearchExecutor}'s chunk-SPLADE
+     * retrieval leg). Tempdoc 712; default false, evidence-gated (931 §E item 8).
+     */
     RAG_CHUNK_SPLADE_ENABLED("rag.chunk_splade.enabled", "JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED", LifecycleStage.PERMANENT),
     /** Enable the RAG doc-level union leg for chunkless docs (tempdoc 749; default true). */
     RAG_UNION_ENABLED("rag.union.enabled", "JUSTSEARCH_RAG_UNION_ENABLED", LifecycleStage.PERMANENT),
@@ -1050,6 +1049,11 @@ public enum EnvRegistry {
     /** Min chars before vector search is skipped (short-query optimization). */
     HYBRID_VECTOR_SKIP_MIN_CHARS("index.hybrid.vector_skip_min_chars",
         "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_CHARS", LifecycleStage.PERMANENT),
+    /** Minimum content-field document-frequency fraction for skipping a redundant dense leg. */
+    HYBRID_VECTOR_SKIP_MIN_DF_FRACTION(
+        "index.hybrid.vector_skip_min_df_fraction",
+        "JUSTSEARCH_INDEX_VECTOR_SKIP_MIN_DF_FRACTION",
+        LifecycleStage.PERMANENT),
     /** Max candidate limit for hybrid search results. */
     HYBRID_CANDIDATE_LIMIT_MAX("index.hybrid.candidate_limit_max",
         "JUSTSEARCH_INDEX_HYBRID_CANDIDATE_LIMIT_MAX", LifecycleStage.PERMANENT),
@@ -1322,7 +1326,29 @@ public enum EnvRegistry {
      * config snapshot, not from a raw sysprop read inside the Worker JVM (the [R1] defect shape).
      */
     INDEX_COMMIT_TIMER_INTERVAL_MS(
-        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000", LifecycleStage.PERMANENT);
+        "index.commit.timer_interval_ms", "JUSTSEARCH_INDEX_COMMIT_TIMER_INTERVAL_MS", "10000", LifecycleStage.PERMANENT),
+
+    // ============ Document-identity deletion grace (tempdoc 931 §C.6) ============
+
+    /**
+     * How long, in ms, a confirmed-deleted path keeps its document identity before a file
+     * reappearing at that path is treated as a NEW document (default 30 days).
+     *
+     * <p>Identity rows have no GC, so before this key a replacement file at a previously-deleted
+     * path inherited the old uid — and with it the old document's accumulated feedback. Deleting
+     * the row on removal would be worse: an unmounted drive, a sync client that momentarily hides a
+     * file, or a cloud placeholder would each look like a deletion and permanently break identity
+     * across an ordinary restore. The grace window is the compromise: within it a reappearance is
+     * the SAME document; past it, a new uid is minted.
+     *
+     * <p>Resolved onto {@code ResolvedConfig.Index} and read by the Worker from the ordinal-450
+     * config snapshot, not from a raw sysprop read inside the Worker JVM.
+     */
+    INDEX_IDENTITY_DELETION_GRACE_MS(
+        "index.identity.deletion_grace_ms",
+        "JUSTSEARCH_INDEX_IDENTITY_DELETION_GRACE_MS",
+        "2592000000",
+        LifecycleStage.PERMANENT);
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

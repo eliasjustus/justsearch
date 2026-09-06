@@ -30,10 +30,10 @@ import org.slf4j.Logger;
  * doc type — chunk docs use {@link SchemaFields#CHUNK_VECTOR} / {@link
  * SchemaFields#CHUNK_EMBEDDING_STATUS}, parents use {@link SchemaFields#VECTOR} / {@link
  * SchemaFields#EMBEDDING_STATUS} — mirroring the doc-type routing in {@code
- * CombinedEnrichmentBackfillOps}. Doc type is detected the same way the content-fetch fallback
- * already does: a non-blank {@link SchemaFields#CHUNK_CONTENT} means a chunk doc (only {@code
- * ChunkDocumentWriter} ever populates that field). The sparse ({@code SPLADE}/{@code
- * SPLADE_STATUS}) write pair is unaffected — chunk docs legitimately carry the SPLADE field.
+ * CombinedEnrichmentBackfillOps}. Doc type is detected from {@link SchemaFields#IS_CHUNK}; content
+ * is fetched through the parent-aware batch reader, which reconstructs chunk text from the parent
+ * and stored offsets. The sparse ({@code SPLADE}/{@code SPLADE_STATUS}) write pair is unaffected —
+ * chunk docs legitimately carry the SPLADE field.
  */
 public final class BgeM3BackfillOps {
   private BgeM3BackfillOps() {}
@@ -47,6 +47,9 @@ public final class BgeM3BackfillOps {
       BooleanSupplier runningSupplier,
       int batchSize,
       boolean commitAfterBatch,
+      // Tempdoc 712/931: see SpladeBackfillOps.BackfillContext — same flag, same reason. This lane
+      // writes the sparse and dense pair together, so a chunk it selects gets sparse data too.
+      boolean chunkSpladeEnabled,
       Logger log) {}
 
   /**
@@ -61,12 +64,19 @@ public final class BgeM3BackfillOps {
     long t0 = System.nanoTime();
     try {
       List<String> pendingIds =
-          context
-              .documentFieldOps()
-              .queryDocIdsByField(
-                  SchemaFields.SPLADE_STATUS,
-                  SchemaFields.SPLADE_STATUS_PENDING,
-                  context.batchSize());
+          context.chunkSpladeEnabled()
+              ? context
+                  .documentFieldOps()
+                  .queryDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize())
+              : context
+                  .documentFieldOps()
+                  .queryNonChunkDocIdsByField(
+                      SchemaFields.SPLADE_STATUS,
+                      SchemaFields.SPLADE_STATUS_PENDING,
+                      context.batchSize());
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
@@ -89,6 +99,10 @@ public final class BgeM3BackfillOps {
 
       // Phase 1: Collect content for all pending docs
       long t1 = System.nanoTime();
+      Map<String, String> contentByDocId =
+          context.documentFieldOps().getDocumentContentBatch(pendingIds);
+      Map<String, Map<String, String>> typeByDocId =
+          context.documentFieldOps().getDocumentFieldsBatch(pendingIds, java.util.Set.of(SchemaFields.IS_CHUNK));
       List<String> batchDocIds = new ArrayList<>(pendingIds.size());
       List<String> batchContents = new ArrayList<>(pendingIds.size());
       // Tempdoc 710 D.3: aligned with batchDocIds/batchContents — tracks whether each pending doc
@@ -97,13 +111,10 @@ public final class BgeM3BackfillOps {
       List<Boolean> batchIsChunk = new ArrayList<>(pendingIds.size());
       for (String docId : pendingIds) {
         try {
-          String chunkContent =
-              context.documentFieldOps().getDocumentField(docId, SchemaFields.CHUNK_CONTENT);
-          // Only ChunkDocumentWriter ever populates CHUNK_CONTENT, so a non-blank value here is
-          // a reliable doc-type signal (tempdoc 710 D.3) — same detection the CombinedEnrichment
-          // path uses.
-          boolean isChunk = chunkContent != null && !chunkContent.isBlank();
-          String content = isChunk ? chunkContent : context.documentFieldOps().getDocumentContent(docId);
+          boolean isChunk =
+              "true".equals(
+                  typeByDocId.getOrDefault(docId, Map.of()).get(SchemaFields.IS_CHUNK));
+          String content = contentByDocId.get(docId);
 
           if (content == null || content.isBlank()) {
             // Neither the sparse postings nor the dense vector can exist without content. Stamping

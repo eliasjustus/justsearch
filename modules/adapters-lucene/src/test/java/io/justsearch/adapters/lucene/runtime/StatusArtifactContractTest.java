@@ -7,6 +7,7 @@ import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
@@ -29,8 +30,8 @@ import tools.jackson.databind.ObjectMapper;
  * {@code validate()}).
  *
  * <p>The documents here are shaped exactly as {@code ChunkDocumentWriter} writes a chunk:
- * {@code is_chunk=true}, {@code chunk_content} set, no {@code content}, no {@code embedding_status},
- * no {@code ner_status}, {@code splade_status=PENDING}.
+ * {@code is_chunk=true}, indexed-only {@code chunk_content} plus parent offsets, no {@code content},
+ * no {@code embedding_status}, no {@code ner_status}, {@code splade_status=PENDING}.
  */
 class StatusArtifactContractTest {
 
@@ -289,7 +290,7 @@ class StatusArtifactContractTest {
               () ->
                   runtime
                       .indexingCoordinator()
-                      .updateDocument("chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                      .updateDocument("chunk-0", Map.of(SchemaFields.PATH, "doc-renamed")));
           commit(runtime);
 
           assertEquals(
@@ -396,7 +397,7 @@ class StatusArtifactContractTest {
                   runtime
                       .indexingCoordinator()
                       .updateDocument(
-                          "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                          "chunk-0", Map.of(SchemaFields.PATH, "doc-renamed")));
           commit(runtime);
 
           assertArrayEquals(
@@ -431,7 +432,7 @@ class StatusArtifactContractTest {
                   runtime
                       .indexingCoordinator()
                       .updateDocument(
-                          "chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+                          "chunk-0", Map.of(SchemaFields.PATH, "doc-renamed")));
           commit(runtime);
 
           assertEquals(
@@ -454,6 +455,11 @@ class StatusArtifactContractTest {
     fields.put(SchemaFields.PARENT_DOC_ID, "doc-0");
     fields.put(SchemaFields.PATH, "doc-0");
     fields.put(SchemaFields.CHUNK_CONTENT, "chunk body");
+    fields.put(SchemaFields.CHUNK_START_CHAR, "0");
+    fields.put(SchemaFields.CHUNK_END_CHAR, "10");
+    // Tempdoc 931 §C.1: the revision of the parent content the offsets above address.
+    fields.put(
+        SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex("chunk body"));
     // No CONTENT, no EMBEDDING_STATUS, no NER_STATUS — a chunk carries none of them.
     fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
     fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
@@ -519,6 +525,20 @@ class StatusArtifactContractTest {
       Files.writeString(cfg, yaml);
       System.setProperty("justsearch.config", cfg.toString());
       runtime = open(CHUNK_CATALOG);
+      runtime
+          .indexingCoordinator()
+          .indexSingle(
+              new IndexDocument(
+                  Map.of(
+                      SchemaFields.DOC_ID,
+                      "doc-0",
+                      SchemaFields.DOC_UID,
+                      "doc-0#0",
+                      SchemaFields.PATH,
+                      "doc-0",
+                      SchemaFields.CONTENT,
+                      "chunk body")));
+      commit(runtime);
       body.accept(runtime);
     } finally {
       if (runtime != null) runtime.close();
@@ -541,7 +561,10 @@ class StatusArtifactContractTest {
           { "id": "is_chunk", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
           { "id": "parent_doc_id", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
           { "id": "content", "type": "text", "stored": true, "docValues": false },
-          { "id": "chunk_content", "type": "text", "stored": true, "docValues": false },
+          { "id": "chunk_content", "type": "text", "stored": false, "docValues": false, "rmwPolicy": "rederive-parent-slice" },
+          { "id": "chunk_parent_content_sha256", "type": "keyword", "stored": true, "docValues": false, "roles": [] },
+          { "id": "chunk_start_char", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
+          { "id": "chunk_end_char", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
           { "id": "ner_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
           { "id": "embedding_status", "type": "keyword", "stored": true, "docValues": true, "roles": ["filter"] },
           { "id": "embedding_retry_count", "type": "long", "stored": true, "docValues": true, "roles": ["filter", "sort"] },
@@ -588,11 +611,13 @@ class StatusArtifactContractTest {
                     try {
                       Files.deleteIfExists(p);
                     } catch (Exception ignored) {
+                      // best-effort cleanup; a locked file (e.g. Windows file lock) should not fail the test
                     }
                   });
         }
       }
     } catch (Exception ignored) {
+      // best-effort cleanup; failures here must not mask the test's actual assertions
     }
   }
 }

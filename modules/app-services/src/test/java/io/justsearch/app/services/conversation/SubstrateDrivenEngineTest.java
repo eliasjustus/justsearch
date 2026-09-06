@@ -1726,11 +1726,11 @@ final class SubstrateDrivenEngineTest {
   /** ScriptedAi that also reports token usage, like a real stream with {@code include_usage}. */
   private static final class UsageReportingAi implements OnlineAiService {
     private final String response;
-    private final io.justsearch.app.api.OnlineAiService.AiUsage usage;
+    private final AiUsage usage;
 
     UsageReportingAi(String response, Integer prompt, Integer completion, Integer total) {
       this.response = response;
-      this.usage = new io.justsearch.app.api.OnlineAiService.AiUsage(prompt, completion, total);
+      this.usage = new AiUsage(prompt, completion, total);
     }
 
     @Override
@@ -1765,7 +1765,7 @@ final class SubstrateDrivenEngineTest {
     final List<String> responses;
     final AtomicInteger callIndex = new AtomicInteger(0);
     final List<List<Map<String, Object>>> calls = new ArrayList<>();
-    final List<io.justsearch.app.api.SamplingParams> samplingCalls = new ArrayList<>();
+    final List<SamplingParams> samplingCalls = new ArrayList<>();
 
     ScriptedAi(List<String> responses) {
       this.responses = responses;

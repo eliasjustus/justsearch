@@ -137,7 +137,7 @@ class IngestionDiagnosticsContractTest {
     // First search after backend boot loads the embedding ONNX model on the worker.
     // Loading exceeds the 5s gRPC search deadline, which trips the circuit breaker;
     // retry until the model is warm and search returns results.
-    JsonNode hits = awaitSearchHit(marker, SEARCHABLE_TIMEOUT);
+    awaitSearchHit(marker, SEARCHABLE_TIMEOUT);
 
     String requestBody =
         MAPPER.writeValueAsString(
@@ -155,7 +155,7 @@ class IngestionDiagnosticsContractTest {
                     "content_truncated",
                     "parser_warnings_count")));
     JsonNode resp = MAPPER.readTree(httpPost("/api/knowledge/search", requestBody));
-    hits = resp.path("results");
+    JsonNode hits = resp.path("results");
     assertTrue(hits.isArray() && !hits.isEmpty(), "Expected at least one search hit for marker");
     JsonNode fields = hits.get(0).path("fields");
     assertFalse(

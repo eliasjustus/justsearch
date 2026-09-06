@@ -59,7 +59,6 @@ export type ComponentTag =
   | 'jf-filter-chip'
   | 'jf-folder-card'
   | 'jf-form'
-  | 'jf-governance-view'
   | 'jf-group-layout'
   | 'jf-handoff-card'
   | 'jf-health-event'
@@ -70,6 +69,7 @@ export type ComponentTag =
   | 'jf-hover-preview-host'
   | 'jf-indexing-overlay'
   | 'jf-indexing-overlay-host'
+  | 'jf-ingestion-summary'
   | 'jf-interaction-retrospective-panel'
   | 'jf-library-surface'
   | 'jf-list-items'
@@ -205,7 +205,6 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-filter-chip',
   'jf-folder-card',
   'jf-form',
-  'jf-governance-view',
   'jf-group-layout',
   'jf-handoff-card',
   'jf-health-event',
@@ -216,6 +215,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-hover-preview-host',
   'jf-indexing-overlay',
   'jf-indexing-overlay-host',
+  'jf-ingestion-summary',
   'jf-interaction-retrospective-panel',
   'jf-library-surface',
   'jf-list-items',

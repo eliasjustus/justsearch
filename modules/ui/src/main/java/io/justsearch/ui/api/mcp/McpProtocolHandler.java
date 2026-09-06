@@ -3,6 +3,7 @@ package io.justsearch.ui.api.mcp;
 
 import io.javalin.http.Context;
 import io.justsearch.agent.api.registry.ResourceCatalog;
+import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.mcp.McpContractVersions;
 import java.time.Clock;
 import java.time.Duration;
@@ -229,7 +230,8 @@ public final class McpProtocolHandler {
         "capabilities", Map.of(
             "tools", Map.of("listChanged", false),
             "resources", Map.of("subscribe", true, "listChanged", false),
-            "prompts", Map.of("listChanged", false)),
+            "prompts", Map.of("listChanged", false),
+            "experimental", surface.experimentalCapabilities()),
         // Tempdoc 804 §B9 (F12): `version` is THIS BUILD (the claim MCP's serverInfo makes); the
         // curated tool-surface version rides `_meta` under a namespaced key, so both stay reachable
         // and neither is reported as the other.
@@ -249,11 +251,11 @@ public final class McpProtocolHandler {
   @SuppressWarnings("unchecked")
   private Map<String, Object> handleToolsCall(Object paramsObj, String sessionId) {
     var params = MAPPER.convertValue(paramsObj, Map.class);
-    if (params == null) return McpToolSurface.errorContent("Invalid params");
+    if (params == null) return McpToolSurface.errorContent("Invalid params", ApiErrorCode.INVALID_REQUEST);
     String toolName = (String) params.get("name");
     Map<String, Object> arguments =
         (Map<String, Object>) params.getOrDefault("arguments", Map.of());
-    if (toolName == null) return McpToolSurface.errorContent("Tool name is required");
+    if (toolName == null) return McpToolSurface.errorContent("Tool name is required", ApiErrorCode.INVALID_REQUEST);
     touchSession(sessionId);
     String requestedBy = sessionId != null && sessions.get(sessionId) != null
         ? sessions.get(sessionId).clientName

@@ -3345,7 +3345,7 @@ export class UnifiedChatView extends JfElement {
     const topOf = (g: PlacedGroup): string =>
       spacedPx ? `${g.positionPx.toFixed(2)}px` : `${g.positionPx.toFixed(2)}%`;
     // §13 Pillar A binding — the spine is an operable nav (keyboard-operable buttons with accessible
-    // names → controls-a11y-clean); click/Enter jumps the reading column to that timeline item, and the
+    // names → 559 operability); click/Enter jumps the reading column to that timeline item, and the
     // scroll-spy marks the in-view node `.active`.
     // §13/§19 — the viewport indicator: a decorative box marking the slice of the conversation on
     // screen, so the long answer body is navigable and the full track reads as a map (the spatial
@@ -3461,8 +3461,9 @@ export class UnifiedChatView extends JfElement {
    * every item is unanchored → an even spread over 0..1, a graceful default.
    */
   // §21 AFFORDANCE — the minimap-as-scrollbar pointer/keyboard handlers. Bound arrow FIELDS so the
-  // template references them without an inline `=>` (a `>` in the attribute would truncate the
-  // controls-a11y tag scan); the scroll math lives in the NavigationController (Spike A's exact mapping).
+  // template references them without an inline `=>` (originally because a `>` in the attribute
+  // truncated the since-retired controls-a11y tag scan; the form is kept because it is the clearer
+  // one); the scroll math lives in the NavigationController (Spike A's exact mapping).
   private readonly onSpineThumbPointerDown = (e: PointerEvent): void => {
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture?.(e.pointerId);

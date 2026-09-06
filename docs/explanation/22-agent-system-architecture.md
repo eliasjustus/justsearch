@@ -5,7 +5,7 @@ status: stable
 description: "Agent loop, operation-substrate tool dispatch, token budget, durability, and MCP tool surface."
 ---
 
-# 22. Agent System Architecture
+# Agent System Architecture
 
 JustSearch includes an agentic assistant that can search the knowledge base, browse indexed folders, request ingestion, and perform approved file operations. The agent runs in the Head process, delegates online inference to the app inference runtime, and delegates Lucene index I/O through service/Worker abstractions.
 
@@ -251,6 +251,13 @@ Event persistence supports replay through the agent session event endpoint and s
 A grounded agent answer carries **one** citation authority: `AgentEvent.AgentSource` (a chunk-identified local passage — `parentDocId`, `chunkIndex`, `path`/`title`/`excerpt`, `startLine`/`endLine`). At end-of-run, `AgentSession.collectGroundingSources()` collects these from the run's executed search-tool results (the `searchResults` structured payload, keyed by chunk identity and deduped), and `AgentStepRunner.groundedDone()` attaches them — plus the per-sentence inline-citation links `AgentEvent.AgentSentenceCite` resolved by `AgentCitationResolver` (the *same* answer↔source matcher the RAG path uses) — to the terminal `AgentDone` event. The sources stand alone even when the matcher does not run; the inline marks are an enrichment layer on top, never a second authority.
 
 Only **chunk-identified** hits are citable: a hit lacking `parentDocId` (a document-level hit, or a search over an index whose chunk-enrichment is not yet ready) is skipped, and grounding degrades to empty — observably (a `WARN` fires when search hits existed but none were citable, so an operational issue never masquerades as a dead feature). The FE renders this one list as the evidence rail + the collapsible "Sources · N" chips + the inline `[n]` marks (the "one tool-call render + one ordered run projection" governance in `governance/run-renderers.v1.json`); a reloaded conversation rehydrates the same grounding from the persisted record, so live and record renders cannot diverge.
+
+`SearchTool` carries a separate, non-rendered `feedbackFeatures` projection for learning feedback.
+Each entry pairs the path-oriented `docId` used by `AgentDone.sources` with the stable parent
+`docUid` supplied by the Worker. `AgentDispositionWiring` resolves citations through that pair and
+persists only UID-keyed dispositions; it never changes the visible source, citation, or tool-card
+shape. A missing or ambiguous UID drops the best-effort feedback row rather than creating a new
+path-keyed record.
 
 **One run-STRUCTURE authority (tempdoc 565 §26).** The same one ordered run projection carries a typed `RunSegmentRef` facet — *which group/origin each timeline item belongs to* — computed by one `assignRunSegments` pass both the live and record projectors call. This completed the "a run is a run" unification at the run's *structure* (the facet the §15.C flatten dropped into an untyped escape hatch): a **workflow** run renders its node graph as labelled segments (the `node_started`/`node_completed` boundaries bracket each node's `node_output` content; the spine marks node boundaries), and a **background** run launched with a `conversationId` renders inline in that conversation's thread as an `origin=background` segment. The workflow shape is a *mode* of the one window, not a second surface (the `interaction-surface` gate makes a second one a build failure), reached through a **picker** that projects `/api/registry/workflows` rather than a hardcoded id. The **memory** surface split accordingly: the durable facts ("what it knows") stay the `core.memory-surface` peer, while the *activity* half ("what it did" — the presence inbox + the run-in-background launcher) folded into the retrospective drawer's Inbox tab. `RunSegmentRef` is *branded* (only `assignRunSegments` mints it) and the `run-renderers` register covers the segmentation pass, so a second run-structure renderer is caught the same way the grounding/answer leaves are.
 

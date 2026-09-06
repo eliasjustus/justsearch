@@ -69,9 +69,10 @@ the rot they were built to avoid is being forgotten (§26 discoverability). Pick
 | "Trace the interaction trajectory into a step" | `jseval ui-shot <step> --trace` | served FE | per-step trace of the chain leading to `<step>` (limited to existing harness chain steps) |
 
 Rules of thumb: judge correctness from `ui-shot`'s `.measure.json` facts (cheap, reliable), not the PNG;
-gate a11y regressions with `ui-a11y-gate` (local-first, ADR-0026 — not CI-wired, so run it); use `ui-diff`
-when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. The
-`ui-shot-hint` PostToolUse hook surfaces the *contextually-relevant* verb when you edit a `shell-v0` file.
+gate a11y regressions with `ui-a11y-gate` (also runs on PRs as the ADVISORY `Measured axe` job in
+`ci.yml` — advisory means non-blocking, so still run it locally); use `ui-diff`
+when deliberately iterating on one surface; `ui-critic`/`ui-fuzz` are deeper, situational passes. After
+editing a `shell-v0` file, run `jseval ui-shot --affected <file>` to find the contextually-relevant step(s).
 
 ## These verbs vs the browser (`claude-in-chrome`) <!-- rule:harness-for-assertions -->
 
@@ -108,8 +109,8 @@ The live shell lands on the **chat** surface by default; every view step navigat
 and the harness's app-ready signal is the **rail** (not `search-input`).
 
 ## The agent feedback loop
-Editing `modules/ui-web/src/shell-v0/**` fires the `ui-shot-hint` PostToolUse hook, which names the affected
-steps (from `ui_step_index.json`). Run the suggested `jseval ui-shot <step>`, then read its `.measure.json`
+After editing `modules/ui-web/src/shell-v0/**`, run `jseval ui-shot --affected <file>` to find the
+affected steps (from `ui_step_index.json`), then `jseval ui-shot <step>`, then read its `.measure.json`
 (facts) and/or the PNG (gestalt).
 
 ## Coverage + freshness gate — tempdoc 615 §6.1a
@@ -165,7 +166,6 @@ excerpt; the highest-fan-out entries are:
 | `scripts/jseval/jseval/ui_selectors.py` | live shell-v0 selector constants (role/testid/surface-id) |
 | `scripts/jseval/jseval/ui_step_index.json` | file→step map (gated) |
 | `scripts/ci/check-ui-step-coverage.mjs` + `governance/ui-step-coverage.v1.json` | coverage/freshness gate |
-| `scripts/agent-analytics/hooks/ui-shot-hint.mjs` | edit-hint hook |
 
 ## Known limitations
 - **No mock-data mode** — data/AI steps need the live dev stack (+ `ai_activate` for AI).

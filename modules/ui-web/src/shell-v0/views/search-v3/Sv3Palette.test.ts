@@ -22,7 +22,7 @@ import type { Sv3Palette } from './Sv3Palette.js';
 import type { Sv3Empty } from './Sv3Empty.js';
 import { SV3_PALETTE_RUN } from './Sv3Palette.js';
 import { SV3_PALETTE_REQUEST } from './Sv3Topbar.js';
-import { COMMANDS, COMMAND_GROUPS, SIDEBAR_EMPTY } from './fixtures.js';
+import { COMMANDS, COMMAND_GROUPS, SIDEBAR_EMPTY, SV3_COMMAND_SEARCH_TEXT } from './fixtures.js';
 import { COMPONENT_TAGS } from '../../renderers/component-vocabulary.generated.js';
 import { modalOwnsFocus, __resetModalityForTest } from '../../primitives/modality.js';
 
@@ -231,6 +231,39 @@ describe('Ctrl+K is scoped to the window, and the shipped binding is left alone'
 });
 
 describe('the open palette keeps the keyboard, and hands it back on close', () => {
+  it('906: a pointer press cannot dismiss the option before its click dispatches', async () => {
+    const el = await mount();
+    const { palette, trigger } = await openViaTopbar(el);
+    const input = palette.shadowRoot!.querySelector('input')!;
+    const item = palette.shadowRoot!.querySelector<HTMLElement>(`#sv3-palette-item-${SV3_COMMAND_SEARCH_TEXT}`)!;
+    const label = item.querySelector<HTMLElement>('.item-label')!;
+    const commands: string[] = [];
+    el.addEventListener(SV3_PALETTE_RUN, (event) => {
+      commands.push((event as CustomEvent<{ id: string }>).detail.id);
+    });
+    const refocused = watchFocus(trigger);
+    expect(palette.shadowRoot?.activeElement).toBe(input);
+
+    label.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true, button: 0 }));
+    const mouseDown = new MouseEvent('mousedown', { bubbles: true, composed: true, cancelable: true, button: 0 });
+    label.dispatchEvent(mouseDown);
+    // happy-dom does not perform native mousedown focus transfer. Reproduce Chromium's
+    // observed default: a nonfocusable option blurs the field with relatedTarget=null.
+    if (!mouseDown.defaultPrevented) {
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true, composed: true, relatedTarget: null }));
+    }
+    await palette.updateComplete;
+    expect(palette.open, 'pointer focus transfer dismissed the option before click').toBe(true);
+    expect(palette.shadowRoot?.activeElement).toBe(input);
+    expect(commands).toEqual([]);
+    label.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, composed: true, button: 0 }));
+    label.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, button: 0 }));
+    await palette.updateComplete;
+    expect(commands).toEqual([SV3_COMMAND_SEARCH_TEXT]);
+    expect(palette.open).toBe(false);
+    expect(refocused()).toBe(true);
+  });
+
   it('focuses the field on open and returns focus to the invoker on Escape', async () => {
     const el = await mount();
     const { palette, trigger } = await openViaTopbar(el);

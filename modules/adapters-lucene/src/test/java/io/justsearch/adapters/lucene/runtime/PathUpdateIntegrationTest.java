@@ -17,8 +17,8 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsRenamesParentAndChunks() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
-    Path cfg = null;
+    Path base;
+    Path cfg;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-test-");
       String yaml =
@@ -143,7 +143,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsReturnsZeroForMissingPath() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-miss-test-");
       String yaml =
@@ -192,7 +192,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsHandlesNullAndBlankInputs() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-null-test-");
       String yaml =
@@ -225,7 +225,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsWithNoChunks() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-nochunk-test-");
       String yaml =
@@ -278,7 +278,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsPreservesEmbeddingStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-embed-test-");
       String yaml =
@@ -344,7 +344,7 @@ class PathUpdateIntegrationTest {
   @Test
   void readModifyWritePreservesMultiValuedFields() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-multi-test-");
       String yaml =
@@ -417,7 +417,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsDoesNotResetNerStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-ner-test-");
       String yaml =
@@ -480,7 +480,7 @@ class PathUpdateIntegrationTest {
   @Test
   void updateDocumentPathsPreservesChunkEmbeddingStatus() throws Exception {
     String prev = System.getProperty("justsearch.config");
-    Path base = null;
+    Path base;
     try {
       base = Files.createTempDirectory("justsearch-pathupdate-chunkembed-test-");
       String yaml =
@@ -585,7 +585,7 @@ class PathUpdateIntegrationTest {
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
 
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
+      return new IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }
@@ -614,7 +614,7 @@ class PathUpdateIntegrationTest {
       var mapper = new ObjectMapper();
       var fieldMapper = new FieldMapper(mapper.readTree(json));
 
-      return new io.justsearch.adapters.lucene.runtime.IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
+      return new IndexSchema(fieldMapper, new io.justsearch.adapters.lucene.analyzers.SsotAnalyzerRegistry(), io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource::new, new io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator(), null).ephemeral().open();
     } catch (Exception e) {
       throw new RuntimeException(e);
     }

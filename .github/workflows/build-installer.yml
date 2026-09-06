@@ -217,8 +217,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci --prefix modules/shell
-          npm ci --prefix modules/ui-web
+          npm ci --prefix modules/shell --audit=false
+          npm ci --prefix modules/ui-web --audit=false
 
       # The command template is step-scoped here only to decide whether the pinned vendor tool is
       # needed. The archive is digest-verified before extraction; no downloaded code runs in this
@@ -609,7 +609,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --audit=false
 
       - name: Download installer artifact
         uses: actions/download-artifact@v7

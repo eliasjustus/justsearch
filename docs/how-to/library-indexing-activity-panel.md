@@ -1,12 +1,25 @@
 ---
 title: "Library Indexing Activity Panel — Frontend Implementation Guide"
 type: how-to
-status: planning
+status: draft
 audience: frontend
 related: tempdoc 419 (WP1, WP4), tempdoc 410 (privacy contract), ADR-0028 (scoped reverse-path-lookup)
 ---
 
 # Library Indexing Activity Panel — Frontend Implementation Guide
+
+The Library Folders view now implements the **retained-outcome summary** through
+`shell-v0/components/IngestionSummary.ts`. It reads
+`GET /api/diagnostics/ingestion/summary?since=0`, groups recorded event counts by
+outcome and reason, and exposes loading, empty, refresh and fetch-error states.
+`ingestionSummaryPresentation.ts` words the current reason vocabulary; its test
+checks coverage against the Java constants. Counts are retained events, not unique
+files or a current-readiness verdict. No path hashes are resolved by this panel.
+
+The recent-event drawer, filename resolution and live scan-progress flows described
+below remain planned. Their delivery must be verified separately. The historical
+nine-row wording example is illustrative; the implementation's complete wording
+projection is the maintained consumer.
 
 This document is the frontend implementation guide for the **Library
 Indexing Activity panel** (tempdoc 419 / WP1) and the live **scan
@@ -186,7 +199,7 @@ the source of truth — if it grows, this doc must update.
 | Field | Show in primary view? | Notes |
 |---|---|---|
 | `id` | No | Internal; useful only for support tickets. |
-| `pathHash` | **No** (advanced/support detail only) | Hash is meaningless to humans. Use the resolver via "Show filename" button. |
+| `pathHash` | **No** (Detailed mode or support only) | Hash is meaningless to humans. Use the resolver via "Show filename" button. |
 | `collection` | Yes | "default", "docs", etc. |
 | `outcomeClass` | Yes (with friendly label) | See [reason-code mapping](#reason-code-friendly-labels) below. |
 | `reasonCode` | Yes (with friendly label) | Same. |
@@ -197,8 +210,8 @@ the source of truth — if it grows, this doc must update.
 | `sourceModifiedAtMs` | Yes (formatted timestamp) | |
 | `sourceKind` | Yes | "Regular file", "Cloud placeholder", etc. |
 | `artifactStatus` | Yes (when present) | "SUCCESS_FULL" → "Indexed in full"; "SUCCESS_PARTIAL" → "Indexed (truncated)"; etc. |
-| `policyId` | Advanced detail | "tika-default-v1" |
-| `parserId` | Advanced detail | "tika-policy-structured" |
+| `policyId` | Detailed mode | "tika-default-v1" |
+| `parserId` | Detailed mode | "tika-policy-structured" |
 
 **Show filename affordance:** A button next to each event reading
 "Show filename" that calls `resolveHash(pathHash)` and either:

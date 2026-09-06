@@ -1,0 +1,22 @@
+{
+  "schema": "github-advisory-baseline.v1",
+  "generated_at": "2026-09-05T08:57:56.593Z",
+  "source_report": "tmp/github-advisory-report.json",
+  "targets": {
+    "root": {
+      "advisories": []
+    },
+    "runtime-client": {
+      "advisories": []
+    },
+    "shell": {
+      "advisories": []
+    },
+    "ui-web": {
+      "advisories": []
+    },
+    "wire-contract": {
+      "advisories": []
+    }
+  }
+}

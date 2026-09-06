@@ -24,7 +24,8 @@ class NdjsonAppendStoreTest {
             "the query",
             123L,
             List.of(
-                new FeatureSnapshot.HitFeatures("d1", 1, 0.9f, 0.8f, 0.7f, 0.85f, 1024L),
+                new FeatureSnapshot.HitFeatures(
+                    "uid-1", "C:/docs/d1", 1, 0.9f, 0.8f, 0.7f, 0.85f, 1024L),
                 new FeatureSnapshot.HitFeatures("d2", 2, 0.5f, 0.4f, 0.3f, 0.45f, null))));
 
     List<FeatureSnapshot> all = store.readAll();
@@ -32,8 +33,44 @@ class NdjsonAppendStoreTest {
     FeatureSnapshot got = all.get(0);
     assertEquals("iid-1", got.interactionId());
     assertEquals(2, got.hits().size());
+    assertEquals("uid-1", got.hits().get(0).docId());
+    assertEquals("C:/docs/d1", got.hits().get(0).sourceDocId());
     assertEquals(1024L, got.hits().get(0).parentTokenCount());
+    assertNull(got.hits().get(1).sourceDocId(), "legacy path rows have no source alias");
     assertNull(got.hits().get(1).parentTokenCount(), "absent token count must round-trip as null");
+  }
+
+  @Test
+  void featureSnapshot_roundtripsTheContentRevisionAndReadsALegacyRowAsUnknown(@TempDir Path dir)
+      throws IOException {
+    // Tempdoc 931 §C.6 — a row written before contentRevision existed must deserialize with null,
+    // not fail and not default to something LabelProjection would read as a mismatch. The legacy
+    // line is written VERBATIM rather than round-tripped, so this is the real on-disk shape.
+    Path file = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(
+        file,
+        "{\"schemaVersion\":1,\"record\":{\"interactionId\":\"iid-legacy\",\"query\":\"q\","
+            + "\"occurredAtMs\":1,\"hits\":[{\"docId\":\"uid-legacy\",\"sourceDocId\":\"C:/a.md\","
+            + "\"rank\":1,\"sparse\":0.1,\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,"
+            + "\"parentTokenCount\":null}]}}\n");
+
+    var store = new NdjsonAppendStore<>(file, FeatureSnapshot.class);
+    store.append(
+        new FeatureSnapshot(
+            "iid-current",
+            "q",
+            2L,
+            List.of(
+                new FeatureSnapshot.HitFeatures(
+                    "uid-current", "C:/b.md", 1, 0.9f, 0.8f, 0.7f, 0.85f, 10L, "rev-b"))));
+
+    List<FeatureSnapshot> all = store.readAll();
+    assertEquals(2, all.size());
+    assertNull(
+        all.get(0).hits().get(0).contentRevision(),
+        "a pre-931 row is UNKNOWN, never a revision mismatch");
+    assertEquals("uid-legacy", all.get(0).hits().get(0).docId());
+    assertEquals("rev-b", all.get(1).hits().get(0).contentRevision());
   }
 
   @Test
@@ -74,10 +111,33 @@ class NdjsonAppendStoreTest {
     Path path = dir.resolve("feature-snapshots.ndjson");
     Files.writeString(
         path,
-        "{\"interactionId\":\"iid-legacy\",\"query\":\"q\",\"occurredAtMs\":1,\"hits\":[]}\n");
+        "{\"interactionId\":\"iid-legacy\",\"query\":\"q\",\"occurredAtMs\":1,"
+            + "\"hits\":[{\"docId\":\"C:/legacy.md\",\"rank\":1,\"sparse\":0.1,"
+            + "\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,\"parentTokenCount\":null}]}\n");
 
     var store = new NdjsonAppendStore<>(path, FeatureSnapshot.class);
-    assertEquals("iid-legacy", store.readAll().getFirst().interactionId());
+    FeatureSnapshot legacy = store.readAll().getFirst();
+    assertEquals("iid-legacy", legacy.interactionId());
+    assertEquals("C:/legacy.md", legacy.hits().getFirst().docId());
+    assertNull(legacy.hits().getFirst().sourceDocId());
+  }
+
+  @Test
+  void versionedPrePhase2HitWithoutSourceAliasRemainsReadable(@TempDir Path dir)
+      throws IOException {
+    Path path = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(
+        path,
+        "{\"schemaVersion\":1,\"record\":{\"interactionId\":\"iid-old\",\"query\":\"q\","
+            + "\"occurredAtMs\":1,\"hits\":[{\"docId\":\"C:/old.md\",\"rank\":1,"
+            + "\"sparse\":0.1,\"dense\":0.2,\"splade\":0.3,\"fused\":0.4,"
+            + "\"parentTokenCount\":null}]}}\n");
+
+    FeatureSnapshot legacy =
+        new NdjsonAppendStore<>(path, FeatureSnapshot.class).readAll().getFirst();
+
+    assertEquals("C:/old.md", legacy.hits().getFirst().docId());
+    assertNull(legacy.hits().getFirst().sourceDocId());
   }
 
   @Test

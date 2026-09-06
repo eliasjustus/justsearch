@@ -1,16 +1,17 @@
 // @vitest-environment happy-dom
 
 /**
- * Developer telemetry is Advanced-mode only.
+ * Developer telemetry is Detailed-mode only.
  *
  * Sandbox round 8 — `renderTransitionTimeline()` and `renderTraceExplorer()` were called from
  * INSIDE `renderSimplePanel()`, so the first-run consumer surface showed "Recent mode transitions"
- * and "Recent spans (10) · click a row to copy trace ID". The Advanced branch rendered neither.
- * Both now render only in Advanced, with their existing emptiness gates untouched.
+ * and "Recent spans (10) · click a row to copy trace ID". The Detailed branch rendered neither.
+ * Both now render only in Detailed, with their existing emptiness gates untouched.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import './BrainSurface';
+import { __resetUiModeForTest, setUiMode } from '../state/uiModeState.js';
 
 interface BrainHost extends HTMLElement {
   settings: { mode?: 'simple' | 'advanced' };
@@ -40,6 +41,7 @@ const SPANS: BrainHost['recentSpans'] = [
 
 /** Mount with telemetry data present in BOTH panels' feeding state; return the rendered shadow DOM. */
 async function mount(mode: 'simple' | 'advanced'): Promise<string> {
+  setUiMode(mode);
   const el = document.createElement('jf-brain-surface') as BrainHost;
   el.settings = { mode };
   el.inference = { generation: 2, mode: 'offline', activeModelId: null };
@@ -52,6 +54,8 @@ async function mount(mode: 'simple' | 'advanced'): Promise<string> {
   document.body.removeChild(el);
   return html;
 }
+
+afterEach(() => __resetUiModeForTest());
 
 describe('BrainSurface developer telemetry placement (round 8)', () => {
   it('the Simple panel exposes NO transition timeline and NO trace explorer', async () => {
@@ -66,7 +70,7 @@ describe('BrainSurface developer telemetry placement (round 8)', () => {
     expect(html).not.toContain('copy trace ID');
   });
 
-  it('the Advanced panel renders both', async () => {
+  it('the Detailed panel renders both', async () => {
     const html = await mount('advanced');
     expect(html).toContain('brain-transitions-timeline');
     expect(html).toContain('brain-trace-explorer');
@@ -79,7 +83,8 @@ describe('BrainSurface developer telemetry placement (round 8)', () => {
     expect(html).toContain('Recent spans');
   });
 
-  it('the Advanced panel keeps the emptiness gates — no telemetry data, no sections', async () => {
+  it('the Detailed panel keeps the emptiness gates — no telemetry data, no sections', async () => {
+    setUiMode('advanced');
     const el = document.createElement('jf-brain-surface') as BrainHost;
     el.settings = { mode: 'advanced' };
     el.inference = { generation: 0, mode: 'offline', activeModelId: null };
@@ -95,6 +100,7 @@ describe('BrainSurface developer telemetry placement (round 8)', () => {
   });
 
   it('the trace explorer is gated on tracesAvailable alone — spans present but unavailable stays hidden', async () => {
+    setUiMode('advanced');
     const el = document.createElement('jf-brain-surface') as BrainHost;
     el.settings = { mode: 'advanced' };
     el.inference = { generation: 2, mode: 'offline', activeModelId: null };

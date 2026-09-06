@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -78,7 +77,19 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
       // The one rebuild-requiring key: a hash over the effective *physical* index shape. Absent
       // when a configured model's digest is unresolvable — see IndexFingerprint's class Javadoc on
       // why an indeterminate input must not be stamped as an answer.
-      indexFingerprint().ifPresent(fp -> out.put(IndexFingerprint.COMMIT_META_KEY, fp));
+      //
+      // The canonical INPUTS are stamped unconditionally beside it, including on the boot where the
+      // digest could not be computed. That is the point: an index whose shape was recorded while a
+      // model file was unreadable still recorded everything that model does not touch, so a later
+      // boot in the same state can still tell a changed vector dimension from an unchanged one
+      // (tempdoc 931 §C.5). It is the same statement as the digest, not a second one — see
+      // IndexFingerprint.COMMIT_META_INPUTS_KEY on why it is not a parity key.
+      IndexFingerprint.Inputs inputs = fingerprintInputs();
+      IndexFingerprint.compute(inputs).ifPresent(fp -> out.put(IndexFingerprint.COMMIT_META_KEY, fp));
+      out.put(
+          IndexFingerprint.COMMIT_META_INPUTS_KEY,
+          new String(
+              IndexFingerprint.canonicalJson(inputs), java.nio.charset.StandardCharsets.UTF_8));
       // Per-language synonym lists were removed in tempdoc 581 §13 / ADR-0043 (native
       // multilingual, no per-language levers). synonyms_hash is retained as a commit-metadata /
       // observability identity field (consumed by telemetry spans + jseval) and is now the
@@ -150,8 +161,10 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
   }
 
   /**
-   * Assembles the {@link IndexFingerprint} inputs and computes the digest, or empty when a
-   * configured model's digest is unresolvable.
+   * The assembled {@link IndexFingerprint.Inputs} — the one assembly from which BOTH the digest
+   * ({@link IndexFingerprint#compute}) and the canonical inputs JSON are rendered: two call sites
+   * that each built their own would be free to disagree, and the whole value of the inputs key is
+   * that it is the exact rendering the digest hashes.
    *
    * <p>The catalog is projected to its <em>physical</em> shape here rather than hashed as a file:
    * {@code rmwPolicy} is dropped because it cannot describe a stored or doc-values field (see
@@ -159,12 +172,11 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
    * exclusion is what the old {@code index_schema_fp} lacked, and why three annotation-only catalog
    * edits each falsely demanded a reindex (tempdoc 804).
    */
-  Optional<String> indexFingerprint() throws IOException {
+  IndexFingerprint.Inputs fingerprintInputs() throws IOException {
     JsonNode catalog = M.readTree(file("SSOT/catalogs/fields.v1.json"));
     ResolvedConfig rc = resolvedConfigOrNull();
 
-    return IndexFingerprint.compute(
-        new IndexFingerprint.Inputs(
+    return new IndexFingerprint.Inputs(
             catalog.path("version").asText(),
             projectFields(catalog, IndexFingerprint.effectiveVectorDimension()),
             analyzerFingerprint(),
@@ -188,7 +200,7 @@ public final class SsotCommitMetadataSource implements CommitMetadataSource {
                 majorMinor(com.ibm.icu.util.VersionInfo.ICU_VERSION.toString())),
             IndexFingerprint.embeddingModel(),
             IndexFingerprint.spladeModel(),
-            IndexFingerprint.nerModel()));
+            IndexFingerprint.nerModel());
   }
 
   /**

@@ -3,13 +3,22 @@ package io.justsearch.ui.api.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static io.justsearch.ui.api.ContractSchemaAssertions.assertConforms;
 
+import io.javalin.http.Context;
 import io.justsearch.app.api.runtime.RuntimeContract;
 import io.justsearch.app.api.runtime.RuntimeManifest;
 import io.justsearch.app.api.runtime.RuntimeManifestBuilder;
 import io.justsearch.app.api.runtime.RuntimeManifestHeadInfoBuilder;
 import io.justsearch.app.api.runtime.RuntimeManifestWorkerInfoBuilder;
+import io.justsearch.ui.runtime.RuntimeManifestPublisher;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Tempdoc 501 §13.4.5 audience axis: HTTP-class transports (REST + SSE +
@@ -20,6 +29,49 @@ import org.junit.jupiter.api.Test;
  * cannot silently regress the projection.
  */
 class RuntimeManifestControllerRedactionTest {
+
+  @Test
+  void serializationFailureUsesSanitizedStableEnvelope() throws Exception {
+    RuntimeManifest manifest =
+        RuntimeManifestBuilder.builder()
+            .schemaVersion(1)
+            .instanceId("inst-hostile")
+            .pid(1234L)
+            .startedAt("2026-09-03T00:00:00Z")
+            .dataDir("C:\\Users\\victim\\private")
+            .head(
+                RuntimeManifestHeadInfoBuilder.builder()
+                    .apiPort(54321)
+                    .apiBaseUrl("http://127.0.0.1:54321")
+                    .readyAt("2026-09-03T00:00:00Z")
+                    .build())
+            .build();
+    RuntimeManifestPublisher publisher = mock(RuntimeManifestPublisher.class);
+    when(publisher.current()).thenReturn(manifest);
+    Context ctx = mock(Context.class);
+    when(ctx.status(500)).thenReturn(ctx);
+    String hostile = "token=secret at C:\\Users\\victim\\private\\manifest.json";
+
+    new RuntimeManifestController(
+            publisher,
+            ignored -> {
+              throw new IllegalStateException(hostile);
+            })
+        .handleGet(ctx);
+
+    ArgumentCaptor<Object> body = ArgumentCaptor.forClass(Object.class);
+    verify(ctx).json(body.capture());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = (Map<String, Object>) body.getValue();
+    assertEquals("INTERNAL_ERROR", response.get("errorCode"));
+    assertEquals("Runtime manifest serialization failed", response.get("error"));
+    assertFalse(response.toString().contains("secret"));
+    assertFalse(response.toString().contains("victim"));
+    assertConforms(
+        "GET /api/runtime/manifest status 500",
+        "api-error-response.v1.json",
+        new tools.jackson.databind.ObjectMapper().writeValueAsString(response));
+  }
 
   @Test
   void publicProjectionStripsSessionTokenWhenPresent() {

@@ -18,6 +18,7 @@ import io.justsearch.app.services.settings.UiSettingsStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -33,6 +34,8 @@ import org.slf4j.LoggerFactory;
  */
 public class SettingsController {
   private static final Logger log = LoggerFactory.getLogger(SettingsController.class);
+  static final String UI_MODE_INTENT_HEADER = "X-JustSearch-UI-Mode-Intent";
+  private static final int MAX_TRACKED_UI_MODE_CLIENTS = 64;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
   private final UiSettingsStore settingsStore;
@@ -40,6 +43,13 @@ public class SettingsController {
   private final Telemetry telemetry;
   private final ConfigStore configStore;
   private final Runnable chatEnabledChanged; // nullable — tempdoc 737 Phase 1 spec-write nudge
+  private final Map<String, Long> latestUiModeIntentByClient =
+      new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Long> eldest) {
+          return size() > MAX_TRACKED_UI_MODE_CLIENTS;
+        }
+      };
 
   public SettingsController(
       UiSettingsStore settingsStore,
@@ -99,30 +109,46 @@ public class SettingsController {
           telemetry, ApiErrorHandler.routeOf(ctx)));
       return;
     }
-    UiSettings current = settingsStore.load();
-    // Tempdoc 737: capture BEFORE mergeV2Into — it mutates `current` in place.
-    Boolean chatEnabledBefore = current.getChatEnabled();
-    try {
-      SettingsV2 incoming = MAPPER.readValue(ctx.body(), SettingsV2.class);
-      UiSettings merged = mergeV2Into(current, incoming);
+    // Every request is a partial patch over a whole-document durable store. Keep load + merge +
+    // save (and its runtime projection) under the store identity so concurrent requests through
+    // this or another controller instance cannot each save a snapshot derived from the same old
+    // document and silently clobber one another.
+    synchronized (settingsStore) {
+      UiSettings current = settingsStore.load();
+      // Tempdoc 737: capture BEFORE mergeV2Into — it mutates `current` in place.
+      Boolean chatEnabledBefore = current.getChatEnabled();
+      try {
+        SettingsV2 incoming = MAPPER.readValue(ctx.body(), SettingsV2.class);
+        UiModeIntent modeIntent = modeIntentOf(ctx, incoming);
+        Long latestSequence =
+            modeIntent == null ? null : latestUiModeIntentByClient.get(modeIntent.clientId());
+        boolean applyMode =
+            modeIntent == null
+                || latestSequence == null
+                || modeIntent.sequence() > latestSequence;
+        UiSettings merged = mergeV2Into(current, incoming, applyMode);
 
-      String validationError = validateIndexPath(merged.getIndexBasePath());
-      if (validationError != null) {
-        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_PATH, validationError, telemetry, ApiErrorHandler.routeOf(ctx)));
-        return;
-      }
+        String validationError = validateIndexPath(merged.getIndexBasePath());
+        if (validationError != null) {
+          ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_PATH, validationError, telemetry, ApiErrorHandler.routeOf(ctx)));
+          return;
+        }
 
-      settingsStore.save(merged);
-      rebuildConfigStore(merged);
-      if (chatEnabledChanged != null
-          && !java.util.Objects.equals(chatEnabledBefore, merged.getChatEnabled())) {
-        chatEnabledChanged.run();
+        settingsStore.save(merged);
+        rebuildConfigStore(merged);
+        if (modeIntent != null && applyMode) {
+          latestUiModeIntentByClient.put(modeIntent.clientId(), modeIntent.sequence());
+        }
+        if (chatEnabledChanged != null
+            && !java.util.Objects.equals(chatEnabledBefore, merged.getChatEnabled())) {
+          chatEnabledChanged.run();
+        }
+        ctx.json(toSettingsV2(merged));
+        log.info("Settings updated via API v2");
+      } catch (Exception e) {
+        log.error("Failed to update settings (v2)", e);
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Invalid settings format", telemetry, ApiErrorHandler.routeOf(ctx)));
       }
-      ctx.json(toSettingsV2(merged));
-      log.info("Settings updated via API v2");
-    } catch (Exception e) {
-      log.error("Failed to update settings (v2)", e);
-      ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST, "Invalid settings format", telemetry, ApiErrorHandler.routeOf(ctx)));
     }
   }
 
@@ -162,7 +188,7 @@ public class SettingsController {
   }
 
   /** Merges an incoming {@link SettingsV2} into the existing {@link UiSettings}. */
-  private UiSettings mergeV2Into(UiSettings base, SettingsV2 incoming) {
+  private UiSettings mergeV2Into(UiSettings base, SettingsV2 incoming, boolean applyMode) {
     if (incoming == null) {
       return base;
     }
@@ -176,7 +202,7 @@ public class SettingsController {
       if (ui.defaultAction() != null) base.setDefaultAction(ui.defaultAction());
       if (ui.inspectorWidth() != null) base.setInspectorWidth(ui.inspectorWidth());
       if (ui.pauseIndexingDuringAi() != null) base.setPauseIndexingDuringAi(ui.pauseIndexingDuringAi());
-      if (ui.mode() != null) base.setMode(ui.mode());
+      if (applyMode && ui.mode() != null) base.setMode(ui.mode());
       if (ui.hasSeenTrustLoopNudge() != null) base.setTrustLoopNudgeSeen(ui.hasSeenTrustLoopNudge());
       if (ui.excludePatterns() != null) base.setExcludePatterns(ui.excludePatterns());
       if (ui.chatEnabled() != null) base.setChatEnabled(ui.chatEnabled());
@@ -199,6 +225,40 @@ public class SettingsController {
 
     return base;
   }
+
+  /**
+   * Parses the frontend's per-client monotonic mode intent only when this patch actually carries a
+   * mode. Older intents remain valid partial patches for their other fields, but cannot restore an
+   * earlier mode after the browser has timed out and advanced its queue.
+   */
+  private static UiModeIntent modeIntentOf(Context ctx, SettingsV2 incoming) {
+    if (incoming == null || incoming.ui() == null || incoming.ui().mode() == null) {
+      return null;
+    }
+    String raw = ctx.header(UI_MODE_INTENT_HEADER);
+    if (raw == null || raw.isBlank()) {
+      return null; // Compatibility for existing API clients.
+    }
+    int separator = raw.lastIndexOf(':');
+    if (separator < 1 || separator == raw.length() - 1) {
+      throw new IllegalArgumentException("Invalid UI mode intent header");
+    }
+    String clientId = raw.substring(0, separator);
+    if (clientId.length() > 96 || !clientId.matches("[A-Za-z0-9_-]+")) {
+      throw new IllegalArgumentException("Invalid UI mode intent client id");
+    }
+    try {
+      long sequence = Long.parseLong(raw.substring(separator + 1));
+      if (sequence <= 0) {
+        throw new IllegalArgumentException("UI mode intent sequence must be positive");
+      }
+      return new UiModeIntent(clientId, sequence);
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException("Invalid UI mode intent sequence", e);
+    }
+  }
+
+  private record UiModeIntent(String clientId, long sequence) {}
 
   private static String blankToNull(String s) {
     return (s == null || s.isBlank()) ? null : s;

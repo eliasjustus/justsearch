@@ -42,6 +42,8 @@ final class CoreOperationCatalogTest {
     // Slice 491 §9.D Phase E (C4 / E3): added core.navigate-to-surface; Tempdoc 560 WS4 moved its
     // DEFINITION to AgentToolsOperationCatalog (it is no longer a core *definition* — the ref
     // constant stays in CoreOperationCatalog for handler registration).
+    // Tempdoc 931 §E item 10: added core.settle-index (purge deleted-but-unmerged documents so
+    // paired evaluation arms compare with equal merge state).
     // Tempdoc 564 facet 4c: the catalog count is DERIVED from the canonical expected id-set below,
     // not a hand-maintained magic number — the redundant count "leg" is subsumed. The id-set is the
     // one irreducible per-op authoring (adding/removing an op updates this single place; count follows).
@@ -53,6 +55,7 @@ final class CoreOperationCatalogTest {
             "core.clear-failed-jobs",
             "core.reindex",
             "core.export-diagnostics",
+            "core.copy-diagnostic-summary",
             "core.add-watched-root",
             "core.remove-watched-root",
             "core.preview-excludes",
@@ -76,7 +79,8 @@ final class CoreOperationCatalogTest {
             "core.resolve-path-hash",
             "core.rebuild-index",
             "core.reconcile-root",
-            "core.index-gc");
+            "core.index-gc",
+            "core.settle-index");
     Set<String> ids =
         catalog.definitions().stream()
             .map(op -> op.id().value())
@@ -183,6 +187,20 @@ final class CoreOperationCatalogTest {
     assertEquals(RiskTier.LOW, op.policy().risk());
     assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
     assertEquals(Set.of(ExecutorTag.UI), op.executors());
+  }
+
+  @Test
+  void copyDiagnosticSummaryIsHeadLocalLowRiskMetadataOnlyUserOperation() {
+    Operation op = catalog.findById(CoreOperationCatalog.COPY_DIAGNOSTIC_SUMMARY).orElseThrow();
+    assertEquals(RiskTier.LOW, op.policy().risk());
+    assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
+    assertEquals(AuditPolicy.METADATA_ONLY, op.policy().audit());
+    assertEquals(Set.of(ExecutorTag.UI), op.executors());
+    assertEquals(Audience.USER, op.audience());
+    assertTrue(
+        op.policy().requiredCapabilities().isEmpty(),
+        "copy summary must remain available without Worker or Inference");
+    assertTrue(op.intf().result().contains("\"required\":[\"summary\"]"));
   }
 
   @Test

@@ -5,12 +5,11 @@
  * AGENTS.md is injected into every Codex session; CLAUDE.md + every
  * .claude/rules/*.md is injected into every Claude session. These files tax
  * every task in their respective harnesses regardless of relevance. The Part I.E
- * finding: the existing bloat guard (prose-tier-register's sentence-scan) only
- * governs ANCHORED rule sentences, so the largest bloat (the Pre-merge list,
- * common-workflows procedures) grew invisible to it. This ratchet closes that
- * hole by bounding the always-loaded BYTE budget, the same shape as the
- * class-size / ui-bundle / npm-audit ratchets: a per-file ceiling that only
- * shrinks.
+ * finding: the bloat guard of the day (the since-retired prose-tier-register
+ * gate's sentence-scan) only governed ANCHORED rule sentences, so the largest
+ * bloat (the Pre-merge list, common-workflows procedures) grew invisible to it.
+ * This ratchet closes that hole by bounding the always-loaded BYTE budget, the
+ * same shape as the npm-audit ratchet: a per-file ceiling that only shrinks.
  *
  *   node scripts/ci/check-always-loaded-budget.mjs            # default == --check
  *   node scripts/ci/check-always-loaded-budget.mjs --check    # fail (exit 1) if any file over ceiling
@@ -26,10 +25,10 @@
  * silent ceiling-JSON surgery). ~tokens reported as bytes/4.
  *
  * 582 R3 ("freeze the meta-tier count") note: this is a standalone CI lint, the
- * same tier as the doc-gen `--check` family — not a new kernel discipline-gate.
- * The design's R3-clean home is folding the same check into the existing
- * prose-tier-register enforcer; that wiring is a follow-up once the doc set
- * stabilizes (see the baseline `$comment`).
+ * same tier as the doc-gen `--check` family — not a kernel discipline-gate. The
+ * design's R3-clean home was folding it into the prose-tier-register enforcer;
+ * that gate was retired by tempdoc 930 chunk F, so this lint is now the only
+ * always-loaded bloat guard and stays standalone.
  */
 
 import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
@@ -70,11 +69,9 @@ const tok = (b) => Math.round(b / 4);
  * file was invisible to the ratchet — always-loaded AND unmeasured. Fail-closed:
  * every on-disk rules file must either carry a ceiling or be non-always-loaded
  * (`paths:` frontmatter scopes a rule to matching files — it loads on demand,
- * not at launch). `compaction-state.md` is session-ephemeral (compact-restore
- * writes and deletes it) and exempt.
+ * not at launch).
  */
 function unlistedAlwaysLoaded() {
-  const EXEMPT = new Set(['compaction-state.md']);
   let names;
   try {
     names = readdirSync(resolve(REPO_ROOT, '.claude/rules')).filter((n) => n.endsWith('.md'));
@@ -83,7 +80,6 @@ function unlistedAlwaysLoaded() {
   }
   const out = [];
   for (const n of names) {
-    if (EXEMPT.has(n)) continue;
     const rel = `.claude/rules/${n}`;
     if (rel in ceilings) continue;
     let head = '';

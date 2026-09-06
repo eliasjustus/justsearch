@@ -168,6 +168,79 @@ async function recordHoldsTree(record, treeRoot) {
   return holdsWithin(record, treeRoot);
 }
 
+/** Teardown-only path resolver: tolerate absence while propagating I/O/permission failures. */
+async function strictRealpathNearest(p, { realpath = fsp.realpath } = {}) {
+  if (typeof p !== 'string' || !p.trim() || !path.isAbsolute(p)) {
+    throw new Error(`held resource path is not absolute: ${JSON.stringify(p)}`);
+  }
+  const abs = path.resolve(p);
+  let head = abs;
+  const tail = [];
+  for (;;) {
+    try {
+      const real = await realpath(head);
+      return tail.length ? path.join(real, ...tail) : real;
+    } catch (err) {
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err;
+      const parent = path.dirname(head);
+      if (parent === head) return abs;
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+/** Strict, tri-state-by-throw relation used only at the destructive teardown boundary. */
+async function strictRecordHoldsTree(record, treeRoot, options) {
+  const target = normalizePathForCompare(await strictRealpathNearest(treeRoot, options));
+  const roots = record?.resourceRoots || {};
+  for (const key of ['worktreeRoot', 'nodeModulesRealPath']) {
+    const raw = roots[key];
+    if (raw === undefined || raw === null) continue;
+    // eslint-disable-next-line no-await-in-loop -- two roots at most per record
+    const root = normalizePathForCompare(await strictRealpathNearest(raw, options));
+    if (target === root || target.startsWith(`${root}/`) || root.startsWith(`${target}/`)) return true;
+  }
+  return false;
+}
+
+async function readTeardownEntries({ dir, targetPath }) {
+  await assertOptionalRegisterDirectory(dir);
+  let dirEntries;
+  try {
+    dirEntries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw err;
+  }
+  const pending = dirEntries
+    .filter((entry) => entry.name.endsWith('.tmp'))
+    .map((entry) => ({
+      ok: false,
+      recordId: `(pending:${entry.name})`,
+      reason: `pending atomic-write entry ${entry.name} makes helper registration state unknown; wait for the producer, or if it is stale run node scripts/dev/agent-spawn-sweep.cjs --occasion session-start`,
+    }));
+  const rawEntries = await readAgentSpawnRegister({ dir });
+  const relevant = [...pending];
+  for (const entry of rawEntries) {
+    if (!entry.ok) {
+      relevant.push(entry);
+      continue;
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop -- bounded by AGENT_SPAWNS_MAX_RECORDS (64)
+      if (await strictRecordHoldsTree(entry.record, targetPath)) relevant.push(entry);
+    } catch (err) {
+      relevant.push({
+        ok: false,
+        recordId: entry.recordId,
+        reason: `could not establish held-resource relation: ${String(err?.message || err).slice(0, 200)}`,
+      });
+    }
+  }
+  return relevant;
+}
+
 /**
  * The EXECUTE-capability assembly shared by the three occasions that may actually kill:
  * `session-start`, `session-end`, and `session-closeout` (861 §6.4 / OCCASIONS map).
@@ -209,6 +282,7 @@ async function runAgentSpawnSweep({
   now = Date.now(),
   env = process.env,
   readTable = readProcessTable,
+  executeReadTable = readProcessTable,
   actorSource = null,
   thresholds = DEFAULT_THRESHOLDS,
   prune = occasion === 'session-start',
@@ -258,6 +332,7 @@ async function runAgentSpawnSweep({
   for (const entry of buckets.reap) {
     kills.push(await executeReap(entry, {
       dir,
+      readTable: executeReadTable,
       actor: { sessionId: callerSessionId, source: actorSource || occasion },
     }));
   }
@@ -289,19 +364,103 @@ async function consultAgentSpawnsForTeardown({
   now = Date.now(),
   env = process.env,
   readTable = readProcessTable,
+  executeReadTable = readProcessTable,
   thresholds = DEFAULT_THRESHOLDS,
 } = {}) {
-  return runAgentSpawnSweep({
+  const registerDir = resolveAgentSpawnsRegisterDir(mainRepoRoot, env);
+  const entries = await readTeardownEntries({ dir: registerDir, targetPath });
+  const result = await runAgentSpawnSweep({
     occasion: 'worktree-teardown',
     mainRepoRoot,
     callerSessionId,
     now,
     env,
     readTable,
+    executeReadTable,
     thresholds,
     actorSource: 'remove-worktree',
-    filterEntry: (e) => (e.ok && e.record ? recordHoldsTree(e.record, targetPath) : false),
+    // An unreadable row cannot prove that it is unrelated to this target. Include it so the
+    // conflict matrix refuses teardown instead of turning unknown state into permission.
+    filterEntry: (entry) => entries.some((candidate) => candidate.recordId === entry.recordId && candidate.ok === entry.ok),
   });
+  // Include pending/strict-relation unknowns that are not part of the ordinary *.json reader.
+  const synthetic = entries.filter((entry) => !result.buckets.all.some((row) => row.recordId === entry.recordId));
+  if (synthetic.length) {
+    const table = readTable();
+    const stateRoot = resolveDevRunnerStateRoot(mainRepoRoot, env);
+    const extra = reapEligible({
+      records: synthetic,
+      processTable: table,
+      occasion: 'worktree-teardown',
+      callerSessionId,
+      now,
+      thresholds,
+      devRunnerActive: await readDevRunnerActiveRun({ stateRoot }),
+      sessionsDir: path.join(stateRoot, 'sessions'),
+      env,
+    });
+    result.buckets.all.push(...extra.all);
+    result.buckets.refuse.push(...extra.refuse);
+    result.buckets.blocksProceed = result.buckets.blocksProceed || extra.blocksProceed;
+  }
+  const uncleared = result.kills.filter((kill) => !kill.confirmed && kill.identity?.verdict !== 'mismatch');
+  if (uncleared.length) {
+    result.buckets.blocksProceed = true;
+    result.executionBlockers = uncleared;
+  }
+  return result;
+}
+
+async function assertOptionalRegisterDirectory(dir) {
+  try {
+    const stat = await fsp.lstat(dir);
+    if (stat.isSymbolicLink()) throw new Error(`${dir} is a symlink`);
+    if (!stat.isDirectory()) throw new Error(`${dir} is not a directory`);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return;
+    throw err;
+  }
+}
+
+/**
+ * Read-only counterpart to consultAgentSpawnsForTeardown for `remove-worktree --dry-run`.
+ * It deliberately stops after the pure reapEligible projection: no executeReap, refusal mark,
+ * prune, lease renewal, or register write occurs. Unreadable rows are retained because their
+ * relationship to the target is unknown and therefore blocks the preview verdict.
+ */
+async function inspectAgentSpawnsForTeardown({
+  mainRepoRoot,
+  targetPath,
+  callerSessionId = null,
+  now = Date.now(),
+  env = process.env,
+  readTable = readProcessTable,
+  thresholds = DEFAULT_THRESHOLDS,
+} = {}) {
+  const stateRoot = resolveDevRunnerStateRoot(mainRepoRoot, env);
+  const dir = resolveAgentSpawnsRegisterDir(mainRepoRoot, env);
+  const entries = await readTeardownEntries({ dir, targetPath });
+  const sessionsDir = path.join(stateRoot, 'sessions');
+  if (entries.length === 0) {
+    return {
+      occasion: 'worktree-teardown', dir,
+      buckets: { reap: [], contention: [], refuse: [], report: [], all: [], blocksProceed: false, markPending: [] },
+    };
+  }
+  const processTable = readTable();
+  const devRunnerActive = await readDevRunnerActiveRun({ stateRoot });
+  const buckets = reapEligible({
+    records: entries,
+    processTable,
+    occasion: 'worktree-teardown',
+    callerSessionId,
+    now,
+    thresholds,
+    devRunnerActive,
+    sessionsDir,
+    env,
+  });
+  return { occasion: 'worktree-teardown', dir, buckets };
 }
 
 /**
@@ -382,7 +541,7 @@ async function gatherAgentSpawnOrientation({
  * `recordFilter` (861 W5 review F-5) applies BEFORE the process-table read, not after: the
  * build hint's per-session marker de-dup passes `(e) => !alreadyNudged(sessionId, e.recordId)`
  * here so an already-nudged holder never causes a PowerShell spawn on a subsequent gradlew/npm
- * call, mirroring `exec-substrate-hint.mjs`'s check-before-work order.
+ * call — check before work, not after.
  *
  * Returns `{ holders: [] }` fast (no process-table read) when the pre-filter finds nothing —
  * the common case, and the reason this hint stays cheap enough for a PreToolUse hook budget.
@@ -463,8 +622,11 @@ module.exports = {
   deriveObservedRows,
   holdsWithin,
   recordHoldsTree,
+  strictRealpathNearest,
+  strictRecordHoldsTree,
   runAgentSpawnSweep,
   consultAgentSpawnsForTeardown,
+  inspectAgentSpawnsForTeardown,
   gatherAgentSpawnOrientation,
   findBuildHolders,
   describeEntry,

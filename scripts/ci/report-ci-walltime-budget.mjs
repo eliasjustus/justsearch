@@ -74,13 +74,36 @@ function warn(code, message, details = {}) {
   return { code, message, ...details };
 }
 
-export function buildWalltimeBudgetReport({ attribution, policy }) {
+export function buildWalltimeBudgetReport({ attribution, policy, now = new Date() }) {
   const laneByJob = new Map();
   for (const lane of Array.isArray(policy.lanes) ? policy.lanes : []) {
     if (lane.job) laneByJob.set(lane.job, lane);
   }
   const jobs = Array.isArray(attribution.jobs) ? attribution.jobs : [];
   const warnings = [];
+
+  const reviewByMs = Date.parse(policy.reviewBy || '');
+  if (!Number.isFinite(reviewByMs)) {
+    warnings.push(warn('invalid-policy-review-date', 'The wall-time policy needs a valid reviewBy date.'));
+  } else if (reviewByMs < now.getTime()) {
+    warnings.push(warn('stale-policy-evidence', `Wall-time policy evidence expired on ${policy.reviewBy}.`, { reviewBy: policy.reviewBy }));
+  }
+
+  const jobNames = new Set(jobs.map((job) => job.name));
+  for (const lane of laneByJob.values()) {
+    if (lane.requiredCheck && !jobNames.has(lane.job)) {
+      warnings.push(warn('missing-required-lane', `${lane.job} is required but absent from this attribution.`, { job: lane.job }));
+    }
+    const ceiling = lane?.advisoryBudgets?.maxWallSeconds;
+    const hardTimeout = lane?.hardTimeoutSeconds;
+    if (Number.isFinite(ceiling) && Number.isFinite(hardTimeout) && ceiling > hardTimeout * 0.8) {
+      warnings.push(warn('insufficient-timeout-headroom', `${lane.job} advisory ceiling ${ceiling}s leaves less than 20% headroom before its ${hardTimeout}s hard timeout.`, {
+        job: lane.job,
+        budgetSeconds: ceiling,
+        hardTimeoutSeconds: hardTimeout,
+      }));
+    }
+  }
 
   if (jobs.length === 0) {
     warnings.push(warn('empty-attribution', 'No jobs were found in the wall-clock attribution report.'));
@@ -102,6 +125,7 @@ export function buildWalltimeBudgetReport({ attribution, policy }) {
       job: job.name,
       wallSeconds: job.wallSeconds,
       ceilingSeconds: hasCeiling ? ceiling : null,
+      hardTimeoutSeconds: Number.isFinite(lane?.hardTimeoutSeconds) ? lane.hardTimeoutSeconds : null,
       overBudget: hasCeiling ? job.wallSeconds > ceiling : false,
     });
   }
@@ -109,6 +133,8 @@ export function buildWalltimeBudgetReport({ attribution, policy }) {
   return {
     kind: KIND,
     generatedAt: new Date().toISOString(),
+    evidenceMeasuredAt: policy.measuredAt || null,
+    evidenceReviewBy: policy.reviewBy || null,
     advisory: true,
     run: attribution.run || {},
     criticalPath: attribution.criticalPath || null,
@@ -132,11 +158,11 @@ export function renderMarkdown(report) {
     '',
     `Status: warn-only, ${report.warningCount} warning(s)`,
     '',
-    '| Job | Wall clock | Advisory ceiling | Over |',
-    '|---|---:|---:|:--:|',
+    '| Job | Wall clock | Advisory ceiling | Hard timeout | Over |',
+    '|---|---:|---:|---:|:--:|',
   ];
   for (const lane of report.lanes) {
-    lines.push(`| ${lane.job} | ${fmtSeconds(lane.wallSeconds)} | ${lane.ceilingSeconds === null ? 'n/a' : fmtSeconds(lane.ceilingSeconds)} | ${lane.overBudget ? '⚠️' : ''} |`);
+    lines.push(`| ${lane.job} | ${fmtSeconds(lane.wallSeconds)} | ${lane.ceilingSeconds === null ? 'n/a' : fmtSeconds(lane.ceilingSeconds)} | ${lane.hardTimeoutSeconds === null ? 'n/a' : fmtSeconds(lane.hardTimeoutSeconds)} | ${lane.overBudget ? '⚠️' : ''} |`);
   }
   lines.push('');
   if (report.warnings.length === 0) {

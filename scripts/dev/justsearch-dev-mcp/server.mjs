@@ -19,7 +19,8 @@ const MCP_SRC_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** The behavior-bearing source set LOADED into this MCP process (§H.1 R2): the MCP dir's *.mjs + the entry
  *  that imports main() + the createRequire'd ownership-verdict.cjs. dev-runner.cjs is *spawned* (always
- *  fresh) so it is excluded; node_modules is excluded. */
+ *  fresh) so it is excluded. node_modules is excluded because third-party runtime identity is represented
+ *  by the checked-in runtime.generated.mjs in this directory. */
 function mcpSourceFiles() {
   const files = [];
   try {
@@ -73,8 +74,7 @@ export function mcpStaleNotice(bootStamp) {
   return null;
 }
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { McpServer, StdioServerTransport } from './runtime.generated.mjs';
 
 import {
   AcquireWhenFreeInputSchema,
@@ -90,7 +90,17 @@ import {
   runCliJson,
 } from './cli.mjs';
 import { readJsonFileNoSymlinks, resolveAllowedRunFile, tailTextFileNoSymlinks } from './files.mjs';
-import { logError, logInfo, maybeAppendNdjson } from './log.mjs';
+import { logInfo, maybeAppendNdjson } from './log.mjs';
+import {
+  FILE_OBSERVATION,
+  PROBE_OBSERVATION,
+  classifyInferenceOrphan,
+  observeDirectoryEntries,
+  observeOptionalJsonFile,
+  observePath,
+  probeLoopbackHttpStatus,
+  probeStatusCodeOrThrow,
+} from './observations.mjs';
 import { ensureLoopbackUrl, resolveAgentSessionIdForMcp, resolveMainRepoRoot, resolveRepoRoot, resolveUnderRepo } from './paths.mjs';
 import {
   AiActivateInputSchema,
@@ -712,6 +722,8 @@ export const API_CALL_ALLOWLIST = [
   { path: '/api/indexing/migration/pause', methods: ['POST'] },
   { path: '/api/indexing/migration/resume', methods: ['POST'] },
   { path: '/api/indexing/gc', methods: ['POST'] },
+  // Tempdoc 931 §E item 10: purge tombstones so paired evaluation arms query equal merge state.
+  { path: '/api/indexing/settle', methods: ['POST'] },
   // Inference
   { path: '/api/inference/status', methods: ['GET'] },
   { path: '/api/inference/mode', methods: ['POST'] },
@@ -1960,13 +1972,18 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.preflight',
     {
-      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, no inference orphans. Pass the SAME distFrom you will pass to start — the dist checks then run against the tree start will launch from (a bare worktree name resolves against .claude/worktrees). The checked root is reported as `distCheckedRoot`.',
+      description: 'Check if the dev stack can be started: worker dist built, no active/stale runs, models present, and the inference port available. `checkStates` distinguishes PASS, FAIL, UNKNOWN and SKIPPED; every gating check must be PASS for ready:true. Pass the SAME distFrom you will pass to start — the dist checks then run against the tree start will launch from (a bare worktree name resolves against .claude/worktrees). The checked root is reported as `distCheckedRoot`.',
       inputSchema: PreflightInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (rawArgs) => {
       const input = PreflightInputSchema.parse(rawArgs ?? {});
       const details = {};
+      const checkStates = {};
+      const setCheck = (name, state, detail) => {
+        checkStates[name] = state;
+        details[name] = detail;
+      };
 
       // Tempdoc 844 B1: check the tree `start` will actually use. Same resolver as start, so the
       // two cannot drift; without distFrom this is the invoking checkout exactly as before.
@@ -1983,116 +2000,204 @@ export async function main() {
       const distCheckRoot = distRoot.repoRoot;
 
       // 1a. Worker distribution exists
-      let workerDist = false;
       const workerBin = path.join(distCheckRoot, 'modules', 'indexer-worker', 'build', 'install', 'indexer-worker', 'bin',
         process.platform === 'win32' ? 'indexer-worker.bat' : 'indexer-worker');
-      try {
-        await fsp.lstat(workerBin);
-        workerDist = true;
-        details.workerDist = `OK (${workerBin})`;
-      } catch {
-        details.workerDist = `Missing: ${workerBin}. Run: ./gradlew.bat assemble`;
+      const workerObservation = await observePath(workerBin);
+      if (workerObservation.state === FILE_OBSERVATION.PRESENT) {
+        setCheck('workerDist', 'PASS', `OK (${workerBin})`);
+      } else if (workerObservation.state === FILE_OBSERVATION.ABSENT) {
+        setCheck('workerDist', 'FAIL', `Missing: ${workerBin}. Run: ./gradlew.bat assemble`);
+      } else {
+        setCheck(
+          'workerDist',
+          'UNKNOWN',
+          `Could not verify Worker distribution (${workerObservation.state}): ${workerObservation.error?.message}`,
+        );
       }
 
       // 1b. Head (UI) distribution exists — the dev-runner spawns from installDist, not gradlew
-      let headDist = false;
       const headBin = path.join(distCheckRoot, 'modules', 'ui', 'build', 'install', 'ui', 'bin',
         process.platform === 'win32' ? 'ui.bat' : 'ui');
-      try {
-        await fsp.lstat(headBin);
-        headDist = true;
-        details.headDist = `OK (${headBin})`;
-      } catch {
-        details.headDist = `Missing: ${headBin}. Run: ./gradlew.bat :modules:ui:installDist`
-          + ' (or, for a fresh worktree: node scripts/dev/prepare-worktree.cjs)';
+      const headObservation = await observePath(headBin);
+      if (headObservation.state === FILE_OBSERVATION.PRESENT) {
+        setCheck('headDist', 'PASS', `OK (${headBin})`);
+      } else if (headObservation.state === FILE_OBSERVATION.ABSENT) {
+        setCheck(
+          'headDist',
+          'FAIL',
+          `Missing: ${headBin}. Run: ./gradlew.bat :modules:ui:installDist`
+            + ' (or, for a fresh worktree: node scripts/dev/prepare-worktree.cjs)',
+        );
+      } else {
+        setCheck(
+          'headDist',
+          'UNKNOWN',
+          `Could not verify Head distribution (${headObservation.state}): ${headObservation.error?.message}`,
+        );
       }
 
       // 2. No stale or active run
-      let noStaleRun = true;
-      try {
-        const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
-        if (active?.runId) {
-          const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId: active.runId });
-          const pids = runJson?.pids || {};
-          const anyAlive = Object.values(pids).some((pid) => {
-            if (typeof pid !== 'number' || pid <= 0) return false;
-            try { process.kill(pid, 0); return true; } catch { return false; }
-          });
-          if (anyAlive) {
-            noStaleRun = false;
-            details.noStaleRun = `Active run ${active.runId} has live processes. Stop it first or use the existing run.`;
-          } else if (Object.keys(pids).length > 0) {
-            noStaleRun = false;
-            details.noStaleRun = `Stale run ${active.runId}: all PIDs dead but active.json remains. Use justsearch.dev.stop to clean up.`;
-          } else {
-            details.noStaleRun = 'OK (no active run)';
-          }
+      const activeObservation = await observeOptionalJsonFile({
+        repoRoot: mainRepoRoot,
+        relPosix: 'tmp/dev-runner/active.json',
+        maxBytes: 200_000,
+      });
+      if (activeObservation.state === FILE_OBSERVATION.ABSENT) {
+        setCheck('noStaleRun', 'PASS', 'OK (active.json is absent)');
+      } else if (activeObservation.state !== FILE_OBSERVATION.PRESENT) {
+        setCheck(
+          'noStaleRun',
+          'UNKNOWN',
+          `Could not verify active run (${activeObservation.state}): ${activeObservation.error?.message}`,
+        );
+      } else {
+        const activeRunId = activeObservation.value?.runId;
+        if (typeof activeRunId !== 'string' || !activeRunId.trim()) {
+          setCheck('noStaleRun', 'UNKNOWN', 'active.json is present but has no valid runId');
         } else {
-          details.noStaleRun = 'OK (no active run)';
+          let runObservation;
+          try {
+            const runFile = resolveAllowedRunFile({ repoRoot: mainRepoRoot, runId: activeRunId, kind: 'run_json' });
+            runObservation = await observeOptionalJsonFile({
+              repoRoot: mainRepoRoot,
+              relPosix: runFile.relPosix,
+              maxBytes: 2_000_000,
+            });
+          } catch (error) {
+            runObservation = {
+              state: FILE_OBSERVATION.INVALID,
+              error: { code: 'INVALID_RUN_ID', message: error?.message || String(error) },
+            };
+          }
+          if (runObservation.state !== FILE_OBSERVATION.PRESENT) {
+            setCheck(
+              'noStaleRun',
+              'UNKNOWN',
+              `active.json names ${activeRunId}, but run.json is ${runObservation.state}: `
+                + `${runObservation.error?.message || 'no readable run record'}`,
+            );
+          } else {
+            const pids = runObservation.value?.pids || {};
+            const anyAlive = Object.values(pids).some((pid) => {
+              if (typeof pid !== 'number' || pid <= 0) return false;
+              try { process.kill(pid, 0); return true; } catch { return false; }
+            });
+            if (anyAlive) {
+              setCheck(
+                'noStaleRun',
+                'FAIL',
+                `Active run ${activeRunId} has live processes. Stop it first or use the existing run.`,
+              );
+            } else if (Object.keys(pids).length > 0) {
+              setCheck(
+                'noStaleRun',
+                'FAIL',
+                `Stale run ${activeRunId}: all PIDs are dead but active.json remains. Use justsearch.dev.stop to clean up.`,
+              );
+            } else {
+              setCheck(
+                'noStaleRun',
+                'FAIL',
+                `Run ${activeRunId} is recorded active without process identities. Use quick_health before cleanup.`,
+              );
+            }
+          }
         }
-      } catch {
-        details.noStaleRun = 'OK (no active.json)';
       }
 
       // 3. Models directory non-empty
-      let modelsDir = false;
-      try {
-        const entries = await fsp.readdir(path.join(repoRoot, 'models'));
-        modelsDir = entries.length > 0;
-        details.modelsDir = modelsDir ? `OK (${entries.length} entries)` : 'Empty: models/ directory has no files';
-      } catch {
-        details.modelsDir = 'Missing: models/ directory not found';
+      const modelsObservation = await observeDirectoryEntries(path.join(repoRoot, 'models'));
+      if (modelsObservation.state === FILE_OBSERVATION.PRESENT) {
+        const entries = modelsObservation.value;
+        setCheck(
+          'modelsDir',
+          entries.length > 0 ? 'PASS' : 'FAIL',
+          entries.length > 0 ? `OK (${entries.length} entries)` : 'Empty: models/ directory has no files',
+        );
+      } else if (modelsObservation.state === FILE_OBSERVATION.ABSENT) {
+        setCheck('modelsDir', 'FAIL', 'Missing: models/ directory not found');
+      } else {
+        setCheck(
+          'modelsDir',
+          'UNKNOWN',
+          `Could not inspect models/ (${modelsObservation.state}): ${modelsObservation.error?.message}`,
+        );
       }
 
-      // 4. No inference orphan (llama-server on default port)
-      let noInferenceOrphan = true;
-      try {
-        const sc = await httpGetStatusCode(`http://127.0.0.1:${INFERENCE_PORT}/health`, 2000);
-        if (sc === 200) {
-          noInferenceOrphan = false;
-          details.noInferenceOrphan = `Orphaned inference server on port ${INFERENCE_PORT}. Kill it or use justsearch.dev.stop.`;
-        } else {
-          details.noInferenceOrphan = 'OK';
-        }
-      } catch {
-        details.noInferenceOrphan = 'OK';
+      // 4. Inference port available. A response proves occupancy, not listener identity.
+      const inferenceObservation = await probeLoopbackHttpStatus(
+        `http://127.0.0.1:${INFERENCE_PORT}/health`,
+        { timeoutMs: 2_000 },
+      );
+      if (inferenceObservation.state === PROBE_OBSERVATION.REFUSED) {
+        setCheck('noInferenceOrphan', 'PASS', `OK (connection refused on port ${INFERENCE_PORT})`);
+      } else if (inferenceObservation.state === PROBE_OBSERVATION.REACHABLE) {
+        setCheck(
+          'noInferenceOrphan',
+          'FAIL',
+          `A listener answered on inference port ${INFERENCE_PORT} (HTTP ${inferenceObservation.statusCode ?? '?'}). `
+            + 'Do not assume the port/GPU is free; identify its owning process before cleanup.',
+        );
+      } else {
+        setCheck(
+          'noInferenceOrphan',
+          'UNKNOWN',
+          `Could not determine whether port ${INFERENCE_PORT} is free (${inferenceObservation.state}): `
+            + `${inferenceObservation.error?.message || 'probe failed'}`,
+        );
       }
 
       // 5. Shared cuda12 GPU llama-server resolvable (tempdoc 656). REPORT-ONLY: the stack starts
       // fine without it (inference fails closed), so this does NOT gate `ready`. GPU-only by design:
       // there is deliberately no CPU baseline in dev (a CPU 9B fallback DOSes concurrent worktrees).
-      let llamaVariantResolvable = true;
-      try {
-        const exe = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
-        const cuda12 = ['native-bin', 'llama-server', 'variants', 'cuda12', exe];
-        const mainRepoRoot = resolveMainRepoRoot(repoRoot);
-        const worktreeCuda12 = path.join(repoRoot, 'modules', 'ui', ...cuda12);
-        const sharedCuda12 = path.join(mainRepoRoot, 'modules', 'ui', ...cuda12);
-        let where = null;
-        try { await fsp.lstat(worktreeCuda12); where = 'worktree'; } catch { /* not present */ }
-        if (!where) { try { await fsp.lstat(sharedCuda12); where = 'shared main-checkout'; } catch { /* not present */ } }
-        if (where) {
-          details.llamaVariantResolvable = `OK (cuda12 GPU runtime resolvable — ${where})`;
-        } else {
-          llamaVariantResolvable = false;
-          details.llamaVariantResolvable =
-            'No cuda12 GPU runtime resolvable. Provision the shared runtime ONCE at the main checkout: '
+      const exe = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
+      const cuda12 = ['native-bin', 'llama-server', 'variants', 'cuda12', exe];
+      const resolvedMainRepoRoot = resolveMainRepoRoot(repoRoot);
+      const worktreeCuda12 = path.join(repoRoot, 'modules', 'ui', ...cuda12);
+      const sharedCuda12 = path.join(resolvedMainRepoRoot, 'modules', 'ui', ...cuda12);
+      const worktreeCudaObservation = await observePath(worktreeCuda12);
+      const sharedCudaObservation = sharedCuda12 === worktreeCuda12
+        ? worktreeCudaObservation
+        : await observePath(sharedCuda12);
+      if (worktreeCudaObservation.state === FILE_OBSERVATION.PRESENT) {
+        setCheck('llamaVariantResolvable', 'PASS', 'OK (cuda12 GPU runtime resolvable — worktree)');
+      } else if (sharedCudaObservation.state === FILE_OBSERVATION.PRESENT) {
+        setCheck('llamaVariantResolvable', 'PASS', 'OK (cuda12 GPU runtime resolvable — shared main-checkout)');
+      } else if (
+        worktreeCudaObservation.state === FILE_OBSERVATION.ABSENT
+        && sharedCudaObservation.state === FILE_OBSERVATION.ABSENT
+      ) {
+        setCheck(
+          'llamaVariantResolvable',
+          'FAIL',
+          'No cuda12 GPU runtime resolvable. Provision the shared runtime ONCE at the main checkout: '
             + '`./gradlew :modules:ui:stageLlamaCudaVariant` (~600 MB), then the dev-runner auto-populates '
             + 'the shared native-bin and every worktree references it. Dev is GPU-only (no CPU baseline); '
-            + 'until then inference is unavailable (fails closed) but search works.';
-        }
-      } catch {
-        details.llamaVariantResolvable = 'OK (check skipped)';
-        llamaVariantResolvable = true;
+            + 'until then inference is unavailable (fails closed) but search works.',
+        );
+      } else {
+        const uncertain = worktreeCudaObservation.state !== FILE_OBSERVATION.ABSENT
+          ? worktreeCudaObservation
+          : sharedCudaObservation;
+        setCheck(
+          'llamaVariantResolvable',
+          'UNKNOWN',
+          `Could not verify cuda12 runtime (${uncertain.state}): ${uncertain.error?.message}`,
+        );
       }
 
-      const ready = workerDist && headDist && noStaleRun && modelsDir && noInferenceOrphan;
+      const checks = Object.fromEntries(
+        Object.entries(checkStates).map(([name, state]) => [name, state === 'PASS']),
+      );
+      const ready = ['workerDist', 'headDist', 'noStaleRun', 'modelsDir', 'noInferenceOrphan']
+        .every((name) => checkStates[name] === 'PASS');
       return toToolResult(PreflightOutputSchema.parse({
         ready,
-        checks: { workerDist, headDist, noStaleRun, modelsDir, noInferenceOrphan, llamaVariantResolvable },
+        checks,
+        checkStates,
         // Tempdoc 844 B1: self-describing — which tree the dist checks looked at, and how it was
         // resolved. `distCheckedRoot` is what `start` will launch from for the same distFrom;
-        // the remaining checks (models, stale run, inference orphan) are machine/shared-state
+        // the remaining checks (models, stale run, inference-port availability) are machine/shared-state
         // scoped and are unaffected by distFrom.
         distCheckedRoot: distCheckRoot,
         distFrom: distRoot.distFrom,
@@ -2107,7 +2212,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.quick_health',
     {
-      description: 'Fast orientation — call after compaction or at session start. Returns run state and optional HTTP readiness probes; the default detail:"summary" spawns no subprocess. `foreignRuns` lists JustSearch runs this dev-runner did NOT start — `[]` means "probed, found none", `null` means "did not probe" (probe:false), so a free-looking verdict is never a claim about the whole machine. Each entry says how it is known: `source:"registered"` = its producer (e.g. `jseval`, on 33221) declared it, so it carries identity (`producer`, `repoRoot`, `pid`, `gpuBound`) and a verified `state` — `live` (port answered), `unreachable` (port silent, pid alive), `stale` (port silent, pid gone: a leaked record, nothing is running, remove `recordFile`), `unreadable` (record unparseable). `source:"observed"` = a port answered with nothing declaring it; all that is known is that something is listening. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
+      description: 'Fast orientation — call after compaction or at session start. `runState` is ACTIVE, ABSENT, or UNKNOWN; compatibility field `running` is null when register/probe evidence cannot establish true or false. Typed `probes` distinguish reachable, refused, timed-out, and unexpected failures. The default detail:"summary" spawns no subprocess. `foreignRuns` lists registered or observed listener candidates outside the positively identified owned listener — `[]` means "probed, found none", `null` means "did not probe or could not complete the probe". Each entry carries `attribution:"unowned"` only when non-ownership is proven; corrupt/unknown owned-run state yields `attribution:"unknown"`. `source:"registered"` carries producer identity and a verified liveness `state`; `source:"observed"` proves only that a port answered. An inference-port response alone never authorizes process cleanup. detail:"full" additionally runs the dev-runner status subprocess and returns its process/port/readiness payload under `detail` (this replaced the retired justsearch.dev.status tool).',
       inputSchema: QuickHealthInputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -2123,54 +2228,129 @@ export async function main() {
       let apiBaseUrl = null;
       let pidsAlive = false;
       let ownership = null;
-      try {
-        const active = await readJsonFileNoSymlinks({ repoRoot: mainRepoRoot, relPosix: 'tmp/dev-runner/active.json', maxBytes: 200_000 });
-        if (active?.runId) {
-          runId = active.runId;
-          const runJson = await readRunJson({ repoRoot: mainRepoRoot, runId });
-          apiPort = runJson?.apiPortActual ?? null;
-          uiPort = runJson?.uiPortActual ?? null;
-          apiBaseUrl = runJson?.apiBaseUrl ?? null;
-          const pids = runJson?.pids || {};
-          pidsAlive = Object.values(pids).some((pid) => {
-            if (typeof pid !== 'number' || pid <= 0) return false;
-            try { process.kill(pid, 0); return true; } catch { return false; }
-          });
-          // Tempdoc 606: single ownership-verdict projection (replaces the inline
-          // 271 block + 542 op-lease overlay). Surfaces the prescriptive verdict +
-          // recommendedAction so the agent is told what to do, not just shown raw fields.
-          const callerSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
-          const proj = await buildOwnershipProjection({ mainRepoRoot, callerRepoRoot: repoRoot, callerSessionId, takeover: 'deny', active, runJson });
-          ownership = proj.ownership;
+      let runState = 'UNKNOWN';
+      let runStateError;
+      let activeRecord = null;
+      let activeRunJson = null;
+      const activeObservation = await observeOptionalJsonFile({
+        repoRoot: mainRepoRoot,
+        relPosix: 'tmp/dev-runner/active.json',
+        maxBytes: 200_000,
+      });
+      if (activeObservation.state === FILE_OBSERVATION.ABSENT) {
+        runState = 'ABSENT';
+      } else if (activeObservation.state !== FILE_OBSERVATION.PRESENT) {
+        runStateError = {
+          code: `ACTIVE_RECORD_${activeObservation.state}`,
+          message: activeObservation.error?.message || `active.json is ${activeObservation.state}`,
+        };
+      } else {
+        activeRecord = activeObservation.value;
+        if (typeof activeRecord?.runId !== 'string' || !activeRecord.runId.trim()) {
+          runStateError = {
+            code: 'ACTIVE_RECORD_INVALID',
+            message: 'active.json is present but has no valid runId',
+          };
+        } else {
+          runId = activeRecord.runId;
+          let runObservation;
+          try {
+            const runFile = resolveAllowedRunFile({ repoRoot: mainRepoRoot, runId, kind: 'run_json' });
+            runObservation = await observeOptionalJsonFile({
+              repoRoot: mainRepoRoot,
+              relPosix: runFile.relPosix,
+              maxBytes: 2_000_000,
+            });
+          } catch (error) {
+            runObservation = {
+              state: FILE_OBSERVATION.INVALID,
+              error: { code: 'INVALID_RUN_ID', message: error?.message || String(error) },
+            };
+          }
+          if (runObservation.state !== FILE_OBSERVATION.PRESENT) {
+            runStateError = {
+              code: `RUN_RECORD_${runObservation.state}`,
+              message: `active.json names ${runId}, but run.json is ${runObservation.state}: `
+                + `${runObservation.error?.message || 'no readable run record'}`,
+            };
+          } else {
+            runState = 'ACTIVE';
+            activeRunJson = runObservation.value;
+            apiPort = activeRunJson?.apiPortActual ?? null;
+            uiPort = activeRunJson?.uiPortActual ?? null;
+            apiBaseUrl = activeRunJson?.apiBaseUrl ?? null;
+            const pids = activeRunJson?.pids || {};
+            pidsAlive = Object.values(pids).some((pid) => {
+              if (typeof pid !== 'number' || pid <= 0) return false;
+              try { process.kill(pid, 0); return true; } catch { return false; }
+            });
+            // Tempdoc 606: single ownership-verdict projection (replaces the inline
+            // 271 block + 542 op-lease overlay). Surfaces the prescriptive verdict +
+            // recommendedAction so the agent is told what to do, not just shown raw fields.
+            const callerSessionId = input.sessionId || resolveAgentSessionIdForMcp(repoRoot);
+            try {
+              const proj = await buildOwnershipProjection({
+                mainRepoRoot,
+                callerRepoRoot: repoRoot,
+                callerSessionId,
+                takeover: 'deny',
+                active: activeRecord,
+                runJson: activeRunJson,
+              });
+              ownership = proj.ownership;
+            } catch { /* the run is still observed; ownership stays unavailable */ }
+          }
         }
-      } catch {
-        // No active run
       }
 
       let httpReady = null;
       let workerReady = null;
       let inferenceOrphan = undefined;
+      const probes = {};
 
       if (probe && apiBaseUrl) {
         try {
           const base = ensureLoopbackUrl(apiBaseUrl, 'apiBaseUrl');
-          const statusCode = await httpGetStatusCode(new URL('/api/status', base).toString(), 2000);
-          httpReady = statusCode === 200;
-          if (httpReady) {
-            const healthCode = await httpGetStatusCode(new URL('/api/health', base).toString(), 2000);
-            workerReady = healthCode === 200;
+          const apiObservation = await probeLoopbackHttpStatus(
+            new URL('/api/status', base).toString(),
+            { timeoutMs: 2_000 },
+          );
+          probes.api = apiObservation;
+          if (apiObservation.state === PROBE_OBSERVATION.REACHABLE) {
+            httpReady = apiObservation.statusCode === 200;
+          } else if (apiObservation.state === PROBE_OBSERVATION.REFUSED) {
+            httpReady = false;
           }
-        } catch {
-          httpReady = false;
+          if (httpReady === true) {
+            const workerObservation = await probeLoopbackHttpStatus(
+              new URL('/api/health', base).toString(),
+              { timeoutMs: 2_000 },
+            );
+            probes.worker = workerObservation;
+            if (workerObservation.state === PROBE_OBSERVATION.REACHABLE) {
+              workerReady = workerObservation.statusCode === 200;
+            } else if (workerObservation.state === PROBE_OBSERVATION.REFUSED) {
+              workerReady = false;
+            }
+          }
+        } catch (error) {
+          probes.api = {
+            state: PROBE_OBSERVATION.ERROR,
+            error: { code: 'INVALID_API_BASE_URL', message: error?.message || String(error) },
+          };
         }
       }
 
-      // Check for inference orphan — only when no active run or backend is dead
-      if (probe && (!runId || httpReady === false)) {
-        try {
-          const sc = await httpGetStatusCode(`http://127.0.0.1:${INFERENCE_PORT}/health`, 2000);
-          if (sc === 200) inferenceOrphan = true;
-        } catch { /* no orphan */ }
+      // Observe inference-port availability when no active run is proven or its backend is dead.
+      if (probe && (runState !== 'ACTIVE' || httpReady === false)) {
+        const inferenceObservation = await probeLoopbackHttpStatus(
+          `http://127.0.0.1:${INFERENCE_PORT}/health`,
+          { timeoutMs: 2_000 },
+        );
+        probes.inference = inferenceObservation;
+        inferenceOrphan = classifyInferenceOrphan({
+          inferenceObservation,
+        });
       }
 
       // Tempdoc 842 §2.7: aiActive was hard-coded null — populate it for a running, reachable
@@ -2218,13 +2398,14 @@ export async function main() {
       // into an explicit "stale record" rather than a phantom live backend.
       const foreignRuns = await probeForeignRuns({
         enabled: probe,
-        hasActiveRun: runId !== null,
+        ownedRunState: runState,
         ownedApiPort: apiPort,
         aiActive,
         registerDir: resolveForeignRegisterDir(mainRepoRoot),
+        probe: probeStatusCodeOrThrow,
       });
       const foreignRunsNotice = foreignRuns && foreignRuns.length > 0
-        ? `${foreignRuns.length} JustSearch run(s) on this machine were NOT started by this dev-runner `
+        ? `${foreignRuns.length} registered or observed listener candidate(s) are outside the positively identified owned listener `
           + `(${foreignRuns.map((f) => (f.source === 'registered'
             ? `${f.port ?? '?'}:${f.producer || 'registered'}/${f.state}`
             : `${f.port}:${f.kind}/${f.attribution}`)).join(', ')}). `
@@ -2243,10 +2424,12 @@ export async function main() {
       // from the lease-stamp cross-check; index warmth projected from /api/status; FE binding is
       // FE-owned (self-declared via the 637 #1 banner); locks are build-owned (no cheap local probe).
       let freshness;
-      if (runId) {
+      if (runState === 'ACTIVE') {
         const buildArtifact = ownership?.backendStale
           ? { state: 'STALE', reason: 'running an older build than source', remedy: 'gradlew :modules:ui:installDist then restart/reload' }
-          : { state: 'FRESH' };
+          : ownership
+            ? { state: 'FRESH' }
+            : { state: 'UNKNOWN', reason: 'ownership/build provenance could not be read' };
         let indexWarmth = { state: 'UNKNOWN' };
         if (probe && httpReady && apiBaseUrl) {
           try {
@@ -2319,14 +2502,25 @@ export async function main() {
         }
       }
 
+      let running = null;
+      if (runState === 'ABSENT') {
+        running = false;
+      } else if (runState === 'ACTIVE') {
+        if (pidsAlive || probes.api?.state === PROBE_OBSERVATION.REACHABLE) running = true;
+        else if (probes.api?.state === PROBE_OBSERVATION.REFUSED) running = false;
+      }
+
       return toToolResult(QuickHealthOutputSchema.parse({
-        running: runId !== null && (httpReady === true || (httpReady === null && pidsAlive)),
+        running,
+        runState,
+        ...(runStateError ? { runStateError } : {}),
         runId,
         apiPort,
         uiPort,
         httpReady,
         workerReady,
         aiActive,
+        ...(Object.keys(probes).length > 0 ? { probes } : {}),
         foreignRuns,
         ...(foreignRunsNotice ? { foreignRunsNotice } : {}),
         ...(inferenceOrphan !== undefined ? { inferenceOrphan } : {}),
@@ -2337,26 +2531,6 @@ export async function main() {
       }));
     },
   );
-
-  /** Probe inference port for orphaned llama-server and kill it if found. */
-  async function probeAndKillInferenceOrphan() {
-    try {
-      const sc = await httpGetStatusCode(`http://127.0.0.1:${INFERENCE_PORT}/health`, 2000);
-      if (sc !== 200) return null;
-      const { stdout } = await execFileP('powershell',
-        ['-NoProfile', '-Command',
-         `(Get-NetTCPConnection -LocalPort ${INFERENCE_PORT} -State Listen -ErrorAction SilentlyContinue).OwningProcess`],
-        { timeout: 5000 });
-      const pid = parseInt(stdout.trim(), 10);
-      if (pid > 0) {
-        await execFileP('taskkill', ['/PID', String(pid), '/F'], { timeout: 5000 });
-        return { killed: true, pid };
-      }
-      return { killed: false, error: 'Could not determine PID' };
-    } catch {
-      return null; // no orphan or probe failed
-    }
-  }
 
   mcpServer.registerTool(
     'justsearch.dev.acquire_when_free',
@@ -2412,7 +2586,7 @@ export async function main() {
   mcpServer.registerTool(
     'justsearch.dev.stop',
     {
-      description: 'Stop the running dev stack and optionally clean its data directory. Also detects and kills orphaned inference processes.',
+      description: 'Stop the active dev stack and optionally clean its data directory. Only processes identified by the dev-runner ownership record are eligible for cleanup; an unattributed inference-port listener is never killed.',
       inputSchema: StopInputSchema,
       annotations: { destructiveHint: true, openWorldHint: false },
     },
@@ -2420,12 +2594,6 @@ export async function main() {
       const input = StopInputSchema.parse(rawArgs);
       const effectiveRunId = input.runId ?? await resolveRunId(mainRepoRoot, undefined);
       if (!effectiveRunId) {
-        // No active run — but check for orphaned inference server before giving up
-        const orphan = await probeAndKillInferenceOrphan();
-        if (orphan?.killed) {
-          return toToolResult({ ok: true, inferenceOrphanKilled: orphan.pid,
-            message: `No active run, but killed orphaned inference server (PID ${orphan.pid}) on port ${INFERENCE_PORT}.` });
-        }
         return toToolResult({ ok: false, error: { code: 'NO_ACTIVE_RUN', message: 'No active run to stop. Call quick_health to verify state.' } });
       }
       const clean = input.clean ?? 'none';
@@ -2486,16 +2654,6 @@ export async function main() {
         } catch (cleanErr) {
           out.cleanup = { ok: false, error: { message: cleanErr?.message || String(cleanErr) } };
         }
-      }
-
-      // Probe for orphaned inference server (C2 fix)
-      const orphan = await probeAndKillInferenceOrphan();
-      if (orphan?.killed) {
-        out.inferenceOrphan = true;
-        out.inferenceOrphanKilled = orphan.pid;
-      } else if (orphan && !orphan.killed) {
-        out.inferenceOrphan = true;
-        out.inferenceOrphanError = orphan.error;
       }
 
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_stop_result', tool: 'justsearch.dev.stop', runId: effectiveRunId, ok: out.ok, exitCode });
@@ -2876,10 +3034,3 @@ export async function main() {
 
   // Keep process alive; stdio transport will keep listeners open.
 }
-
-process.on('uncaughtException', (err) => {
-  logError('uncaughtException', err?.stack || String(err));
-});
-process.on('unhandledRejection', (err) => {
-  logError('unhandledRejection', err?.stack || String(err));
-});

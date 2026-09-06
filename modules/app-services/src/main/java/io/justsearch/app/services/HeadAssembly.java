@@ -429,7 +429,7 @@ public final class HeadAssembly implements AutoCloseable {
 
     // Tempdoc 629 (LAYER): seal agent-run meta.json + events.ndjson with the data key (lazy reads → no
     // reload-listener needed; while locked the ledger is empty until unlock).
-    java.nio.file.Path agentRunsPath = dataDir.resolve("agent-runs");
+    Path agentRunsPath = dataDir.resolve("agent-runs");
     AgentRunStore agentRunStore =
         new AgentRunStore(
             agentRunsPath,
@@ -442,7 +442,7 @@ public final class HeadAssembly implements AutoCloseable {
             io.justsearch.agent.api.encryption.StoreCatalog.AGENT_RUNS,
             agentRunsPath,
             () -> {
-              var out = new java.util.ArrayList<java.util.Map<String, Object>>();
+              var out = new java.util.ArrayList<Map<String, Object>>();
               for (var summary : agentRunStore.listSessions(100_000)) {
                 String sid = (String) summary.get("sessionId");
                 if (sid == null) {
@@ -475,13 +475,13 @@ public final class HeadAssembly implements AutoCloseable {
                   continue;
                 }
                 var meta = new java.util.LinkedHashMap<String, Object>();
-                if (run.get("snapshot") instanceof java.util.Map<?, ?> raw) {
+                if (run.get("snapshot") instanceof Map<?, ?> raw) {
                   for (var e : raw.entrySet()) {
                     meta.put(String.valueOf(e.getKey()), e.getValue());
                   }
                 }
                 var events =
-                    run.get("events") instanceof java.util.List<?> list ? list : java.util.List.of();
+                    run.get("events") instanceof List<?> list ? list : List.of();
                 if (!meta.isEmpty()) {
                   agentRunStore.runEvents().writeRunMeta(sid.toString(), meta);
                 }
@@ -586,20 +586,20 @@ public final class HeadAssembly implements AutoCloseable {
     // controller, the LambdaMART label rebuild) so the F-021 join survives at-rest encryption.
     io.justsearch.agent.api.encryption.StoreCipher feedbackCipher =
         storeCipher(io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK.recoverability());
-    java.nio.file.Path feedbackDir =
-        io.justsearch.configuration.PlatformPaths.resolveDataDir().resolve("feedback");
+    Path feedbackDir =
+        PlatformPaths.resolveDataDir().resolve("feedback");
     // Tempdoc 778 — the default-on local capture flag (loopback-privacy: nothing captured leaves the
     // machine, and the user can turn even local capture off).
     this.feedbackCaptureSettings =
         new io.justsearch.app.services.feedback.FeedbackCaptureSettings(
-            io.justsearch.configuration.PlatformPaths.resolveDataDir());
+            PlatformPaths.resolveDataDir());
 
     // Tempdoc 580 §17 P4 — the agent-citation contributor: each agent answer's grounding sources +
     // citations project to the ONE canonical disposition stream (CITED/SHOWN). Best-effort.
     if (agentRunStore != null) {
       io.justsearch.app.services.feedback.AgentDispositionWiring.register(
           agentRunStore::addEventListener,
-          io.justsearch.configuration.PlatformPaths.resolveDataDir(),
+          PlatformPaths.resolveDataDir(),
           feedbackCipher,
           this.feedbackCaptureSettings);
     }
@@ -613,7 +613,7 @@ public final class HeadAssembly implements AutoCloseable {
             io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK,
             feedbackDir,
             () -> {
-              var out = new java.util.ArrayList<java.util.Map<String, Object>>();
+              var out = new java.util.ArrayList<Map<String, Object>>();
               readFeedbackFile(
                   feedbackDir.resolve("result-dispositions.ndjson"),
                   io.justsearch.app.services.feedback.ResultDisposition.class,
@@ -644,7 +644,7 @@ public final class HeadAssembly implements AutoCloseable {
       // boot, and AGAIN on unlock, because a locked store lists no sessions at all (the same 834 R5
       // trap AgentRunReconciler names just above). The pass is idempotent and runs off the boot
       // thread.
-      final io.justsearch.agent.AgentRunStore runStoreForHistory = agentRunStore;
+      final AgentRunStore runStoreForHistory = agentRunStore;
       final io.justsearch.app.services.agenthistory.AgentHistoryIndexer historyIndexer =
           this.agentHistoryIndexer;
       Runnable reindexMissingTranscripts =
@@ -728,7 +728,7 @@ public final class HeadAssembly implements AutoCloseable {
     // Tempdoc 629 (LAYER): seal memory.json with the data key. Because FileMemoryStore eager-loads at
     // construction, a locked-at-launch start skips the read; reload on unlock / clear on lock via the
     // DataKeyManager listener so memory is never stuck-empty after the user unlocks.
-    java.nio.file.Path memoriesPath = this.dataDir.resolve("memories");
+    Path memoriesPath = this.dataDir.resolve("memories");
     io.justsearch.agent.FileMemoryStore memStore =
         new io.justsearch.agent.FileMemoryStore(
             memoriesPath,
@@ -739,7 +739,7 @@ public final class HeadAssembly implements AutoCloseable {
             io.justsearch.agent.api.encryption.StoreCatalog.MEMORIES,
             memoriesPath,
             () -> {
-              var out = new java.util.ArrayList<java.util.Map<String, Object>>();
+              var out = new java.util.ArrayList<Map<String, Object>>();
               for (var r : memStore.whatItKnows()) {
                 var m = new java.util.LinkedHashMap<String, Object>();
                 m.put("id", r.id());
@@ -1108,7 +1108,7 @@ public final class HeadAssembly implements AutoCloseable {
    * assembly, conversations from {@code ConversationApiAssembly}. The encrypted-backup export reads this
    * list instead of re-enumerating the stores, so "which stores are AUTHORED" is declared once.
    */
-  private final java.util.List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores =
+  private final List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores =
       new java.util.concurrent.CopyOnWriteArrayList<>();
 
   /**
@@ -1121,7 +1121,7 @@ public final class HeadAssembly implements AutoCloseable {
    * instead of silently widening what the backup claims to protect.
    */
   public void registerAuthoredStore(io.justsearch.agent.api.encryption.StoreDescriptor descriptor) {
-    java.util.Objects.requireNonNull(descriptor, "descriptor");
+    Objects.requireNonNull(descriptor, "descriptor");
     if (!descriptor.store().isAuthored()) {
       throw new IllegalArgumentException(
           "StoreCatalog."
@@ -1134,8 +1134,8 @@ public final class HeadAssembly implements AutoCloseable {
   }
 
   /** The aggregated AUTHORED store list, read by the backup export/import. */
-  public java.util.List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores() {
-    return java.util.List.copyOf(this.authoredStores);
+  public List<io.justsearch.agent.api.encryption.StoreDescriptor> authoredStores() {
+    return List.copyOf(this.authoredStores);
   }
 
   /** Null-safe {@code toString} for import-sink field coercion from JSON-able maps. */
@@ -1148,18 +1148,18 @@ public final class HeadAssembly implements AutoCloseable {
    * envelopes for the encrypted-backup source. Best-effort: a read failure logs and skips.
    */
   private static <T> void readFeedbackFile(
-      java.nio.file.Path file,
+      Path file,
       Class<T> type,
       io.justsearch.agent.api.encryption.StoreCipher cipher,
       String label,
-      java.util.List<java.util.Map<String, Object>> out) {
+      List<Map<String, Object>> out) {
     try {
       var store = new io.justsearch.app.services.feedback.NdjsonAppendStore<>(file, type, cipher);
       var mapper = new tools.jackson.databind.ObjectMapper();
       for (T rec : store.readAll()) {
         var entry = new java.util.LinkedHashMap<String, Object>();
         entry.put("file", label);
-        entry.put("record", mapper.convertValue(rec, java.util.Map.class));
+        entry.put("record", mapper.convertValue(rec, Map.class));
         out.add(entry);
       }
     } catch (Exception e) {
@@ -1173,9 +1173,9 @@ public final class HeadAssembly implements AutoCloseable {
    * count actually written.
    */
   private static int restoreFeedbackEntries(
-      java.nio.file.Path feedbackDir,
+      Path feedbackDir,
       io.justsearch.agent.api.encryption.StoreCipher cipher,
-      java.util.List<java.util.Map<String, Object>> entries) {
+      List<Map<String, Object>> entries) {
     if (entries == null || entries.isEmpty()) {
       return 0;
     }
@@ -1196,7 +1196,7 @@ public final class HeadAssembly implements AutoCloseable {
       var existingSnap = toJsonSet(snapshots.readAll(), mapper);
       for (var entry : entries) {
         Object file = entry.get("file");
-        if (!(entry.get("record") instanceof java.util.Map<?, ?> recordMap)) {
+        if (!(entry.get("record") instanceof Map<?, ?> recordMap)) {
           continue;
         }
         if ("result-dispositions.ndjson".equals(file)) {
@@ -1225,7 +1225,7 @@ public final class HeadAssembly implements AutoCloseable {
 
   /** Serialized-record identity set for the feedback restore's skip-existing check. */
   private static <T> java.util.Set<String> toJsonSet(
-      java.util.List<T> records, tools.jackson.databind.ObjectMapper mapper) {
+      List<T> records, tools.jackson.databind.ObjectMapper mapper) {
     var set = new java.util.HashSet<String>();
     for (T r : records) {
       try {

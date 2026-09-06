@@ -1,8 +1,8 @@
 /**
  * Shared I/O utilities for the agent-analytics pipeline.
  *
- * Deduplicates event loading, NDJSON parsing, and session grouping
- * used by analyze-session, cost-session, generate-index, and the outcome/judge scripts.
+ * Deduplicates event loading, NDJSON parsing, and session grouping used by
+ * cost-session, context-attribution, the merge-link scripts, and the friction miners.
  */
 
 import fs from 'node:fs';
@@ -12,12 +12,6 @@ export const TELEMETRY_DIR = 'tmp/agent-telemetry';
 export const EVENTS_FILE = 'events.ndjson';
 export const SESSIONS_DIR = 'sessions';
 export const COSTS_FILE = 'costs.ndjson';
-export const OUTCOMES_FILE = 'outcomes.ndjson';
-// Residual LLM-judge cache (tempdoc 622 §6.3): the judge fills only inference
-// fields. outcome-session.mjs is the fact-authority for OUTCOMES_FILE's shape, but
-// since tempdoc 858 §3 it computes the record on demand and writes the file only
-// under `--write` — consumers call outcomeForSession() instead of reading it.
-export const JUDGE_OUTCOMES_FILE = 'judge-outcomes.ndjson';
 export const SESSION_MERGES_FILE = 'session-merges.ndjson';
 
 // --- friction scope filter (tempdoc 858 §7) --------------------------------
@@ -255,6 +249,22 @@ export function loadOtlpStream(dir, base) {
 }
 
 /**
+ * Read the compact `ledger.ndjson` stream — otlp-sink.py's body-free
+ * projection of the log stream (tempdoc 930 F2) — archives first, current
+ * last, exactly like every other rotated stream.
+ *
+ * It exists as its own reader (rather than callers passing the literal
+ * 'ledger' to `loadOtlpStream`) because the base name is the contract between
+ * the sink and this module: logs.ndjson keeps 2 archives (~1 GB/active day of
+ * embedded request bodies) while ledger.ndjson keeps 90 (~1 MB/day), so a
+ * reader that wants tokens/cost/tool outcomes older than the last hour must
+ * read THIS stream, and naming it here is what makes that discoverable.
+ */
+export function readOtlpLedger(dir) {
+  return loadOtlpStream(dir, 'ledger');
+}
+
+/**
  * Reconstruct the dispatch.mjs-style `input_summary` from an OTLP `tool_input`
  * JSON string, so OTLP-sourced events match the legacy event shape the scorers
  * read (file_path / command / has_offset / *_string_length / …).
@@ -292,8 +302,8 @@ export function loadEventsFromOtlp() {
   const dir = path.join(repoRoot, TELEMETRY_DIR, OTLP_DIR);
   const logs = loadOtlpStream(dir, 'logs');
 
-  // The rich tool input lives on the `tool_result` (post) log, but the legacy
-  // analyze-session reads `input_summary` off the `pre_tool_use` event. Pre-pass:
+  // The rich tool input lives on the `tool_result` (post) log, but a reader of the
+  // hook event stream expects `input_summary` on the `pre_tool_use` event. Pre-pass:
   // map tool_use_id -> reconstructed input_summary so we can attach it to BOTH the
   // pre_tool_use (tool_decision) and post_tool_use (tool_result) events.
   const inputByUseId = new Map();
@@ -347,7 +357,7 @@ export function loadEventsFromOtlp() {
         break;
       }
       case 'tool_decision':
-        // attach the joined input_summary so analyze-session's pre_tool_use readers
+        // attach the joined input_summary so pre_tool_use readers
         // (file_reads / unbounded / hot-file / edits) see the file_path + flags.
         events.push({ event: 'pre_tool_use', session_id: sid, ts, tool_name: a.tool_name,
           tool_use_id: a.tool_use_id, input_summary: inputByUseId.get(a.tool_use_id) ?? null,
@@ -563,24 +573,6 @@ export function loadNdjsonMap(filePath) {
       } catch { /* skip */ }
     }
   } catch { /* file doesn't exist */ }
-  return map;
-}
-
-/**
- * Load all session reports from the sessions directory.
- * Returns Map<session_id, report>.
- */
-export function loadSessionReports() {
-  const dir = path.join(repoRoot, TELEMETRY_DIR, SESSIONS_DIR);
-  const map = new Map();
-  try {
-    for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json'))) {
-      try {
-        const report = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-        if (report.session_id) map.set(report.session_id, report);
-      } catch { /* skip */ }
-    }
-  } catch { /* no dir */ }
   return map;
 }
 

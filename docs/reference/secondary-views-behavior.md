@@ -6,11 +6,11 @@ updated: 2026-08-19
 description: "Secondary view behavioral specification (Library, Brain, Health, Settings, Help)."
 ---
 
-# Secondary Views: Behavioral Reference
+# Secondary Views Behavioral Reference
 
 [`search-ui-behavior.md`](search-ui-behavior.md) documents the search experience (Zones A, C, D, E). This document covers the secondary views accessed through Zone B (the ActivityRail), plus the ActivityRail itself. Together they form the complete UI behavioral reference.
 
-> **Tempdoc 577 Goal 3 (search⊕agent unification), superseded by Search Thread S5b:** Search is **no longer a rail peer**. It is the unified Chat (now labeled "Search") window's `retrieve` base intent tier (instant hit-list → Ask → Delegate). The standalone search surface (`core.search-surface`) — briefly demoted to `Placement.DEEPLINK` — is now RETIRED outright: the catalog entry, rail icon, and every dispatch site (Shell, command palette, actions, the intent router's default query surface) are gone, with `core.search-surface` deep-links aliasing to `core.unified-chat-surface` (`RETIRED_SURFACE_ALIASES`) for back-compat. The nav-items table below also carries pre-578 taxonomy + React-era styling drift tracked by tempdoc 579 — verify the live rail against `CoreSurfaceCatalog.java` + `ShellRail.ts`.
+> **Search-thread unification:** **Search** is the one rail window for the `retrieve` → Ask → Delegate progression. The retired `core.search-surface` aliases to `core.unified-chat-surface` for compatibility. Mode-specific Ask, free-chat, and extract IDs remain deep-link addresses but are not independent rail or split-pane destinations. The nav-items table below also carries pre-578 taxonomy + React-era styling drift tracked by tempdoc 579 — verify the live rail against `CoreSurfaceCatalog.java` + `ShellRail.ts`.
 
 Source files (Lit surfaces under `modules/ui-web/src/shell-v0/`): the rail chrome
 `chrome/ShellRail.ts`, and the view surfaces `views/LibrarySurface.ts`,
@@ -23,7 +23,7 @@ Source files (Lit surfaces under `modules/ui-web/src/shell-v0/`): the rail chrom
 > 2026-06-13): the ActivityRail and all five surfaces (Library, Brain, Health,
 > Settings, Help) render and match these descriptions** — e.g. Library shows the
 > watched-folders + exclude-patterns layout, Brain the model-config panel, Settings
-> the Simple/Advanced + System/Dark/Light + High-contrast/Vim controls. Deep
+> the Simple/Detailed + System/Dark/Light + High-contrast/Vim controls. Deep
 > per-control behaviors were spot-checked, not exhaustively exercised; verify a
 > specific claim against `modules/ui-web/src/shell-v0/` + code if precision matters.
 > (Tracked: tempdoc 579.)
@@ -42,7 +42,7 @@ Six items, split into two groups by a thin horizontal divider:
 
 | # | ID | Icon | Label | Tint color | Group |
 |---|-----|------|-------|------------|-------|
-| 1 | `unified-chat` | MessageSquare | Chat | teal | Primary | _(577 Goal 3: the one interaction window — search/Ask/Delegate; replaced the standalone `search` rail item)_ |
+| 1 | `unified-chat` | MessageSquare | Search | teal | Primary | _(the one interaction window — retrieve/Ask/Delegate)_ |
 | 2 | `library` | Library | Library | amber | Primary |
 | 3 | `brain` | Brain | AI Brain | teal | Primary |
 | 4 | `health` | Activity | Health | emerald | Primary |
@@ -53,7 +53,7 @@ Six items, split into two groups by a thin horizontal divider:
 
 - When a non-search item is active, a `motion.div` with `layoutId="rail-indicator"` renders behind the icon, providing a smooth spring animation between items (`stiffness: 400, damping: 30`).
 - The active indicator uses the item's tint color for background and inset glow: e.g., `bg-teal-500/15` + `shadow-[inset_0_0_12px_rgba(20,184,166,0.15)]`.
-- **Exception (historical):** the retired standalone Search rail item had no background when active (`bg-transparent`), merging with the top bar; the unified Chat window that replaced it follows the normal active-indicator treatment.
+- **Exception (historical):** the retired standalone Search rail item had no background when active (`bg-transparent`), merging with the top bar; the current Search window follows the normal active-indicator treatment.
 - Inactive items are `text-[var(--text-muted)]` with hover states.
 
 ### Keyboard
@@ -77,7 +77,7 @@ Manages indexed folder roots. The user adds folders, monitors indexing status, a
 ### Header
 
 - Title: "Library" / "Manage your indexed folders"
-- **Reindex All** button — visible only in Advanced mode (`isAdvanced`). Triggers full re-index of all roots. Shows a spinning RefreshCw icon during reindex.
+- **Reindex All** button — visible only in Detailed mode (`isAdvanced`). Triggers full re-index of all roots. Shows a spinning RefreshCw icon during reindex.
 - **Add Folder** button (teal, `bg-teal-700`) — visible only when at least one root exists (empty state has its own CTA).
 
 ### Add folder flow
@@ -123,15 +123,23 @@ Clicking the Trash2 button opens a `ConfirmDialog` (danger variant):
 - Message: `Remove "{path}" from the index? The files will not be deleted, but they will no longer be searchable.`
 - Buttons: "Remove" (confirm) / "Keep" (cancel)
 
-### Exclude patterns (Advanced only)
+### Exclude patterns (Detailed only)
 
-Visible only in Advanced mode and only when at least one root exists. A glass card with:
+Visible only in Detailed mode and only when at least one root exists. A glass card with:
 
 - Label: "Exclude patterns" with glob examples (`**/node_modules/**`, `**/.git/**`, `**/*.log`).
 - Textarea for one glob per line. Changes are saved to settings on each keystroke.
 - **Apply excludes** button — flushes settings to backend, then calls `applyExcludes()` API. Shows result summary: "Applied N patterns across M roots: deleted X files (by id) + Y jobs (by path prefix)."
 
 ### Error handling
+
+The Folders view includes an **Indexing activity** summary of retained ingestion
+outcomes, grouped by reason and outcome class. Its total counts recorded events,
+not distinct files or current search readiness. Known reasons have readable labels;
+unknown reasons remain visible with neutral wording. The summary distinguishes
+loading, empty, fetch failure and last-loaded data, and offers an explicit refresh.
+It does not resolve filename hashes or retry ingestion jobs. Leaving Folders stops
+its refresh subscription and cancels an in-flight request.
 
 Errors display as a floating toast at `absolute top-16 right-6`, animated in from the right. Red styling (`bg-red-500/15 text-red-300`), with a dismiss × button that calls `clearError`. There is no auto-dismiss timer — the toast persists until the user clicks × or `clearError` is called as a side effect of another operation (e.g., a successful add/remove).
 
@@ -188,13 +196,13 @@ The state is derived from `installStatus.state`, `inference.mode`, and boolean f
 
 **Capability cards** ("What you get"): Shown for both `not_installed` and `offline` states (reminds returning users of AI features).
 
-A "Switch to Advanced" link is available at the bottom of the simple panel.
+The Brain header exposes the shared **Simple / Detailed** segmented control.
 
-### Advanced mode
+### Detailed mode
 
 Rendered when `ui.mode === 'advanced'`. Shows the full configuration interface.
 
-A **"← Simple view"** link at the top returns to Simple mode (mirrors the "Advanced settings" link in Simple mode).
+The same Brain header control returns to Simple mode; it is a projection of the app-wide setting, not a Brain-only mode.
 
 **Section attention badges**: Colored dots appear on `<summary>` elements when a section needs attention:
 - **Install AI** — amber (not completed) or red (failed)
@@ -254,7 +262,7 @@ Sections in render order:
    - Browse buttons for each model (Tauri only)
    - "Restart worker to apply embedding model" button
 
-10. **Inference settings** _(inside Models section, Advanced UI only)_:
+10. **Inference settings** _(inside Models section, Detailed UI only)_:
     - Context Window slider (512–32768 tokens, step 512)
     - Max tokens slider (64–16384 tokens, step 64)
     - GPU Layers: "Auto (CPU-only)" checkbox (default on, hides slider). When unchecked, slider appears (1–100 layers). Explanatory text above: v1 ships CPU-only runtime, manual offloading requires GPU-capable runtime.
@@ -325,28 +333,17 @@ Verified with real NVML data during the tempdoc 364 verification pass.
 
 ### Health events
 
-Events are derived from system state by `deriveHealthEvents.ts`. Up to 8 events are shown, priority-ordered (errors first).
+The live Health surface consumes typed conditions and occurrences from
+`/api/health/events/stream`. Agent completion details explain completed, step-limit,
+budget-limit, errored and cancelled outcomes in plain language, preserving the
+event's existing title and severity. A step-limit explanation does not claim that
+an answer exists; an unknown disposition produces an honest generic explanation.
+Explicit lifecycle messages take precedence over these fallback details.
 
-| Event ID | Level | Message |
-|----------|-------|---------|
-| `api-error` | error | Passthrough from API error |
-| `index-unavailable` | error | Indexer unavailable |
-| `index-start-error` | error | Indexer failed to start |
-| `schema-rebuilding` | info | Index is rebuilding |
-| `schema-blocked` | error | Legacy index format / schema mismatch detected |
-| `reindex-required` | warning | Reindex recommended |
-| `embedding-blocked` | warning | Embedding model mismatch detected |
-| `queue-db-unhealthy` | error | Queue DB unhealthy |
-| `queue-db-check-failed` | warning | Queue DB integrity check failed |
-| `last-failed-job` | warning | Last job failed |
-| `next-retry` | info | Retry scheduled |
-
-When no events exist, a green "All systems operational / No issues detected" card is shown with a CheckCircle icon.
-
-Each event card has severity-colored styling:
-- Error: red background, XCircle icon
-- Warning: amber background, AlertTriangle icon
-- Info: glass surface, Activity icon
+Recent events shows the latest 30 received events in reverse order through the
+shared `jf-health-event` activity-row renderer. Each row preserves its producer's
+severity and uses the existing status-tone mapping. An empty list says "No events
+yet."; it does not imply that every subsystem is healthy.
 
 ### Quick actions
 
@@ -394,11 +391,11 @@ User preferences panel with 6 glass sections that animate in with staggered entr
 
 UI Mode toggle:
 - **Simple** (default) — "Standard view"
-- **Advanced** — "Reindex & excludes"
+- **Detailed** — "Reindex & excludes"
 
-Helper text: "Advanced mode shows Reindex All button and exclude patterns in Library."
+Helper text: "Detailed mode shows Reindex All button and exclude patterns in Library."
 
-This toggle gates Advanced-only features across all views (Library exclude patterns, BrainView advanced sections, HealthView is unaffected).
+This toggle gates Detailed-only features across all views (Library exclude patterns, Brain runtime sections, Health is unaffected).
 
 #### 2. Appearance (Palette icon)
 
@@ -471,8 +468,9 @@ Two-column layout on large screens (single column on small).
 ### Header
 
 - Title: "Help & Support" with HelpCircle icon
-- Subtitle: "Diagnostics export and local-first transparency."
-- **Export diagnostics** button — calls `exportDiagnostics(apiBase)`. Disabled in demo mode. Shows saved path on success, error message on failure.
+- Subtitle: "Copy a redacted summary or export the full local diagnostics bundle."
+- **Copy diagnostic summary** operation — available while Worker/Inference are offline. Copies the bounded allowlist-only summary directly from the operation response; the summary is never rendered or persisted. A fixed local receipt appears only after the clipboard write succeeds, with fixed failure text otherwise.
+- **Export diagnostics** operation — exports the full redacted ZIP and shows the saved path on success or an error on failure.
 
 ### Left column
 
@@ -486,28 +484,23 @@ Two-column layout on large screens (single column on small).
 
 Expanded answers show below the question with a chevron rotation animation.
 
-Note: the Help surface's shortcuts list (`shell-v0/views/HelpSurface.ts`) should be re-checked — a known issue had `/` listed twice with different descriptions, displaying the same key twice in the UI.
-
 **Quick troubleshooting** — Glass card with 3 bullet points:
-- Stale results → Reindex in Library (Advanced) or Health
+- Stale results → Reindex in Library (Detailed) or Health
 - Stuck indexing → Restart worker in Health
-- Bug report → Export diagnostics first
+- Bug report → Copy diagnostic summary, review it, then paste it into the optional issue field
 
 ### Right column
 
-**Keyboard shortcuts** — 9 entries in a divided glass card:
+**Keyboard shortcuts** — only bindings that actually fire are listed:
 
 | Key | Description |
 |-----|-------------|
-| `/` | Focus search bar |
-| `/` | Enter command mode (when search is focused) _(duplicate key — see note)_ |
-| `??` | Enter AI chat mode |
-| `Ctrl+Enter` | Open selected file |
-| `↑ ↓` | Navigate results |
-| `Space` | Toggle file selection |
-| `Ctrl+A` | Select all results |
-| `Escape` | Clear selection / close panel |
-| `Alt` | Show all keyboard hints |
+| `Ctrl / ⌘ + K` | Open the command palette |
+| `Enter` | Run the search when the search box is focused |
+| `Esc` | Clear the search box or close an open panel/drawer |
+| `Ctrl / ⌘ + Z` | Undo |
+| `Ctrl / ⌘ + Shift + Z` | Redo |
+| `J / K` | Step through a visible conversation transcript |
 
 **Local-first info** — Glass card with Shield icon: "Your files stay on this machine. Search and indexing run locally, and the UI only talks to the local backend over loopback."
 
@@ -520,18 +513,19 @@ Note: the Help surface's shortcuts list (`shell-v0/views/HelpSurface.ts`) should
 
 ## 7. Cross-cutting patterns
 
-### Simple/Advanced mode
+### Simple/Detailed mode
 
 The `ui.mode` setting (`'simple'` default / `'advanced'`) gates features across multiple views:
 
-| View | Simple mode | Advanced mode adds |
+| View | Simple mode | Detailed mode adds |
 |------|-------------|-------------------|
 | Library | Add/remove folders, status display | Reindex All button, exclude patterns section |
 | Brain | BrainSimplePanel (state machine) | Full configuration: compatibility cards, policy, GPU booster, model slots, inference settings |
 | Settings | All 6 sections visible | _(no difference)_ |
 | Health | Full dashboard | _(no difference)_ |
 
-The toggle lives in Settings → Interface, but BrainView's simple panel also has a "Switch to Advanced" link.
+The toggle lives in the top bar, Settings → Interface, and the Brain surface header; all three
+controls project the same live `uiModeState` value.
 
 ### ConfirmDialog pattern
 

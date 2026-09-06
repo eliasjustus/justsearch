@@ -74,7 +74,7 @@ final class LifecycleContractTest {
     OnlineAiService onlineAi = mock(OnlineAiService.class);
     when(onlineAi.isAvailable()).thenReturn(false);
     when(onlineAi.isStartingUp()).thenReturn(true);
-    io.justsearch.app.api.OnlineAiService __onlineAi = onlineAi;
+    OnlineAiService __onlineAi = onlineAi;
 
     // No worker configured, inference offline => DEGRADED should still return 200.
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).onlineAiService(__onlineAi).build();
@@ -88,6 +88,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(200, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/health status 200", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       assertSchemaV1(json);
       assertEquals("LIFECYCLE_STATE_DEGRADED", json.path("lifecycle").path("state").asText());
@@ -104,7 +106,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
 
     // Simulate worker startup failure (worker bootstrap error) => ERROR => 503.
     LocalApiServer server =
@@ -121,6 +123,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(503, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/health status 503", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       assertSchemaV1(json);
       assertEquals("LIFECYCLE_STATE_ERROR", json.path("lifecycle").path("state").asText());
@@ -137,7 +141,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
     LocalApiServer server = LocalApiServer.builder(settingsStore, tempDir.resolve("index")).onlineAiService(__onlineAi).build();
     try {
       HttpResponse<String> resp =
@@ -149,6 +153,8 @@ final class LifecycleContractTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(200, resp.statusCode());
+      ContractSchemaAssertions.assertConforms(
+          "GET /api/status status 200", "lifecycle-snapshot.v1.json", resp.body());
       JsonNode json = MAPPER.readTree(resp.body());
       // /api/status is a superset of the schema v1 health fields;
       // check the required v1 fields are present, not exact match.
@@ -173,7 +179,7 @@ final class LifecycleContractTest {
     OnlineAiService onlineAi = mock(OnlineAiService.class);
     when(onlineAi.isAvailable()).thenReturn(true);
     when(onlineAi.isStartingUp()).thenReturn(false);
-    io.justsearch.app.api.OnlineAiService __onlineAi = onlineAi;
+    OnlineAiService __onlineAi = onlineAi;
 
     var inferenceCap = new io.justsearch.app.services.lifecycle.InferenceCapability(true);
     inferenceCap.transition(io.justsearch.app.api.lifecycle.CapabilityHealth.READY, null);
@@ -229,7 +235,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
     KnowledgeServerBootstrap mockKs = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient mockClient = mock(RemoteKnowledgeClient.class);
     stubWorkerReady(mockKs);
@@ -271,7 +277,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
     KnowledgeServerBootstrap mockKs = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient mockClient = mock(RemoteKnowledgeClient.class);
     stubWorkerReady(mockKs);
@@ -323,7 +329,7 @@ final class LifecycleContractTest {
     OnlineAiService onlineAi = mock(OnlineAiService.class);
     when(onlineAi.isAvailable()).thenReturn(false);
     when(onlineAi.isStartingUp()).thenReturn(true);
-    io.justsearch.app.api.OnlineAiService __onlineAi = onlineAi;
+    OnlineAiService __onlineAi = onlineAi;
 
     // Inference capability in PENDING state → maps to STARTING in lifecycle snapshot
     var inferenceCap = new io.justsearch.app.services.lifecycle.InferenceCapability(true);
@@ -426,7 +432,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
 
     // Mock a KnowledgeServerBootstrap that is "ready" but throws on status fetch.
     KnowledgeServerBootstrap mockKs = mock(KnowledgeServerBootstrap.class);
@@ -478,7 +484,7 @@ final class LifecycleContractTest {
     UiSettingsStore settingsStore =
         new UiSettingsStore(UiSettingsStore.PersistenceMode.IN_MEMORY, tempDir.resolve("settings.json"));
 
-    io.justsearch.app.api.OnlineAiService __onlineAi = OnlineAiService.unavailable();
+    OnlineAiService __onlineAi = OnlineAiService.unavailable();
     KnowledgeServerBootstrap mockKs = mock(KnowledgeServerBootstrap.class);
     RemoteKnowledgeClient mockClient = mock(RemoteKnowledgeClient.class);
     stubWorkerReady(mockKs);

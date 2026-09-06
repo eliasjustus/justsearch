@@ -1,12 +1,16 @@
 ---
-title: "Public main history publication"
+title: "ADR-0045: Public main history publication"
 type: decision
 status: stable
 description: "Public main receives curated squash commits from pull requests while branch commits remain workspace history."
 date: 2026-06-28
 probes:
   - adr-0045-history-policy-checked
-last_reviewed: 2026-09-02
+  - adr-0045-review-record-separated
+  - adr-0045-review-record-regression-invoked
+  - adr-0045-agent-enqueue-validated
+  - adr-0045-direct-agent-merge-guarded
+last_reviewed: 2026-09-05
 ---
 
 # ADR-0045: Public main history publication
@@ -122,3 +126,63 @@ exception too easy to use as the default.
 Rejected for this slice. The relevant GitHub settings are native repository and
 branch-protection configuration. A maintainer-run verifier records the policy
 without adding a CI job that may lack permissions on pull-request tokens.
+
+## Amendment: separate mutable review evidence — 2026-09-04
+
+The complete PR title and body remain the native squash title/body source, but
+they must be commit-safe throughout publication. Mutable scope, risk,
+verification evidence, and review state live in exactly one managed PR issue
+comment, identified by the `justsearch-review-record:v1` marker. The comment is
+bound to the current PR number, head SHA, and public-body SHA-256. Branch check
+summaries and artifacts may hold reproducible detail, but they are linked
+evidence rather than the durable review index.
+
+Publishers manage and validate that comment with
+`scripts/ci/pr-review-record.mjs`, then preview the public title/body with
+`scripts/ci/preview-squash-message.mjs` before entering the ordinary merge
+queue. No publication step temporarily moves rich review text through the PR
+body or restores it after enqueue. The command is maintainer-run; this amendment
+does not add a write-capable workflow, required check, or CI permission.
+
+The command re-reads the PR, actor permissions, and managed comment immediately
+before a mutation, then performs one exact read-back. GitHub's issue-comment
+update endpoint has no compare-and-swap precondition, however. For updates, the
+authenticated comment owner must therefore remain the sole writer from dry-run
+through read-back; a transport or verification ambiguity is reported as
+unknown and is never retried blindly.
+
+The landed-message promise is semantic, not byte-exact. GitHub may reflow long
+lines and append its own attribution material. Verification proves that the
+durable public content landed and review-only content did not; public bodies
+avoid formatting whose meaning depends on exact line wrapping.
+
+The managed comment is the chosen durable surface because PR comments remain
+on the Conversation timeline and have stable links and visible edit history.
+Check runs are not the authority because GitHub archives them after 400 days
+and deletes them ten days later. A future check may project freshness and link
+to the comment, but only after its pull-request and merge-group event behavior
+is proven. See GitHub's documentation for [issue comments](https://docs.github.com/en/rest/issues/comments)
+and [check retention](https://docs.github.com/en/pull-requests/reference/status-checks#retention-of-checks).
+
+## Amendment: validate the agent merge effect — 2026-09-05
+
+Repository-owned agent CLI publication now enters the merge queue through
+`scripts/dev/run-gh.mjs enqueue <PR>`. The gateway runs the squash preview and
+managed-review check against live GitHub state and refuses to invoke `gh pr merge`
+when either check or its process boundary fails. A shared pre-tool hook blocks the
+ordinary direct `gh pr merge` and generic `run-gh.mjs pr merge` spellings so the
+documented Claude and Codex paths converge on the gateway.
+
+This is a last-mile agent guard, not a claim of universal GitHub enforcement. The
+GitHub UI, ad-hoc API mutations, and deliberately obfuscated shell commands remain
+maintainer-controlled bypass surfaces. The check-to-enqueue interval also is not
+atomic: GitHub exposes no compare-and-swap precondition for PR metadata or issue
+comments, so the authenticated owner must avoid concurrent edits during that short
+window.
+
+A hosted required check remains deferred. `issue_comment` and
+`pull_request_target` workflows run at the default-branch SHA, while a merge-queue
+required check must also report on the synthetic `merge_group` SHA. GitHub does not
+document a complete PR-membership list in the merge-group event. Do not create a
+write-capable Checks projection until metadata refresh and every grouped PR can be
+bound to those SHAs without relying on queue-ref naming conventions.

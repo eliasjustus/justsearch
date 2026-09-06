@@ -174,7 +174,7 @@ final class RAGContextTest {
     SseEvent citations = r.events().get(1);
     assertEquals("rag.citations", citations.name());
     @SuppressWarnings("unchecked")
-    var citList = (java.util.List<java.util.Map<String, Object>>) citations.payload().get("citations");
+    var citList = (List<Map<String, Object>>) citations.payload().get("citations");
     assertEquals(1, citList.size(), "one citation from the single chunk");
     assertEquals("doc-1", citList.get(0).get("parentDocId"));
 

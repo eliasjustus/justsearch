@@ -5,7 +5,7 @@ status: stable
 description: "Checklist for features spanning build, shell, backend, and frontend."
 ---
 
-# Cross-Component Feature Checklist
+# Cross-Component Checklist
 
 Use this checklist when implementing features that span multiple components (build system, Tauri shell, Java backend, or frontend).
 

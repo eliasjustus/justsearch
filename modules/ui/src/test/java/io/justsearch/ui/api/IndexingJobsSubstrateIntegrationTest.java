@@ -268,8 +268,8 @@ final class IndexingJobsSubstrateIntegrationTest {
           }
 
           @Override
-          public java.util.List<java.nio.file.Path> getWatchedPaths() {
-            return java.util.List.of();
+          public List<java.nio.file.Path> getWatchedPaths() {
+            return List.of();
           }
 
           @Override

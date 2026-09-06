@@ -1,17 +1,8 @@
-import org.gradle.api.plugins.quality.PmdExtension
-
 plugins {
   id("conventions.jvm-base")
 }
 
 description = "JustSearch Indexing & Search Benchmarks"
-
-// Benchmarks are not production code - relax PMD enforcement
-plugins.withId("pmd") {
-  configure<PmdExtension> {
-    isIgnoreFailures = true
-  }
-}
 
 dependencies {
   // Core indexing & configuration

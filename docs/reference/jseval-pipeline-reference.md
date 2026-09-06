@@ -64,8 +64,8 @@ python -m jseval knn-bench
 
 ### Standing ratchets (engine-quality gates)
 
-Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions; the
-`search-engine-hint` hook nudges them after engine/inference/MCP-surface edits. All share
+Five **relative** regression ratchets (no absolute SLO) catch silent engine/agent-utility regressions;
+run them after engine/inference/MCP-surface edits. All share
 `jseval/ratchet_kernel.py` (load baselines → resolve run → compare → report) and project their floors from a
 canonical source (never hand-typed).
 
@@ -221,31 +221,20 @@ deliberately — use it only when you actually intend to run another checkout's 
 Post-§23 closure, jseval is the single CLI surface for every piece of
 tempdoc 400 observability. Every subcommand below reads/writes the
 jseval-owned data root (tempdoc 716): `--data-dir` defaults to
-`scripts/jseval/tmp/`, which hosts both `eval-results/` (where a defaults
-`run` writes) and `cohort_baselines/` (where `calibrate` files envelopes) —
-defaults-only invocations compose without path flags. Pre-716 calibration
-state left inside a backend data dir still resolves read-only, with a
-deprecation WARN. See `docs/explanation/08-observability.md` for the schema.
+`scripts/jseval/tmp/`, which hosts `eval-results/` (where a defaults `run`
+writes) — defaults-only invocations compose without path flags. See
+`docs/explanation/08-observability.md` for the schema.
+
+Tempdoc 930 §18.1 row 7 removed the cohort-envelope / drift-calibration
+commands (`calibrate`, `calibrate-drift-baseline`,
+`recalibrate-nightly-baseline`) and the `cohort_baselines/` directory they
+wrote: no baseline was ever captured on any machine. Run-to-run variation is
+reported per run instead — `summary.json`'s `latency_stats` and
+`encoder_latency` blocks (see below).
 
 ```bash
-# Calibrate cross-run non-determinism envelope (LR1-b).
-# --data-dir = where the envelope is FILED (default: jseval data root);
-# --backend-data-dir = isolated Worker dir the sub-runs execute against.
-python -m jseval calibrate --dataset scifact --modes full --runs 5 \
-  --max-queries 50 [--backend-data-dir <path>]
-
-# Capture drift baseline from N warm runs (LR4-g, Phase 6/6.2 opt-in)
-# Requires >= 3 runs at stable SHA; blocks cold-start outliers
-python -m jseval calibrate-drift-baseline --cohort-hash H \
-  --from-runs R1 R2 R3
-
-# Extract sigma from an existing envelope for nightly-baseline refresh
-python -m jseval recalibrate-nightly-baseline \
-  --cohort-hash H [--output env.txt]
-
-# Nightly-style quality gate (Phase 6/6.13; was scripts/ci/phase3_*)
-python -m jseval gate --baseline-stdev 0.00108 \
-  --tolerance-pct 10 [--report-out <json>]
+# Projection-presence gate (Phase 6/6.13; was scripts/ci/phase3_*)
+python -m jseval gate [--report-out <json>]
 
 # Layer-5 experiment runners
 python -m jseval counterfactual --dataset scifact --max-queries 50
@@ -257,11 +246,7 @@ python -m jseval bisect --run-a <run_dir> --run-b <run_dir> \
   [--synthesize --dataset scifact --modes full --dry-run]
 ```
 
-**Operator guides:** `docs/how-to/recalibrate-phase3-baseline.md`,
-`docs/how-to/calibrate-drift-baseline.md`,
-`docs/how-to/interpret-bisect-output.md`,
-`docs/how-to/triage-psi-drift.md`,
-`docs/how-to/envelope-staleness-policy.md`.
+**Operator guides:** `docs/how-to/interpret-bisect-output.md`.
 
 ## Available Datasets
 
@@ -336,10 +321,9 @@ mode. The structural check is satisfied by two legs, so an omitted
 - **Backend lifecycle**: `--start-backend` starts runHeadlessEval,
   `--clean` wipes the whole data dir, auto-stops via taskkill on
   completion. `--clean` is **fail-closed** (tempdoc 711 item 4) and,
-  since tempdoc 716, **unconditional**: calibration state
-  (`cohort_baselines/`, `non_determinism_envelopes/`) is filed under the
-  jseval data root (`scripts/jseval/tmp/`), never inside the backend
-  data dir, so nothing in the backend dir is protected from the wipe.
+  since tempdoc 716, **unconditional**: every durable jseval artifact is
+  filed under the jseval data root (`scripts/jseval/tmp/`), never inside the
+  backend data dir, so nothing in the backend dir is protected from the wipe.
   Because the Worker JVM (spawned by the Head as a grandchild of the
   Gradle process) has been observed to survive the process-tree
   `taskkill` and keep the Lucene index open, the wipe runs a
@@ -396,6 +380,7 @@ mode. The structural check is satisfied by two legs, so an omitted
 | `--search-load-qpm N` | Drive N queries/minute (evenly spaced) against `POST /api/knowledge/search` on a background thread **during** ingest + the readiness/pipeline wait, and record a `search_load` block in `summary.json` (mode, queries issued, errors, latency p50/p95/max, start/end). Queries come from the dataset's own query file, in `hybrid` mode. Off by default; nothing changes when it is absent (885) |
 | `--search-load continuous` | As above but back-to-back with one request in flight (the continuous MCP-style agent loop). Mutually exclusive with `--search-load-qpm` |
 | `--first-search-probe` | After every batch of `--first-search-probe-files` (default 50) newly indexed documents, issue ONE search and record its latency separately from `--search-load*`. Reopen-on-demand moves the segment-open cost onto exactly that query, so averaging it into steady-state traffic hides it. Off by default (885 item 19) |
+| `--settle-index` | Force-merge the active index to one tombstone-free segment (`POST /api/indexing/settle` with `expungeDeletesOnly: false, maxSegments: 1`) after the pre-query readiness gate and before the query phase, so two arms of a paired comparison query indexes with **equal merge state**. Expunge-only was not enough: Lucene skips segments under its 10 % deleted-fraction threshold, so it left 181 tombstones on scifact (931 C1 campaign). Readiness is re-checked once afterwards (the settle commits and reopens the searcher). Records `index_state_at_query.settled` plus the before/after counts under `index_state_at_query.settle`. Degrades to `settled: false` with a WARN on a 404 (pre-931 backend), a worker refusal, or a transport failure -- the run continues. Off by default: it holds the writer for the duration of a force-merge (931 SS-E item 10) |
 
 That endpoint is the one that writes the Worker's MMF activity slot, so these two flags are how a
 throughput measurement is taken *with foreground search traffic present* — see tempdoc 885's
@@ -417,9 +402,8 @@ so nothing there survives a fresh checkout.
 ## Output Structure
 
 The jseval data root (`scripts/jseval/tmp/`; tempdoc 716) hosts every
-durable jseval artifact — run results and calibration state — so every
-gate/calibrate reader's `--data-dir` defaults compose with `run`'s
-default `--output-dir`:
+durable jseval artifact, so every gate reader's `--data-dir` default
+composes with `run`'s default `--output-dir`:
 
 ```text
 scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
@@ -427,7 +411,6 @@ scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
     summary.json            # Metrics, config, git SHA, pipeline timing
     <mode>_per_query.json   # Per-query scores and ranks
     <mode>_run.trec         # TREC-format run file
-  cohort_baselines/<hash>/  # `calibrate` envelopes + drift baselines
 ```
 
 **Additive schema key, always present (885 item 19).** Every `run` emits a `cadence` block in
@@ -438,6 +421,28 @@ telemetry NDJSON (`index.runtime.*`), plus `first_search_after_indexing` (null u
 ran). Every field degrades to `null` when the Worker does not publish the metric, so the comparison
 columns exist on every row rather than appearing only on some — which is the point, an arm table
 with missing columns cannot be read.
+
+**Additive schema key, always present (tempdoc 931 §E item 10).** Every `run` with modes (a
+query phase) emits an `index_state_at_query` block, snapshotted right after the pre-query
+readiness gate passes: `{"max_doc", "num_docs", "deleted_docs", "chunk_splade_coverage_percent",
+"splade_coverage_percent", "chunk_vector_coverage_percent", "settled", "readiness_passed_at"}`,
+plus a nested `settle` sub-block (`max_doc_before` / `num_docs_before` / `max_doc_after` /
+`num_docs_after` / `segments_after` / `elapsed_ms`) when `--settle-index` ran and succeeded.
+`settled` distinguishes "equal merge state by construction" from "equal by accident". `deleted_docs`
+is `max_doc - num_docs` — the tombstone count that inflates BM25 collection statistics when it
+differs between two otherwise-identical fresh indexes of the same corpus (a measured case moved
+2,629 vs 222, shifting hit counts 3-4% with no code cause). Every field is `null` when the backend
+doesn't publish it (older backend, or `--skip-readiness`), so a paired-arm comparison always has
+the column to check before attributing a metric delta to code.
+
+**Additive schema key, always present (930 §18.1 row 7).** Every `run` also emits an
+`encoder_latency` block: `{"encoders": {"<encoder.name>": {"n", "p50_ms", "p95_ms"}}}`, derived
+from the `encoder.ort_run` spans in the Worker's `traces.ndjson` (rotated siblings included).
+`encoders` is `{}` when the Worker published no such spans — typically because
+`JUSTSEARCH_INDEX_TRACING_LEVEL=detailed` was not exported. Absolute numbers, no baseline and
+no threshold: this replaced the `encoder_drift` PSI projection, whose per-cohort baseline never
+existed. Read it alongside `cpu_fallback_counts` to tell "the encoder got slower" from "the
+encoder moved to CPU".
 
 **Local prerequisite for the full pytest suite.** `python -m pytest scripts/jseval/tests` needs the
 optional extras: `pip install -e "scripts/jseval[dev,agent]"`. Without them four test modules fail
@@ -462,6 +467,10 @@ nothing rather than reporting a partial pass.
 - `ingest.worker_throughput_docs_per_sec` — primary indexing throughput
 - `search_config` — active search pipeline config snapshot from `/api/status` (343)
 - `env_overrides` — env vars applied by jseval config that differed from defaults (343)
+- `index_state_at_query.deleted_docs` — tombstone count at query-phase start, for paired-arm
+  merge-state comparability (931 §E item 10)
+- `index_state_at_query.settled` — whether `--settle-index` equalized this arm's merge state
+  before the query phase (931 §E item 10)
 - `git_sha` — for reproducibility
 
 ## YAML Run Config

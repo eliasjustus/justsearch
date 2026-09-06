@@ -38,6 +38,17 @@ final class SearchResponseBuilderEvidencePreviewTest {
   // Chunk text longer than the cap; "needle" up front keeps it excerpt-/span-eligible.
   private static final String LONG_CHUNK = "needle " + "x".repeat(6000);
   private static final String HEAD_PREVIEW = "head-of-doc preview for the merged parent";
+  private static final String REPORT_CLUSTER =
+      "report report report findings report report report data report analysis report.";
+  private static final String REPORT_GAP = " padding padding padding padding ".repeat(20);
+  private static final String ENTITY_CONTENT =
+      REPORT_CLUSTER
+          + REPORT_GAP
+          + REPORT_CLUSTER
+          + REPORT_GAP
+          + REPORT_CLUSTER
+          + REPORT_GAP
+          + "the report was authored by Zorptannicus in chambers.";
 
   private RunningRuntime lifecycle;
 
@@ -50,9 +61,9 @@ final class SearchResponseBuilderEvidencePreviewTest {
             new IndexDocument(
                 Map.of(
                     SchemaFields.DOC_ID, "parent-1",
-                    SchemaFields.DOC_UID, "parent-1#0",
+                    SchemaFields.DOC_UID, "stable-parent-uid",
                     SchemaFields.TITLE, "Parent Title",
-                    SchemaFields.CONTENT, "unrelated filler content")));
+                    SchemaFields.CONTENT, ENTITY_CONTENT)));
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
   }
@@ -66,6 +77,8 @@ final class SearchResponseBuilderEvidencePreviewTest {
   private static Supplier<ResolvedConfig> configWith(boolean evidencePreviewOn) {
     ResolvedConfigBuilder b = new ResolvedConfigBuilder();
     b.putDefault("search.evidence_preview.enabled", Boolean.toString(evidencePreviewOn));
+    b.putDefault("search.evidence_span.enabled", "true");
+    b.putDefault("search.evidence_span.entity_signal", "ner_membership");
     ResolvedConfig cfg = b.build();
     return () -> cfg;
   }
@@ -141,6 +154,10 @@ final class SearchResponseBuilderEvidencePreviewTest {
         preview,
         "ON: chunk-only hit's content_preview is the winning chunk's text capped at 4096");
     assertEquals(CAP, preview.length(), "ON: preview is capped at 4096 chars");
+    assertEquals(
+        "stable-parent-uid",
+        chunkOnly.getFieldsMap().get(SchemaFields.DOC_UID),
+        "a chunk-only result must carry its stable parent UID for Head-side feedback");
   }
 
   @Test
@@ -170,5 +187,31 @@ final class SearchResponseBuilderEvidencePreviewTest {
             "ON: a content_preview span must stay within the delivered (capped) preview");
       }
     }
+  }
+
+  @Test
+  void rawMultiValuedEntitiesFeedNerMembershipEvidenceSelection() {
+    // Four report clusters compete for the three excerpt slots. The final, otherwise weakest
+    // cluster must survive because the retained raw NER field names its entity. Stored
+    // multi-valued fields use " | "; the selector tokenizes the aggregate without splitting names.
+    var hit =
+        new LuceneRuntimeTypes.SearchHit(
+            "parent-1",
+            1.0f,
+            Map.of(SchemaFields.ENTITY_PERSONS_RAW, "Zorptannicus | Another Person"));
+    var result = new LuceneRuntimeTypes.SearchResult(List.of(hit), 1, 5L);
+    PipelineConfig pipeline = PipelineConfig.newBuilder().setSparseEnabled(true).build();
+
+    SearchResponse response =
+        builderWith(true)
+            .toGrpcResponseBuilder(
+                result, 5L, "report", pipeline, null, /* includeExcerpts= */ true,
+                /* includeDetail= */ false)
+            .build();
+
+    assertTrue(
+        response.getResults(0).getExcerptRegionsList().stream()
+            .anyMatch(region -> region.getText().contains("Zorptannicus")),
+        "the retained raw entity field must keep the answer-bearing report cluster");
   }
 }

@@ -1,5 +1,5 @@
 ---
-title: "Backend-owned truth — the frontend renders, never owns"
+title: "ADR-0034: Backend-owned truth — the frontend renders, never owns"
 type: decision
 status: accepted
 description: "Operations, Resources, and Prompts (the truth) are singular and backend-owned; the frontend is a renderer/composition layer over them."

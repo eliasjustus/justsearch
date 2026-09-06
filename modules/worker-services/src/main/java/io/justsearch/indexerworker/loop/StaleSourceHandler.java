@@ -2,6 +2,8 @@
 package io.justsearch.indexerworker.loop;
 
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
+import io.justsearch.indexerworker.services.ConfirmedDeletionMarker;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import java.nio.file.Path;
 import org.slf4j.Logger;
@@ -22,9 +24,16 @@ public final class StaleSourceHandler {
   private static final Logger log = LoggerFactory.getLogger(StaleSourceHandler.class);
 
   private final IndexingCoordinator indexingCoordinator;
+  private final ConfirmedDeletionMarker deletionMarker;
 
   public StaleSourceHandler(IndexingCoordinator indexingCoordinator) {
+    this(indexingCoordinator, DocumentIdentityStore.UNAVAILABLE);
+  }
+
+  public StaleSourceHandler(
+      IndexingCoordinator indexingCoordinator, DocumentIdentityStore identityStore) {
     this.indexingCoordinator = indexingCoordinator;
+    this.deletionMarker = new ConfirmedDeletionMarker(identityStore);
   }
 
   /**
@@ -38,6 +47,10 @@ public final class StaleSourceHandler {
     try {
       String normalizedPath = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
       indexingCoordinator.deleteByIdAndChunks(normalizedPath);
+      // Tempdoc 931 §C.6 — a confirmed deletion point: the document left the index because its
+      // source is gone. The marker re-verifies absence, so the DELETED classification that reaches
+      // here from an IOException on stat (unreadable, not absent) records nothing.
+      deletionMarker.markIfAbsent(filePath);
       return 1;
     } catch (Exception e) {
       log.debug("Best-effort delete failed for missing file {}: {}", filePath, e.getMessage());

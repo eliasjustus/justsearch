@@ -225,7 +225,7 @@ class ChaosSuiteTest {
     @DisplayName("Worker terminates when heartbeat goes stale (simulated main death)")
     @Timeout(value = 180, unit = TimeUnit.SECONDS)
     void workerDiesWhenHeartbeatStale() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
       // 1. Start worker
@@ -310,7 +310,7 @@ class ChaosSuiteTest {
     @DisplayName("Indexing is throttled — not stopped — while foreground searches are in flight")
     @Timeout(value = 180, unit = TimeUnit.SECONDS)
     void indexingRunsAtAReducedDutyUnderForegroundSearchLoad() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
       mmfHarness.open();
@@ -486,7 +486,7 @@ class ChaosSuiteTest {
     @DisplayName("Worker survives concurrent MMF fuzzing")
     @Timeout(value = 180, unit = TimeUnit.SECONDS)
     void workerSurvivesMmfFuzzing() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
       mmfHarness.open();
@@ -603,7 +603,7 @@ class ChaosSuiteTest {
     @DisplayName("Client detects worker death via gRPC failure")
     @Timeout(value = 150, unit = TimeUnit.SECONDS)
     void clientDetectsWorkerDeath() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
       mmfHarness.open();
@@ -778,7 +778,7 @@ class ChaosSuiteTest {
     @DisplayName("Multiple concurrent health checks succeed")
     @Timeout(value = 180, unit = TimeUnit.SECONDS)
     void concurrentHealthChecks() throws Exception {
-      org.junit.jupiter.api.Assertions.assertTrue(workerDistExists && processManager != null,
+      assertTrue(workerDistExists && processManager != null,
           "❌ Worker distribution or shared config not available");
 
       mmfHarness.open();

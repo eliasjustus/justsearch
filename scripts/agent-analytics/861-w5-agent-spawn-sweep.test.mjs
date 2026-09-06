@@ -39,6 +39,7 @@ const require = createRequire(import.meta.url);
 const {
   runAgentSpawnSweep,
   consultAgentSpawnsForTeardown,
+  inspectAgentSpawnsForTeardown,
   gatherAgentSpawnOrientation,
   findBuildHolders,
   deriveObservedRows,
@@ -46,6 +47,7 @@ const {
   describeEntry,
   holdsWithin,
   recordHoldsTree,
+  strictRecordHoldsTree,
   resolveCallerSessionId,
   resolveMainRepoRoot,
 } = require('../dev/lib/agent-spawn-sweep.cjs');
@@ -492,6 +494,69 @@ async function main() {
       assert.deepEqual(result.buckets.all, []);
       assert.deepEqual(result.kills, []);
     });
+  });
+
+  await check('worktree-teardown blocks when execution-time identity re-verification refuses an otherwise reapable holder', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const now = NOW();
+      const dir = path.join(tmp, 'agent-spawns');
+      const worktreeRoot = path.join(tmp, 'execution-refuse-target');
+      await fsp.mkdir(worktreeRoot, { recursive: true });
+      const record = await buildAgentSpawnRecord({
+        recordId: 'execution-refuse', producer: 'test', pid: 999916,
+        creationFileTimeUtc: '134320479841300916', cmdlineFingerprint: 'vite --port 16',
+        port: 40016, leaseDurationSec: 3600, sessionId: 'caller-session',
+        resourceRoots: { worktreeRoot }, now,
+      });
+      await writeAgentSpawnRecord({ dir, record });
+      const readTable = () => fakeTable(now, [{
+        ProcessId: 999916,
+        CreationFileTimeUtc: '134320479841300916',
+        CommandLine: 'vite --port 16',
+      }]);
+      const result = await consultAgentSpawnsForTeardown({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env, now, readTable,
+        executeReadTable: () => ({ ok: false, reason: 'injected execution-time process-table failure' }),
+      });
+      assert.equal(result.kills.length, 1);
+      assert.equal(result.kills[0].refused, true);
+      assert.equal(result.kills[0].confirmed, false);
+      assert.equal(result.buckets.blocksProceed, true, 'an unconfirmed execution must block directory deletion');
+      assert.equal(result.executionBlockers.length, 1);
+    });
+  });
+
+  await check('worktree-teardown preview treats a pending atomic register write as unknown without modifying it', async () => {
+    await withTmpRegister(async ({ tmp, env, mainRepoRoot }) => {
+      const dir = path.join(tmp, 'agent-spawns');
+      const worktreeRoot = path.join(tmp, 'pending-target');
+      await fsp.mkdir(worktreeRoot, { recursive: true });
+      await fsp.mkdir(dir, { recursive: true });
+      const pending = path.join(dir, 'serve-123.json.999.tmp');
+      await fsp.writeFile(pending, '{in progress');
+      const before = await fsp.stat(pending);
+      const result = await inspectAgentSpawnsForTeardown({
+        mainRepoRoot, targetPath: worktreeRoot, callerSessionId: 'caller-session', env,
+      });
+      const after = await fsp.stat(pending);
+      assert.equal(result.buckets.blocksProceed, true);
+      assert.match(result.buckets.all[0].reason, /pending atomic-write/i);
+      assert.equal(after.size, before.size);
+      assert.equal(after.mtimeMs, before.mtimeMs);
+      assert.equal(await fsp.readFile(pending, 'utf8'), '{in progress');
+    });
+  });
+
+  await check('strict teardown path relation propagates non-absence realpath failures', async () => {
+    const error = Object.assign(new Error('injected access refusal'), { code: 'EACCES' });
+    await assert.rejects(
+      strictRecordHoldsTree(
+        { resourceRoots: { worktreeRoot: path.resolve('held-root') } },
+        path.resolve('target-root'),
+        { realpath: async () => { throw error; } },
+      ),
+      /injected access refusal/,
+    );
   });
 
   // ── F-2a/F-3: the shared session-id resolution chain ────────────────────────────────────────

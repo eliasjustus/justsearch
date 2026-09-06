@@ -54,8 +54,9 @@ class LoggingRedactionGoldenTest {
     root.addAppender(fa);
 
     // Populate MDC and emit WARN with reason_code and sensitive value
-    try (var req = MdcContext.request("7c0c5c1b0f4f0c1a7f9c0d3e5a6b7c8d", "req-1");
-         var p = MdcContext.pipeline("search_default")) {
+    var req = MdcContext.request("7c0c5c1b0f4f0c1a7f9c0d3e5a6b7c8d", "req-1");
+    var p = MdcContext.pipeline("search_default");
+    try (req; p) {
       org.slf4j.Logger log = LoggerFactory.getLogger("io.justsearch.app.services.test");
       log.warn(Markers.append("reason_code", "rerank_skipped_deadline"),
           "rerank skipped due to budget: {}",

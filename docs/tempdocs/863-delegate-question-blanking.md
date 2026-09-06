@@ -1,11 +1,7 @@
 ---
 number: 863
 title: The delegate turn is missing from the answer plane — `recordsToThread` as a declared capability
-status: IMPLEMENTED — slice A (PR #550) and slice B (#542) both built; awaiting merge. Charter premise
-  CORRECTED by source + live evidence (§1); the layer decision is SERVER-SIDE (§4.A) as the fix, with
-  the FE merge rule repaired as a distinct correctness defect (§4.B) — both, doing two different jobs.
-  Decisions taken during implementation are recorded in §9, including three defects the design did not
-  anticipate and one gap it leaves open (§8.4). The live leg (§7 A.8) is NOT done.
+status: "IMPLEMENTED — slice A (PR #550) and slice B (#542) both built; awaiting merge. Charter premise CORRECTED by source + live evidence (§1); the layer decision is SERVER-SIDE (§4.A) as the fix, with the FE merge rule repaired as a distinct correctness defect (§4.B) — both, doing two different jobs. Decisions taken during implementation are recorded in §9, including three defects the design did not anticipate and one gap it leaves open (§8.4). The live leg (§7 A.8) is NOT done."
 created: 2026-08-25
 updated: 2026-08-25
 scheduling: 863 implements BEFORE 865, serial — both edit `AgentInteractionMapper`'s `done` case and

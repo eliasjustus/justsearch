@@ -13,7 +13,9 @@ Two traps the experiment found, encoded here so they can't recur:
 - The FE parse boundary is NON-fail-open: an empty `{}` is WORSE than a 502 — it
   fails the generated-schema parse and the shell never mounts. So boot-critical
   contracts get schema-valid bodies (the captured `__fixtures__/*-live.json` for
-  status/search/settings; minimal-valid EMPTY catalogs for the registry endpoints).
+  status/search/settings; schema-valid catalogs for the registry endpoints). The
+  operation catalog carries the two Help actions so its structural captures exercise
+  the same projected controls as the live surface.
 - A glob `**/api/**` over-matches the FE's own `/src/api/*.ts` Vite modules; the
   matcher MUST be a path predicate (`path == '/api' or startswith('/api/')`).
 """
@@ -60,6 +62,62 @@ def _empty_catalog(primitive: str) -> str:
         "namespace": "core",
         "primitive": primitive,
         "entries": [],
+    })
+
+
+def _help_operations_catalog_body() -> str:
+    """Schema-valid operation rows needed by the Help structural capture.
+
+    These mirror the two entries emitted by ``CoreOperationCatalog``. Keeping the
+    fixture intentionally narrow makes ``help``/``help-narrow`` prove the projected
+    controls without turning the deterministic harness into a second full catalog.
+    """
+    def entry(operation_id: str, result_properties: dict, *, inputs: dict) -> dict:
+        return {
+            "id": operation_id,
+            "type": "operation",
+            "presentation": {
+                "labelKey": f"ops.{operation_id.removeprefix('core.')}.label",
+                "descriptionKey": f"ops.{operation_id.removeprefix('core.')}.description",
+            },
+            "intf": {
+                "inputs": inputs,
+                "result": {"type": "object", "properties": result_properties},
+                "errors": [],
+                "uiHints": {},
+            },
+            "policy": {
+                "risk": "LOW",
+                "confirm": {"kind": "NONE"},
+                "audit": "METADATA_ONLY",
+                "undoSupported": False,
+                "inverseOperationId": None,
+            },
+            "availability": {},
+            "lineage": {"affects": [], "supersedes": []},
+            "provenance": {"tier": "CORE", "contributorId": "core", "version": "1.0"},
+            "executors": ["UI"],
+            "audience": "USER",
+            "consumers": [],
+        }
+
+    export = entry(
+        "core.export-diagnostics",
+        {"path": {"type": "string"}},
+        inputs={"type": "object", "properties": {"feTelemetry": {"type": "object"}}},
+    )
+    summary = entry(
+        "core.copy-diagnostic-summary",
+        {"summary": {"type": "string"}},
+        inputs={"type": "object", "properties": {}, "additionalProperties": False},
+    )
+    summary["intf"]["result"]["required"] = ["summary"]
+    return json.dumps({
+        "schemaVersion": "1.0.0",
+        "catalogVersion": 1,
+        "namespace": "core",
+        "primitive": "Operation",
+        "entries": [export, summary],
     })
 
 
@@ -261,9 +319,10 @@ def _surfaces_catalog_body() -> str:
 # `check-ui-step-coverage` fixture-coverage clause reads (615 §37.1), and this row is the body every
 # non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
+    ("/api/diagnostics/ingestion/summary", '{"rollups": [], "count": 0}'),
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
     ("/api/registry/surfaces", _surfaces_catalog_body()),
-    ("/api/registry/operations", _empty_catalog("Operation")),
+    ("/api/registry/operations", _help_operations_catalog_body()),
     ("/api/registry/resources", _empty_catalog("Resource")),
     ("/api/registry/diagnostic-channels", _empty_catalog("DiagnosticChannel")),
 )
@@ -691,7 +750,7 @@ def _inference_body(variant: str) -> str:
 def _settings_body(variant: str) -> str:
     """The `/api/settings` response for a variant (tempdoc 697 activation). The captured
     `_BODY_SETTINGS` fixture carries `ui.mode: "advanced"` (whatever the live capture's
-    disclosure was set to at capture time). LIVE-VERIFIED (headless probe): Advanced mode
+    disclosure was set to at capture time). LIVE-VERIFIED (headless probe): Detailed mode
     force-expands the chat window's degradation banner regardless of severity
     (UnifiedChatView.ts:2123 `forcedExpanded = isAdvancedMode() || verdict.severity ===
     'error'`), so `.degradation-banner-collapsed` never renders under the captured default —
@@ -700,8 +759,9 @@ def _settings_body(variant: str) -> str:
     variant keeps the captured `advanced` default unchanged.
 
     DELIBERATELY not extended to `degraded-detailed` (tempdoc 814 closure): that variant exists
-    precisely to KEEP the captured "advanced" disclosure, which is how the `chat-bands-detailed`
-    step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
+    precisely to KEEP the captured `advanced` wire value (Detailed disclosure). That is how the
+    `chat-bands-detailed` step gets the EXPANDED banner
+    (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
     Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
     separating the two degraded variants."""
     if variant in ("degraded", "degraded-thread", "agent-run"):

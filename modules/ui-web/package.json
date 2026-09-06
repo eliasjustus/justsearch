@@ -8,7 +8,7 @@
     "dev:all": "node scripts/dev-all.cjs",
     "build": "vite build",
     "build:analyze": "node -e \"process.env.ANALYZE='true';require('child_process').execSync('npx vite build',{stdio:'inherit',env:{...process.env,ANALYZE:'true'}})\"",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:strict": "tsc -p tsconfig.strict.json --noEmit",
     "preview": "vite preview",
@@ -24,13 +24,11 @@
     "gen:wire-schema-types": "node ../../scripts/codegen/gen-wire-schema-types.mjs",
     "gen:liveness-constants": "node ../../scripts/codegen/gen-liveness-constants.mjs",
     "gen:api-client": "node ../../scripts/codegen/gen-api-client.mjs",
-    "check:api-client-regen": "node ../../scripts/ci/check-api-client-regen.mjs",
+    "check:regen": "node ../../scripts/ci/regen-all.mjs --check --except notices",
+    "check:reference-client-openapi-regen": "node ../../scripts/ci/check-reference-client-openapi-regen.mjs",
     "check:component-vocabulary": "node ../../scripts/ci/gen-component-vocabulary.mjs --check",
-    "check:liveness-constants-regen": "node ../../scripts/ci/check-liveness-constants-regen.mjs",
     "check:liveness-constants-single-authority": "node ../../scripts/ci/check-liveness-constants-single-authority.mjs",
-    "check:shape-handler-regen": "node ../../scripts/ci/check-shape-handler-regen.mjs",
     "check:shape-view-coverage": "node ../../scripts/ci/check-shape-view-coverage.mjs",
-    "check:wire-schema-types-regen": "node ../../scripts/ci/check-wire-schema-types-regen.mjs",
     "check:wire-type-single-authority": "node ../../scripts/ci/check-wire-type-single-authority.mjs"
   },
   "dependencies": {
@@ -71,7 +69,7 @@
     "knip": "^6.20.0",
     "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.18",
     "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.2.1",
     "typescript": "^6.0.3",
@@ -80,6 +78,6 @@
   },
   "overrides": {
     "flatted": "^3.4.2",
-    "fast-uri": "^3.1.2"
+    "fast-uri": "^3.1.6"
   }
 }

@@ -5,7 +5,7 @@ status: stable
 description: "MCP server for connecting AI agents to a running JustSearch instance via Streamable HTTP."
 ---
 
-# Production MCP Server
+# Production MCP Server Reference
 
 JustSearch exposes an MCP server at `POST /mcp` on its local API.
 External AI tools (Claude Desktop, Cursor, VS Code Copilot, etc.)
@@ -30,9 +30,9 @@ MCP server on?" is exactly "which port is the API on?":
 - **Pin it:** set the `JUSTSEARCH_API_PORT` environment variable (or the
   `-Djustsearch.api.port=` system property for source runs) before launching. Note that a pin
   is a *preference*: if that port is taken, the ephemeral fallback above still applies.
-- **Discover the actual port:** the backend writes it to
-  `<data dir>\runtime\api-port.txt` — for the installed desktop app that is
-  `%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. It also prints
+- **Discover the actual port:** the backend writes it as `head.apiPort` in the runtime manifest,
+  `<data dir>\runtime\manifest.json` — for the installed desktop app that is
+  `%APPDATA%\io.justsearch.shell\runtime\manifest.json`. It also prints
   `JUSTSEARCH_API_PORT=<port>` to stdout (captured in `logs\headless-backend.log`) and serves
   `GET /api/health` once up. (Gradle dev tasks like `runHeadless`/`devAll` default to `33221`,
   which is why older docs and scripts mention that number — the installed app does not use it.)
@@ -48,14 +48,14 @@ published release yet, and it needs an app build that serves `POST /mcp`,
 which the v0.1.0 release may predate. Once shipped: download the `.mcpb` from
 the release page and open it with Claude Desktop (Settings → Extensions) —
 one click, no JSON editing. The bundle is a thin local stdio bridge to the
-running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
-automatically. Until then, use the connector flow below.
+running app's `/mcp` endpoint; it handles port discovery via the runtime
+manifest automatically. Until then, use the connector flow below.
 
 ### Claude Desktop in ~2 minutes, starting from "launch the app"
 
 1. **Launch JustSearch** (Start menu). Wait for the window to load — the API is up when
    `http://127.0.0.1:8080/api/health` answers in a browser. If it doesn't, read the actual
-   port from `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` and use that below.
+   port (`head.apiPort`) from `%APPDATA%\io.justsearch.shell\runtime\manifest.json` and use that below.
 2. **Claude Desktop → Settings → Connectors → Add custom connector**, URL:
 
    ```text
@@ -100,8 +100,8 @@ Add to `.cursor/mcp.json` or equivalent:
 claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp
 ```
 
-In all three: replace `8080` with the port from
-`%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
+In all three: replace `8080` with the `head.apiPort` value from
+`%APPDATA%\io.justsearch.shell\runtime\manifest.json` if `8080` was taken on your machine
 (see [Which port?](#which-port)).
 
 Every flow above needs a build that serves `POST /mcp`; the v0.1.0 installer release may predate it.
@@ -185,7 +185,7 @@ Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from
 `McpContractVersions.TOOL_SURFACE_VERSION`, reported as
 `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` and as the runtime
-manifest's `mcpToolSurfaceVersion`): `0.6.0`. MCP `serverInfo.version` is the
+manifest's `mcpToolSurfaceVersion`): `0.7.0`. MCP `serverInfo.version` is the
 **build** version (bound to `EnvRegistry.APP_VERSION`) — a host that logs or
 gates on server version must see this build's number, not the tool surface's.
 
@@ -203,6 +203,20 @@ gates on server version must see this build's number, not the tool surface's.
 All 6 tools validate their arguments against a declared JSON Schema at the MCP boundary before
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
+
+### Tool lifecycle extension
+
+MCP has no standard tool-deprecation fields, so JustSearch advertises the versioned experimental
+capability `capabilities.experimental["io.justsearch/tool-lifecycle"] = {"version":"1.0"}`.
+Lifecycle data comes from a closed, validated catalog beside the six tool declarations: every
+catalog row must resolve to exactly one live tool, and duplicate or orphaned rows fail fast.
+
+When a tool is deprecated, `tools/list` adds only namespaced top-level `_meta` keys:
+`io.justsearch/deprecated`, `io.justsearch/deprecatedSince`, optional
+`io.justsearch/sunsetAt`, and `io.justsearch/replacement`. The standard `annotations` object is left
+unchanged. A short deprecation sentence is also prepended to the description for clients that ignore
+extensions. The production catalog is currently empty, so no shipped tool emits this metadata and
+the curated tool-surface version is `0.7.0` after the additive failure metadata below.
 
 ## Response shape (tempdoc 725)
 
@@ -375,6 +389,24 @@ Four proposed URIs for agent orientation:
 
 Plus 9 catalog-driven resources (health events, indexing jobs, etc.)
 for subscription support.
+
+## Tool execution failures
+
+Execution failures retain `isError: true` and a readable `content[].text` message.
+The same known facts are available in `structuredContent`: `error` contains the
+sanitized explanation, with optional `errorCode`, `errorClass` and `retryable`.
+Exception paths use the existing API classification after removing asynchronous
+completion wrappers; the underlying cause supplies both wording and failure facts.
+An unclassified failure
+omits classification fields; an operation result preserves its supplied code and
+retry hint without inferring an absent class. Missing retryability is unknown,
+not permission to retry. The text channel states any supplied classification and
+retry hint, so clients consuming either delivery channel see consistent facts.
+
+The `0.7.0` tool-surface version identifies this additive metadata and the removal
+of blanket transience claims. It does not change tool names, arguments, the MCP
+protocol version, or authorization. A confirmation-pending response continues to
+use its existing approval guidance; it must not trigger automatic replay.
 
 ## Trust Model
 

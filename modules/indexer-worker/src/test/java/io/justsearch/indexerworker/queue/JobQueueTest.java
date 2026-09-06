@@ -311,7 +311,7 @@ final class JobQueueTest {
   void attemptsSemanticsOnlyIncrementOnFailure() throws Exception {
     // Use a real temp file so path normalization is consistent across platforms
     Path testFile = tempDir.resolve("attempts_test.txt");
-    java.nio.file.Files.writeString(testFile, "test");
+    Files.writeString(testFile, "test");
 
     // Get the normalized path that will be stored in the DB
     String normalizedPath = PathNormalizer.normalizePath(testFile.toAbsolutePath().toString());
@@ -1231,12 +1231,14 @@ final class JobQueueTest {
     jobQueue.enqueue(List.of(Path.of("/test/seed.txt")));
     jobQueue.close();
 
-    // Corrupt the page that holds the schema by overwriting bytes well past the SQLite header.
+    // Corrupt page 1's sqlite_schema b-tree after the fixed 100-byte database header. Using the
+    // file midpoint is not stable: adding an otherwise valid table can move that offset onto an
+    // unused or non-critical page and make this test stop testing corruption detection.
     try (RandomAccessFile raf = new RandomAccessFile(dbPath.toFile(), "rw")) {
       long size = raf.length();
       assertTrue(size > 1024, "DB must be larger than the header for the test to be meaningful");
-      raf.seek(size / 2);
-      byte[] garbage = new byte[2048];
+      raf.seek(100L);
+      byte[] garbage = new byte[512];
       for (int i = 0; i < garbage.length; i++) {
         garbage[i] = (byte) 0xAB;
       }

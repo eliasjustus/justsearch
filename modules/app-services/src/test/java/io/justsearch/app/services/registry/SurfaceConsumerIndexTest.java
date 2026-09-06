@@ -170,7 +170,7 @@ final class SurfaceConsumerIndexTest {
             Audience.USER,
             new SurfaceConsumes(Set.of(), Set.of(OP_A), Set.of(), Set.of()));
     SurfaceCatalog catalog = SurfaceCatalog.of("core", List.of(s));
-    java.util.List<SurfaceCatalog> mutable = new java.util.ArrayList<>(List.of(catalog));
+    List<SurfaceCatalog> mutable = new java.util.ArrayList<>(List.of(catalog));
 
     SurfaceConsumerIndex index = new SurfaceConsumerIndex(mutable);
     assertEquals(1, index.consumersOf(OP_A).size());

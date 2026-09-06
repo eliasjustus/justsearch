@@ -73,6 +73,12 @@ run('makeCall preserves compactMetadata when provided, omits the key when not', 
   assert.equal('compactMetadata' in withoutMeta, false);
 });
 
+run('makeCall preserves actual reasoning effort when provided', () => {
+  const c = makeCall({ harness: 'codex-cli', sessionId: 's1', reasoningEffort: 'high' });
+  assert.equal(c.reasoningEffort, 'high');
+  assert.equal(makeCall({ harness: 'codex-cli', sessionId: 's2' }).reasoningEffort, null);
+});
+
 run('makeCall round-trips a full Claude-shaped call', () => {
   const c = makeCall({
     harness: 'claude-code',

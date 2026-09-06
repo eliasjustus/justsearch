@@ -12,6 +12,7 @@ import io.justsearch.indexing.SchemaFields;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class ChunkSearchOps {
   private static final Logger log = LoggerFactory.getLogger(ChunkSearchOps.class);
+
+  private record PendingChunkHit(String docId, float score, Map<String, String> fields) {}
 
   private final RuntimeSession session;
   private final SearcherBridge bridge;
@@ -322,7 +325,7 @@ public final class ChunkSearchOps {
     }
   }
 
-  /** Extracts chunk hits from TopDocs using the standard stored field allowlist. */
+  /** Extracts chunk metadata, then reconstructs text with one stored-content read per parent. */
   private SearchResult buildChunkHits(
       org.apache.lucene.search.IndexSearcher searcher,
       org.apache.lucene.search.TopDocs topDocs,
@@ -331,15 +334,19 @@ public final class ChunkSearchOps {
     org.apache.lucene.index.StoredFields storedFields = searcher.storedFields();
 
     List<SearchHit> hits = new ArrayList<>();
+    List<PendingChunkHit> pending = new ArrayList<>(topDocs.scoreDocs.length);
+    Map<String, DocumentFieldOps.ChunkSlice> chunkSlices = new LinkedHashMap<>();
     Set<String> storedAllowlist =
         Set.of(
             SchemaFields.DOC_ID,
-            SchemaFields.CHUNK_CONTENT,
             SchemaFields.PARENT_DOC_ID,
             SchemaFields.CHUNK_INDEX,
             SchemaFields.CHUNK_TOTAL,
             SchemaFields.CHUNK_START_CHAR,
             SchemaFields.CHUNK_END_CHAR,
+            // Tempdoc 931 §E item 5: the parent revision the offsets address, so the text
+            // reconstruction below can refuse a parent that has been rewritten since.
+            SchemaFields.CHUNK_PARENT_CONTENT_SHA256,
             SchemaFields.CHUNK_START_LINE,
             SchemaFields.CHUNK_END_LINE,
             SchemaFields.CHUNK_HEADING_TEXT,
@@ -354,9 +361,6 @@ public final class ChunkSearchOps {
 
       Map<String, String> fields = new HashMap<>();
       fields.put(SchemaFields.DOC_ID, chunkDocId);
-      fields.put(
-          SchemaFields.CHUNK_CONTENT,
-          docFields.getOrDefault(SchemaFields.CHUNK_CONTENT, ""));
       fields.put(
           SchemaFields.PARENT_DOC_ID,
           docFields.getOrDefault(SchemaFields.PARENT_DOC_ID, ""));
@@ -387,7 +391,18 @@ public final class ChunkSearchOps {
         fields.put(SchemaFields.PARENT_TOKEN_COUNT, parentTokenCount);
       }
 
-      hits.add(new SearchHit(chunkDocId, scoreDoc.score, fields));
+      DocumentFieldOps.ChunkSlice slice = DocumentFieldOps.chunkSliceFrom(docFields);
+      if (slice != null) chunkSlices.put(chunkDocId, slice);
+      pending.add(new PendingChunkHit(chunkDocId, scoreDoc.score, fields));
+    }
+
+    Map<String, String> contentByChunk =
+        DocumentFieldOps.resolveChunkContents(
+            searcher, idField, chunkSlices, Map.of(), session.telemetryEvents);
+    for (PendingChunkHit item : pending) {
+      item.fields().put(
+          SchemaFields.CHUNK_CONTENT, contentByChunk.getOrDefault(item.docId(), ""));
+      hits.add(new SearchHit(item.docId(), item.score(), item.fields()));
     }
 
     long tookMs = System.currentTimeMillis() - startTime;
@@ -554,11 +569,6 @@ public final class ChunkSearchOps {
       return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
     }
 
-    if (hybridSearchOps.shouldSkipVectorSearch(queryText)) {
-      log.debug("searchChunksHybrid: trivial query '{}', using BM25 only", queryText);
-      return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
-    }
-
     long startTime = System.currentTimeMillis();
 
     int docCandidateLimit = Math.min(docIds.size(), effectiveLimit * 2);
@@ -615,12 +625,6 @@ public final class ChunkSearchOps {
       return new SearchResult(List.of(), 0, 0);
     }
     int effectiveLimit = limit <= 0 ? 5 : limit;
-
-    if (hybridSearchOps.shouldSkipVectorSearch(queryText)) {
-      log.debug(
-          "searchChunksHybrid (Phase 6): trivial query '{}', using BM25 only", queryText);
-      return searchChunksFiltered(queryText, docIds, effectiveLimit, additionalFilter);
-    }
 
     long startTime = System.currentTimeMillis();
 
@@ -725,8 +729,7 @@ public final class ChunkSearchOps {
     if (queryText == null || queryText.isBlank()) {
       return new SearchResult(List.of(), 0, 0);
     }
-    boolean vectorUsable = queryVector != null && queryVector.length > 0
-        && !hybridSearchOps.shouldSkipVectorSearch(queryText);
+    boolean vectorUsable = queryVector != null && queryVector.length > 0;
     if (!vectorUsable) {
       return searchFullDocs(queryText, docIds, limit, additionalFilter);
     }

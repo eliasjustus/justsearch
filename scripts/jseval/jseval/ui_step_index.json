@@ -59,9 +59,30 @@
   ],
   "shell-v0/views/SecuritySurface.ts": ["security", "security-light"],
   "shell-v0/views/security/atRestCard.ts": ["security", "security-light", "health", "health-light"],
-  "shell-v0/views/HealthSurface.ts": ["health", "health-light"],
-  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching"],
+  "shell-v0/views/HealthSurface.ts": ["health", "health-light", "health-completion"],
+  "shell-v0/aggregate-substrate/strategies/healthEventActivityRow.ts": ["health-completion"],
+  "shell-v0/views/LibrarySurface.ts": ["library", "library-light", "skeleton-library", "library-enriching", "library-ingestion"],
+  "shell-v0/components/IngestionSummary.ts": ["library-ingestion"],
+  "shell-v0/components/ingestionSummaryPresentation.ts": ["library-ingestion"],
+  "shell-v0/state/searchState.ts": ["search-failure"],
   "shell-v0/state/folderStatus.ts": ["library-enriching"],
+  "shell-v0/state/uiModeState.ts": [
+    "home", "library", "ai-brain", "health", "settings", "security", "help",
+    "home-light", "library-light", "ai-brain-light", "health-light",
+    "settings-light", "security-light", "help-light",
+    "ai-brain-advanced", "ai-brain-advanced-light", "ai-brain-components",
+    "ai-brain-consent", "ai-brain-components-light", "ai-brain-consent-light",
+    "search-results", "command-mode", "zero-results", "input-focus", "filters-chips",
+    "search-simple-mode", "search-advanced-mode", "multi-select", "row-hover",
+    "snippets-expanded", "selection-preserved", "search-results-light",
+    "search-results-compact", "search-results-rich",
+    "inspector-open", "citation-highlight", "sv3-citation-selected",
+    "sv3-citation-dropped", "sv3-composer-occlusion",
+    "chat-mode", "qa-response", "chat-proportion", "chat-bands",
+    "chat-bands-detailed", "chat-composer-small", "chat-spine-single",
+    "chat-spine-multi", "chat-chip-yield", "chat-evidence-rail",
+    "chat-activity-rail-open", "chat-wide-docked"
+  ],
   "shell-v0/views/BrainSurface.ts": [
     "ai-brain", "ai-brain-advanced", "ai-brain-light", "ai-brain-advanced-light",
     "ai-brain-components", "ai-brain-consent",
@@ -79,8 +100,7 @@
   "shell-v0/components/AppUpdateBanner.ts": [
     "settings", "settings-light"
   ],
-  "shell-v0/views/HelpSurface.ts": ["help", "help-light"],
-  "shell-v0/views/GovernanceView.ts": ["governance", "governance-light"],
+  "shell-v0/views/HelpSurface.ts": ["help", "help-light", "help-narrow"],
 
   "shell-v0/shell/Shell.ts": ["shell-v0-demo"],
   "shell-v0/shell/LitWidget.ts": ["shell-v0-demo"],

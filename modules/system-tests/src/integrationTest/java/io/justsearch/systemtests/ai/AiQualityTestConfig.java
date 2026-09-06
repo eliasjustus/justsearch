@@ -4,8 +4,6 @@ import io.justsearch.aibackend.local.LocalIntentTranslatorConfig;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Configuration factory for AI Quality tests.
@@ -21,7 +19,6 @@ import org.slf4j.LoggerFactory;
  * Multi-threaded floating-point math is non-associative and will cause flaky tests.
  */
 public final class AiQualityTestConfig {
-  private static final Logger log = LoggerFactory.getLogger(AiQualityTestConfig.class);
 
   /** Fixed seed for deterministic generation. */
   public static final int DETERMINISTIC_SEED = 42;

@@ -5,7 +5,7 @@ status: stable
 description: "HeadlessApp, Lit shell-v0 structure, and Auto-Discovery."
 ---
 
-# 07. UI Host Architecture
+# UI Host Architecture
 
 JustSearch uses a "Sidecar" UI architecture. The "Backend" (`HeadlessApp`) and the "Frontend" (UI) are decoupled, allowing them to be developed and run independently.
 

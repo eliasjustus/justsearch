@@ -1,5 +1,5 @@
 ---
-title: "ai-bridge Module Decomposition"
+title: "ADR-0017: ai-bridge Module Decomposition"
 type: decision
 status: stable
 description: "Split ai-bridge monolith into ai-backend, gpu-bridge, and prompt-support; delete hollow app-ai and unused ai-worker."

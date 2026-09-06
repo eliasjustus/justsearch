@@ -18,8 +18,16 @@ import {
   isUnregistered,
   resolveGhBin,
   buildChecksArgs,
+  classifyMergeSnapshot,
+  classifyWorkflowRun,
+  enqueuePullRequest,
+  mergeWait,
+  parseEnqueueArgs,
+  parseValueFlag,
   parseRequiredOnly,
   parseTimeoutSec,
+  selectWorkflowRun,
+  runWaitSha,
 } from './run-gh.mjs';
 
 let passed = 0;
@@ -27,6 +35,15 @@ const failures = [];
 function run(label, fn) {
   try {
     fn();
+    passed += 1;
+  } catch (e) {
+    failures.push(`${label}: ${e.message}`);
+  }
+}
+
+async function runAsync(label, fn) {
+  try {
+    await fn();
     passed += 1;
   } catch (e) {
     failures.push(`${label}: ${e.message}`);
@@ -155,6 +172,126 @@ run('parseTimeoutSec with a valid numeric value still parses normally', () => {
   assert.equal(timeoutSec, 60);
   assert.deepEqual(rest, ['445', '--required-only']);
 });
+
+// --- publication transition waits ---
+run('merged PR snapshot is terminal success and carries the landed SHA', () => {
+  assert.deepEqual(classifyMergeSnapshot({ state: 'MERGED', mergeCommit: { oid: 'abc123' } }), {
+    verdict: 'pass', key: 'MERGED:abc123', message: 'merged at abc123',
+  });
+});
+run('closed unmerged PR snapshot is terminal failure', () => {
+  assert.equal(classifyMergeSnapshot({ state: 'CLOSED' }).verdict, 'fail');
+});
+run('open PR snapshot remains pending and exposes queue-state transitions', () => {
+  assert.deepEqual(classifyMergeSnapshot({ state: 'OPEN', mergeStateStatus: 'QUEUED' }), {
+    verdict: 'pending', key: 'OPEN:QUEUED', message: 'OPEN / QUEUED',
+  });
+});
+run('exact-SHA run selection rejects other events and chooses the newest match', () => {
+  const selected = selectWorkflowRun([
+    { databaseId: 1, headSha: 'abc', event: 'push', createdAt: '2026-01-01T00:00:00Z' },
+    { databaseId: 2, headSha: 'abc', event: 'merge_group', createdAt: '2026-01-03T00:00:00Z' },
+    { databaseId: 3, headSha: 'abc', event: 'push', createdAt: '2026-01-02T00:00:00Z' },
+    { databaseId: 4, headSha: 'def', event: 'push', createdAt: '2026-01-04T00:00:00Z' },
+  ], 'abc', 'push');
+  assert.equal(selected.databaseId, 3);
+});
+run('workflow run classification distinguishes registration, progress, pass, and failure', () => {
+  assert.equal(classifyWorkflowRun(null).key, 'UNREGISTERED');
+  assert.equal(classifyWorkflowRun({ databaseId: 5, status: 'in_progress' }).verdict, 'pending');
+  assert.equal(classifyWorkflowRun({ databaseId: 5, status: 'completed', conclusion: 'success' }).verdict, 'pass');
+  assert.equal(classifyWorkflowRun({ databaseId: 5, status: 'completed', conclusion: 'cancelled' }).verdict, 'fail');
+});
+run('parseValueFlag extracts a named value without swallowing a following flag', () => {
+  assert.deepEqual(parseValueFlag(['abc', '--workflow', 'CI', '--event', 'push'], '--workflow', 'default'), {
+    value: 'CI', rest: ['abc', '--event', 'push'],
+  });
+  assert.deepEqual(parseValueFlag(['abc', '--workflow', '--event', 'push'], '--workflow', 'default'), {
+    value: 'default', rest: ['abc', '--event', 'push'],
+  });
+});
+await runAsync('merge-wait times out deterministically while a PR stays pending', async () => {
+  let clock = 0;
+  const code = await mergeWait('gh', 7, 1, {
+    loadJson: () => ({ value: { state: 'OPEN', mergeStateStatus: 'QUEUED' } }),
+    now: () => clock,
+    pause: async () => { clock = 1000; },
+    emit: (_prefix, classified) => classified.key,
+  });
+  assert.equal(code, 3);
+});
+await runAsync('run-wait-sha handles registration followed by exact-SHA success', async () => {
+  let call = 0;
+  const code = await runWaitSha('gh', 'abc', 1, { workflow: 'CI', event: 'push' }, {
+    loadJson: () => ({ value: call++ === 0 ? [] : [{ databaseId: 9, headSha: 'abc', event: 'push', status: 'completed', conclusion: 'success' }] }),
+    now: () => 0,
+    pause: async () => {},
+    emit: (_prefix, classified) => classified.key,
+  });
+  assert.equal(code, 0);
+  assert.equal(call, 2);
+});
+
+// --- validated publication enqueue gateway ---
+run('parseEnqueueArgs accepts only a PR number and optional repository slug', () => {
+  assert.deepEqual(parseEnqueueArgs(['933']), { prNumber: 933, repo: null });
+  assert.deepEqual(parseEnqueueArgs(['933', '--repo', 'justsearch-app/justsearch']), {
+    prNumber: 933,
+    repo: 'justsearch-app/justsearch',
+  });
+  assert.throws(() => parseEnqueueArgs(['0']), /positive/);
+  for (const ambiguous of ['1e3', '0x10', '+7', '7.0', '01']) {
+    assert.throws(() => parseEnqueueArgs([ambiguous]), /positive/, ambiguous);
+  }
+  assert.throws(() => parseEnqueueArgs(['999999999999999999999']), /safe-integer/);
+  assert.throws(() => parseEnqueueArgs(['933', '--squash']), /accepts only/);
+  assert.throws(() => parseEnqueueArgs(['933', '--repo', 'invalid']), /owner\/repo/);
+});
+
+run('enqueue validates preview and managed record before requesting the ordinary merge queue', () => {
+  const calls = [];
+  const code = enqueuePullRequest('gh-bin', 933, 'justsearch-app/justsearch', {
+    nodeBin: 'node-bin',
+    previewScript: 'preview-script',
+    reviewRecordScript: 'review-script',
+    run: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0 };
+    },
+    writeError: () => {},
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(calls, [
+    { command: 'node-bin', args: ['preview-script', '--pr', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+    { command: 'node-bin', args: ['review-script', 'check', '--pr', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+    { command: 'gh-bin', args: ['pr', 'merge', '933', '--repo', 'justsearch-app/justsearch'], options: { stdio: 'inherit', windowsHide: true } },
+  ]);
+});
+
+for (const [label, results, expected] of [
+  ['preview refusal', [{ status: 1 }], 1],
+  ['preview spawn error', [{ error: new Error('missing') }], 2],
+  ['preview signal', [{ status: null, signal: 'SIGTERM' }], 2],
+  ['preview missing status', [{}], 2],
+  ['review refusal', [{ status: 0 }, { status: 1 }], 1],
+]) {
+  run(`enqueue fails closed on ${label} without requesting a merge`, () => {
+    const calls = [];
+    const queue = [...results];
+    const code = enqueuePullRequest('gh-bin', 933, null, {
+      nodeBin: 'node-bin',
+      previewScript: 'preview-script',
+      reviewRecordScript: 'review-script',
+      run: (command, args) => {
+        calls.push({ command, args });
+        return queue.shift() ?? { status: 0 };
+      },
+      writeError: () => {},
+    });
+    assert.equal(code, expected);
+    assert(!calls.some((call) => call.command === 'gh-bin'), JSON.stringify(calls));
+  });
+}
 
 // --- Report ---
 if (failures.length > 0) {

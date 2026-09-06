@@ -638,6 +638,27 @@ public final class SearchExecutor {
       // is still rescuable). Empty unless chunk_leg_recall_complete is enabled.
       List<LuceneRuntimeTypes.SearchHit> legTopNParents) {}
 
+  /**
+   * Whether the chunk-SPLADE retrieval leg may run (tempdoc 931 §E item 8, tempdoc 712).
+   *
+   * <p>{@code rag.chunk_splade.enabled} is one switch over one stage, not a write-side-only switch:
+   * every backfill lane already refuses to encode chunk SPLADE when it is off, so a query-side leg
+   * that ignored it scored against whatever partial chunk-{@code splade} population happened to be
+   * on disk from an earlier flag-on window. A null {@link ResolvedConfig} (or a null {@code rag()})
+   * reads as OFF — the flag's own default — rather than as "unconstrained".
+   */
+  static boolean chunkSpladeLegEnabled(
+      io.justsearch.ipc.PipelineConfig pipeline,
+      Map<String, Float> spladeWeights,
+      ResolvedConfig resolvedConfig) {
+    return pipeline.getSpladeEnabled()
+        && spladeWeights != null
+        && !spladeWeights.isEmpty()
+        && resolvedConfig != null
+        && resolvedConfig.rag() != null
+        && resolvedConfig.rag().chunkSpladeEnabled();
+  }
+
   private ChunkMergeResult mergeChunkResults(
       LuceneRuntimeTypes.SearchResult wholeDocResult,
       String queryString,
@@ -650,8 +671,11 @@ public final class SearchExecutor {
 
     org.apache.lucene.search.Query chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
 
-    boolean chunkSplade =
-        pipeline.getSpladeEnabled() && spladeWeights != null && !spladeWeights.isEmpty();
+    // Tempdoc 931 §E item 8 — the resolved config is read BEFORE the leg decision, not after the
+    // early return: rag.chunk_splade.enabled gates the chunk-SPLADE leg, and with the fetch below
+    // the return a splade-only chunk request short-circuited before the flag was ever consulted.
+    ResolvedConfig resolvedConfig = resolvedConfigSupplier.get();
+    boolean chunkSplade = chunkSpladeLegEnabled(pipeline, spladeWeights, resolvedConfig);
     boolean chunkBm25 = pipeline.getSparseEnabled() && queryString != null && !queryString.isBlank();
     boolean chunkKnn = pipeline.getDenseEnabled() && queryVector != null && queryVector.length > 0;
 
@@ -660,7 +684,6 @@ public final class SearchExecutor {
           trimSearchResult(wholeDocResult, limit), 0, 0, 0, 0, false, "", false);
     }
 
-    ResolvedConfig resolvedConfig = resolvedConfigSupplier.get();
     ResolvedConfig.HybridSearch hybridConfig =
         resolvedConfig != null ? resolvedConfig.hybridSearch() : null;
     // Tempdoc 774 Stage 1 — the chunk branch reads its OWN CC leg weights + zero-exclude, decoupled

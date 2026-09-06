@@ -299,8 +299,8 @@ final class TransitionRunnerTest {
     // for the simple sequential case.
     java.util.concurrent.CountDownLatch firstStarted = new java.util.concurrent.CountDownLatch(1);
     java.util.concurrent.CountDownLatch firstMayProceed = new java.util.concurrent.CountDownLatch(1);
-    java.util.concurrent.atomic.AtomicReference<Throwable> errA = new java.util.concurrent.atomic.AtomicReference<>();
-    java.util.concurrent.atomic.AtomicReference<Throwable> errB = new java.util.concurrent.atomic.AtomicReference<>();
+    AtomicReference<Throwable> errA = new AtomicReference<>();
+    AtomicReference<Throwable> errB = new AtomicReference<>();
 
     Thread a =
         new Thread(
@@ -359,8 +359,8 @@ final class TransitionRunnerTest {
     // A listener that, on every notification, attempts to call back into the runner. The
     // re-entrant run() must throw IllegalStateException from beginTransition (FSM is in
     // TRANSITIONING when the listener fires).
-    java.util.concurrent.atomic.AtomicReference<Throwable> reentryError =
-        new java.util.concurrent.atomic.AtomicReference<>();
+    AtomicReference<Throwable> reentryError =
+        new AtomicReference<>();
     ModeChangeListener reentrant =
         (from, to) -> {
           // Only attempt re-entry on the TRANSITIONING notification to avoid infinite recursion

@@ -5,7 +5,7 @@ status: draft
 description: "Config-file policy delivery, precedence, and enforcement targets."
 ---
 
-# 15. Enterprise Policy (v2+)
+# Enterprise Policy (v2+)
 
 This document specifies how JustSearch should support **enterprise policy enforcement** starting in v2, using **config files** (not registry/GPO-first).
 

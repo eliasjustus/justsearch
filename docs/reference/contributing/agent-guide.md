@@ -113,7 +113,7 @@ node scripts/governance/run.mjs --gate wire --mode gate
 
 #### PMD Rule Configuration
 
-PMD is configured in `config/pmd/ruleset.xml` across 5 categories:
+PMD is configured in `config/pmd/ruleset.xml` across 6 categories:
 
 | Category | Rules |
 |----------|-------|
@@ -121,7 +121,27 @@ PMD is configured in `config/pmd/ruleset.xml` across 5 categories:
 | errorprone (10) | `BrokenNullCheck`, `DoNotTerminateVM`, `EmptyCatchBlock`, `EqualsNull`, `ImplicitSwitchFallThrough`, `MisplacedNullCheck`, `OverrideBothEqualsAndHashcode`, `ReturnFromFinallyBlock`, `UnconditionalIfStatement`, `UselessOperationOnImmutable` |
 | multithreading (3) | `AvoidThreadGroup`, `DoubleCheckedLocking`, `NonThreadSafeSingleton` |
 | security (2) | `HardCodedCryptoKey`, `InsecureCryptoIv` |
-| bestpractices (4) | `UnusedLocalVariable`, `UnusedPrivateField`, `UnusedPrivateMethod`, `UnusedAssignment` |
+| bestpractices (6) | `UnusedLocalVariable`, `UnusedPrivateField`, `UnusedPrivateMethod`, `UnusedAssignment`, `UnusedFormalParameter`, `SystemPrintln` |
+| documentation (1) | `CommentContent` — the parked-marker (TODO/FIXME/XXX) ban, successor to the retired `todo-fixme` kernel gate |
+
+**Scope — every Java source set.** `pmdMain` uses `ruleset.xml`; every other source set
+(`test`, `integrationTest`, `systemTest`, `soakTest`, `determinismTest`, `testFixtures`) uses
+`config/pmd/ruleset-tests.xml`, which is the same ruleset minus `SystemPrintln` (a test's console
+output is its report) and `NonThreadSafeSingleton` (it fires on `@BeforeAll`/`@AfterAll` fixture
+assignment, which JUnit serialises). CLI-entry-point modules (`ssot-tools`, `core-contracts`) point
+`pmdMain` at `config/pmd/ruleset-cli-tools.xml`, which drops `SystemPrintln` and `DoNotTerminateVM`.
+
+All three files inline their rules — PMD's `rule ref` resolves against the CLASSPATH, not the
+working directory, and an unresolvable ref makes PMD analyse **zero files while Gradle reports
+success**. `scripts/ci/check-pmd-ruleset-sync.mjs` therefore enforces that each derived ruleset is
+the authority minus its declared, description-justified subtraction, and that no ref is a file path.
+
+Run everything with `./gradlew.bat pmdAll` (root aggregate over all 93 PMD tasks); CI runs the same
+task in the required `Build (no model blobs)` job, measured at 188 s there. Running it instead on
+`Unit tests (platform-contracts)` was tried and measured worse (201 s, and that lane over its
+advisory budget) — `pmdAll` compiles every source set of every module either way, so the placement
+is decided by which job has wall-time headroom, not by which already compiles tests.
+`-PskipPmd=true` is the local fast-iteration escape hatch; CI never sets it.
 
 **Exception handling policy:**
 
@@ -306,7 +326,6 @@ When editing files under `modules/ui-web/src/`, use `jseval ui-shot` for targete
 - **Step discovery**: `jseval ui-shot --list` shows all available steps (chain and isolated) with their dependency relationships.
 - **Affected steps**: `jseval ui-shot --affected <file>` finds which steps exercise a given source file. Works with full Windows paths.
 - **Measurement companion (615 §6.2)**: every capture also writes a `<step>.measure.json` (accessibility tree + axe violations + element geometry/overflow + console errors) and prints a one-line fact summary. Judge correctness from the **facts** (cheaper + more reliable than the PNG); read the PNG for gestalt. The harness drives the **live Lit `shell-v0`** — there is no mock-data demo mode, so data/AI steps need the dev stack running (AI also needs `ai_activate`).
-- **Auto-hint**: The `ui-shot-hint` PostToolUse hook automatically suggests relevant steps after edits to `.ts` files under `modules/ui-web/src/`. The hint is lightweight (<50ms, no process spawning) and the agent decides whether to capture.
 - **Full reference**: Load the `/ui-check` skill for the complete step registry, file-to-step index, and worktree-aware auto-serve details.
 
 ### 3.5. CI signal model
@@ -321,7 +340,8 @@ The public repository has two CI postures:
   remains the historical basis for that manual-specialty posture.
 
 The public hosted `CI` workflow is split into stable fact lanes: public claims,
-license and notices, no-model build, unit tests, and secret scan. A red
+license and notices, no-model build, unit tests, secret scan, and the
+`jseval Python suite` (required since 2026-09-05, ADR-0044 amendment). A red
 check should name the fact that failed rather than one generic build bucket.
 
 The public unit-test signal is sharded into `Unit tests (app-ui)`, `Unit tests
@@ -371,11 +391,22 @@ gate:
 - `codeql.yml` when you need semantic code scanning outside GitHub's managed
   security surfaces.
 - `build-installer.yml --ref <vX.Y.Z>` for installer/release attach validation.
+- `update-preserves-models.yml` after editing NSIS hooks, `tauri.conf.json`
+  bundle resources, or sidecar staging — it installs a published release, seeds
+  model files, upgrades to the next release and asserts they survive
+  (`docs/how-to/verify-update-preserves-models.md`). The
+  `check-update-preserves-models` script is only the static half.
+- `prepare-winget-manifests.yml` and `sign-vendored-mirrors.yml` are release-cut
+  steps documented in `docs/how-to/cut-a-release.md`.
+- `onramp-smoke.yml` for the model-less Tier 0 first-success proof;
+  `ci-walltime-trend.yml` for CI wall-time trend reporting.
 
 After changes to query orchestration, fusion weights, reranking, or anything
-that could shift σ(nDCG@10), run the drift gate manually (no workflow
-wraps it): `docs/how-to/recalibrate-phase3-baseline.md` has the
-`jseval calibrate` / `jseval gate` sequence.
+that could shift nDCG@10, re-run the arm and compare (no workflow wraps it):
+`python -m jseval run --start-backend --dataset <slug> --modes full`, then
+`python -m jseval relevance-gate --dataset <slug>` against its pinned floor.
+There is no calibrated σ to compare against — tempdoc 930 §18.1 row 7 removed
+the cohort-envelope machinery, which never produced a baseline.
 
 The `agent-live-eval-nightly.yml`, `rr219-resilience-governance-nightly.yml`,
 `rr219-resilience-soak-weekly.yml`, `track-g-report-win.yml`, and
@@ -385,7 +416,8 @@ deleted by commit `a9c484f59` (2026-03-16); jseval covers the substance
 (`scripts/jseval/` — `agent-eval`, `retrieval-eval`, `rag-eval`,
 `bench-concurrency`, etc.). `phase-3-observability-nightly.yml` was likewise
 retired (2026-07-07) — it never ran automatically in its history (ADR-0026);
-its manual `jseval calibrate`/`jseval gate` capability is unaffected.
+its manual `jseval gate` capability is unaffected (tempdoc 930 §18.1 row 7
+narrowed that gate to a projection-presence check).
 
 **How to trigger and inspect:**
 
@@ -394,6 +426,7 @@ gh workflow run ci.yml                              # re-run public hosted fact 
 gh workflow run docs-lint.yml                       # manual docs verification
 gh workflow run codeql.yml                          # semantic code scanning
 gh workflow run build-installer.yml --ref <vX.Y.Z>  # installer/release attach
+gh workflow run update-preserves-models.yml         # N->N+1 model survival
 gh run list --workflow=<name> --limit=1             # check latest status
 gh run view <id>                                    # inspect a specific run
 ```
@@ -481,21 +514,33 @@ reached 6,563 commits, 3,331 of them touching `docs/tempdocs`).
 
 **Axis 1 — how a branch lands (mechanized, you don't manage it).** ADR-0045 set
 the repo to squash-only: every PR collapses to one `main` commit whose title and
-body come from the *PR* title/body, not the branch commit list. So your branch
-commits can be as noisy as you like — checkpoint, retry, "wip" — they never reach
-`main`. The only thing that matters is a good PR title/body, because that *is* the
-public commit. Preview it before merge with
-`node scripts/ci/preview-squash-message.mjs --pr <N>`.
+complete body come from the *PR* title/body, not the branch commit list. Keep
+those two fields permanently commit-safe. Mutable authorship, scope/risk,
+verification evidence, and review state belong in exactly one managed PR comment
+created from `.github/pr-review-record-template.md`; they never move temporarily
+through the PR body.
 
-That checker looks for a section titled exactly `## Testing` — a `## Test
-plan` header (or similar) triggers its `missing-testing-signal` warning even
-if a testing section is present under a different name (tempdoc 695). It
-also flags literal GFM `- [ ]`/`- [x]` checklist syntax in the body: that
-syntax renders as an interactive checkbox on the PR page, but publishes as
-inert plain-text `- [x]` once it becomes the squash commit message — prefer
-plain bullets or a prose list there instead.
+Use `scripts/ci/pr-review-record.mjs upsert --pr <N> --file <review-file>` to
+preview the exact comment create/update. The command prints a fingerprint; pass
+that value to the same command with `--execute --confirm <fingerprint>`. It
+refuses duplicate markers, foreign ownership, stale head/body metadata, and
+changes visible at its final preflight or exact read-back. GitHub comment
+updates have no compare-and-swap precondition, so the authenticated comment
+owner must be the sole writer from dry-run through read-back; do not manually
+edit the managed comment concurrently. Run `pr-review-record.mjs check --pr <N>` and
+`preview-squash-message.mjs --pr <N>` after the final push and review edit so
+findings can be corrected. The validated enqueue gateway repeats both live checks
+immediately before its queue request. The first command verifies the rich record;
+the second rejects review structure, template residue, provider prose, task boxes,
+and operational state from the public commit.
 
-Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
+Check summaries and artifacts may hold reproducible detail, but the managed
+comment is the stable index. Do not use a check summary as the only durable
+review record. Landed-message comparison is semantic rather than byte-exact:
+GitHub may hard-wrap long lines and append its own attribution. Public bodies
+therefore avoid tables or nested formatting whose meaning depends on wrapping.
+
+Four `gh` CLI quirks (tempdoc 695, 930) worth knowing at merge/wait time:
 
 - **A push does not guarantee a CI run.** GitHub's `synchronize` event
   intermittently does not fire, leaving a PR whose newest green check belongs
@@ -510,25 +555,35 @@ Three `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   you know checks exist for the right commit.
 - **Waiting on a PR's CI completion** fits `node scripts/dev/run-gh.mjs
   checks-wait <N>` (backgrounded) better than a hand-rolled poll loop — the
-  latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs
-  hundreds of loop iterations and GitHub API calls on a multi-minute job, and
-  can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
+  latter costs hundreds of loop iterations and GitHub API calls on a
+  multi-minute job, and can outlast the Bash tool's own command timeout.
+  `checks-wait` pre-polls
   until checks register on the branch, then decodes `gh pr checks`'s
   documented 0=pass/1=fail/8=pending bitwise exit contract instead of
-  guessing at it (tempdoc 743 P-K). `gh run watch <run-id> --exit-status` is
-  still the equivalent for a specific workflow run (no wrapper yet). Watching
+  guessing at it (tempdoc 743 P-K). For a specific landed commit, use
+  `node scripts/dev/run-gh.mjs run-wait-sha <sha> --workflow CI --branch main
+  --event push`; it owns registration polling, emits only transitions, and
+  has a bounded timeout. Watching
   immediately after *any* push (not just the batch case further below) can
   race check registration — `checks-wait`'s pre-poll is exactly that
   mitigation; see the registration-race bullet in Batch-publishing below and
   the `/publish` skill's CI-wait pattern for the never-chain-with-merge half
   of this sequence.
-- **`gh pr merge <N> --squash --delete-branch` can report `failed to run
-  git: fatal: 'main' is already used by worktree` even when the remote merge
-  succeeded.** That's `gh`'s local post-merge branch-sync step failing
-  because `main` is checked out in another worktree of this repo — not a
-  failed merge. Confirm with `gh pr view <N> --json
-  state,mergedAt,mergeCommit` instead of retrying the merge.
-
+- **`checks-wait --required-only` can report green with nothing verified**
+  (tempdoc 930 publication, 2026-09-05, three occurrences). While a PR is
+  `CONFLICTING` GitHub builds no merge commit, so no CI registers and "all
+  required checks green" is vacuous; seconds after a push it can read the
+  superseded run's cached state; and a check you are in the middle of
+  *promoting* to required is not yet in the required set, so it is skipped.
+  Before enqueueing, confirm `mergeStateStatus` is `CLEAN`, that the checks
+  belong to the current `headRefOid`, and that `gh pr checks <N> --required`
+  lists every context you expect.
+- **`origin/main` moves under a long task.** Background re-fetches advance the
+  remote-tracking ref mid-task, so `git diff origin/main` drifts (a 100k-line
+  "leak" that is only base drift), and `git reset --soft origin/main` can
+  silently give a rebuilt commit a parent that already contains a later PR —
+  which reverts that PR on push. Re-fetch immediately before every comparison
+  and verify `git log -1 --format=%P` after any soft reset.
 **Publishing goes through the live GitHub merge queue (tempdoc 829 R4, executed
 2026-08-14).** The repo transferred to an organization, ruleset `main-merge-queue`
 gates `main` (SQUASH method, `merge_group` wired into `ci.yml`, validated end-to-end
@@ -543,23 +598,37 @@ longer applies once a PR is enqueued). Practical sequence:
   push's checks take a few seconds to appear; `gh pr checks <N> --watch` called
   immediately can return `"no checks reported"` (nonzero exit — **not** a CI
   failure; keep waiting), same as before the queue.
-- **Enqueue with `gh pr merge <N>` — no strategy flag.** Under the queue this does
-  not merge directly; it adds the PR to the queue. The queue runs its own
+- **Validate the candidate-side boundary before pushing** — `node
+  scripts/ci/run-publish-preflight.mjs --check` proves that every required
+  status context is classified in the versioned local-reproduction inventory.
+  `--list` shows which contexts have a deterministic local subset and which are
+  honestly hosted-only; `--run` executes the local subsets. Hosted-only never
+  waives the corresponding GitHub check.
+- **Enqueue with `node scripts/dev/run-gh.mjs enqueue <N>`.** The repository-owned
+  gateway checks the live `PR_TITLE` / `PR_BODY` squash projection and exact managed
+  review record, then issues the ordinary strategy-free queue request. Direct
+  `gh pr merge` and the generic `run-gh.mjs pr merge` passthrough bypass that proof
+  and are blocked by the shared agent hook. Under the queue the accepted request
+  does not merge directly; it adds the PR to the queue. The queue runs its own
   `merge-group` CI pass against the PR merged with the latest `main` and merges
   (squash) autonomously on success.
 - **A queue rejection is a real signal, not a flake to blind-retry.** If the entry
   drops out of the queue and the PR stays open/unmerged, the merge-group run
   failed — pull that run (merge_group event, or the PR's checks tab) and
   investigate before re-enqueuing.
-- **`preview-squash-message.mjs` is now the sole pre-publication checkpoint, and it
-  matters more than before it did:** the queue merges unattended, so there is no
-  second human look at the title/body before it becomes permanent public history.
-  Run it, and fix everything it flags, before enqueuing — not after.
-- **Confirm the merge landed before any cleanup** — `gh pr view <N> --json state`
-  must read `MERGED`; an unattended queue merge gives no other confirmation moment.
+- **The review-record check and squash preview are the pre-publication
+  checkpoints.** The queue merges unattended, so there is no second human look
+  at the comment freshness or title/body before publication. The enqueue gateway
+  runs both and refuses the queue request on any finding. Its checks and queue
+  request remain a short sole-writer window rather than an atomic GitHub transaction.
+- **Confirm the merge landed before any cleanup** — use `node
+  scripts/dev/run-gh.mjs merge-wait <N>`. It performs the bounded queue poll,
+  emits only state transitions, and returns the landed SHA on `MERGED`.
 - **Check main's *final* HEAD is green** — after the queue merges, watch push-CI on
-  main's newest commit (`gh run watch`); superseded push runs show `cancelled`
-  (concurrency), only the newest matters.
+  the landed SHA with `run-wait-sha`. A completed non-success result, including
+  cancellation, is not green. If a later main push supersedes and cancels that
+  run, inspect it and explicitly wait on main's newest SHA. Keep this post-merge
+  check: merge-group success has not guaranteed same-SHA main success historically.
 
 **Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
 fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR
@@ -579,11 +648,6 @@ directions" section to a tempdoc is working history, not a project-history unit.
 Landing it as its own PR (`docs(644): … (#16)`) is exactly the axis-2 miss —
 tidy under axis 1, but a standalone public commit for archaeology. It should have
 ridden along with the next substantive PR or batched.
-
-The `docs-granularity-hint` hook reminds you of this at `git push` if a branch's
-whole diff is working-history-only; it never blocks (granularity is judgment, not
-something a gate can adjudicate). Canonical-doc-only and docs+code branches don't
-trigger it.
 
 ### 3.8. A tempdoc that changes a governed decision updates its ADR in the same PR
 

@@ -26,20 +26,14 @@
 
 const VALID_HARNESSES = new Set(['claude-code', 'codex-cli']);
 /**
- * `main`/`spawn`/`fork` are produced today (Claude adapter: `spawn`/`fork`
- * from `subagents/*.meta.json`'s `agentType`). `resume` and `thread` are
- * RESERVED VOCABULARY — no adapter in this PR emits either, on purpose,
- * because neither harness's log currently carries the evidence a per-CALL
- * lineage edge needs (independent review, 886 §12 PR 1 fix-up):
+ * `main`/`spawn`/`fork` are produced today. Claude derives `spawn`/`fork`
+ * from `subagents/*.meta.json`; Codex derives `spawn` from
+ * `session_meta.payload.source.subagent.thread_spawn`, which now carries an
+ * explicit parent thread id. `resume` and `thread` remain reserved vocabulary:
  *
- *   - `thread`  needs a PARENT identifier in the payload itself — e.g. a
- *     Codex `inter_agent_communication_metadata` line that names a source
- *     thread/session id, not just the boolean `{trigger_turn}` shape
- *     observed corpus-wide (51,740 events, 2026-09-02), which asserts
- *     multi-agent communication happened in the SESSION but derives no
- *     per-call edge. That fact is surfaced instead as the codex adapter's
- *     session-level `multiAgent` flag — a session property, not a lineage
- *     kind, until a real parent id shows up in a sampled payload.
+ *   - `thread` needs a parent identifier for non-spawn inter-agent traffic.
+ *     Codex `inter_agent_communication_metadata` still provides only a
+ *     session-level fact, so it cannot establish that edge.
  *   - `resume`  needs an explicit resumed-FROM linkage: a Codex rollout
  *     whose `session_meta` (or a dedicated field) names the prior rollout
  *     it resumes, or a Claude Code transcript carrying `--resume`'s source
@@ -86,6 +80,7 @@ export function makeCall(partial) {
     },
     ts: partial.ts ?? null,
     model: partial.model ?? null,
+    reasoningEffort: partial.reasoningEffort ?? null,
     tokens: {
       fresh: tokensIn.fresh ?? 0,
       cacheRead: tokensIn.cacheRead ?? null,

@@ -59,7 +59,7 @@ class OpenTimeCommitUserDataTest {
           m.put("index_fingerprint", BOGUS_SCHEMA_FP);
           return m;
         };
-    var first = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), bogusMeta, validator).atPath(dir).open();
+    var first = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), bogusMeta, validator).atPath(dir).open();
     // start removed (builder.open()  starts);
     first.indexingCoordinator()
         .indexSingle(
@@ -72,7 +72,7 @@ class OpenTimeCommitUserDataTest {
     // The open-time snapshot should capture the BOGUS fingerprint from Phase 1.
     // After indexing + committing, the latest commit has the REAL fingerprint.
     CommitMetadataSource realMeta = new SsotCommitMetadataSource();
-    var second = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), realMeta, validator).atPath(dir).open();
+    var second = IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), realMeta, validator).atPath(dir).open();
     // start removed (builder.open() starts);
 
     // Capture the open-time snapshot before any new commits.

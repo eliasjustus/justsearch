@@ -3,8 +3,8 @@
 /**
  * Tempdoc 806 B.2 (round-12): ONE condition, ONE named remedy.
  *
- * The Brain SIMPLE panel tells the user "A required component is missing — use Repair in Advanced"
- * for `installStatus.repairNeeded`. The Advanced panel it sends them to presented **Install** as the
+ * The Brain SIMPLE panel tells the user "A required component is missing — use Repair in Detailed"
+ * for `installStatus.repairNeeded`. The Detailed panel it sends them to presented **Install** as the
  * primary CTA for that same condition, with Repair as an unemphasised sibling — the user follows a
  * named instruction and the destination names a different action.
  *
@@ -12,10 +12,11 @@
  * looked primary on the screen the user was sent to.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import './BrainSurface';
 import { deriveRepairRemedy, repairRemedySub } from './BrainSurface.js';
 import type { InstallStatus } from '../state/aiStateStore.js';
+import { __resetUiModeForTest, setUiMode } from '../state/uiModeState.js';
 
 interface BrainHost extends HTMLElement {
   apiBase: string;
@@ -26,12 +27,13 @@ interface BrainHost extends HTMLElement {
   updateComplete: Promise<boolean>;
 }
 
-/** Mounts Advanced with the AI-install accordion open and returns the install-section buttons. */
+/** Mounts Detailed with the AI-install accordion open and returns the install-section buttons. */
 async function installButtons(
   installStatus: InstallStatus,
 ): Promise<{ variants: Record<string, string | null>; text: string }> {
   const el = document.createElement('jf-brain-surface') as BrainHost;
   el.apiBase = '';
+  setUiMode('advanced');
   el.settings = { mode: 'advanced' };
   document.body.appendChild(el);
   await el.updateComplete;
@@ -64,7 +66,9 @@ const HEALTHY: InstallStatus = {
   installedFully: true,
 } as InstallStatus;
 
-describe('BrainSurface Advanced — the install panel names the same remedy Simple points at', () => {
+afterEach(() => __resetUiModeForTest());
+
+describe('BrainSurface Detailed — the install panel names the same remedy Simple points at', () => {
   it('repairNeeded ⇒ Repair is the primary affordance, Install is not', async () => {
     const { variants, text } = await installButtons(REPAIR_NEEDED);
     expect(variants.Repair).toBe('primary');

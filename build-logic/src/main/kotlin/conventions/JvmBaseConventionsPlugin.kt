@@ -181,38 +181,37 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
           .from(project.rootProject.layout.projectDirectory.file("config/pmd/ruleset.xml"))
     }
 
-    // Skip PMD in local builds by default. Override with:
-    //   -PskipPmd=false    (force enable locally)
-    //   CI=true env var    (auto-enabled in CI)
+    // `pmdMain` runs in `check`/`build` everywhere (tempdoc 930 §22.2 follow-up 2). It used to
+    // default to skipped off-CI, and no workflow ran `check`, so the ruleset — including the
+    // `CommentContent` parked-marker ban that succeeded the retired `todo-fixme` kernel gate —
+    // bit only when someone passed `-PskipPmd=false` by hand. Measured cost of the flip: ~23s
+    // wall for all 30 `pmdMain` tasks with classes already compiled (`--max-workers=1`, cache
+    // off, 2026-09-05), so there is nothing left to buy by defaulting it off.
+    //   -PskipPmd=true    escape hatch for a fast local iteration loop; CI never sets it.
     val skipPmd = project.providers.gradleProperty("skipPmd")
         .map { it.equals("true", ignoreCase = true) }
-        .orElse(
-            project.providers.environmentVariable("CI")
-                .map { it.isBlank() || it.equals("false", ignoreCase = true) }
-                .orElse(true)
-        )
+        .orElse(false)
 
-    val includePmdTests =
-        project.providers.gradleProperty("pmd.includeTests")
-            .map { it.equals("true", ignoreCase = true) }
-            .orElse(false)
-            .get()
+    // Java TEST sources are covered too (930 §22.2 follow-up 10). `pmd.includeTests` is gone:
+    // every source set PMD sees — `test`, `integrationTest`, `systemTest`, `soakTest`,
+    // `determinismTest`, `testFixtures` — runs in `check`/`build`, under a ruleset of its own.
+    // `ruleset-tests.xml` is `ruleset.xml` minus two rules whose premise does not hold in a test
+    // (`SystemPrintln`, `NonThreadSafeSingleton`); the file states why. 569 pre-existing
+    // violations were cleared in the same change. Measured cost: see the CI step comment.
+    val testRuleSetFiles = project.objects.fileCollection()
+        .from(project.rootProject.layout.projectDirectory.file("config/pmd/ruleset-tests.xml"))
 
-    // Gradle's PMD plugin wires all source sets (main, test, integrationTest, etc) into `check` by default.
-    // Keep test-source PMD opt-in to avoid blocking `./gradlew check` on test-only hygiene.
-    // Skip all PMD locally unless explicitly opted in.
+    // Gradle's PMD plugin already wires every source set's task into `check`; the explicit
+    // `dependsOn` below survives from when this plugin narrowed that to `pmdMain`.
     project.tasks.withType(Pmd::class.java).configureEach {
-      onlyIf {
-        !skipPmd.get() && (name == "pmdMain" || includePmdTests)
+      onlyIf { !skipPmd.get() }
+      if (name != "pmdMain") {
+        ruleSetFiles = testRuleSetFiles
       }
     }
     project.tasks.named("check") {
       dependsOn(project.tasks.matching { it.name == "spotlessCheck" })
-      if (includePmdTests) {
-        dependsOn(project.tasks.withType(Pmd::class.java))
-      } else {
-        dependsOn(project.tasks.matching { it.name == "pmdMain" })
-      }
+      dependsOn(project.tasks.withType(Pmd::class.java))
     }
 
     // Skip distribution archives in local builds. Override with:

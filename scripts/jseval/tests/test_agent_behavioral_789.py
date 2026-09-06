@@ -22,8 +22,10 @@ import copy
 
 import pytest
 
-from jseval import agent_utility_inspect as aui
-from jseval.agent_behavioral import (
+pytest.importorskip("inspect_ai")
+
+from jseval import agent_utility_inspect as aui  # noqa: E402
+from jseval.agent_behavioral import (  # noqa: E402
     CENSUS_IDENTIFIER_SHAPE,
     aggregate_behavioral,
     behavioral_record,
@@ -36,10 +38,13 @@ from jseval.agent_behavioral import (
     probe_texts,
     tool_shape,
 )
-from jseval.utility_evidence import read_evidence, sanitize_observation
-from jseval.utility_recompose import finalize_observation_groups, semantic_digest
-from tests.test_agent_utility_inspect import _rmsg, _state
-from tests.test_utility_evidence import _observation
+from jseval.utility_evidence import read_evidence, sanitize_observation  # noqa: E402
+from jseval.utility_recompose import (  # noqa: E402
+    finalize_observation_groups,
+    semantic_digest,
+)
+from tests.test_agent_utility_inspect import _rmsg, _state  # noqa: E402
+from tests.test_utility_evidence import _observation  # noqa: E402
 
 SEARCH = "mcp__justsearch__justsearch_search"
 ANSWER = "mcp__justsearch__justsearch_answer"

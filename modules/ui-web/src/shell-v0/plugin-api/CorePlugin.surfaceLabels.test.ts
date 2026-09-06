@@ -38,7 +38,7 @@ describe('CorePlugin surface labels — single authority (557 Q10)', () => {
   it('present() resolves a core surface label from the seeded catalog, not id-derivation', () => {
     // Seed the registry-surface catalog as bootSurfaceCatalog would at runtime.
     __seedResourceCatalog({
-      'registry-surface.unified-chat-surface.label': 'Chat',
+      'registry-surface.unified-chat-surface.label': 'Search',
       'registry-surface.brain-surface.label': 'AI Brain',
     });
     mergePluginSurfaceContributions([
@@ -59,13 +59,33 @@ describe('CorePlugin surface labels — single authority (557 Q10)', () => {
     expect(getSurface('core.unified-chat-surface')?.presentation.labelKey).toBe(
       'registry-surface.unified-chat-surface.label',
     );
-    // "Chat" comes from the catalog — NOT the derived "Unified Chat".
-    expect(present({ kind: 'surface', id: 'core.unified-chat-surface' }).label).toBe('Chat');
+    // "Search" comes from the catalog — NOT the derived "Unified Chat".
+    expect(present({ kind: 'surface', id: 'core.unified-chat-surface' }).label).toBe('Search');
     expect(present({ kind: 'surface', id: 'core.unified-chat-surface' }).label).not.toBe('Unified Chat');
   });
 
+  it('923 F-22 — keeps the canonical Search name when the message catalog is unavailable', () => {
+    mergePluginSurfaceContributions([
+      {
+        pluginId: 'core',
+        contribution: {
+          id: 'core.unified-chat-surface',
+          mountTag: 'jf-unified-chat-view',
+          labelKey: 'registry-surface.unified-chat-surface.label',
+          descriptionKey: 'registry-surface.unified-chat-surface.description',
+          audience: 'USER',
+          placement: 'RAIL',
+        },
+        effectiveAudience: 'USER',
+        provenance: CORE_PROVENANCE,
+      },
+    ]);
+
+    expect(present({ kind: 'surface', id: 'core.unified-chat-surface' }).label).toBe('Search');
+  });
+
   it('557 Q7 — a navigate effect to a surface route uses the catalog label, not the raw route', () => {
-    __seedResourceCatalog({ 'registry-surface.unified-chat-surface.label': 'Chat' });
+    __seedResourceCatalog({ 'registry-surface.unified-chat-surface.label': 'Search' });
     mergePluginSurfaceContributions([
       {
         pluginId: 'core',
@@ -85,7 +105,7 @@ describe('CorePlugin surface labels — single authority (557 Q10)', () => {
       kind: 'effect',
       effect: { kind: 'navigate', to: 'justsearch://surface/core.unified-chat-surface' },
     }).label;
-    expect(label).toBe('Navigate to Chat');
+    expect(label).toBe('Navigate to Search');
     expect(label).not.toContain('justsearch://');
     expect(label).not.toContain('Unified Chat');
   });

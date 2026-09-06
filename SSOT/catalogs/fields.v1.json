@@ -61,6 +61,13 @@
       "analyzer": "icu"
     },
     {
+      "id": "content_sha256",
+      "type": "keyword",
+      "stored": true,
+      "docValues": false,
+      "roles": []
+    },
+    {
       "id": "content_preview",
       "type": "text",
       "stored": true,
@@ -301,10 +308,11 @@
     {
       "id": "chunk_content",
       "type": "text",
-      "stored": true,
+      "stored": false,
       "docValues": false,
       "roles": ["highlight"],
-      "analyzer": "icu"
+      "analyzer": "icu",
+      "rmwPolicy": "rederive-parent-slice"
     },
     {
       "id": "chunk_start_char",
@@ -319,6 +327,13 @@
       "stored": true,
       "docValues": true,
       "roles": ["filter", "sort"]
+    },
+    {
+      "id": "chunk_parent_content_sha256",
+      "type": "keyword",
+      "stored": true,
+      "docValues": false,
+      "roles": []
     },
     {
       "id": "chunk_start_line",
@@ -385,14 +400,6 @@
       "roles": ["filter", "facet"]
     },
     {
-      "id": "entity_persons_text",
-      "type": "text",
-      "stored": true,
-      "docValues": false,
-      "analyzer": "icu",
-      "roles": []
-    },
-    {
       "id": "entity_organizations_raw",
       "type": "keyword",
       "stored": true,
@@ -401,28 +408,12 @@
       "roles": ["filter", "facet"]
     },
     {
-      "id": "entity_organizations_text",
-      "type": "text",
-      "stored": true,
-      "docValues": false,
-      "analyzer": "icu",
-      "roles": []
-    },
-    {
       "id": "entity_locations_raw",
       "type": "keyword",
       "stored": true,
       "docValues": true,
       "multiValued": true,
       "roles": ["filter", "facet"]
-    },
-    {
-      "id": "entity_locations_text",
-      "type": "text",
-      "stored": true,
-      "docValues": false,
-      "analyzer": "icu",
-      "roles": []
     },
     {
       "id": "splade",

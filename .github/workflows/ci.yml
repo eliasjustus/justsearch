@@ -45,10 +45,11 @@ jobs:
   public-claims:
     name: Public claims
     runs-on: ubuntu-latest
-    # 10 -> 15: this job now installs modules/ui-web and builds the kernel gate inputs (knip,
-    # npm audit, module-deps). The producers themselves measure ~8s combined; the install is the
-    # cost, and a job that times out is a red for every PR rather than a signal about one.
-    timeout-minutes: 15
+    # 15 -> 20 -> 30: this required lane exhausted both former limits while building kernel
+    # gate inputs after every earlier check had passed. The replacement GitHub advisory producer
+    # is independently bounded and fails closed; leave remaining runner/install variance enough
+    # headroom so a timeout does not turn every PR red instead of reporting a failed check.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -89,16 +90,14 @@ jobs:
         run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
 
       - name: Test release composition (Python)
-        # tempdoc 802. `scripts/jseval/tests/` (132 files) runs in CI NOWHERE — the same
-        # orphaned-layer class as the ~26 node files D6 wired above, and the reason a test
-        # added alongside a fix here would have been a claim rather than a guarantee.
-        # Scoped deliberately to the ONE file guarding release composition rather than the
-        # whole suite: the rest has never been run under CI's locked env, so enabling it
-        # wholesale would turn `main` red on failures this change does not own. The broader
-        # gap is logged for its own pass.
-        # pytest/hypothesis are not in requirements.lock.txt, so `-c` leaves them unpinned;
-        # that is why this installs the `dev` extra separately instead of widening the
-        # canonical install above (which the lock-drift guard keys on).
+        # tempdoc 802. Kept in THIS lane, alongside the claim checks it protects, so a
+        # release-composition break fails the check named "Public claims" rather than only
+        # the separate suite job. The rest of `scripts/jseval/tests/` now runs in the
+        # `jseval-suite` job below (tempdoc 930 §18.1 row 7 closed the "runs in CI
+        # NOWHERE" gap this comment used to record).
+        # pytest is not in requirements.lock.txt, so `-c` leaves it unpinned; that is why
+        # this installs it separately instead of widening the canonical install above
+        # (which the lock-drift guard keys on).
         run: |
           python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0"
           python -m pytest scripts/jseval/tests/test_release.py -q
@@ -111,8 +110,23 @@ jobs:
           python -m pip install --quiet pillow
           python -m unittest discover -s scripts/sandbox -p "test_*.py" -v
 
+      # A lockfile can install fine under the npm that wrote it and still be REFUSED by the
+      # runner's npm ("Missing: X@V from lock file"), because writing prunes edges the reader
+      # demands. Nothing local caught that; three jobs went red on it. This reads all five
+      # lockfiles offline and fails on the same condition, before any install runs.
+      - name: Lockfiles name every declared dependency edge
+        run: node scripts/ci/check-lockfile-completeness.mjs
+
       - name: Install root dependencies
-        run: npm ci
+        # The identity gate below is the authoritative audit for this lockfile. npm's install-time
+        # audit duplicates it through an unbounded advisory POST and has blocked this lane for 5m.
+        run: npm ci --audit=false
+
+      - name: Test language-agnostic authored-word-list scanner
+        run: node scripts/ci/lib/language-agnostic-word-lists.test.mjs
+
+      - name: Search analysis remains language-agnostic
+        run: node scripts/ci/check-language-agnostic-analysis.mjs
 
       # Tempdoc 745 D6. These ~26 files (743's baseline-economics/record-merge suites
       # included) previously ran in CI NOWHERE — manual-only, i.e. only when someone
@@ -136,6 +150,31 @@ jobs:
 
       - name: Workflow trigger policy guard
         run: node scripts/ci/check-workflow-triggers.mjs
+
+      - name: Test workflow npm audit policy
+        run: node scripts/ci/test-check-workflow-npm-audit-policy.mjs
+
+      - name: Workflow npm install audit policy guard
+        run: node scripts/ci/check-workflow-npm-audit-policy.mjs
+
+      - name: Test lockfile completeness guard
+        run: node scripts/ci/test-check-lockfile-completeness.mjs
+
+      # Runs here rather than next to the PMD step in `Build (no model blobs)`: it reads three XML
+      # files and needs no JDK, no compile and no Gradle. Its subject is drift between rulesets that
+      # are inlined copies of each other, plus the file-path `rule ref` that makes PMD analyse zero
+      # files while Gradle reports success (tempdoc 930 §22.2 follow-up 10).
+      - name: Test PMD ruleset-sync guard
+        run: node --test scripts/ci/check-pmd-ruleset-sync.test.mjs
+
+      - name: PMD rulesets agree with their authority
+        run: node scripts/ci/check-pmd-ruleset-sync.mjs
+
+      - name: Test publish preflight contract
+        run: node scripts/ci/test-run-publish-preflight.mjs
+
+      - name: Required-check local reproduction inventory is complete
+        run: node scripts/ci/run-publish-preflight.mjs --check
 
       - name: Test platform lifecycle evidence policy
         run: node scripts/ci/check-platform-lifecycle.test.mjs
@@ -174,6 +213,22 @@ jobs:
       - name: Always-loaded agent-doc budget ratchet
         run: node scripts/ci/check-always-loaded-budget.mjs
 
+      # Tempdoc 930 §18.1 row 8 / §19.3 F4: docs/tempdocs/ is append-only design history, so nothing
+      # shrinks a tempdoc back down on its own — the same always-loaded-budget argument above, applied
+      # to working history. Only tempdocs TOUCHED in this diff are checked (a pre-existing over-cap
+      # tempdoc nobody touched doesn't fail an unrelated PR). The PR base is passed explicitly when one
+      # exists; on push/merge_group the script's own default (origin/main, else HEAD~1) applies — this
+      # job's `fetch-depth: 0` checkout above gives both enough history to resolve.
+      - name: Tempdoc size cap (per number, evidence sidecar exempt)
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$PR_BASE_SHA" ]; then
+            node scripts/ci/check-tempdoc-size.mjs --base "$PR_BASE_SHA"
+          else
+            node scripts/ci/check-tempdoc-size.mjs
+          fi
+
       # Tempdoc 872: the ui-web gate set (authority: the `ui-web-gates` recipe in
       # governance/consult-register.v1.json) was advisory-only — pushed at edit time, run in
       # CI nowhere — so `gen-token-names --check` sat RED on main for weeks and twelve sessions
@@ -186,14 +241,6 @@ jobs:
       # and the floor guard, so a reworded recipe cannot shrink the set to a silent green.
       - name: ui-web gate runner parses the whole recipe
         run: node scripts/ci/run-ui-web-gates.test.mjs
-
-      # Tempdoc 872: expected-state pins are dated exceptions with exits. Checked here: every
-      # pin declares an exit (exitProbe and/or reviewBy) and none is past its reviewBy — so
-      # the known-state-hint cannot deliver a claim nobody has re-affirmed. exitProbes are
-      # `slow:` and run only locally (`--slow`); a pin past reviewBy turns this step red for
-      # every PR by design — re-affirm it with evidence or delete it.
-      - name: expected-state pins declare an exit and are not expired
-        run: node scripts/agent-analytics/expected-state-probe.mjs --gate
 
       # Tempdoc 872: the observations inbox is retired; a shard from a session still on the
       # old brief would otherwise land unread. Fail legibly, with the routing remedy.
@@ -228,8 +275,20 @@ jobs:
       - name: Test squash-message preview
         run: node scripts/ci/test-preview-squash-message.mjs
 
-      - name: Test v2 squash-message projection
+      - name: Test publication-record projection
         run: node scripts/ci/test-squash-message-projection.mjs
+
+      - name: Test managed PR review record
+        run: node scripts/ci/test-pr-review-record.mjs
+
+      - name: Test validated publication enqueue
+        run: node scripts/dev/run-gh.test.mjs
+
+      - name: Test direct publication-merge guard
+        run: node scripts/agent-analytics/hooks/publication-merge-guard.test.mjs
+
+      - name: Test bounded advisory reporting
+        run: node scripts/ci/test-report-github-advisories.mjs
 
       # Tempdoc 884 PR 2. Same shape again, third time in this file: check-tempdoc-numbers is a
       # merge gate, and its collision rule had no test at all until 884 had to loosen one branch
@@ -247,17 +306,23 @@ jobs:
       # registered, baselined and unable to notice anything, because this job built none of their
       # inputs. gates/dead-code/baseline.txt had gone untouched since 2026-07-16 while 27 findings
       # accumulated behind it. The inputs are cheap -- measured locally at 0.2s (module-deps),
-      # 2.7s (knip) and 4.5s (npm audit) -- so the reason they were missing was wiring, not budget.
-      # dead-code-jvm's producer is a Gradle run, so it lives in the unit-test lane that already
-      # builds it rather than here.
-      # Tempdoc 918 item 2, closing 913 open item 1. Each of the 20 unwired gates was run bare on
-      # the base and classified (census: tempdoc 918 §D). These 14 are green on `main` AND hermetic
+      # 2.7s (knip) and 4.5s (the original npm audit) -- so the reason they were missing was wiring,
+      # not budget. Tempdoc 921 later replaced that unreliable POST with bounded GitHub advisory GETs.
+      # Tempdoc 918 item 2, closing 913 open item 1. Each unwired gate was run bare on
+      # the base and classified (census: tempdoc 918 §D). These 11 are green on `main` AND hermetic
       # -- they read checked-in registers, catalogs and source text, and need no produced artifact,
       # no Gradle output, no protoc and no dev stack. The step sits DELIBERATELY above the
       # `npm ci --prefix modules/ui-web` below, so the job itself demonstrates the claim rather
       # than asserting it: if one of these ever starts needing an install, it fails here.
       #
-      # Six of the 20 are NOT in this step:
+      # Tempdoc 930 chunk F removed three ids from this list by deleting their gates, not by
+      # unwiring them: `todo-fixme` is now ESLint `no-warning-comments` (ui-web) + the PMD
+      # `CommentContent` rule (Java), `test-to-code` was dropped, and `prose-tier-register`
+      # retired with docs/reference/contributing/tier-register.md. `ts-any` (ESLint
+      # `no-explicit-any` + eslint-suppressions.json) went the same way. `npm-audit` did NOT --
+      # it is still a registered, baselined gate and still runs in the built-inputs step below.
+      #
+      # Four gates are still NOT in this step:
       #   - consumer-presence, host-owns-truth, runtime-witness
       #                  all three read tmp/consumer-presence/registry-snapshot.json, a Gradle
       #                  artifact (RegistrySnapshotExporterTest), and SOFT-FAIL to `pass` when it
@@ -265,43 +330,82 @@ jobs:
       #                  have inspected nothing -- the first version of this step did exactly that
       #                  and logged three `snapshot-missing` warnings as part of a green. They now
       #                  run in the unit-tests app-ui lane, after the task that builds the snapshot.
-      #   - ts-any       red on `main` behind expected-state pin `ts-any-gate-counts-english-prose`
-      #                  (countAny scores the English word "any"); wiring a known red would make
-      #                  every PR red for a reason no PR caused. Wire it with the counting fix.
       #   - test-efficacy its PIT strength report is an ON-DEMAND input, so without a `:pitest` run
       #                  the runner SKIPS it (kernel/input-skipped, verdict `skipped`, exit 0).
       #                  Wiring it here would add a step that can only ever report a vacuous green.
       #                  It belongs in a lane that produces the report.
-      #   - wire         has its own step below: it needs the buf CLI, and its failure mode without
-      #                  it is a PASS, which is worse than being unwired.
-      - name: Hermetic kernel gates (14, no produced inputs, no install)
+      #   - wire         has its own step below, with the buf CLI installed ahead of it.
+      - name: Hermetic kernel gates (11, no produced inputs, no install)
         run: |
-          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate prose-tier-register --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --gate test-to-code --gate todo-fixme             --mode gate
+          node scripts/governance/run.mjs             --gate consumer-drift --gate contract-projection --gate contribution-surface             --gate hook-integrity --gate interaction-surface --gate observed-happening             --gate runtime-state --gate ssot-catalog-sync             --gate stage-completeness --gate surface-altitude --gate tempdoc-wiring             --mode gate
+
+      # Tempdoc 930 chunk F. Seven `check-*-regen.mjs` wrappers were one property each -- "a
+      # generated file matches its source" -- with seven CI steps. `regen-all` is that set; the
+      # `notices` entry needs the license reports, so it runs in the license-and-notices job that
+      # builds them (`--only notices`) rather than being skipped here.
+      - name: Generated files match their sources (regen set)
+        run: node scripts/ci/regen-all.mjs --check --except notices
+
+      - name: Test the regen set runner
+        run: node scripts/ci/regen-all.test.mjs
 
       - name: Build kernel gate inputs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          npm ci --prefix modules/ui-web
+          npm ci --prefix modules/ui-web --audit=false
           node scripts/docs/generate-runtime-config-matrix.mjs
           node scripts/architecture/module-deps.mjs
-          node scripts/ci/report-npm-audit.mjs
+          node scripts/ci/report-github-advisories.mjs
           npm --prefix modules/ui-web run knip:report
 
+      # `npm-audit` is NOT one of the six gates tempdoc 930 chunk F retired -- it stays registered,
+      # baselined and wired here. Chunk F first swapped it for plain `npm audit --audit-level=high`
+      # over both lockfiles; that step was red on the base for pre-existing high advisories that
+      # no PR introduced, which is the same objection the comment above raises against wiring a
+      # known red. The commodity command has no accepted-advisory baseline, so it cannot
+      # distinguish "new advisory" from "advisory we already carry" -- which is the one thing this
+      # ratchet exists to do. The upgrades that clear those advisories have since landed and the
+      # accepted set is empty (ADR-0044 amendment 2026-09-05), so the gate now fails on the first
+      # high/critical identity in any of the five lockfiles. `actions/dependency-review-action`
+      # was evaluated as a replacement in the same pass and rejected: it scores a revision diff,
+      # not the checked-out lockfile.
       - name: Kernel gates with built inputs (config-surface, dead-code, npm-audit, module-deps)
         run: |
           node scripts/governance/run.mjs \
             --gate config-surface --gate dead-code --gate npm-audit --gate module-deps \
             --mode gate
 
-      # Tempdoc 913 T1/T2, the same shape as the block below it. The dev-MCP surface's doc-sync
-      # gate and the two pure suites that cover its verdict logic ran in no workflow at all, which
-      # is why an allowlist could lose an endpoint and the ownership verdict could report
-      # `rebuildFirst` on every distFrom launch with nothing to contradict either. All three are
-      # pure (no dev stack, no Gradle): check-dev-mcp-doc-sync spawns the MCP server over stdio and
-      # calls tools/list, which touches no run state.
-      - name: Dev-MCP surface (doc sync + pure unit suites)
+      # Tempdoc 930 chunk F: the `ts-any` and `todo-fixme` gates became ESLint rules, and ESLint
+      # ran in no workflow -- so the rules would have been unenforced the moment the gates went.
+      # `eslint-suppressions.json` carries the pre-existing violations; a NEW one fails here.
+      - name: Frontend lint (ts-any + todo-fixme successors)
+        run: npm --prefix modules/ui-web run lint
+
+      # Tempdoc 930 section 22.2 follow-up 3 closes the other half of the same hole. The retired
+      # `todo-fixme` gate scanned `scripts/**` and `*.ps1` too, and neither successor above
+      # covered them: ESLint ran only in modules/ui-web, PMD only sees Java. `lint:scripts` is the
+      # root ESLint config (eslint.config.mjs, ~575 .mjs/.cjs files plus the packaging JS);
+      # `lint:ps1` is the PowerShell equivalent, which ESLint cannot parse. Both carry their
+      # pre-existing markers in a suppression list, so a NEW marker fails here.
+      - name: Script lint (todo-fixme successor for scripts/** and *.ps1)
         run: |
+          npm run lint:scripts
+          npm run test:lint-ps1
+          npm run lint:ps1
+
+      # Required dev-MCP contract: generated runtime freshness/licensing, exact dependency-free
+      # launcher topology, typed observation truth, canonical inventory sync, pure helper logic,
+      # and real stdio handler projection. No suite starts the shared dev stack or runs Gradle.
+      - name: Dev-MCP surface (hermetic bootstrap + truth + doc sync)
+        run: |
+          node scripts/dev/generate-dev-mcp-runtime.mjs --check
+          node scripts/dev/generate-dev-mcp-runtime.test.mjs
+          node scripts/dev/test-dev-mcp-bootstrap.mjs
+          node scripts/dev/test-dev-mcp-observations.mjs
           node scripts/ci/check-dev-mcp-doc-sync.mjs
           node scripts/dev/test-dev-mcp-surface-honesty.mjs
+          node scripts/dev/test-dev-mcp-projection-live.mjs
           node scripts/dev/test-ownership-verdict.mjs
 
       # Tempdoc 913 D1, the same shape a fourth time, one register-family out. The
@@ -314,16 +418,15 @@ jobs:
       #
       # These three are input-free (they read the register JSONs + walk the source tree, no
       # produced artifact), so they cost nothing to run here. Scoped to the register family
-      # implicated by D1 rather than "the rest of the kernel": ts-any is red on main behind an
-      # expected-state pin, and `wire` is environment-sensitive (needs the buf CLI installed),
-      # so a blanket full-kernel step would land CI red for reasons unrelated to the fix.
+      # implicated by D1 rather than "the rest of the kernel": `wire` is environment-sensitive
+      # (it needs the buf CLI installed, so it has its own step with that install), so a blanket
+      # full-kernel step would land CI red for reasons unrelated to the fix.
       #
-      # Census (corrected by review of #617 -- the first count missed the six kernel gates the
+      # Census (corrected by review of #617 -- the first count missed the kernel gates the
       # "ui-web pre-merge gate set" step above runs via run-ui-web-gates.mjs, which expands the
-      # `ui-web-gates` recipe: ambient-purity, style-literal-ratchet, atom-fork-ratchet,
-      # modality-contract, transient-arbitration, modal-arbitration). Of 35 registered gates,
-      # 12 ran in CI before this step and 15 do with it -- so 20 remain unwired, tracked in
-      # tempdoc 913 open items with the full list.
+      # `ui-web-gates` recipe: ambient-purity, atom-fork-ratchet, modality-contract,
+      # transient-arbitration, modal-arbitration). Tempdoc 930 chunk F took the registry from 35
+      # gates to 29; the remaining unwired set is tracked in tempdoc 913 open items.
       - name: Register-family gates (operation-surface, execution-surface, guard resolution)
         run: |
           node scripts/governance/run.mjs \
@@ -331,17 +434,24 @@ jobs:
             --mode gate
 
       # The `wire` gate (protobuf breaking-change detection) ran in NO workflow and no job covers
-      # `contracts/**` either, so a breaking .proto change had nothing to stop it. It is wired with
-      # its install rather than without, because `buf` absent is not a failure in this gate -- it
-      # emits `contract-governance/buf-cli-missing` and still returns verdict `pass`
-      # (expected-state pin `wire-gate-buf-cli-missing` documents exactly this fail-open). A step
-      # that ran the gate without installing buf would be a permanent green that inspects nothing.
-      # The install is a 2-package `npm ci` against a committed lockfile (~1s locally).
+      # `contracts/**` either, so a breaking .proto change had nothing to stop it.
+      #
+      # Tempdoc 930 §19.3 F7 removed the assertion that used to follow this step -- a `node -e`
+      # grep of the SARIF for `buf-cli-missing`, which existed only because the gate returned
+      # verdict `pass` when the CLI was absent. That fail-open is now fixed in the gate itself
+      # (`gates/wire/enforcer.mjs`: any `contract-governance/*` runner error fails the gate), so
+      # the assertion had nothing left to catch and its absence no longer hides anything.
+      #
+      # The install stays and is load-bearing: the gate resolves the binary from
+      # `scripts/wire-contract/node_modules/@bufbuild/...` by path, NOT from PATH
+      # (gates/wire/protobuf-buf-breaking.mjs:22-33 -- the npm .bin launcher is a JS shim that
+      # execFileSync cannot run on Windows without shell:true). `bufbuild/buf-setup-action` puts
+      # buf on PATH, which this resolver would not see; a 2-package `npm ci` against a committed
+      # lockfile (~1s) is both the pinned version and the path the gate actually looks in.
       - name: Wire contract gate (protobuf breaking changes)
         run: |
-          npm ci --prefix scripts/wire-contract
+          npm ci --prefix scripts/wire-contract --audit=false
           node scripts/governance/run.mjs --gate wire --mode gate --out tmp/wire-gate.sarif
-          node -e "if (require('fs').readFileSync('tmp/wire-gate.sarif','utf8').includes('buf-cli-missing')) { console.error('wire gate ran without the buf CLI: its pass is vacuous'); process.exit(1); }"
 
       # Tempdoc 884 review B1, same shape as the note above: the kernel's own gate tests
       # (18 *.test.mjs files) ran NOWHERE -- standalone `node <file>` scripts nobody
@@ -360,6 +470,12 @@ jobs:
 
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
+
+      - name: Release baseline stays in sync with the ratchet + scorecard
+        run: node scripts/ci/check-release-baseline-sync.mjs
+
+      - name: Generated scorecard matches the canonical release
+        run: node scripts/docs/gen-scorecard.mjs --check
 
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs
@@ -469,9 +585,11 @@ jobs:
       # The shape-handler live oracle compared eventSchema entries — objects — with `===`, so it
       # reported drift for every shape while printing byte-identical live/fixture lines and could
       # never pass. Only the comparator is unit-testable without a backend, and that is exactly the
-      # part that was wrong; the `--live` leg itself still needs a running stack.
-      - name: Test the shape-handler regen live comparator
-        run: node scripts/ci/check-shape-handler-regen.test.mjs
+      # part that was wrong; the oracle itself still needs a running stack. Tempdoc 930 chunk F
+      # split the script: its static `gen-shape-handlers --check` half is now an entry of the
+      # regen set, and what is left (this file's subject) is the live-only oracle.
+      - name: Test the shape-handler live comparator
+        run: node scripts/ci/check-shape-handler-live.test.mjs
 
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
@@ -491,6 +609,12 @@ jobs:
       - name: Markdownlint canonical docs
         run: npx markdownlint "docs/explanation/**/*.md" "docs/reference/**/*.md" "docs/how-to/**/*.md" "docs/decisions/**/*.md"
 
+      - name: Validate docs frontmatter, headings and encoding
+        # Complements markdownlint (style) with the semantic rules: frontmatter parses, the H1
+        # equals the frontmatter title llms.txt indexes, no U+FFFD. Unwired until tempdoc 930
+        # §22.2 follow-up 7 cleared its last 2,219 findings; wiring it is what keeps it at zero.
+        run: node scripts/docs/docs-validate.mjs
+
       - name: Verify llms.txt is up to date
         run: node scripts/docs/llmstxt-generate.mjs --check
 
@@ -503,6 +627,163 @@ jobs:
         with:
           name: governance-health-${{ github.run_id }}-${{ github.run_attempt }}
           path: tmp/governance-history.ndjson
+          if-no-files-found: warn
+
+  jseval-suite:
+    name: jseval Python suite
+    # tempdoc 930 §18.1 row 7. `scripts/jseval/tests/` is ~47k lines that ran in CI
+    # NOWHERE — a measurement harness behind public claims whose own tests were a claim
+    # rather than a guarantee. The suite is pure-CPU and fully mocked (nothing here
+    # starts a backend, and `run.py`'s three socket-opening helpers are stubbed by
+    # `tests/test_run.py::_offline_backend`), so it runs on a hosted Linux runner.
+    #
+    # Optional-dependency behaviour: `inspect_ai` (agent extra), `playwright` (ui extra)
+    # and `Pillow` (scan extra) are reached only through `pytest.importorskip`, so those
+    # tests SKIP rather than error and the ~80 transitive deps of the agent extra stay out
+    # of this lane. That guard was MISSING in four places — the three modules importing
+    # `jseval.agent_utility_inspect` at module scope (`test_agent_behavioral_789.py`,
+    # `test_delivery_tier_735.py`, `test_partial_usage_capture_757.py`) and the
+    # `_graded_logs` helper in `test_utility_comparison.py` — and was added to match
+    # their already-guarded siblings. The first run of this job caught the module-scope
+    # three as `Interrupted: 3 errors during collection`, which aborted the WHOLE suite.
+    # All four went unnoticed precisely because nothing ran the suite on a machine
+    # without the agent extra installed. `hypothesis` and `jsonschema` are NOT guarded
+    # (`tests/test_suite_stats_properties.py:10`), which is why the `dev` extra is
+    # installed in full below.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        # Only for the lock-drift guard below; no npm install happens in this job.
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        # Same fail-fast as the claims lane: if pyproject.toml and the committed lock
+        # disagree, the install below would resolve versions nobody reviewed.
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval
+        # Mirrors the claims lane's install: constraint-installed against the dependency
+        # lock (tempdoc 792 §6) so the suite resolves the same versions every run.
+        run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
+
+      - name: Install test dependencies
+        # The `dev` extra's four packages are absent from requirements.lock.txt, so `-c`
+        # leaves them unpinned and installing them through the canonical command above
+        # would trip the lock-drift guard. Named explicitly (rather than `[dev]`) so this
+        # step's resolution set is visible in the diff.
+        run: python -m pip install --quiet "pytest>=7.0" "pyyaml>=6.0" "hypothesis>=6.0" "jsonschema>=4.0"
+
+      - name: Run jseval test suite
+        # `-p no:cacheprovider`: a fresh runner has no cache to reuse and the plugin
+        # would only write .pytest_cache into the checkout.
+        run: python -m pytest scripts/jseval/tests -q -p no:cacheprovider
+
+  measured-axe:
+    name: Measured axe (advisory)
+    # Tempdoc 930 §22.2 follow-up 5. Chunk H retired twelve static a11y/token oracles in
+    # favour of measurement, but only half the replacement ran on PRs: the four-palette
+    # contrast sweep (`check-contrast-matrix`, inside the required `Public claims` lane via
+    # run-ui-web-gates.mjs). The other half — `jseval ui-a11y-gate`, real axe-core against
+    # the rendered page — was local-only, so a PR that regressed a rendered-page a11y rule
+    # had no automated catch at all.
+    #
+    # Nothing about that gate needs the backend, which is why it can run here: `--fixtures`
+    # intercepts every `/api/*` request in Playwright and serves committed schema-valid
+    # bodies (scripts/jseval/jseval/ui_fixtures.py `install_fixtures`), and `ui-shot` starts
+    # its own Vite dev server out of `modules/ui-web` (ui_shot.py `_start_vite_server`). So
+    # the whole sweep is Node + Python + headless Chromium: no Java, no Gradle, no GPU, no
+    # dev stack. Measured locally at 350s wall for the register's 20 surfaces including a
+    # cold Vite start, exit 0.
+    #
+    # ADVISORY, following `integration-tests`: deliberately absent from
+    # scripts/ci/workflow-signal-policy.v1.json's requiredStatusChecks and from
+    # scripts/ci/public-ci-local-repro.v1.json (adding an entry to the latter while the job
+    # is not a required check FAILS validatePublicCiLocalRepro by design). Promotion to a
+    # required check is a separate decision that wants stability evidence from this lane
+    # first — the path `jseval-suite` walked between §18.1 row 7 and §22.2 follow-up 4.
+    # Recorded as the 2026-09-05 amendment to ADR-0026, which is why the gate's own
+    # docstrings no longer say "not CI-wired". Also absent from
+    # scripts/ci/ci-walltime-policy.v1.json: every lane there carries a `requiredCheck`
+    # and the reporter's one loud finding is `missing-required-lane`, so a non-required
+    # job has no honest row to occupy until it is promoted.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: modules/ui-web/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: jseval dependency lock drift guard
+        run: node scripts/ci/check-jseval-lock.mjs
+
+      - name: Install canonical jseval with the ui extra
+        # The `ui` extra is Playwright. It is an optional-dependency, so it is absent from
+        # requirements.lock.txt and `-c` leaves it unpinned — same shape as the pytest
+        # install in the two lanes above. The lock-drift guard only compares pyproject's
+        # base `dependencies` against the lock, so naming an extra here cannot trip it.
+        run: python -m pip install -e "scripts/jseval[ui]" -c scripts/jseval/requirements.lock.txt
+
+      - name: Install frontend dependencies
+        # axe.min.js (the bundle ui_measure injects) and Vite both come from here.
+        run: npm ci --prefix modules/ui-web --audit=false
+
+      - name: Resolve the installed Playwright version
+        id: playwright
+        run: |
+          echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install headless Chromium
+        # `--with-deps` installs the shared libraries Chromium needs; those are apt packages,
+        # not part of the cached browser directory, so this step runs on a cache hit too.
+        run: python -m playwright install --with-deps chromium
+
+      - name: Measured axe over the a11y baseline register
+        # Exit 0 clean · 1 a NEW axe rule not in the surface's `knownRules` · 2 a capture
+        # error. The per-surface verdict JSON goes to stderr; `pipefail` keeps the gate's
+        # exit code rather than tee's (agent-lessons `piped-exit-masked`).
+        run: |
+          set -o pipefail
+          mkdir -p build/ci/ui-a11y
+          python -m jseval ui-a11y-gate --output-dir build/ci/ui-a11y 2>&1 \
+            | tee build/ci/ui-a11y/gate-report.log
+
+      - name: Upload measured-axe captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: measured-axe-captures
+          path: |
+            build/ci/ui-a11y/*.measure.json
+            build/ci/ui-a11y/*.png
+            build/ci/ui-a11y/gate-report.log
           if-no-files-found: warn
 
   license-and-notices:
@@ -539,7 +820,7 @@ jobs:
           cache-dependency-path: modules/ui-web/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix modules/ui-web
+        run: npm ci --prefix modules/ui-web --audit=false
 
       - name: Enforce the license allowlist
         run: ./gradlew.bat checkLicense --no-configuration-cache --no-parallel
@@ -553,8 +834,10 @@ jobs:
           cd modules\ui-web
           npx --yes license-checker --production --json --relativeOnly > ..\..\build\npm-licenses.json
 
+      # The one regen-set entry that needs produced inputs (the license reports dumped above), so
+      # it runs here rather than in the hermetic regen step in `Public claims`. Tempdoc 930 chunk F.
       - name: NOTICE / THIRD_PARTY_NOTICES are in sync
-        run: node scripts/ci/check-notices-regen.mjs
+        run: node scripts/ci/regen-all.mjs --check --only notices
 
   build:
     name: Build (no model blobs)
@@ -585,9 +868,16 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             modules/ui-web/package-lock.json
+            packages/runtime-client/package-lock.json
 
       - name: Install root dependencies
-        run: npm ci
+        run: npm ci --audit=false
+
+      - name: Install runtime client generator dependencies
+        run: npm ci --prefix packages/runtime-client --ignore-scripts --audit=false
+
+      - name: Runtime client generated source is in sync
+        run: npm --prefix packages/runtime-client run check:regen
 
       - name: Assemble without model blobs
         shell: bash
@@ -595,8 +885,32 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           node scripts/ci/report-build-attribution.mjs --runner-label "ubuntu-latest" --out-json build/ci/build-attribution.json --out-md build/ci/build-attribution.md --task-timing-json build/ci/build-task-timing.json -- ./gradlew assemble -PskipWebBuild=false --console=plain
 
-      - name: Reference-client API projections are reproducible
-        run: node scripts/ci/check-api-client-regen.mjs
+      # PMD rides this job because it needs compiled classes and nothing else, and this job has
+      # already compiled main via `assemble`. Tempdoc 930 §22.2 follow-up 2 — before this step no
+      # workflow put PMD in its task graph, so the ruleset (incl. the `CommentContent` parked-marker
+      # ban) never ran in CI. It is a separate step, not an `assemble` dependency: `assemble`
+      # produces artifacts, `check` verifies them, and PMD is verification.
+      #
+      # `pmdAll` (root build.gradle.kts), not a list of task names: it is every `Pmd` task in every
+      # module, so a module that registers a new `JvmTestSuite` is covered without anyone
+      # remembering — the same dormancy shape follow-up 2 found in `pmdMain` and follow-up 10 found
+      # in `modules/system-tests`.
+      #
+      # PLACEMENT IS MEASURED, NOT ASSUMED. Follow-up 10 widened the step from `pmdMain` (49s) to
+      # every source set (188s here) and it was tried in `Unit tests (platform-contracts)` on the
+      # theory that a lane already compiling test sources would run it cheaper. It did not: 201s
+      # there, and that lane hit 488s against its 360s advisory budget, while this job runs 469s
+      # against 600s. `pmdAll` needs main plus every non-main source set for all ~30 modules, so
+      # neither placement avoids the compile — this is the job with the headroom. Do not relocate
+      # again without re-measuring; `scripts/ci/ci-walltime-policy.v1.json` holds both numbers.
+      - name: Static analysis (PMD, all source sets)
+        run: ./gradlew pmdAll --console=plain
+
+      # `gen-api-client --check` is an entry of the regen set (run in `Public claims`); the
+      # classified OpenAPI snapshot's check shells out to Gradle, so it stays its own step and
+      # belongs in this job, which has already assembled. Tempdoc 930 chunk F.
+      - name: Reference-client OpenAPI projection is reproducible
+        run: node scripts/ci/check-reference-client-openapi-regen.mjs
 
       - name: Upload build attribution
         if: always()
@@ -608,6 +922,16 @@ jobs:
             build/ci/build-attribution.md
             build/ci/build-task-timing.json
           if-no-files-found: warn
+
+      - name: Setup runtime client minimum Node version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Test and inspect the packed runtime client
+        run: |
+          npm --prefix packages/runtime-client test
+          npm --prefix packages/runtime-client run check:pack
 
   unit-tests:
     name: Unit tests (${{ matrix.lane }})
@@ -629,7 +953,7 @@ jobs:
             # This lane runs :modules:app-services:test, which IS RegistrySnapshotExporterTest --
             # the producer of tmp/consumer-presence/registry-snapshot.json. The three gates that
             # read that snapshot therefore run here (tempdoc 918 B1), same pattern as
-            # run_dead_code_jvm on the platform-contracts lane. None of the three resolves a git
+            # run_snapshot_gates, but for the app-ui lane. None of the three resolves a git
             # baseline (registry: diffStrategy "none" / no baseline), so depth 1 is enough.
             run_snapshot_gates: "true"
             gradle_tasks: >-
@@ -662,11 +986,14 @@ jobs:
             os: ubuntu-latest
             artifact: unit-test-attribution-platform-contracts
             runner_label: ubuntu-latest/platform-contracts
-            # This lane already runs :modules:dead-code-audit:test, which IS the dead-code-jvm
-            # gate's declared producer, so the gate runs here (884 §F row 9). Its baseline needs
-            # git history; see the checkout step.
+            # :modules:dead-code-audit:test carries the whole-program dead-class ratchet as an
+            # ArchUnit FreezingArchRule (tempdoc 930 chunk F retired the `dead-code-jvm` kernel
+            # gate that used to read its JSON report from a separate step). The store is a
+            # checked-in file, not a git-base diff, so this lane no longer needs full history for
+            # THAT reason -- but the depth stays 0 until something measures that nothing else in
+            # the lane wants history, because a silent shallow-clone regression is exactly the
+            # class the checkout comment below is about.
             fetch_depth: 0
-            run_dead_code_jvm: "true"
             gradle_tasks: >-
               :modules:ai-backend:test
               :modules:api-contract-projection-java:test
@@ -687,9 +1014,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # platform-contracts alone needs real history: it runs the dead-code-jvm kernel gate
-          # below, whose baseline strategy is git-base, and the kernel fails CLOSED on a shallow
-          # clone rather than reporting a false green. The other two lanes stay on depth 1.
+          # platform-contracts alone takes real history (see its matrix comment). The other two
+          # lanes stay on depth 1.
           #
           # Every lane declares this explicitly. `matrix.fetch_depth || 1` would have been wrong:
           # GitHub expressions treat 0 as FALSY, so the one lane that needs full history would have
@@ -714,13 +1040,6 @@ jobs:
           chmod +x ./gradlew 2>/dev/null || true
           GW='./gradlew'; [ "$RUNNER_OS" = "Windows" ] && GW='./gradlew.bat'
           "$GW" ${{ matrix.gradle_tasks }} -PskipWebBuild=true --console=plain
-
-      # 884 §F row 9: dead-code-jvm was registered, baselined and unable to notice anything,
-      # because its input is a Gradle run no gate-running job performed. The task above IS that
-      # producer, so the gate is evaluated here rather than nowhere.
-      - name: JVM dead-code gate (input built by the tasks above)
-        if: matrix.run_dead_code_jvm == 'true'
-        run: node scripts/governance/run.mjs --gate dead-code-jvm --mode gate
 
       # Tempdoc 918 B1. consumer-presence, host-owns-truth and runtime-witness read the registry
       # snapshot exported below, and each returns verdict `pass` with a `snapshot-missing` WARNING
@@ -993,7 +1312,11 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, integration-tests, secret-scan]
+    # `jseval-suite` is in this list because it is a required lane with a wall-clock
+    # budget: `report-ci-walltime-attribution.mjs` drops any job with no end time, so an
+    # attribution taken while the ~6.5-minute suite still runs would omit it entirely and
+    # `report-ci-walltime-budget.mjs` would warn `missing-required-lane` on every run.
+    needs: [public-claims, license-and-notices, build, unit-tests, windows-native-tests, shell-rust-tests, integration-tests, secret-scan, jseval-suite]
     if: always()
     steps:
       - name: Checkout

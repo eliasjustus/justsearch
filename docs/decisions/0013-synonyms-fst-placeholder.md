@@ -1,5 +1,5 @@
 ---
-title: Synonyms FST Placeholder
+title: "ADR-0013: Synonyms FST Placeholder"
 type: decision
 status: accepted - partially superseded by ADR-0043
 description: "Use deterministic text placeholders for synonym FST artifacts until a Java Lucene FST compiler is built."

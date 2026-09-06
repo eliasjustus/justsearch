@@ -168,7 +168,7 @@ final class OrtModelSessionLoadingTest {
       // FP16 model loaded on CPU — valid format
       assertFalse(session.getInputNames().isEmpty(), "Model should have inputs");
       assertFalse(session.getOutputNames().isEmpty(), "Model should have outputs");
-    } catch (ai.onnxruntime.OrtException e) {
+    } catch (OrtException e) {
       // FP16 models with fused ops (SimplifiedLayerNormFusion) can't load on CPU EP.
       // This is expected — the FP16→FP32 fallback in production handles this case.
       assertTrue(
@@ -326,14 +326,14 @@ final class OrtModelSessionLoadingTest {
     long[] shape = {1, seqLen};
 
     Map<String, OnnxTensor> inputs = new HashMap<>();
-    OnnxTensor tokenTypeTensor = null;
     try {
       inputs.put("input_ids", OnnxTensor.createTensor(env, LongBuffer.wrap(inputIds), shape));
       inputs.put(
           "attention_mask", OnnxTensor.createTensor(env, LongBuffer.wrap(attentionMask), shape));
 
       if (inputNames.contains("token_type_ids")) {
-        tokenTypeTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(new long[seqLen]), shape);
+        OnnxTensor tokenTypeTensor =
+            OnnxTensor.createTensor(env, LongBuffer.wrap(new long[seqLen]), shape);
         inputs.put("token_type_ids", tokenTypeTensor);
       }
 

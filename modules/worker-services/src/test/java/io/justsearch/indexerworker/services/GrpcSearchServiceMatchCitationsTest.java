@@ -10,10 +10,13 @@ import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.ipc.MatchCitationsRequest;
 import io.justsearch.ipc.MatchCitationsResponse;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,6 +34,9 @@ class GrpcSearchServiceMatchCitationsTest {
 
   @TempDir Path tempDir;
   private RunningRuntime lifecycle;
+  private final Map<String, String> parentContentById = new HashMap<>();
+  /** Chunk fixtures per parent, re-stamped whenever that parent grows to a new revision. */
+  private final Map<String, List<Map<String, Object>>> chunkDocsByParent = new HashMap<>();
 
   @BeforeEach
   void setUp() throws Exception {
@@ -200,19 +206,40 @@ class GrpcSearchServiceMatchCitationsTest {
   // ==================== Helpers ====================
 
   private void indexChunk(String parentDocId, int chunkIndex, String content) throws Exception {
-    lifecycle.indexingCoordinator().indexSingle(
-        new IndexDocument(
-            Map.of(
-                SchemaFields.DOC_ID, "chunk:" + parentDocId + "#" + chunkIndex,
-                SchemaFields.DOC_UID, "chunk:" + parentDocId + "#" + chunkIndex + "#0",
-                SchemaFields.PATH, parentDocId,
-                SchemaFields.PARENT_DOC_ID, parentDocId,
-                SchemaFields.IS_CHUNK, "true",
-                SchemaFields.CHUNK_INDEX, String.valueOf(chunkIndex),
-                SchemaFields.CHUNK_TOTAL, "2",
-                SchemaFields.CHUNK_CONTENT, content,
-                SchemaFields.CHUNK_START_CHAR, "0",
-                SchemaFields.CHUNK_END_CHAR, String.valueOf(content.length()))));
+    String previous = parentContentById.getOrDefault(parentDocId, "");
+    String separator = previous.isEmpty() ? "" : "\n";
+    int start = previous.length() + separator.length();
+    String parentContent = previous + separator + content;
+    parentContentById.put(parentDocId, parentContent);
+    lifecycle
+        .indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(
+                    SchemaFields.DOC_ID, parentDocId,
+                    SchemaFields.DOC_UID, parentDocId + "#0",
+                    SchemaFields.PATH, parentDocId,
+                    SchemaFields.CONTENT, parentContent)));
+    Map<String, Object> chunk = new HashMap<>();
+    chunk.put(SchemaFields.DOC_ID, "chunk:" + parentDocId + "#" + chunkIndex);
+    chunk.put(SchemaFields.DOC_UID, "chunk:" + parentDocId + "#" + chunkIndex + "#0");
+    chunk.put(SchemaFields.PATH, parentDocId);
+    chunk.put(SchemaFields.PARENT_DOC_ID, parentDocId);
+    chunk.put(SchemaFields.IS_CHUNK, "true");
+    chunk.put(SchemaFields.CHUNK_INDEX, String.valueOf(chunkIndex));
+    chunk.put(SchemaFields.CHUNK_TOTAL, "2");
+    chunk.put(SchemaFields.CHUNK_CONTENT, content);
+    chunk.put(SchemaFields.CHUNK_START_CHAR, String.valueOf(start));
+    chunk.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(start + content.length()));
+    chunkDocsByParent.computeIfAbsent(parentDocId, k -> new ArrayList<>()).add(chunk);
+    // The parent grew, so it is at a NEW revision and every chunk already cut from it is stale --
+    // the state the read-path guard (tempdoc 931 section E item 5) refuses to reconstruct from.
+    // Production regenerates chunks after a parent rewrite; this fixture re-stamps them the same
+    // way, so the guard sees the in-step state a real corpus is in.
+    for (Map<String, Object> sibling : chunkDocsByParent.get(parentDocId)) {
+      sibling.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(parentContent));
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(new HashMap<>(sibling)));
+    }
     lifecycle.commitOps().commitAndTrack();
     lifecycle.commitOps().maybeRefreshBlocking();
   }

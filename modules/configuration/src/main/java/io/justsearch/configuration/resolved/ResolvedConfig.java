@@ -436,7 +436,6 @@ public record ResolvedConfig(
    * @param collection primary index collection name
    * @param queryClassificationEnabled 306: enable query classification for CE/expansion gating
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
-   * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
    * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
    *     (default TRUE since the 775 §I flip, 2026-07-22; flag-off reproduces the IDF-only delivery
    *     excerpt byte-for-byte)
@@ -453,7 +452,6 @@ public record ResolvedConfig(
       String collection,
       boolean queryClassificationEnabled,
       double titleBoost,
-      double entityBoost,
       boolean chunkAwareEnabled,
       // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
       // content_preview (evidence-coherent CE input + delivery). Default TRUE since the 775 §I flip
@@ -680,6 +678,11 @@ public record ResolvedConfig(
    * @param commitTimerIntervalMs period of the safety-net commit timer that fires whenever
    *     {@code pendingDocs > 0} (default 10000 — unchanged behaviour). The ceiling on every other
    *     commit-cadence lever, which is why it is configurable at all (885's tracked item).
+   * @param identityDeletionGraceMs how long a confirmed-deleted path keeps its document identity
+   *     before a file reappearing there is treated as a NEW document (default 30 days, tempdoc 931
+   *     §C.6). Temporary absence — an unmounted drive, a sync client hiding a file — must not
+   *     permanently break identity, and a confirmed replacement must not inherit the old
+   *     document's feedback; the window is what separates the two.
    */
   public record Index(
       Integer writerRamBufferMb,
@@ -714,7 +717,11 @@ public record ResolvedConfig(
       String nrtMode,
       int nrtBackgroundReopenMs,
       int nrtOnDemandMaxStaleMs,
-      int commitTimerIntervalMs) {
+      int commitTimerIntervalMs,
+      long identityDeletionGraceMs) {
+
+    /** Default deletion grace for document identity: 30 days in ms (tempdoc 931 §C.6). */
+    public static final long DEFAULT_IDENTITY_DELETION_GRACE_MS = 2_592_000_000L;
 
     /** Wire value of the default NRT reopen strategy (today's behaviour). */
     public static final String NRT_MODE_CONTINUOUS = "continuous";
@@ -821,6 +828,8 @@ public record ResolvedConfig(
    *
    * @param rrfK RRF constant K
    * @param vectorSkipMinChars min query chars before vector search is attempted
+   * @param vectorSkipMinDfFraction minimum analyzed-term document-frequency fraction at which a
+   *     redundant dense leg is skipped
    * @param candidateLimitMax max candidates per retrieval system
    * @param textCandidateMultiplier BM25 candidate multiplier
    * @param vectorCandidateMultiplier vector candidate multiplier
@@ -841,6 +850,7 @@ public record ResolvedConfig(
   public record HybridSearch(
       int rrfK,
       int vectorSkipMinChars,
+      double vectorSkipMinDfFraction,
       int candidateLimitMax,
       int textCandidateMultiplier,
       int vectorCandidateMultiplier,

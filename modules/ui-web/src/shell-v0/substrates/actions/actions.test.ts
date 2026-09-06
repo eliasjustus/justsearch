@@ -99,6 +99,25 @@ describe('operation projection', () => {
 });
 
 describe('shell actions — AI install palette reachability (727 F-1)', () => {
+  it('923 F-22 — registers one Search destination and no duplicate Go to Chat alias', async () => {
+    const navigate = vi.fn();
+    registerShellActions({
+      navigate,
+      toggleInspector: () => {},
+      togglePalette: () => {},
+      focusComposer: () => {},
+    });
+
+    const search = getAction('core.action.shell.go-to-search');
+    expect(search?.title).toBe('Go to Search');
+    expect(getAction('core.action.shell.go-to-chat')).toBeUndefined();
+    expect(await invokeAction('core.action.shell.go-to-search')).toEqual({
+      kind: 'navigate',
+      to: 'core.unified-chat-surface',
+    });
+    expect(navigate).toHaveBeenCalledWith('core.unified-chat-surface');
+  });
+
   // On pre-fix code, `core.start-ai-install` / `core.repair-ai-install` were excluded from
   // BOTH the zero-arg operation projection (correctly, per the test above — a bare invoke can
   // never supply the required `acceptTerms`) AND any other palette registration, so searching

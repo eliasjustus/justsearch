@@ -82,132 +82,32 @@
     },
     {
       "id": "npm-audit",
-      "title": "npm audit severity-count ratchet (high/critical)",
+      "title": "NPM lockfile advisory-identity ratchet (GitHub high/critical advisories)",
       "enforcer": "scripts/governance/gates/npm-audit/enforcer.mjs",
       "ruleDescriptions": "scripts/governance/gates/npm-audit/rule-descriptions.mjs",
       "changesetsDir": "gates/npm-audit/.changesets",
       "classifications": "scripts/governance/gates/npm-audit/classifications.mjs",
       "baseline": {
         "kind": "ratchet-file",
-        "path": "scripts/ci/npm-audit-ratchet-baseline.v1.json",
+        "path": "scripts/ci/github-advisory-baseline.v1.json",
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/npm-audit-report.json",
+        "reportPath": "tmp/github-advisory-report.json",
         "trackedSeverities": [
           "high",
           "critical"
         ],
         "inputs": [
           {
-            "path": "tmp/npm-audit-report.json",
-            "producer": "node scripts/ci/report-npm-audit.mjs",
+            "path": "tmp/github-advisory-report.json",
+            "producer": "node scripts/ci/report-github-advisories.mjs",
             "class": "required"
           }
         ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/npm-audit"
-    },
-    {
-      "id": "prose-tier-register",
-      "title": "Meta-loop: every load-bearing prose rule names a tier",
-      "enforcer": "scripts/governance/gates/prose-tier-register/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/prose-tier-register/rule-descriptions.mjs",
-      "changesetsDir": "gates/prose-tier-register/.changesets",
-      "classifications": "scripts/governance/gates/prose-tier-register/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "docs/reference/contributing/tier-register.md",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {
-        "registryPath": "governance/registry.v1.json"
-      },
-      "selfTestFixturesDir": "scripts/governance/_fixtures/prose-tier-register"
-    },
-    {
-      "id": "todo-fixme",
-      "title": "Source-comment TODO / FIXME / XXX per-file ratchet (tempdoc 530 §2.6)",
-      "enforcer": "scripts/governance/gates/todo-fixme/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/todo-fixme/rule-descriptions.mjs",
-      "changesetsDir": "gates/todo-fixme/.changesets",
-      "classifications": "scripts/governance/gates/todo-fixme/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "gates/todo-fixme/baseline.txt",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {
-        "sourceGlobs": [
-          "modules/**/src/{main,test,testFixtures,integrationTest,systemTest,soakTest}/**/*.java",
-          "modules/ui-web/src/**/*.{ts,tsx}",
-          "scripts/**/*.{js,mjs,cjs,py,ps1}",
-          "modules/shell/src-tauri/**/*.rs"
-        ],
-        "excludeGlobs": [
-          "**/build/**",
-          "**/generated/**",
-          "**/node_modules/**",
-          "**/target/**",
-          "scripts/governance/_fixtures/**",
-          "scripts/governance/gates/todo-fixme/**"
-        ]
-      },
-      "selfTestFixturesDir": "scripts/governance/_fixtures/todo-fixme"
-    },
-    {
-      "id": "ts-any",
-      "title": "TypeScript `any` cast per-file ratchet (tempdoc 530 §2.5)",
-      "enforcer": "scripts/governance/gates/ts-any/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/ts-any/rule-descriptions.mjs",
-      "changesetsDir": "gates/ts-any/.changesets",
-      "classifications": "scripts/governance/gates/ts-any/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "gates/ts-any/baseline.txt",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {
-        "sourceGlobs": [
-          "modules/ui-web/src/**/*.{ts,tsx}"
-        ],
-        "excludeGlobs": [
-          "**/node_modules/**",
-          "**/dist/**",
-          "**/generated/**"
-        ]
-      },
-      "selfTestFixturesDir": "scripts/governance/_fixtures/ts-any"
-    },
-    {
-      "id": "style-literal-ratchet",
-      "title": "Presentation style-literal per-file ratchet (z-index/transition/font-size) — tempdoc 574 §25 Phase 4",
-      "enforcer": "scripts/governance/gates/style-literal-ratchet/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/style-literal-ratchet/rule-descriptions.mjs",
-      "changesetsDir": "gates/style-literal-ratchet/.changesets",
-      "classifications": "scripts/governance/gates/style-literal-ratchet/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "scripts/ci/style-literal-ratchet-baseline.v1.json",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {
-        "sourceGlobs": [
-          "modules/ui-web/src/**/*.ts"
-        ],
-        "excludeGlobs": [
-          "**/node_modules/**",
-          "**/generated/**",
-          "**/*.test.ts",
-          "**/*.spec.ts"
-        ]
-      },
-      "selfTestFixturesDir": "scripts/governance/_fixtures/style-literal-ratchet"
     },
     {
       "id": "atom-fork-ratchet",
@@ -274,22 +174,6 @@
         "register": "governance/ambient-facets.v1.json"
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/ambient-purity"
-    },
-    {
-      "id": "test-to-code",
-      "title": "Per-module test-to-code ratio ratchet (tempdoc 530 §2.10)",
-      "enforcer": "scripts/governance/gates/test-to-code/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/test-to-code/rule-descriptions.mjs",
-      "changesetsDir": "gates/test-to-code/.changesets",
-      "classifications": "scripts/governance/gates/test-to-code/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "gates/test-to-code/baseline.txt",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {},
-      "selfTestFixturesDir": "scripts/governance/_fixtures/test-to-code"
     },
     {
       "id": "module-deps",
@@ -396,31 +280,6 @@
         ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code"
-    },
-    {
-      "id": "dead-code-jvm",
-      "title": "Whole-program JVM dead-class ratchet (tempdoc 638)",
-      "enforcer": "scripts/governance/gates/dead-code-jvm/enforcer.mjs",
-      "ruleDescriptions": "scripts/governance/gates/dead-code-jvm/rule-descriptions.mjs",
-      "changesetsDir": "gates/dead-code-jvm/.changesets",
-      "classifications": "scripts/governance/gates/dead-code-jvm/classifications.mjs",
-      "baseline": {
-        "kind": "ratchet-file",
-        "path": "gates/dead-code-jvm/baseline.txt",
-        "diffStrategy": "git-base",
-        "diffFallback": "HEAD~1"
-      },
-      "config": {
-        "reportPath": "tmp/dead-code-jvm-report.json",
-        "inputs": [
-          {
-            "path": "tmp/dead-code-jvm-report.json",
-            "producer": "./gradlew.bat :modules:dead-code-audit:test",
-            "class": "required"
-          }
-        ]
-      },
-      "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code-jvm"
     },
     {
       "id": "consumer-drift",

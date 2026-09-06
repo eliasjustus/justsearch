@@ -269,12 +269,12 @@ final class StatusRecordSchemaTest {
               "COMPATIBLE", "", "fp-a", "fp-a", "fp-b", "fp-b", "COMPATIBLE", false, ""))
           .queueDb(new QueueDbStatusView(true, 0, 0, true, 0))
           .enrichment(EnrichmentProgressViewBuilder.builder()
-              .chunk(new ChunkCoverageView(42, 42, 0, 0, 100.0, true))
+              .chunk(new ChunkCoverageView(42, 42, 0, 0, 100.0, true, true, 42, 0, 100.0))
               .embeddingDocCount(42).embeddingCompletedCount(42).embeddingCoveragePercent(100.0)
               .spladeDocCount(42)
-              .enrichmentCompleted(java.util.Map.of())
+              .enrichmentCompleted(Map.of())
               .batchTiming(BatchTimingView.empty())
-              .encoderProfiles(java.util.Map.of())
+              .encoderProfiles(Map.of())
               .build())
           .gpu(GpuDiagnosticsView.empty())
           .vectorFormat(VectorFormatView.empty())
@@ -365,17 +365,17 @@ final class StatusRecordSchemaTest {
               "schema-fp-a", "schema-fp-b", "BLOCKED_LEGACY", true, "schema_mismatch"))
           .queueDb(new QueueDbStatusView(false, 1700000000000L, 1700000001000L, false, 1700000002000L))
           .enrichment(EnrichmentProgressViewBuilder.builder()
-              .chunk(new ChunkCoverageView(100, 95, 3, 2, 95.0, true))
+              .chunk(new ChunkCoverageView(100, 95, 3, 2, 95.0, true, true, 95, 3, 95.0))
               .embeddingDocCount(200).embeddingCompletedCount(180)
               .embeddingPendingCount(15).embeddingFailedCount(5).embeddingCoveragePercent(90.0)
               .spladeDocCount(200).spladeCompletedCount(150)
               .spladePendingCount(40).spladeFailedCount(10).spladeCoveragePercent(75.0)
               .pendingNerCount(8).completedNerCount(4)
-              .enrichmentCompleted(java.util.Map.of("embed", 500L, "splade", 400L, "ner", 100L))
+              .enrichmentCompleted(Map.of("embed", 500L, "splade", 400L, "ner", 100L))
               .batchTiming(new BatchTimingView(
-                  java.util.Map.of("embed", 10L, "splade", 10L, "ner", 8L),
-                  java.util.Map.of("embed", 5200L, "splade", 3800L, "ner", 1400L)))
-              .encoderProfiles(java.util.Map.of())
+                  Map.of("embed", 10L, "splade", 10L, "ner", 8L),
+                  Map.of("embed", 5200L, "splade", 3800L, "ner", 1400L)))
+              .encoderProfiles(Map.of())
               .build())
           .gpu(GpuDiagnosticsView.empty())
           .vectorFormat(VectorFormatView.empty())
@@ -642,21 +642,20 @@ final class StatusRecordSchemaTest {
         "chunk_heading_level",           // chunk geometry
         "chunk_heading_text",            // chunk geometry
         "chunk_index",                   // chunk geometry
+        "chunk_parent_content_sha256",   // tempdoc 931 §C.1 — write-path RMW guard, never projected
         "chunk_start_char",              // chunk geometry
         "chunk_start_line",              // chunk geometry
         "chunk_total",                   // chunk geometry
         "content",                       // excluded by SearchResultFormatter (too large)
+        "content_sha256",                // tempdoc 931 §C.6 — feedback capture key, stripped before the HTTP response
         "created_at",                    // not displayed in search results
         "doc_id",                        // identity — carried as top-level Hit.id, not fields
         "doc_uid",                       // internal dedup key
         "embedding_retry_count",         // enrichment metadata
         "embedding_status",              // enrichment metadata
-        "entity_locations_raw",          // NER raw spans
-        "entity_locations_text",         // NER extracted text
-        "entity_organizations_raw",      // NER raw spans
-        "entity_organizations_text",     // NER extracted text
-        "entity_persons_raw",            // NER raw spans
-        "entity_persons_text",           // NER extracted text
+        "entity_locations_raw",          // NER entity values
+        "entity_organizations_raw",      // NER entity values
+        "entity_persons_raw",            // NER entity values
         "extraction_method",             // indexing metadata
         "extraction_quality_score",      // indexing metadata
         "extraction_status",             // tempdoc 410 §11 — indexing provenance, not surfaced
@@ -860,7 +859,7 @@ final class StatusRecordSchemaTest {
         .signalBus(new SignalBusView(0, 0))
         .uptimeMs(60000)
         .healthCheck(new HealthNodeView(true, "1.0.0", 12345, "RUNNING", true, true))
-        .effectiveConfig(java.util.Map.of("ort.version", "1.20.0"))
+        .effectiveConfig(Map.of("ort.version", "1.20.0"))
         .build();
   }
 

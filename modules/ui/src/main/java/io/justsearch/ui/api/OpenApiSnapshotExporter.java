@@ -36,6 +36,9 @@ public final class OpenApiSnapshotExporter {
    * <p>The input is a captured route manifest. This command never reconstructs route registration and
    * never claims that an offline snapshot matches a current Head.
    */
+  // Offline CLI entry point invoked by a Gradle task, not a service path: stdout IS this tool's
+  // output, so routing it through SLF4J would hide it behind the logging config.
+  @SuppressWarnings("PMD.SystemPrintln")
   public static void main(String[] args) throws Exception {
     if (args.length < 2 || args.length > 3 || (args.length == 3 && !"--check".equals(args[2]))) {
       throw new IllegalArgumentException(
@@ -91,7 +94,13 @@ public final class OpenApiSnapshotExporter {
         requiredString(row, "cohort", index),
         nullableString(row, "owningModule", index),
         stringList(row, "requiredCapabilities", index),
-        nullableString(row, "responseSchema", index));
+        nullableString(row, "responseSchema", index),
+        nullableString(row, "stability", index),
+        nullableString(row, "sdkOperationId", index),
+        nullableString(row, "requestSchema", index),
+        queryParameters(row, index),
+        responseSchemas(row, index),
+        lifecycle(row, index));
   }
 
   private static String requiredString(Map<?, ?> row, String field, int index) {
@@ -127,6 +136,69 @@ public final class OpenApiSnapshotExporter {
       result.add(text);
     }
     return List.copyOf(result);
+  }
+
+  private static List<RouteContractPolicy.QueryParameter> queryParameters(
+      Map<?, ?> row, int index) {
+    Object value = row.get("queryParameters");
+    if (value == null) return null;
+    if (!(value instanceof List<?> values)) {
+      throw new IllegalArgumentException(
+          "route snapshot row " + index + " has invalid queryParameters");
+    }
+    List<RouteContractPolicy.QueryParameter> result = new ArrayList<>();
+    for (Object item : values) {
+      if (!(item instanceof Map<?, ?> parameter)
+          || !(parameter.get("required") instanceof Boolean required)) {
+        throw new IllegalArgumentException(
+            "route snapshot row " + index + " has invalid queryParameters entry");
+      }
+      result.add(
+          new RouteContractPolicy.QueryParameter(
+              requiredString(parameter, "name", index),
+              required,
+              requiredString(parameter, "schemaReference", index)));
+    }
+    return List.copyOf(result);
+  }
+
+  private static Map<Integer, String> responseSchemas(Map<?, ?> row, int index) {
+    Object value = row.get("responseSchemas");
+    if (value == null) return null;
+    if (!(value instanceof Map<?, ?> schemas)) {
+      throw new IllegalArgumentException(
+          "route snapshot row " + index + " has invalid responseSchemas");
+    }
+    Map<Integer, String> result = new java.util.TreeMap<>();
+    for (var entry : schemas.entrySet()) {
+      int status;
+      try {
+        status = Integer.parseInt(String.valueOf(entry.getKey()));
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException(
+            "route snapshot row " + index + " has invalid responseSchemas status", e);
+      }
+      if (!(entry.getValue() instanceof String schema) || schema.isBlank()) {
+        throw new IllegalArgumentException(
+            "route snapshot row " + index + " has invalid responseSchemas entry");
+      }
+      result.put(status, schema);
+    }
+    return Map.copyOf(result);
+  }
+
+  private static RouteManifestController.LifecycleEntry lifecycle(Map<?, ?> row, int index) {
+    Object value = row.get("lifecycle");
+    if (value == null) return null;
+    if (!(value instanceof Map<?, ?> lifecycle)) {
+      throw new IllegalArgumentException(
+          "route snapshot row " + index + " has invalid lifecycle");
+    }
+    return new RouteManifestController.LifecycleEntry(
+        requiredString(lifecycle, "deprecatedSince", index),
+        nullableString(lifecycle, "sunsetAt", index),
+        requiredString(lifecycle, "replacement", index),
+        requiredString(lifecycle, "documentationUri", index));
   }
 
   private static void validateRouteDigest(

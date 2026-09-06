@@ -5,7 +5,7 @@ status: stable
 description: "Source-declared lifecycle stages and review metadata for permanent, experimental, and deprecated runtime configuration."
 ---
 
-# Runtime configuration lifecycle policy
+# Runtime Configuration Lifecycle Policy
 
 Every `EnvRegistry` and `ConfigKey` declaration has one compiler-backed
 lifecycle stage:

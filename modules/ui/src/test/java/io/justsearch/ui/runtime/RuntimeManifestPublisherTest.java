@@ -152,7 +152,15 @@ class RuntimeManifestPublisherTest {
     assertEquals(publisher.instanceId(), root.get("instanceId").asText());
     assertTrue(root.get("pid").asLong() > 0);
     assertEquals("READY", root.get("lifecycle").asText());
-    assertEquals(54321, root.get("head").get("apiPort").asInt());
+    // `head.apiPort` is the API-port discovery contract for the NON-JVM consumers — the MCPB
+    // stdio bridge (packaging/mcpb/server/index.js) and scripts/sandbox/mcp-typed-confirm.mjs
+    // read exactly this path (tempdoc 930 repointed both off the removed api-port.txt sibling;
+    // check-runtime-manifest-closure forbids reintroducing one). Renaming it breaks them
+    // silently, so the field name is asserted here at the JSON level, not just on the record.
+    assertEquals(
+        54321,
+        root.get("head").get("apiPort").asInt(),
+        "head.apiPort is the non-JVM API-port discovery contract (tempdoc 501 §6 / 930)");
     assertEquals(12345, root.get("worker").get("grpcPort").asInt());
     assertEquals("ready", root.get("worker").get("state").asText());
   }

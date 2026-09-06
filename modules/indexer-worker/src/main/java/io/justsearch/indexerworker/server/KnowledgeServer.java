@@ -149,6 +149,7 @@ public final class KnowledgeServer implements Closeable {
   // Tempdoc 419 / T5.1 (ADR-0028): scoped reverse-lookup store. Constructed in init() against
   // the same jobs.db as JobQueue; closed in shutdown alongside JobQueue.
   private io.justsearch.indexerworker.queue.SqlitePathResolutionStore pathResolutionStore;
+  private io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore documentIdentityStore;
   private LuceneRuntime searchLifecycle;
   private LuceneRuntime ingestLifecycle;
   EmbeddingService embeddingService;
@@ -292,6 +293,29 @@ public final class KnowledgeServer implements Closeable {
   public KnowledgeServer(WorkerConfig config) {
     this.config = config;
     this.dataDir = config.dataDir();
+  }
+
+  /**
+   * Seeds the jobs.db identity table from the serving index before indexing starts.
+   *
+   * <p>The scan runs only when the store carries no identity at all, or when
+   * {@code document_identity_import} has no row for the serving generation. After the first import
+   * every parent written through admission resolves its uid through the store, and a Green built by
+   * migration re-ingests through the store rather than copying Blue's stored fields — so the scan
+   * only ever seeds an index predating the store or a wiped/restored {@code jobs.db}. Existing
+   * store rows stay authoritative in every case. Full rationale and streaming/skip semantics:
+   * {@link DocumentIdentityBootImport}.
+   */
+  private void importDocumentIdentitiesFromActiveIndex(String activeGenerationId) {
+    LuceneRuntime authority = searchLifecycle;
+    if (authority == null || documentIdentityStore == null || activeGenerationId == null) {
+      return;
+    }
+    DocumentIdentityBootImport.run(
+        authority.documentFieldOps()::scanParentDocumentIdentities,
+        documentIdentityStore,
+        activeGenerationId,
+        System.currentTimeMillis());
   }
 
   /**
@@ -847,6 +871,14 @@ public final class KnowledgeServer implements Closeable {
         ingestLifecycle.schema().validateIndexableFields(SchemaFields.INDEXABLE_FIELDS);
       }
 
+      // Identity authority must exist before any queued or switch-buffered mutation can write.
+      // Import from the serving generation (Blue during migration) before the first possible
+      // drain, so replay, enumeration, and ordinary indexing all resolve through one authority.
+      this.documentIdentityStore =
+          new io.justsearch.indexerworker.queue.SqliteDocumentIdentityStore(
+              dbPath, rc.index().identityDeletionGraceMs());
+      importDocumentIdentitiesFromActiveIndex(layout.activeGenerationId());
+
       // Apply any durable SWITCHING buffer ops. In deferred-writer mode, this is deferred
       // to the background task (after IndexWriter opens). In migration mode, run synchronously.
       // Skipped when the rebuild brake is exhausted: ingest is the READ-ONLY Blue runtime then, so
@@ -881,7 +913,8 @@ public final class KnowledgeServer implements Closeable {
               this::migrationProgressSnapshot,
               MIGRATION_SWITCHING_MAX_DURATION_MS,
               this::initiateShutdown,
-              pathResolutionStore);
+              pathResolutionStore,
+              documentIdentityStore);
       // Tempdoc 885 item 3: build the duty-cycle policy from resolved config before the app
       // services that consume it. The duty/cooldown arrive through the ordinal-450 worker config
       // snapshot, not through a raw Worker sysprop — a key the Worker cannot see is the [R1]
@@ -1032,9 +1065,9 @@ public final class KnowledgeServer implements Closeable {
    */
   static boolean isSchemaMismatch(Throwable t) {
     for (Throwable c = t; c != null; c = c.getCause()) {
-      if (c instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
+      if (c instanceof IndexRuntimeIOException ire
           && ire.reason()
-              == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason
+              == IndexRuntimeIOException.Reason
                   .SCHEMA_MISMATCH) {
         return true;
       }
@@ -1048,8 +1081,8 @@ public final class KnowledgeServer implements Closeable {
   /** True if a startup failure was caused by an unrecoverable corrupt Lucene index (628 Stage D-part2). */
   private static boolean isCorruptIndexCause(Throwable e) {
     for (Throwable t = e; t != null; t = t.getCause()) {
-      if (t instanceof io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException ire
-          && ire.reason() == io.justsearch.adapters.lucene.runtime.IndexRuntimeIOException.Reason.CORRUPT_INDEX) {
+      if (t instanceof IndexRuntimeIOException ire
+          && ire.reason() == IndexRuntimeIOException.Reason.CORRUPT_INDEX) {
         return true;
       }
     }
@@ -1812,10 +1845,10 @@ public final class KnowledgeServer implements Closeable {
    * The metadata this runtime would commit — the "expected" side of every parity comparison. One
    * builder, so the pre-open check, the open-time guard and the commit itself cannot disagree.
    */
-  private java.util.Map<String, Object> expectedCommitMetadata(
+  private Map<String, Object> expectedCommitMetadata(
       java.util.function.Supplier<java.util.Optional<String>> fingerprintSupplier) {
     return new EmbeddingMetadataOverlay(
-            new io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource(),
+            new SsotCommitMetadataSource(),
             fingerprintSupplier,
             SpladeFingerprint::get)
         .build();
@@ -2289,7 +2322,15 @@ public final class KnowledgeServer implements Closeable {
       }
     }
 
-    // Close path-resolution store (must close BEFORE job queue since both connect to jobs.db).
+    // Close auxiliary jobs.db stores before the queue connection.
+    if (documentIdentityStore != null) {
+      try {
+        documentIdentityStore.close();
+      } catch (Exception e) {
+        log.warn("Error closing document-identity store", e);
+      }
+    }
+
     if (pathResolutionStore != null) {
       try {
         pathResolutionStore.close();
@@ -2352,6 +2393,14 @@ public final class KnowledgeServer implements Closeable {
 
   LuceneRuntime lifecycleManagerForTests() {
     return ingestLifecycle;
+  }
+
+  IndexGenerationManager indexGenerationManagerForTests() {
+    return indexGenerationManager;
+  }
+
+  void releaseModelReadyLatchForTests() {
+    modelReadyLatch.countDown();
   }
 
   private static IndexGenerationManager.MigrationState parseMigrationState(String raw) {
@@ -2452,7 +2501,18 @@ public final class KnowledgeServer implements Closeable {
             indexBasePath,
             activeIndexPath,
             JSON,
+            KnowledgeServer::chunkSpladeEnabled,
             log));
+  }
+
+  /**
+   * {@code rag.chunk_splade.enabled} (tempdoc 931 §E item 8), read from the LIVE {@link ConfigStore}
+   * rather than a boot-time copy. Absent config reads as the flag's own default (false).
+   */
+  private static boolean chunkSpladeEnabled() {
+    ConfigStore cs = ConfigStore.globalOrNull();
+    ResolvedConfig rc = cs == null ? null : cs.get();
+    return rc != null && rc.rag() != null && rc.rag().chunkSpladeEnabled();
   }
 
   private void startMigrationEnumeratorBestEffort(ResolvedConfig rc) {

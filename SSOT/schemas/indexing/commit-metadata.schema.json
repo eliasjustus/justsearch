@@ -25,6 +25,11 @@
       "pattern": "^[a-f0-9]{64}$",
       "description": "SHA-256 over the canonical JSON of the effective physical index shape: catalog schema version, per-field physical projection (type/stored/docValues/multiValued/analyzer/roles/vector dimension+similarity), analyzer fingerprint, vector storage format, HNSW build parameters, chunking parameters, and the embedding + SPLADE model digests. The one rebuild-requiring parity key. Absent when a configured model's digest could not be resolved, because an indeterminate input must not be stamped as an identity (tempdoc 915)."
     },
+    "index_fingerprint_inputs": {
+      "type": "string",
+      "minLength": 2,
+      "description": "The canonical JSON that index_fingerprint is the SHA-256 of, stamped verbatim. Present even when index_fingerprint is absent: when a configured model's digest is unresolvable the digest cannot be computed truthfully, but every input that model does not touch (field shapes, vector dimension/similarity, analyzers, chunking, HNSW, analysis library versions) is still known. Whenever EITHER side lacks a digest -- this runtime now, or the commit then -- the parity guard compares these renderings minus the model keys neither side can state unambiguously, instead of declining outright (tempdoc 931 C.5). Not a parity key of its own -- it is the same statement as index_fingerprint, and comparing both would report one shape change twice."
+    },
     "similarity_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "boosts_fp": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "dag_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },

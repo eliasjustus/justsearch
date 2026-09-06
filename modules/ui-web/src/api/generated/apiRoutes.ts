@@ -13,7 +13,7 @@ export interface ApiRoute {
   readonly requiredCapabilities: readonly string[];
 }
 
-/** Every route the Head exposes, keyed by "<METHOD> <path>". Snapshot schema v1.0. */
+/** Every route the Head exposes, keyed by "<METHOD> <path>". Snapshot schema v2.0. */
 export const API_ROUTES = {
   "DELETE /api/ai/install/packages/{packageId}/decline": { method: "DELETE", path: "/api/ai/install/packages/{packageId}/decline", cohort: "ai-runtime", requiredCapabilities: [] },
   "DELETE /api/authorizations/grants": { method: "DELETE", path: "/api/authorizations/grants", cohort: "resource", requiredCapabilities: [] },
@@ -75,7 +75,6 @@ export const API_ROUTES = {
   "GET /api/diagnostics/ingestion/summary": { method: "GET", path: "/api/diagnostics/ingestion/summary", cohort: "observability", requiredCapabilities: [] },
   "GET /api/diagnostics/traces": { method: "GET", path: "/api/diagnostics/traces", cohort: "observability", requiredCapabilities: [] },
   "GET /api/feedback/capture": { method: "GET", path: "/api/feedback/capture", cohort: "interaction", requiredCapabilities: [] },
-  "GET /api/governance/state": { method: "GET", path: "/api/governance/state", cohort: "governance", requiredCapabilities: [] },
   "GET /api/gpu/capabilities": { method: "GET", path: "/api/gpu/capabilities", cohort: "inference", requiredCapabilities: [] },
   "GET /api/health": { method: "GET", path: "/api/health", cohort: "observability", requiredCapabilities: [] },
   "GET /api/health/events/stream": { method: "GET", path: "/api/health/events/stream", cohort: "observability", requiredCapabilities: [] },
@@ -228,6 +227,7 @@ export const API_ROUTES = {
   "POST /api/indexing/migration/start": { method: "POST", path: "/api/indexing/migration/start", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/indexing/reindex": { method: "POST", path: "/api/indexing/reindex", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/indexing/roots": { method: "POST", path: "/api/indexing/roots", cohort: "indexing", requiredCapabilities: ["WORKER"] },
+  "POST /api/indexing/settle": { method: "POST", path: "/api/indexing/settle", cohort: "indexing", requiredCapabilities: ["WORKER"] },
   "POST /api/inference/detach": { method: "POST", path: "/api/inference/detach", cohort: "inference", requiredCapabilities: [] },
   "POST /api/inference/mode": { method: "POST", path: "/api/inference/mode", cohort: "inference", requiredCapabilities: [] },
   "POST /api/inference/reload": { method: "POST", path: "/api/inference/reload", cohort: "inference", requiredCapabilities: [] },

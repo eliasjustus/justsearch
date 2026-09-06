@@ -77,7 +77,7 @@ class PruneByPathPrefixTest {
     indexDir = Files.createTempDirectory("prune-test-index-");
     testFilesDir = Files.createTempDirectory("prune-test-files-");
 
-    runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(createTestCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(indexDir).open();
+    runtime = IndexSchema.fromCatalog(createTestCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(indexDir).open();
   }
 
   @AfterEach
@@ -549,6 +549,59 @@ class PruneByPathPrefixTest {
           100);
 
       assertEquals(1, pruned);
+    }
+  }
+
+  @Nested
+  @DisplayName("Confirmed-deletion sink (tempdoc 931 §C.6)")
+  class ConfirmedDeletionSink {
+
+    @Test
+    @DisplayName("reports only the paths pruned because their file is gone")
+    void reportsOnlyTheVerifiedAbsentPaths() throws Exception {
+      Path gone = createTestFile("docs/gone.txt");
+      Path stays = createTestFile("docs/stays.txt");
+      String goneId = normalizePath(gone);
+      String staysId = normalizePath(stays);
+      runtime
+          .indexingCoordinator()
+          .indexSingle(doc(goneId, Map.of("content", "gone", "path", goneId)));
+      runtime
+          .indexingCoordinator()
+          .indexSingle(doc(staysId, Map.of("content", "stays", "path", staysId)));
+      commitAndRefresh();
+      Files.delete(gone);
+
+      List<String> reported = new java.util.ArrayList<>();
+      int pruned =
+          runtime
+              .pruneOps()
+              .pruneByPathPrefix(testFilesDir.toString(), () -> false, 100, reported::add);
+
+      assertEquals(1, pruned);
+      // The document still on disk must NOT be reported: the sink starts a deletion grace clock,
+      // so a path leaking into it would eventually re-mint a live document's identity.
+      assertEquals(List.of(goneId), reported);
+    }
+
+    @Test
+    @DisplayName("reports nothing when every file is still present")
+    void reportsNothingWhenNothingWasPruned() throws Exception {
+      Path stays = createTestFile("docs/present.txt");
+      String staysId = normalizePath(stays);
+      runtime
+          .indexingCoordinator()
+          .indexSingle(doc(staysId, Map.of("content", "present", "path", staysId)));
+      commitAndRefresh();
+
+      List<String> reported = new java.util.ArrayList<>();
+      int pruned =
+          runtime
+              .pruneOps()
+              .pruneByPathPrefix(testFilesDir.toString(), () -> false, 100, reported::add);
+
+      assertEquals(0, pruned);
+      assertTrue(reported.isEmpty());
     }
   }
 }

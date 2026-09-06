@@ -585,7 +585,7 @@ final class OperationExecutorImplTest {
             TransportTag.BUTTON,
             ExecutorTag.UI,
             Optional.of("user:alice"),
-            java.time.Instant.parse("2026-05-12T08:30:00Z"));
+            Instant.parse("2026-05-12T08:30:00Z"));
     OperationResult result =
         executor.dispatch(makeOp(id, TrustTier.CORE, false), "{}", provenance);
 
@@ -638,7 +638,7 @@ final class OperationExecutorImplTest {
             TransportTag.AGENT_LOOP,
             ExecutorTag.AGENT,
             Optional.empty(),
-            java.time.Instant.parse("2026-05-12T08:30:00Z"));
+            Instant.parse("2026-05-12T08:30:00Z"));
 
     assertThrows(
         RuntimeException.class,
@@ -759,7 +759,7 @@ final class OperationExecutorImplTest {
             TransportTag.BUTTON,
             ExecutorTag.UI,
             Optional.of("user:advisor-test"),
-            java.time.Instant.parse("2026-05-12T09:00:00Z"));
+            Instant.parse("2026-05-12T09:00:00Z"));
 
     OperationResult result = executor.dispatch(op, "{}", provenance);
 
@@ -1007,7 +1007,7 @@ final class OperationExecutorImplTest {
   private static OperationDispatcher latticeExecutorWithGateSink(
       HandlerRegistry handlers,
       ConsentCapsuleService capsule,
-      java.util.List<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry> sink) {
+      List<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry> sink) {
     return new OperationExecutorImpl(
         handlers,
         null,
@@ -1030,13 +1030,12 @@ final class OperationExecutorImplTest {
     OperationRef id = new OperationRef("core.test-medium");
     handlers.register(id, args -> OperationResult.success("ran"));
     var sink =
-        new java.util.ArrayList<
-            io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
+        new ArrayList<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
     var executor =
         new OperationExecutorImpl(
             handlers,
             null,
-            java.util.Map.of(),
+            Map.of(),
             Clock.systemUTC(),
             new CoreTrustEvaluator(),
             CoreIntentSourceCatalog.catalog(),
@@ -1080,7 +1079,7 @@ final class OperationExecutorImplTest {
     HandlerRegistry handlers = new HandlerRegistry();
     OperationRef id = new OperationRef("core.test-medium");
     handlers.register(id, args -> OperationResult.success("ran"));
-    var sink = new java.util.ArrayList<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
+    var sink = new ArrayList<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
     OperationDispatcher executor = latticeExecutorWithGateSink(handlers, new ConsentCapsuleService(), sink);
     Operation op = makeMediumOp(id);
     InvocationProvenance untrusted =
@@ -1104,7 +1103,7 @@ final class OperationExecutorImplTest {
     OperationRef id = new OperationRef("core.test-medium");
     handlers.register(id, args -> OperationResult.success("ran"));
     ConsentCapsuleService capsule = new ConsentCapsuleService();
-    var sink = new java.util.ArrayList<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
+    var sink = new ArrayList<io.justsearch.app.observability.operations.AuthorizationOutcomeEntry>();
     OperationDispatcher executor = latticeExecutorWithGateSink(handlers, capsule, sink);
     Operation op = makeMediumOp(id);
     InvocationProvenance untrusted =

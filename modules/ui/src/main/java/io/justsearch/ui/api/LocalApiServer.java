@@ -166,7 +166,7 @@ public class LocalApiServer {
     // Tempdoc 737 Phase 1: settings writes that change chatEnabled nudge the runtime
     // reconciler (specChanged) so the persisted intent converges now, not at next boot.
     // Lazily resolved at fire time — null-safe for test paths without a HeadAssembly.
-    final io.justsearch.app.services.HeadAssembly haForSpecNudge = b.HeadAssembly;
+    final HeadAssembly haForSpecNudge = b.HeadAssembly;
     this.settingsController =
         new SettingsController(
             b.settingsStore,
@@ -474,7 +474,7 @@ public class LocalApiServer {
         (e, ctx) ->
             ctx.status(423)
                 .json(
-                    java.util.Map.of(
+                    Map.of(
                         "error",
                         "locked",
                         "locked",
@@ -577,7 +577,10 @@ public class LocalApiServer {
     }
 
     securityFilters.install(this.app);
+    RouteLifecycleHeaders.install(this.app);
     setupRoutes();
+    RouteContractPolicy.validateLifecycleRoutes(
+        RouteManifestController.handlerMethodPaths(this.app), RouteContractPolicy.CONTRACTS);
 
     this.app.start("127.0.0.1", bindPort);
   }
@@ -629,10 +632,6 @@ public class LocalApiServer {
         convApi.agentToolsController());
     // Tempdoc 834 §1.6 — the run-stream family (POST managed SSE, already token-covered).
     RunRoutes.register(app, convApi.runStreamController(), convApi.agentSessionController());
-    // Tempdoc 530 Layer 4 §4.2: surface the discipline-gate kernel's latest
-    // SARIF as flat JSON for UI consumers. Read-only; doesn't run gates.
-    GovernanceStateController governanceStateController = new GovernanceStateController();
-    app.get("/api/governance/state", governanceStateController::handle);
     // Tempdoc 583 §D.2a/§D.3: the /api/meta/* self-description family (route manifest + OpenAPI) is
     // bound by MetaApiModule via the apiModules loop below — not inline here (dogfoods the seam).
     // Tempdoc 526 §4.2 — typed DocumentAddress → canonical-coordinate translator.

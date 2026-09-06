@@ -6,7 +6,7 @@
  * Writes a structured JSON file to tmp/agent-telemetry/compact-state-{sessionId}.json
  * containing:
  *   - First 100 lines of MEMORY.md (auto-memory)
- *   - git diff --name-only (modified files)
+ *   - A provenance-bearing Git workspace snapshot from the hook event cwd
  *   - Read-counts cache (files read this session)
  *   - Edit-counts cache (files edited this session)
  *
@@ -20,7 +20,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { atomicWriteFileSync, readStdin, runHook, repoRoot, telemetryDir as TELEMETRY_DIR } from '../lib/hook-base.mjs';
 import { DEFAULT_PROJECTS_ROOT } from '../lib/transcript-store.mjs';
 
@@ -42,8 +42,8 @@ const MEMORY_FILE = path.join(MEMORY_DIR, 'MEMORY.md');
 // facts) without re-bloating the freshly-compacted context window.
 const MEMORY_MAX_LINES = 100;
 
-function compactStatePath(sessionId) {
-  return path.join(TELEMETRY_DIR, `compact-state-${sessionId}.json`);
+function compactStatePath(sessionId, telemetryDir = TELEMETRY_DIR) {
+  return path.join(telemetryDir, `compact-state-${sessionId}.json`);
 }
 
 function readMemorySummary() {
@@ -56,28 +56,47 @@ function readMemorySummary() {
   }
 }
 
-function getModifiedFiles() {
+function runGit(args, cwd) {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    timeout: 5000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+}
+
+/**
+ * Capture an observed Git workspace, never an attribution of changes to the
+ * current session. The event cwd is the authority: falling back to the hook's
+ * repository root would make another worktree's diff look relevant.
+ */
+export function captureWorkspaceSnapshot(eventCwd, observedAt = new Date().toISOString()) {
   try {
-    // Capture both unstaged and staged changes
-    const unstaged = execSync('git diff --name-only', {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const staged = execSync('git diff --cached --name-only', {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const all = new Set([
+    if (typeof eventCwd !== 'string' || !eventCwd.trim() || !fs.statSync(eventCwd).isDirectory()) {
+      return null;
+    }
+
+    const worktree = runGit(['rev-parse', '--show-toplevel'], eventCwd);
+    const branch = runGit(['rev-parse', '--abbrev-ref', 'HEAD'], eventCwd);
+    if (!worktree || !branch) return null;
+
+    const unstaged = runGit(['diff', '--name-only'], eventCwd);
+    const staged = runGit(['diff', '--cached', '--name-only'], eventCwd);
+    const untracked = runGit(['ls-files', '--others', '--exclude-standard'], eventCwd);
+    const modifiedFiles = [...new Set([
       ...unstaged.split('\n').filter(Boolean),
       ...staged.split('\n').filter(Boolean),
-    ]);
-    return [...all];
+      ...untracked.split('\n').filter(Boolean),
+    ])];
+
+    return {
+      observed_at: observedAt,
+      worktree,
+      branch,
+      modified_files: modifiedFiles,
+    };
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -89,47 +108,44 @@ function loadJsonCache(filePath) {
   }
 }
 
+export function saveCompactState(input, options = {}) {
+  const sessionId = input?.session_id;
+  if (!sessionId) return { action: 'noop' };
+
+  const telemetryDir = options.telemetryDir ?? TELEMETRY_DIR;
+  const observedAt = options.observedAt ?? new Date().toISOString();
+  const workspaceSnapshot = captureWorkspaceSnapshot(input.cwd, observedAt);
+  const state = {
+    ts: observedAt,
+    session_id: sessionId,
+    trigger: input.trigger ?? 'unknown',
+    memory_summary: options.memorySummary ?? readMemorySummary(),
+    read_files: loadJsonCache(path.join(telemetryDir, `read-counts-${sessionId}.json`)),
+    edited_files: loadJsonCache(path.join(telemetryDir, `edit-counts-${sessionId}.json`)),
+  };
+  if (workspaceSnapshot) state.workspace_snapshot = workspaceSnapshot;
+
+  fs.mkdirSync(telemetryDir, { recursive: true });
+  const statePath = compactStatePath(sessionId, telemetryDir);
+  atomicWriteFileSync(statePath, JSON.stringify(state, null, 2));
+
+  // Reset read counts so the next orientation window starts fresh. The counts
+  // remain in the consumed compact state for immediate orientation.
+  const readCountsPath = path.join(telemetryDir, `read-counts-${sessionId}.json`);
+  try { atomicWriteFileSync(readCountsPath, '{}'); } catch { /* best-effort */ }
+
+  // Reset repeat-buffer so pre-compaction fingerprints do not block the first
+  // post-compaction orientation calls.
+  const repeatBufferPath = path.join(telemetryDir, `repeat-buffer-${sessionId}.json`);
+  try { fs.unlinkSync(repeatBufferPath); } catch { /* best-effort */ }
+
+  return { action: 'saved', state, statePath };
+}
+
 async function main() {
   try {
     const input = await readStdin().then((raw) => JSON.parse(raw));
-    const sessionId = input.session_id;
-    if (!sessionId) return;
-
-    const state = {
-      ts: new Date().toISOString(),
-      session_id: sessionId,
-      trigger: input.trigger ?? 'unknown',
-      memory_summary: readMemorySummary(),
-      modified_files: getModifiedFiles(),
-      read_files: loadJsonCache(path.join(TELEMETRY_DIR, `read-counts-${sessionId}.json`)),
-      edited_files: loadJsonCache(path.join(TELEMETRY_DIR, `edit-counts-${sessionId}.json`)),
-    };
-
-    fs.mkdirSync(TELEMETRY_DIR, { recursive: true });
-    atomicWriteFileSync(compactStatePath(sessionId), JSON.stringify(state, null, 2));
-
-    // Reset read counts so post-compaction re-reads don't trigger warnings.
-    // The counts are preserved in compact-state above for analytics.
-    // Tempdoc 727 review Finding D: this also wipes intervene.mjs's `_byBasename` cross-root
-    // index (F-7a) — deliberate and correct for its original hot-file-cap purpose, but a real
-    // side effect: edit-reread-hint.mjs can only recognize a cross-root re-read for files read
-    // SINCE the last compaction, not before it.
-    const readCountsPath = path.join(TELEMETRY_DIR, `read-counts-${sessionId}.json`);
-    try { atomicWriteFileSync(readCountsPath, '{}'); } catch { /* best-effort */ }
-
-    // Reset repeat-buffer so pre-compaction fingerprints don't cause false consecutive-repeat
-    // blocks on the first post-compaction tool calls (agent re-orienting after compact).
-    const repeatBufferPath = path.join(TELEMETRY_DIR, `repeat-buffer-${sessionId}.json`);
-    try { fs.unlinkSync(repeatBufferPath); } catch { /* best-effort */ }
-
-    // Tempdoc 579 — re-arm the Consult/Maintain doc hooks after compaction. Both dedupe
-    // once-per-region-per-session via a marker file; but compaction may evict the
-    // governing-doc pointer they already delivered, so clearing the markers lets them
-    // re-deliver on the next edit in a region (the same "don't penalize the re-orienting
-    // agent" rationale as the read-count / repeat-buffer resets above).
-    for (const marker of [`consult-nudged-${sessionId}.json`, `maintain-nudged-${sessionId}.json`]) {
-      try { fs.unlinkSync(path.join(TELEMETRY_DIR, marker)); } catch { /* best-effort */ }
-    }
+    saveCompactState(input);
   } catch {
     // Never block compaction
   }

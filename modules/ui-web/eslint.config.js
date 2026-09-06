@@ -54,6 +54,16 @@ const FETCH_MEMBER_ACCESS_SELECTOR = {
 
 export default defineConfig([
   globalIgnores(['dist']),
+  // Tempdoc 930 §22.2 follow-up 8 — `lint` now runs with `--max-warnings=0`, which makes an
+  // unused `eslint-disable` a hard failure. `src/api/generated/**` is written by a Java
+  // generator (RegistryEnumsTsGenerationTest and friends) whose drift check owns those files
+  // byte-for-byte, so their blanket `/* eslint-disable */` header cannot be edited here —
+  // stripping it would red the Java drift test on the next Gradle run. Silence the
+  // unused-directive report for the generated tree instead of forcing a cross-language edit.
+  {
+    files: ['src/api/generated/**'],
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+  },
   // JavaScript/JSX files
   {
     files: ['**/*.{js,jsx}'],
@@ -95,7 +105,16 @@ export default defineConfig([
       'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-explicit-any': 'off',
+      // Tempdoc 930 chunk F — replaces the `ts-any` kernel gate. The gate counted `any` with a
+      // regex over raw file text, so it scored the English word "any" in prose comments (the
+      // `ts-any-gate-counts-english-prose` red). The lint rule parses, so it cannot. The existing
+      // violations are carried in `eslint-suppressions.json` (ESLint bulk suppressions), which is
+      // the ratchet: a NEW `any` fails, and removing one and re-running `--prune-suppressions`
+      // lowers the count. That is the same ratchet shape with none of the kernel bookkeeping.
+      '@typescript-eslint/no-explicit-any': 'error',
+      // Tempdoc 930 chunk F — replaces the `todo-fixme` kernel gate (TypeScript half; the Java
+      // half is the PMD `CommentContent` rule in config/pmd/ruleset.xml).
+      'no-warning-comments': ['error', { terms: ['todo', 'fixme', 'xxx'], location: 'anywhere' }],
     },
   },
 

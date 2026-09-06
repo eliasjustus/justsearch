@@ -1,5 +1,5 @@
 ---
-title: "API Responses Declare Runtime Context"
+title: "ADR-0023: API Responses Declare Runtime Context"
 type: decision
 status: stable
 description: "Any endpoint whose behavior varies by runtime mode must surface that mode in its response to prevent silent behavioral switches."

@@ -48,7 +48,7 @@ class LogTraceCorrelationTest {
     try (var ignored = new TracingBootstrap(tmp)) {
       Tracer tracer = GlobalOpenTelemetry.get().getTracer("test");
       var span = tracer.spanBuilder("corr.test").startSpan();
-      try (var scope = span.makeCurrent()) {
+      try (var _ = span.makeCurrent()) {
         String traceId = span.getSpanContext().getTraceId();
         MDC.put("trace_id", traceId);
         LoggerFactory.getLogger("io.justsearch.test").info("hello");

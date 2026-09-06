@@ -146,7 +146,6 @@ export async function fetchAndRegisterSurfaceSchemas(apiBase: string): Promise<v
   try {
     const res = await authorizedFetch(url);
     if (!res.ok) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[router/bootstrap] GET ${url} returned ${res.status}; surface schemas unavailable`,
       );
@@ -154,7 +153,6 @@ export async function fetchAndRegisterSurfaceSchemas(apiBase: string): Promise<v
     }
     envelope = (await res.json()) as SurfaceCatalogEnvelope;
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn(`[router/bootstrap] GET ${url} failed:`, err);
     return;
   }

@@ -105,19 +105,16 @@ time. `cc` — CC fusion weights. `mode` — jseval mode. `legs` — retrieval
 legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
 tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
 
-**Cross-run noise vs signal** — before flagging a nDCG@10 change as a
-regression, consult the cohort envelope: `scripts/jseval/tmp/
-cohort_baselines/<hash>/envelope.json` — the jseval-owned data root where
-calibration state is filed since tempdoc 716 (readers fall back to a
-pre-716 backend data dir with a WARN) — gives σ per metric (tempdoc 400
-LR1-b). Deltas
-inside ±2σ are noise. For encoder-level latency distribution drift
-(different question — "did ORT session.run() durations shift even
-without a nDCG change?"), use `jseval calibrate-drift-baseline` + the
-nightly `jseval gate`: PSI > 0.2 on any `encoder.ort_run` duration
-distribution flags a drift signal independent of aggregate quality.
-See `docs/explanation/08-observability.md` §Contract Tiers + §Run
-Manifest and `docs/how-to/triage-psi-drift.md`.
+**Cross-run noise vs signal** — there is no calibrated cohort envelope; the
+`jseval calibrate` machinery that was supposed to supply σ per metric never
+produced a baseline on any machine and was removed (tempdoc 930 §18.1 row 7).
+Judge a nDCG@10 change against the runs themselves: re-run the arm and compare
+the spread, and read each run's own `summary.json` — `latency_stats` for query
+latency and `encoder_latency.encoders.<name>` for absolute per-encoder ONNX
+p50/p95. For the "did ORT session.run() durations shift even without a nDCG
+change?" question, compare that `encoder_latency` block across runs and read
+the `cpu_fallback_counts` projection alongside it. See
+`docs/explanation/08-observability.md` §Contract Tiers + §Run Manifest.
 
 <!-- generated:start — do not edit between markers; run: node scripts/docs/register-headline-sync.mjs -->
 
@@ -679,6 +676,168 @@ cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
   self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
   Any *claim-bearing* run must use the v2 cohort.
 
+### F-060: int8 scalar quantization (lane D PR-C1, `JustSearchCodecV2` + `dot_product`) is ranking-neutral on the registered corpora but does NOT ship as the write default — the pre-registered storage leg fails by construction: `Lucene104HnswScalarQuantizedVectorsFormat` keeps the raw float32 vectors beside the int8 copy, so a 20k × 768 index grew 25.1 % (62.8 → 78.5 MB) instead of shrinking, ANN recall@50 fell 0.994 → 0.974 (ratio 0.980, inside the 915 ratio but 0.020 absolute below float32), and query p50 rose 0.7 ms; paired fresh-index jseval arms moved ≤ 0.0015 nDCG@10 on scifact and were identical-or-better on enron (vector +0.0089), zero errors, arm identity proven from `vectorFormatActual` (2026-09-05, tempdoc 931 §D "C1 campaign" + `931-evidence/c1-quantization-campaign-2026-09-05.md`; draft #662 closed, Float32 stays)
+
+- **Conditions/caveats:** one machine (RTX 4070), one day, one arm per corpus per format; the two
+  arms did not share a merge state (expunge-only settle, 181 vs 1,044 deleted docs on scifact),
+  fixed for future pairs by #685; RSS was not instrumented. The synthetic ANN fixture (64 clustered
+  centroids, exact brute-force truth) is a recall instrument, not a corpus.
+- **What would reopen it:** a format that drops the raw vectors (or a resident-memory criterion
+  in place of on-disk bytes) plus an RSS instrument in `EngineVectorIndexBench` — re-register the
+  rule first; do not re-run against the same criteria.
+
+### F-059: lane D PR-C2 (unstored chunk/entity text) is byte-exact and storage-real — legal stored fields −75.8 % (21.03 → 5.09 MB) with 4,122/4,122 chunk vectors intact — but the wave-3 campaign found two masked enrichment defects on the way (a non-converging flag-off chunk-SPLADE loop, and `rag.chunk_splade.enabled` honoured by one lane of three); with the flag made truly OFF, legal hybrid is 0.5776 = the 832 scorecard, and the −0.012 vs a same-day control is race-encoded chunk postings plus tombstone-inflated BM25 statistics, not C2 (2026-09-05, tempdoc 931 §D findings 5/5b/6, §E 8-11)
+
+- **What C2 does.** `chunk_content` stays analyzed/indexed but `stored:false`; every consumer
+  re-derives the text from the stored parent `content` plus chunk offsets (`ChunkSplitter`'s
+  offset law). Direct Lucene inspection of a fresh legal index: 7,781,026 chars of stored chunk
+  text on the pre-C2 arm = 7,781,026 chars re-derived on C2, 0 mismatches / blanks / out-of-range.
+- **Storage (legal, on disk, by Lucene file type).** `fdt` 21.03 MB → 5.09 MB is the C2 effect.
+  Totals (74.66 MB vs 25.74 MB) are NOT comparable: the control carried 2,629 tombstoned docs in
+  142 un-merged files vs 222 in 58 — `vec`/`pos`/`doc`/`cfs` differ for that reason, and both
+  indexes hold 4,122 chunk vectors and 199 parent vectors (counted, not inferred).
+- **Finding 5 (fixed, `58c3c344`).** With `rag.chunk_splade.enabled` off (the default) C2's
+  combined backfill escalated every PENDING chunk through the SPLADE retry seam each cycle; a
+  retry bump is not stage progress, so the 5 s budget tripped 231 times, embeddings/NER starved
+  for ~25 min on 198 docs, and every chunk ended terminal-FAILED. Readiness 1,793 s → 235 s.
+- **Finding 6 (fixed, `286a97bc`).** `SpladeBackfillOps`/`BgeM3BackfillOps` selected
+  `splade_status=PENDING` with no chunk filter while `ChunkDocumentWriter` stamps PENDING on every
+  chunk, so chunk SPLADE postings were produced by whichever lane won a race — the 832 scorecard
+  and every hybrid baseline on a chunked corpus were measured on that race. Now every lane honours
+  the flag. **Owner decision (tempdoc 712):** the query-side chunk-SPLADE leg still runs off
+  `pipeline.spladeEnabled`; "default OFF" now means no chunk postings at all.
+- **Quality (legal, paired, same machine).** Flag truly off: C2 hybrid **0.5776** / P@1 0.360 /
+  R@10 0.805 vs control 0.5900 (settled re-query) — Δ −0.0125, inside the F-057 2σ line; vector-
+  only 0.6215 vs 0.6148 (R@10 0.83 vs 0.82); lexical 0.6858 vs 0.6873. The C2 number equals the
+  scorecard's 0.578. Verdict: no regression attributable to C2.
+- **Two measurement lessons (routed, 931 §E 9-10).** (i) jseval `--pipeline` readiness counts
+  parents only, so on chunked corpora the query phase can overlap chunk-lane encoding — the same
+  index moved +0.011 in ten minutes; re-query before trusting a fresh hybrid delta ≤ ~0.015.
+  (ii) Paired arms need equal merge state — tombstones inflate BM25 collection statistics
+  (`chunk_content` docCount 6,734 vs 4,344) and moved hit counts 3–4 % with no code cause.
+- **Measured the same night — see F-060.** The C1 (quantization) campaign ran on the C1-only
+  draft #662 and rejected the int8 write default (915 §P3.F).
+
+### F-058: the language-agnostic dense skip (lane D PR-C0) is EFFECTIVELY OFF at its default — the field-local DF rule fired on 4 of 2,410 queries across six corpora (legal 2.0 %, five others 0.0 %), rates are comparable per language by construction, and paired fully-enriched arms show no quality loss (legal +0.0075 nDCG@10 inside the 2σ line, miracl-de identical to 4 dp); its benefit is locale invariance, its cost is that the retired English stop-word skip's savings are gone (2026-09-05, tempdoc 931 §D rows 3a-3b, lane D wave 3)
+
+- **The question (915 C5b).** PR-C0 replaced the English `STOP_WORDS` dense-skip guards with a
+  planner rule: skip dense only when another leg can answer AND the *rarest* analyzed query term
+  occurs in ≥ `index.hybrid.vector_skip_min_df_fraction` (default 0.25) of `content` documents, on
+  ≥ 100 field docs (`SearchPlanner.planDenseSkip`, `SearchInputCapture` min DF fraction). C5b asked
+  for comparable per-language skip rates and no material quality loss on the six pre-registered
+  corpora before PR-C0 may merge.
+- **Skip rate (index-only hybrid, PR-C0 tip `0bb0b8cb`, 17 min, every run `comparable=True`;
+  `denseStatus`/`denseReason` now persisted per query by jseval and rolled up by
+  `scripts/jseval/915_c0_skip_rate.py`).** legal-clerc-200 4/200 (2.0 %, all
+  `SKIPPED_NO_DISCRIMINATIVE_TERM`); scifact 0/300; enron-qa 0/300; ohr-bench-clean 0/962;
+  miracl-de-2k 0/305; miracl-fr-2k 0/343. The 4 legal hits prove the gate path is live; the zeros
+  are the rule's real answer (a natural-language query almost never has *every* term in ≥ 25 % of
+  documents). Per language: en 0–2 %, de 0 %, fr 0 % — comparable; the retired rule could only
+  ever fire for English.
+- **Quality (paired, same machine, same hour, fresh `--clean` index, `--pipeline --embedding`,
+  control = PR-A branch `c0e5dbf5` without C0).** legal-clerc-200: C0 0.5989 / P@1 0.390 / R@10
+  0.825 vs control 0.5914 / 0.365 / 0.830 → Δ +0.0075 nDCG@10, inside the F-057 legal 2σ line
+  (0.0136); miracl-de-2k: 0.8575 / 0.6656 / 0.9967 on both arms (identical; the rule fired 0/305 and
+  the old rule never fired on German, so C0 is a no-op there by construction). Every leg observed on
+  every arm. Scifact/enron/fr/OHR fully-enriched no-regression runs were not run (≈1.5 h, over the
+  wave's 2 h budget) — a limit, not a pass.
+- **Calibration worth keeping.** Two no-C2 legal arms share only 24/200 identical top-10 lists
+  (20 up, 21 down, mean +0.0075): top-10 churn on legal is run-to-run noise; only the mean and the
+  hit count carry signal. `summary.json`'s `ingest.index_size_bytes` is a mid-ingest status snapshot
+  (16.1 MB vs 33.6 MB reported for indexes that are 40.9 MB vs 43.0 MB on disk) — measure index
+  bytes on disk, by Lucene file type.
+- **Consequence for the owner.** At 0.25 the dense skip is a no-op on every corpus we measure, so
+  PR-C0 is a locale-invariance change, not a latency lever; if the old English savings mattered,
+  the knob to revisit is the DF fraction, and this row is the baseline to beat.
+- **Method + run dirs.** tempdoc 931 §D (3a table, 3b/3c design); runs under
+  `.claude/worktrees/wave3-{c0,pa}/scripts/jseval/tmp/eval-results/20260905T02*` (gitignored).
+
+### F-057: the chunk target/overlap re-derivation RETAINS 500/50/100 — 32 admissible runs reduce the matrix to four legal-capable challengers, and none clears the Enron +2σ line needed for a two-of-three win; the unchanged 2000-character prefilter is analytically characterized, not quality-optimized (2026-09-03/04)
+
+- **Question and answer.** Re-derive the document chunk target and overlap instead of inheriting the
+  original 500/50 choice. The 4×3 matrix tested targets `{128,256,384,500}` and overlaps
+  `{0,25,50}` with sentence-aligned boundaries, per-target minimum `max(1,target/5)`, and the writer
+  threshold held at 2000 characters. **No challenger satisfies the pre-registered adoption rule.**
+  Keep `(target, overlap, minimum) = (500, 50, 100)`. The fixed threshold is outside this result.
+- **Evidence admitted.** 32 completed arms: 15 `mixed/legal-clerc-200` (12-cell matrix, two extra
+  incumbent reindexes, one shipped-deadline control), 12 `mixed/ohr-bench-clean`, and five
+  `mixed/enron-qa`. Every cited arm has `ce_coverage.verdict == "ok"`, comparable hybrid output,
+  complete decision-bearing fields, and a clean machine signature. The matrix used one invariant
+  2000 ms CE pre-check deadline so small chunks did not become inadmissible merely by creating more
+  rerank candidates. That deadline is campaign instrumentation; the shipped default remains 200 ms.
+- **Calibration.** Three independently rebuilt legal incumbents scored nDCG@10
+  `0.581629 / 0.592372 / 0.580665` and R@10 `0.810 / 0.835 / 0.815`, at run ids
+  `20260903T085832`, `20260903T090447`, and `20260903T091138_mixed_legal-clerc-200`.
+  Mean/sample-σ are `0.584888 / 0.006499` for nDCG and `0.820 / 0.013229` for R@10. The committed
+  `max(observed σ, 0.0068)` rule therefore puts legal's strict nDCG win line at **0.598488**. OHR
+  and Enron have one incumbent replicate, so their marked floor gives ±2σ = **0.0136**.
+- **Complete cheap-matrix reduction.** The full OHR matrix has no winner: its maximum is the
+  incumbent's **0.957099** (`20260903T125636_mixed_ohr-bench-clean`), so every challenger misses
+  OHR's +2σ line of 0.970699. On legal, only four challengers both clear 0.598488 and avoid a
+  leg-union recall fall below 0.925:
+
+  | target / overlap | legal nDCG@10 | legal R@10 | legal union | run id |
+  | :--- | ---: | ---: | ---: | :--- |
+  | 128 / 25 | 0.634915 | 0.840 | 0.925 | `20260903T093157_mixed_legal-clerc-200` |
+  | 256 / 0 | 0.629296 | 0.835 | 0.930 | `20260903T095341_mixed_legal-clerc-200` |
+  | 384 / 0 | 0.621148 | 0.845 | 0.925 | `20260903T102630_mixed_legal-clerc-200` |
+  | 384 / 25 | 0.609067 | 0.835 | 0.925 | `20260903T103256_mixed_legal-clerc-200` |
+
+- **Decisive Enron result.** Because no arm wins OHR, adoption requires winning both legal and
+  Enron. The incumbent scores 0.792402 nDCG@10 on Enron (`20260903T133806_mixed_enron-qa`), putting
+  the strict +2σ line at **0.806002**. The four legal-capable arms score, respectively,
+  `0.760281`, `0.787604`, `0.793542`, and `0.798495` (run ids `20260903T171519`, `T155614`,
+  `T150903`, `T142710_mixed_enron-qa`). The best delta is only **+0.006093**, below the required
+  >0.0136. Thus no result from a remaining cell can satisfy the necessary two-of-three condition.
+- **Early-stop deviation.** The execution plan originally called for all 12 Enron arms, followed by
+  winner/incumbent multilingual, scifact and RAG checks. It did not pre-register pruning. Seven
+  Enron challengers already incapable of winning legal were stopped, and the downstream controls
+  were not run, only after the necessary-condition proof above was independently reconstructed.
+  This is disclosed as an **unplanned, decision-preserving early stop**, not reported as a full
+  matrix: controls and the secondary/veto-only RAG fixture cannot promote an arm after the primary
+  adoption condition is false. One earlier Enron 256/50 smoke was inadmissible; an attempted 128/0
+  resume produced no metrics or completion marker. Neither is evidence.
+- **Deadline control and threshold disposition.** A clean incumbent at the shipped 200 ms deadline scored
+  0.581146 nDCG@10, 0.810 R@10 and 0.925 union
+  (`20260903T091800_mixed_legal-clerc-200`), inside the incumbent calibration band; campaign scores
+  do not repin a release baseline. The 2000-character writer threshold was **held fixed**, not
+  optimized. Its closed analytic rationale is
+  `TokenEstimation.charsForTokens(ChunkSplitter.DEFAULT_CHUNK_TOKENS) == 2000`: one 500-token window
+  under the canonical optimistic typical-prose estimate of four characters per token. It is only a
+  cheap prefilter; the content-aware splitter and the writer's zero/one-chunk guard decide actual
+  emission. CJK can map 500 tokens to a different character span inside the splitter, without
+  introducing a per-language threshold. The formerly stated ≥1536 “corpus-profile floor” is only
+  the arithmetic point where `IndexingDocumentOps`'s `/3` fallback estimate reaches 512; it is not a
+  measured corpus property or a quality criterion. Classification: **analytically derived,
+  operationally exercised, not quality-optimized**. No threshold sweep or quality-optimum claim is
+  made.
+- **Shipping consequence.** No production chunking constant or configuration surface changes.
+  `ChunkSplitter` remains the static owner; the temporary four-key experiment channel is removed.
+  Index identity already includes target, overlap, minimum, threshold and
+  `ChunkSplitter.ALGORITHM_VERSION`. Since both values and boundary algorithm are unchanged, the
+  correct version remains **`v1`**; bumping it would force an unnecessary reindex.
+- **Historical analysis and runner safety.** `scripts/jseval/916_chunk_sweep.py` records per-arm run ids,
+  admissibility, retrieval/recall, truncation, index bytes, throughput and machine state. The four
+  temporary `JUSTSEARCH_CHUNKING_SWEEP_*` consumers are intentionally absent from the shipping
+  tree, so `run` now refuses to start there; `analyze` remains available for the archived evidence.
+  A resume on the original throwaway experiment shape
+  exposed that non-zero arm exits and decision-bearing nulls could still allow outer completion
+  markers, while the generated PowerShell chain did not enforce child exit status. A reusable arm
+  now needs a structured identity binding target, overlap, minimum, threshold, deadline, run id and
+  source SHA, plus clean-machine and known chunk-branch evidence. The driver retracts invalid or
+  mismatched completion; `tests/test_916_chunk_sweep.py` pins failure and stale-resume shapes plus
+  chain exit propagation. Selection was recomputed from each arm's own metrics and completion
+  evidence, never from the defective outer marker.
+- **Rider (2026-09-05) — OHR `leg_union_recall`/`final_recall` above are biased LOW by 0.1091; the
+  verdict is unchanged.** The staged-recall projection's TREC reader was left-anchored
+  (`parts[2]`), so the 109 `mixed/ohr-bench-clean` golds whose doc ids contain a space were
+  truncated at parse time — the sole cause of the campaign's 105/962 OHR reconciliation mismatches.
+  Corrected for the incumbent arm: `leg_union_recall` 0.8794 → **0.9886**, `final_recall` 0.8784 →
+  **0.9875**, `LEG_MISS` 115 → 10, mismatches → **0** (fix: `scripts/jseval/jseval/trec.py`). The
+  offset is identical on all 12 OHR arms, so every OHR delta and the adoption rule's clause-2
+  comparison hold; `nDCG@10`/`R@10` never read the TREC file, and the legal figures quoted above
+  are unaffected (0 mismatches — CLERC ids contain no whitespace). Detail: tempdoc 916 §L.8.
+
 ### F-056: audit finding 2 is MEASURED AND REFUTED at both the set-membership and the score-aggregation level, and the aggregate-then-cut parent collapse is REVERTED — three campaigns over two chunked corpora and three index builds found no lambda that helps R@10 without worsening leak; durable findings are that the CC branch min-max normalizes its pool floor to exactly 0.0 (no lambda can rescue a bottom-ranked parent), that sigma(R@10) on clean arms is 0.0000 but sigma(nDCG@10) is not, and that a degraded-ce arm on legal is biased UPWARD above the 2% tolerance (2026-09-03, tempdoc 916 Part 2 + sections I and J, lane E)
 
 - **The question.** The 2026-09-01 audit's finding 2: `SearchExecutor.collapseChunkHitsToParents`
@@ -1102,8 +1261,9 @@ above)*
   intra-fusion attribution stays deferred (only-if-warranted).
 - **Guard ACTIVE + cross-corpus profile (2026-06-24 follow-up, 636 §guard-activated):** the leak-gate is now
   **pinned** (`leak-gate-baselines.v1.json`, measured-derived via `leak-gate-derive`: needle 0.100 /
-  courtlistener 0.070 / scifact 0.013 / enron-qa 0.047, tol 0.05) and **wired** into the `search-engine-hint`
-  hook as the third engine ratchet (relevance + perf + leak). Across **four diverse corpora** (synthetic/legal/
+  courtlistener 0.070 / scifact 0.013 / enron-qa 0.047, tol 0.05) and **wired** in as the third
+  standing engine-quality ratchet (relevance + perf + leak; see `jseval leak-gate` above). Across
+  **four diverse corpora** (synthetic/legal/
   academic/email, 0 reconciliation mismatches each) the instrument distinguishes regimes — legal is
   **leg-recall-bound** (leg_miss 0.28), academic + email are **judge-rank-bound** (judge_low 0.25, legs find it
   ≥0.89) — and the regime-blind headline is decisive: **cascade-leak is small everywhere (0.013–0.100, mean
@@ -1116,6 +1276,19 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+- **Instrument rider (2026-09-05) — the projection under-reported `leg_union_recall` (and
+  `final_recall`) on any corpus whose doc ids contain whitespace, until fixed.** `_load_trec` read
+  the doc id left-anchored as `parts[2]` of a whitespace-split line, while the writer emitted
+  `qid Q0 <docid> rank score tag` space-delimited, so a doc id containing a space was truncated and
+  then missed every membership check — inflating `LEG_MISS`, deflating `leg_union_recall` and
+  `final_recall`, and showing up as "projection says absent, harness says present" reconciliation
+  mismatches. **Observed on `mixed/ohr-bench-clean` only** (109/962 golds affected; bias −0.1091;
+  105 mismatches). The four corpora profiled above, plus `mixed/legal-clerc-200` and
+  `mixed/enron-qa`, have whitespace-free ids and reported 0 mismatches — their numbers stand. Fixed
+  2026-09-05: `scripts/jseval/jseval/trec.py` is now the single right-anchored reader + tab-delimiting
+  writer used by all three in-repo TREC readers. **A non-zero mismatch count that is entirely
+  "absent/present"-shaped is a parser symptom first, a retrieval finding second.** Detail: tempdoc
+  916 §L.8.
 
 ### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
 
@@ -2153,6 +2326,16 @@ above)*
 - **Decision:** default **OFF**; the flag is a corpus-specific lever for a future sparse-dominant
   workload. The 712 foundation (the flag + the fix for chunk docs being silently marked
   splade-COMPLETED without encoding) shipped in #145 regardless of the default.
+- **Scope correction (2026-09-05, tempdoc 931 §E item 8):** `rag.chunk_splade.enabled` is now ONE
+  switch over the whole chunk-SPLADE stage, not a producer-side-only flag. It gates the query-side
+  leg too (`SearchExecutor.chunkSpladeLegEnabled` → `ChunkSearchOps.searchChunksSplade`), and
+  `ChunkDocumentWriter` no longer stamps `splade_status=PENDING` on chunks written while it is off.
+  Before this, a flag-off engine still ran the chunk-SPLADE leg against whatever partial chunk
+  `splade` population an earlier flag-on window had left on disk — so a flag-off A/B arm was not
+  measuring a leg-off engine. Any future re-run of the A/B below is therefore a cleaner comparison
+  than the ones recorded here. **Consequence to know:** chunks written while the flag is off carry
+  no `splade_status`, so flipping the flag on does NOT retro-enrol them (the lanes select by status
+  VALUE); a rebuild of those parents does.
 - **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
   anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
   offline result is F-033; this is its live-tier resolution.
@@ -2374,8 +2557,8 @@ above)*
   does not *raise* `leak_rate` — it can lower it). Tempdoc 701 added **`jseval union-recall-gate`**: the
   floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
   same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
-  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
-  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** standing
+  engine-quality ratchet. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
   like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
   golden/needle-burial-v1 1.0** (tol 0.05).
   Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
@@ -2389,6 +2572,15 @@ above)*
   `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
   release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
   parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
+- **Instrument rider (2026-09-05) — the gated quantity itself was under-reported on
+  whitespace-bearing doc ids until fixed.** `leg_union_recall` comes from
+  `staged_recall_accounting`, whose TREC reader truncated any doc id containing a space (see the
+  F-025 rider), so the floor was measured too low on such corpora. **Observed on
+  `mixed/ohr-bench-clean`** (bias −0.1091). The three pinned floor corpora
+  (`mixed/legal-clerc-200`, `beir/scifact`, `golden/needle-burial-v1`) all have whitespace-free doc
+  ids and are **unaffected — the pins stand and were not re-derived**. Fixed in
+  `scripts/jseval/jseval/trec.py`; a future `union-recall-gate-derive` that adds a corpus with
+  spaces in its ids would previously have pinned a floor ~0.11 too low.
 
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
@@ -2699,9 +2891,9 @@ above)*
 
 ### F-010: Entity-boosted BM25 does not improve search quality
 
-- **Answer:** Entity text fields (populated by NER backfill) contain the same tokens as the content field. DMQ entity boost at 2.0 hurts nDCG by 4.3%; at 0.5 hurts bm25_splade by 2.2%; at 0.0 is neutral. No positive signal at any boost level.
+- **Answer:** The retired analyzed entity-text fields contained the same tokens as the content field. DMQ entity boost at 2.0 hurt nDCG by 4.3%; at 0.5 it hurt bm25_splade by 2.2%; at 0.0 it was neutral. No positive signal appeared at any boost level, so 915 PR-C0 removed the query/configuration path and PR-C2 removed the duplicate physical fields.
 - **Evidence:** tempdoc 326 Phase 7 (A/B isolation on EnronQA, filtered entities + multiple boost values).
-- **Conditions/caveats:** Entity boost would add value if entity fields contained variant tokens NOT in the content field — this requires Phase 4 cluster expansion ("Jim" → "James"). Entity filtering (MIN_ENTITY_LENGTH=2) eliminates the catastrophic regression from noisy single-char entities. Default disabled (0.0).
+- **Conditions/caveats:** A future entity signal would need variant tokens not already present in content (for example cluster expansion from "Jim" to "James") and fresh evidence before activation. The retained `entity_*_raw` keyword fields still serve filtering and faceting; there is no entity-boost setting.
 
 ### F-011: NER model quality is sound (F1=0.91 on CoNLL-2003 validation)
 
@@ -2713,6 +2905,13 @@ above)*
 
 - **Original claim:** Dense retrieval broken for non-BGE-M3 configs. `prepareQueryVector()` falls through to `NO_EMBEDDING_SERVICE`.
 - **Correction:** Dense retrieval WAS working with gte-multilingual-base all along. Two separate issues were conflated: (1) EmbeddingGemma's FP16 NaN (head_dim=256, model-specific, resolved by 358 model change), (2) `KnowledgeHttpApiAdapter.buildPipelineExecution()` never emitted `dense: executed` component status on success — only reported `dense: skipped` on failure. jseval's pipeline tracking saw no `dense` in components and reported `requested_dense_but_not_observed`. Fixed: added `dense: executed` reporting when `pipelineConfig.denseEnabled()` and `!vectorBlocked && !hybridFallback`.
+- **Lane D C0 trace qualification (2026-09):** pre-C0 traces could also over-report dense execution
+  in the opposite direction: the planner selected a dense leg, then a lower-level English stop-word
+  or short-query guard silently skipped KNN. Therefore historical per-query dense skip rates are not
+  trustworthy. C0 moved the decision into `SearchPlanner`, replaced the authored list with a
+  content-field document-frequency signal, and emits a typed skipped dense stage. This does not
+  invalidate the corpus-level quality scores above; it qualifies only claims derived from the old
+  per-query execution trace.
 - **Impact:** All splade-v3+gemma `full` mode baselines (with gte-multilingual-base auto-discovered) were true 3-way fusion (bm25+splade+dense). Confidence upgraded from C to A. The full vs bm25_splade quality gap IS the dense contribution.
 
 ### F-013: SPLADE-v3 sparse quality is 20% below BGE-M3 sparse on SciFact
@@ -2770,7 +2969,7 @@ above)*
 
 - **Answer:** The GPL→LambdaMART learned-fusion reranker (2-feature: sparse+vector, trained on GPL **synthetic** queries) does NOT improve ranking and **consistently degrades** nDCG on real queries. It is non-viable in our cold-start (no real-feedback) situation. **Do not re-propose "activate/enrich GPL-LambdaMART" as a quality lever without real user-click data first.**
 - **Evidence:** tempdoc 245 measured it across three BEIR datasets — **SciFact −0.009, Arguana −0.10, NFCorpus −0.021** (`245-execution-log.md:61`); root cause *"GPL synthetic queries don't transfer to real BEIR queries"* (`245:332`); verdict *"not viable without real user query data," "may be fundamentally unrecoverable"* (`245:1263`). **Re-confirmed live 2026-06-15** (tempdoc 580 §12.8–12.9): on cord19 the GPL-trained model was a **degenerate no-op** — `hybrid_run.trec` byte-identical with vs without the model (LightGBM "no meaningful features" training warning); the reranker executes (`KnowledgeSearchEngine.java:531-574`) but changes nothing.
-- **Conditions/caveats:** 234 *predicted* LambdaMART beats fixed fusion *"when ≥500 labelled queries are available"* — the failure is specifically the **GPL synthetic substitute** for those labels, not learning-to-rank per se. The substrate (GPL pipeline + LambdaMartReranker, 2-feature) is built+wired and the bootstrap first-model bug was fixed (580 §12.7); what's missing is **real implicit-feedback capture** (clicks/opens — confirmed absent, 580 §12.1). So this is a *ship-then-learn* dependency, not a code/feature change. (D-002's corpus-adaptive CC-weight idea / FW-001 is a separate, also-superseded lever — see 580 §10.) **Real labels are necessary but NOT sufficient (580 §13.7, code-verified):** the V1 feature vector `[sparse, vector]` IS fusion's own leg scores (`LambdaMartFeatureSchema`; reranker runs on the *already-fused* list reading the same `sparse-/dense-retrieval` stage scores, `KnowledgeSearchEngine.java:544-560`) and even collapses BM25+SPLADE into one "sparse" slot — so the model is informationally *poorer* than the fusion it post-processes and is **structurally capped below fusion regardless of label quality**. Any real lift needs BOTH rich features beyond fusion's own scores (234 V2 schema) AND real labels. **Do not "capture feedback → re-activate the existing 2-feature model"** — that satisfies labels and still loses to fusion. (The §13.3 *additive-feature, label-free* fusion-weight selector is the cheaper sibling lever this analysis points to.) **Refinement (580 §16, code-verified):** "real labels confirmed absent" is too strong — *user-click/explicit* feedback is absent (a build away), but the **agentic path already persists a graded real-query signal** (retrieved ⊃ grounding ⊃ cited, with `parentDocId`/`chunkIndex` + similarity; `AgentCitationResolver`/`AgentInteractionMapper`). It's real-query (unlike GPL synthetic → sidesteps 245's failure mode) and a **harvest, not a build** — but it is **reorder-only** (recall-blind: the agent can only grade within retrieved top-k, with a circularity risk) and LLM-judged, not user behavior. The cheapest first-real-label experiment: assemble the persisted citation tuples, train on them, A/B on held-out real queries.
+- **Conditions/caveats:** 234 *predicted* LambdaMART beats fixed fusion *"when ≥500 labelled queries are available"* — the failure is specifically the **GPL synthetic substitute** for those labels, not learning-to-rank per se. The substrate now captures search-interaction and agent-citation dispositions and projects new rows under stable parent UIDs (`FeatureSnapshots`, `KnowledgeSearchController`, `AgentDispositionWiring`, and `LabelProjection`); legacy path rows remain readable without backfill. This closes the identity and durability prerequisite, not the quality gate: no evidence yet shows that the collected labels are numerous, representative, or sufficient to improve held-out ranking. **Real labels are necessary but NOT sufficient:** the V1 feature vector `[sparse, vector]` is fusion's own leg scores (`LambdaMartFeatureSchema`; the reranker reads the same sparse/dense retrieval scores), and it collapses BM25+SPLADE into one sparse slot, so the model is informationally poorer than the fusion it post-processes. Any real lift needs both richer features and measured real-label coverage. **Do not "capture feedback → re-activate the existing 2-feature model"**; train and A/B on held-out real queries only after the adoption threshold is met. Agent citations remain reorder-only and recall-blind, with a circularity risk, and are LLM-judged rather than user behavior.
 
 ### F-022: CC beats RRF for chunk-branch fusion (CC shipped as default)
 
@@ -2992,15 +3191,15 @@ picking up items here over inventing new experiments.
 - **Disposition (2026-08-14, owner decision via tempdoc 832):** presented with the three tiers
   (CI-blocking on engine paths / nightly scheduled run / keep agent-invoked) after the 803
   re-baseline plan made the floors trustworthy again, the owner chose **keep agent-invoked** —
-  the ratchets stay nudged by the `search-engine-hint` hook, with no CI wiring added. The
+  the ratchets require a manual `jseval` run, with no CI wiring added. The
   stagnation-asymmetry argument stands recorded; revisit only on a new owner decision or a
   measured recurrence of silent regression.
 - **Question:** Presentation (`ui-web`) is continuously serviced because every edit trips a discipline gate; relevance quality is gated only by an opt-in `jseval` run a human must remember. Should an engine-edit-triggered (or nightly) `jseval gate` fail the build when nDCG@10 drops beyond tolerance vs a pinned baseline, giving retrieval the same continuous-servicing pressure the UI has?
 - **Why it matters:** Under attention scarcity the gated surface crowds out the ungated one. Tempdoc 580 §1 measured the result: ~46k lines of presentation+governance churn over a window in which the retrieval engine moved 0 lines, baselines unrevalidated since 2026-04-19. A relevance ratchet would make silent stagnation/regression *fail loudly* instead of coasting invisibly.
-- **Prior art:** `jseval gate` + `calibrate-drift-baseline` already exist (tempdoc 400 LR4-g) but are manual-CI-only; the cohort envelope (`envelope.json`, ±2σ) already separates signal from noise. The missing piece is wiring, baseline-pinning, and the asymmetry argument — not new measurement tech.
+- **Prior art:** `jseval gate` exists but is manual-CI-only. It used to be paired with `calibrate-drift-baseline` and a cohort `envelope.json` (±2σ); both were removed in tempdoc 930 §18.1 row 7 having never produced a baseline, so a noise/signal separation is now part of what this question would have to build, not prior art. The missing pieces are wiring, baseline-pinning, a tolerance source, and the asymmetry argument.
 - **Status:** Named in tempdoc 580 §4c; deliberately NOT built. **§4a (2026-06-13) resolved the trigger negatively** — HEAD hybrid nDCG@10=0.758 is on-baseline (vs 0.754), no silent regression found, so there is no proof-by-example endorsement. Q-010 now rests only on the stagnation+asymmetry argument; awaits a user decision rather than self-endorsing.
 - **Partially operationalized (2026-06-24, 636 §IMPLEMENTED / D-005):** the nDCG-mean ratchet question is now *complemented* by a recall-survival ratchet — **`jseval leak-gate`** fails a build when a corpus's pinned `leak_rate` ceiling (from the Staged Recall Accounting projection) is exceeded. It is the engine-quality "fail loudly" gate Q-010 asked for, on a **leak** metric rather than nDCG mean (and on the cross-mode projection, not the per-mode envelope). Pinning per-corpus ceilings is the deliberate governance step that still awaits a user decision (like the nDCG ratchet — un-pinned corpora do not gate).
-- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance from the cohort envelope.
+- **Suggested approach:** Pin a per-corpus baseline from a green HEAD run; add `jseval gate` to the engine-module-edit path (PostToolUse hint or a discipline-gate kernel rule); tolerance hand-pinned per corpus (`relevance_gate`'s `tolerance_abs` / `tolerance_default_abs`), since there is no calibrated envelope to derive it from.
 
 ### Q-011: Does the production hybrid (chunk-passage) path also collapse on buried-signal at scale, and should paraphrase queries route away from lexical+CE?
 
@@ -3020,8 +3219,8 @@ above)*
 - **Why it matters:** The cross-encoder is ~82% of query latency (tempdoc 640 §C-2) and the default-on 636 levers feed its candidate pool, so a latency regression there is plausible *and currently unguarded*. For a local-first desktop product latency/footprint are co-equal with relevance.
 - **Prior art:** `relevance_gate.py` (the mirrored gate pattern), `diff_gate.compare_ratio` (the lower/higher-is-better ratio primitive), `calibrate.py` (the within-machine envelope that measured the perf-metric CVs).
 - **Status — IMPLEMENTED (2026-06-24, tempdoc 640):** shipped as **`jseval perf-gate`**, the perf-metric-family sibling of `relevance-gate`. A **relative** ratchet (ratio bands via `diff_gate.compare_ratio`, **no absolute SLO** — the no-users rule). Gate-able metrics, chosen by their measured within-machine CV (640 §confidence pass): **cross-encoder STAGE p50** latency (CV 1–10%; the dominant cost), **primary + enrichment throughput**, and **resident model footprint incl. the LLM** (best-effort — reads the active gguf named in the captured non-hashed `inference_status_snapshot`; ONNX-only on AI-offline runs). Deliberately **excluded as too noisy**: total latency p50 (CV 35–112%, cold-start), `index_size_bytes` (CV 11–62%).
-- **Now a first-class metric family in the canonical record** (a `metric_families` registry — the single source of truth; per-mode CE latency in `aggregate_metrics`, per-run throughput/footprint in `run_metrics`), so the floor **projects from the canonical release** (`perf_gate.project_release_to_perf_baselines`), closing the per-run fork the v1 baseline had. The noise floor is **envelope-aware** (a data-driven `1±k·CV` band from the `calibrate` envelope, with a graceful fixed-band fallback), perf is **trended** in the history DB (`jseval trend --metric`, direction-aware), and rendered in the published benchmark + register scorecard. **Source-class distinction:** per-mode and per-run families live *in* the record; **leak** (Q/D-005) is a cross-mode **projection** metric — registered in the same registry to unify the family concept, but kept projection-sourced, *not* migrated. **Advisory tier:** the `search-engine-hint` hook nudges it (with relevance + leak), not CI-blocking — inherits the relevance ratchet's tier. Conforms to the canonical-record + governed-projection seam (623).
-- **Reach — now BUILT (2026-06-24, tempdoc 640 reach + residuals):** the former reach shipped. (a) The per-run **fork is fully closed** — `release.v1.json` recomposed from a 5-corpus cohort (`scifact` + `courtlistener-200` + `enron-qa` + `miracl-de-2k` + `miracl-fr-2k`) at one commit; the perf baseline is now a `current_release` pointer, so floors project from the same canonical release relevance uses. (b) The **shared ratchet kernel** (`jseval/ratchet_kernel.py`) unifies the relevance / perf / leak / llm-gen gate orchestration. (c) The combined **engine-quality scorecard** (`scripts/docs/gen-scorecard.mjs` → `docs/reference/benchmarks/scorecard.md`) co-locates all axes as one delta-vs-guard table. (d) The **LLM-generation-latency** sibling axis shipped as a `bench`-sourced `llm-gen` family + `jseval llm-gate` (TTFT / e2e / **tokens-sec**, the last now captured — see the inference-runtime register's llm-gen finding) — the inference-path subject, nudged by `search-engine-hint`. **Reconciled (realized vs designed):** footprint is the **resident-during-eval** metric (ONNX during retrieval eval; configured-stack-incl-LLM deferred); the noise floor is the **fixed ratio band + envelope fallback** (the measured CE-stage CV superseded "median ± envelope"). **Still deferred:** 625's *generalized* projection-provenance framework (its own tempdoc).
+- **Now a first-class metric family in the canonical record** (a `metric_families` registry — the single source of truth; per-mode CE latency in `aggregate_metrics`, per-run throughput/footprint in `run_metrics`), so the floor **projects from the canonical release** (`perf_gate.project_release_to_perf_baselines`), closing the per-run fork the v1 baseline had. The noise floor is **envelope-aware** (a data-driven `1±k·CV` band from the `calibrate` envelope, with a graceful fixed-band fallback), perf is **trended** in the history DB (`jseval trend --metric`, direction-aware), and rendered in the published benchmark + register scorecard. **Source-class distinction:** per-mode and per-run families live *in* the record; **leak** (Q/D-005) is a cross-mode **projection** metric — registered in the same registry to unify the family concept, but kept projection-sourced, *not* migrated. **Advisory tier:** run alongside relevance + leak, not CI-blocking — inherits the relevance ratchet's tier. Conforms to the canonical-record + governed-projection seam (623).
+- **Reach — now BUILT (2026-06-24, tempdoc 640 reach + residuals):** the former reach shipped. (a) The per-run **fork is fully closed** — `release.v1.json` recomposed from a 5-corpus cohort (`scifact` + `courtlistener-200` + `enron-qa` + `miracl-de-2k` + `miracl-fr-2k`) at one commit; the perf baseline is now a `current_release` pointer, so floors project from the same canonical release relevance uses. (b) The **shared ratchet kernel** (`jseval/ratchet_kernel.py`) unifies the relevance / perf / leak / llm-gen gate orchestration. (c) The combined **engine-quality scorecard** (`scripts/docs/gen-scorecard.mjs` → `docs/reference/benchmarks/scorecard.md`) co-locates all axes as one delta-vs-guard table. (d) The **LLM-generation-latency** sibling axis shipped as a `bench`-sourced `llm-gen` family + `jseval llm-gate` (TTFT / e2e / **tokens-sec**, the last now captured — see the inference-runtime register's llm-gen finding) — the inference-path subject, run alongside the same advisory ratchet set. **Reconciled (realized vs designed):** footprint is the **resident-during-eval** metric (ONNX during retrieval eval; configured-stack-incl-LLM deferred); the noise floor is the **fixed ratio band + envelope fallback** (the measured CE-stage CV superseded "median ± envelope"). **Still deferred:** 625's *generalized* projection-provenance framework (its own tempdoc).
 
 ### Q-013: Candidate-set integrity (639) — extend Staged Recall Accounting, or fork a parallel recall instrument?
 
@@ -3327,7 +3526,21 @@ Questions — these are "we should eventually" not "we need to know."
 - **FW-005: Tika-specific ingestion tax** — ~~Answered.~~ Tika structured extraction on OHR-Bench PDFs: -16.2% nDCG. Comparable to GOT pre-extracted (-14.7%). **VLM extraction via existing chat model (Qwen 3.5) is the chosen path. Docling integration cancelled.** Source: tempdoc 252 verification (2026-03-20), F-009 updated recommendation.
 - **FW-006: English stemming evaluation** — **WON'T-DO (D-003 / ADR-0043 / tempdoc 581).** A per-language (English) stemmer is a per-language component the language-diversity invariant rejects. Also separately blocked: per tempdoc 223, analyzer-level content stemming breaks the fuzzy zero-hit correction (the analyzed query token diverges in edit distance from the stemmed index term). Distinct from the existing query-side SIMPLE-syntax "stemming" path, which is unaffected.
 - **FW-007: Token estimation calibration** — Hybrid char+word heuristic is intentionally conservative but lacks calibration across content types (URLs, code, JSON, minified JS). Source: RAG-002 (retired from issues/).
-- **FW-008: Vector quantization cross-machine evidence** — Codec wiring implemented (default off). Needs cross-machine benchmark evidence before enabling by default. Source: RAG-004 (retired from issues/). **Still open (verified 2026-06-15):** default remains Float32 (`JustSearchCodec.java:43`); only storage (~75%) is measured — the **nDCG quality cost of Int8 is unmeasured** (single-machine only, RAG-003/235). **Post-cutoff capability note (580 §14.1, Lucene-10.4.0-verified):** `Lucene104(Hnsw)ScalarQuantizedVectorsFormat` exposes **1/2/4/7/8-bit** + **asymmetric 2-bit-store/4-bit-query** ("2-bit recall-competitive with old 4-bit") — so a lower-bit path than Int8 is config-only (no new dep) but reindex-required and recall is corpus-dependent; an **efficiency** lever (memory), not a quality one — eval-gate recall before adopting.
+- **FW-008: Vector quantization evidence** — **DECIDED 2026-09-05 (F-060): the int8 write default
+  does not ship; Float32 stays.** The campaign below ran on draft #662 and failed the storage leg
+  by construction (raw float32 retained beside the int8 copy, index +25 %) and the 0.01-absolute
+  recall@50 leg (−0.020), while ranking quality on scifact/enron was unaffected. #662 closed; the
+  codec work is reusable only if a raw-vector-dropping format or a resident-memory criterion is
+  pre-registered first. Earlier text (2026-09-03 candidate) kept for the rule as it was run:** PR-C1 introduces the restart-safe `JustSearchCodecV2`, pins unsigned-byte
+  Int8, and makes quantization the unconfigured write default while retaining explicit Float32
+  opt-out. Restart, mixed-segment, merge, and configuration tests are short-checkable, but they do
+  not establish ranking quality or footprint. The default is not accepted or merge-ready until the
+  tempdoc 915 campaign passes the stricter intersection: jseval nDCG@10 and R@10 within 0.010 on
+  the registered corpora, EngineVectorIndexBench Float32 recall@50 at least 0.97 and Int8 no more
+  than 0.01 absolute below it, smaller index bytes, and reported RSS. Cross-machine
+  replication remains desirable but is not silently claimed. The lower-bit
+  `SINGLE_BIT_QUERY_NIBBLE` `chunk_vector` arm remains report-only and cannot authorize a shipped
+  default.
 - **FW-009: Citation scorer threshold calibration** — Default 0.5 threshold works in tests but not validated across real-world content types. Source: RAG-006 (retired from issues/).
 - **FW-010: 1M+ vector scale benchmarks** — No runs at 1M+ vectors or cross-machine. Current evidence limited to smaller datasets on single machine. Source: RAG-003 (retired from issues/).
 
@@ -3335,7 +3548,7 @@ Questions — these are "we should eventually" not "we need to know."
 
 <!-- source: docs/explanation/23-search-pipeline-overview.md -->
 
-# 23. Search Pipeline Overview
+# Search Pipeline Overview
 
 JustSearch's search pipeline spans two processes (Head and Body) and is
 split into ingestion-time (offline, index-building) and query-time (online,
@@ -3425,7 +3638,7 @@ query-time stages search against.
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
 | 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
-| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
+| 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes the multi-valued keyword fields `entity_persons_raw`, `entity_organizations_raw`, and `entity_locations_raw` for filters, facets, and NER-membership evidence selection; the redundant analyzed entity-text duplicates were retired in 915 PR-C2 |
 | 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
 | 9   | **Commit**               | `CommitOps`                    | On time (>10 s), size (>1,000 docs), or shutdown; NRT refresh                                 |
 
@@ -3439,7 +3652,7 @@ Three retrieval models can run in any combination:
 
 | Leg                         | Model / Engine                  | Index Field                 | Key Parameters                                  |
 | --------------------------- | ------------------------------- | --------------------------- | ----------------------------------------------- |
-| **BM25** (sparse)           | Lucene BM25                     | `content` / `chunk_content` | k1=0.9, b=0.4; SIMPLE prefix expansion ≥3 chars; `combineMultiField()` builds `DisjunctionMaxQuery` with up to 6 disjuncts: `content` + `title`×3.0 + 3 entity text fields×2.0 (326). Entity boost configurable via `ResolvedConfig.Search.entityBoost()`, default 0.0 (disabled per F-010) |
+| **BM25** (sparse)           | Lucene BM25                     | `content` / `chunk_content` | k1=0.9, b=0.4; SIMPLE prefix expansion ≥3 chars; `combineMultiField()` builds a 3-disjunct `DisjunctionMaxQuery`: `content` + `title`×3.0 + `author`×3.0. The retired `entityBoost` status property remains an always-zero compatibility tombstone until the wire can be versioned. |
 | **Dense** (KNN)             | gte-multilingual-base (768-dim)                                          | `vector` / `chunk_vector`   | ef_search=100; HNSW M=16                        |
 | **SPLADE** (learned sparse) | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) | `FeatureField` entries      | Optional IDF-weighted query encoding            |
 
@@ -3459,7 +3672,7 @@ via virtual threads, then converge at the fusion stage.
 
 | #   | Stage                                 | What It Does                                                                                                                                                        |
 | --- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope` per query term; O(1) via IndexReader; forwarded but not yet used for routing                                                      |
+| 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope`, field-local document count, and minimum analyzed-term document-frequency fraction; O(1) via IndexReader; the planner uses the field-local values for dense-skip routing |
 | 4   | **Filter Parsing + Entity Expansion** | gRPC filters → Lucene queries; entity facet filters expanded via disambiguation cluster snapshot                                                                    |
 | 5   | **Staged Retrieval Dispatch**         | Dispatches to enabled legs; standard combos use optimized methods (`searchHybrid`, `searchHybridSplade`); novel combos use pairwise RRF fusion via `fuseLegs()`     |
 | 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 10× limit for over-retrieval (capped at `candidate_limit_max`, default 100)                                                  |
@@ -3467,7 +3680,7 @@ via virtual threads, then converge at the fusion stage.
 | 8   | **SPLADE Search** ‖                   | `FeatureField` query with learned sparse weights                                                                                                                    |
 | 9   | **CC / RRF Fusion**                   | **CC** (default): min-max normalized convex combination with per-leg weights; **RRF** (alternative): `score = Σ(weight / (K + rank)) + bm25_boost × raw_score` (K=60, vectorWeight=0.75). 3-way variant (`fuseWithCC3`) available when SPLADE is active |
 | 10  | **Low-Signal Gating**                 | Caps vector-only results (default 3) when vector top score <0.40; prevents semantic hijack                                                                          |
-| 11  | **Stop-Word Short-Circuit**           | Skips vector search for trivial queries (<4 chars or single stop words)                                                                                             |
+| 11  | **Planner-Owned Dense Skip**          | When BM25 or SPLADE can run, skips dense retrieval for queries <4 characters or queries whose analyzed terms all occur in at least 25% of a `content` corpus with ≥100 field documents; dense-only search and direct RAG remain recall-first |
 | 12  | **Fuzzy Correction**                  | Two-stage on SIMPLE queries: (a) full Levenshtein fuzzy retry fires when the query returns **zero** hits; (b) per-term augmentation of zero-`docFreq` terms fires when the query returns **nonzero** hits (can still change which document ranks first) |
 
 ‖ = parallel execution

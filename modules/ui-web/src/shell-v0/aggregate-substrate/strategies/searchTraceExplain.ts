@@ -124,14 +124,18 @@ const EXPANSION_SKIP_WORDING: Record<string, string> = {
  * 593 walkthrough showed the raw code interpolated to the user ("blocked
  * (LEGACY_INDEX_NO_FINGERPRINT)") — the Nielsen "no error codes" violation. These
  * are lowercase cause phrases so they read after a context prefix
- * ("semantic ranking blocked — the index needs a one-time rebuild").
+ * ("semantic ranking blocked — the index needs a one-time rebuild"). The two planner-owned
+ * `SKIPPED_*` values are complete sentences because the deliberate omission is not a block.
  *
- * Covers the 14 embedding-compat + routing codes that can populate the three
- * fields. The 11 chunk-merge codes (APPLIED / SKIPPED_*) feed the chunk-merge stage
- * (a diagnostic-tier stage reason), not these fields, and are declared
- * `noWordingExempt` in `governance/search-degradation-reason-codes.v1.json`. The
- * `check-search-degradation-reason-codes` gate enforces this map ↔ `SearchReasonCode`
- * correspondence so a new emittable code without wording fails the build.
+ * Covers every embedding-compat + routing code that can populate the three
+ * fields. The chunk-merge codes (APPLIED / SKIPPED_*) feed the chunk-merge stage
+ * (a diagnostic-tier stage reason), not these fields, so they are deliberately unworded.
+ * The keys of this map are pinned against a declared code list in
+ * `searchTraceExplain.test.ts` (both directions: nothing declared goes unworded, no worded
+ * key is dead). That list is a hand-kept mirror of the Worker's `SearchReasonCode` — the
+ * generated wire schema types these fields as plain `string`, so nothing binds the mirror to
+ * the enum. The offline `search-degradation-reason-codes` register + check that used to
+ * scrape the Java file were retired in tempdoc 930 (they ran in no workflow).
  */
 export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   // embedding / index-model readiness
@@ -151,6 +155,10 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
   NO_EMBEDDING_SERVICE: 'the embedding service is offline',
   EMBEDDING_GENERATION_FAILED: 'query encoding failed',
   EMBEDDING_EXCEPTION: 'query encoding hit an error',
+  SKIPPED_SHORT_QUERY:
+    'Semantic ranking was skipped because the query is too short to produce a useful semantic signal.',
+  SKIPPED_NO_DISCRIMINATIVE_TERM:
+    'Semantic ranking was skipped — every word in this query is common across your documents.',
 };
 
 /**
@@ -163,9 +171,9 @@ export const DEGRADATION_REASON_WORDING: Record<string, string> = {
  *
  * Keyed by `CrossEncoderSkipReason` (app-api) wire strings, drop class only — the by-design skips
  * (DISABLED / NAVIGATIONAL_QUERY / BELOW_MIN_THRESHOLD / DOCS_TOO_LONG / PIPELINE_NOT_ELIGIBLE /
- * MODEL_NOT_CONFIGURED / FUSION_CONFIDENT) are declared `noWordingExempt` in
- * `governance/search-degradation-reason-codes.v1.json` because they never reach this line. The
- * `check-search-degradation-reason-codes` gate holds the two halves in correspondence.
+ * MODEL_NOT_CONFIGURED / FUSION_CONFIDENT) are deliberately unworded because they never reach
+ * this line — `CrossEncoderSkipReason.isDrop()` is the producer-side split, an exhaustive switch.
+ * This map's keys are pinned against the drop list in `searchTraceExplain.test.ts`.
  *
  * Tone: state what did not run and what the ranking is instead. No alarm — the results are real.
  */
@@ -225,7 +233,14 @@ export function userSummaryParts(trace: SearchTrace): string[] {
   // window-level banner carries the full cause+remedy.
   const d = trace.degradation;
   if (d?.vectorBlocked && d.vectorBlockedReason) {
-    parts.push(degradationPhrase('semantic ranking blocked', d.vectorBlockedReason));
+    if (d.vectorBlockedReason.startsWith('SKIPPED_')) {
+      parts.push(
+        DEGRADATION_REASON_WORDING[d.vectorBlockedReason]
+          ?? `Semantic ranking was skipped (${d.vectorBlockedReason})`,
+      );
+    } else {
+      parts.push(degradationPhrase('semantic ranking blocked', d.vectorBlockedReason));
+    }
   }
   if (d?.hybridFallback && d.hybridFallbackReason) {
     parts.push(degradationPhrase('fell back from hybrid', d.hybridFallbackReason));

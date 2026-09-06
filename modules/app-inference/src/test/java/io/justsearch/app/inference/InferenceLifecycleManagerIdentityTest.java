@@ -145,8 +145,8 @@ final class InferenceLifecycleManagerIdentityTest {
     InferenceConfig vduConfig = config.withVduMode(true);
     org.junit.jupiter.api.Assertions.assertNotEquals(config, vduConfig);
     // Confirm the TransitionReason values are reachable + bounded.
-    org.junit.jupiter.api.Assertions.assertNotNull(TransitionReason.VDU_ENTER);
-    org.junit.jupiter.api.Assertions.assertNotNull(TransitionReason.VDU_EXIT);
+    assertNotNull(TransitionReason.VDU_ENTER);
+    assertNotNull(TransitionReason.VDU_EXIT);
     assertEquals("vdu_enter", TransitionReason.VDU_ENTER.wireValue());
     assertEquals("vdu_exit", TransitionReason.VDU_EXIT.wireValue());
   }

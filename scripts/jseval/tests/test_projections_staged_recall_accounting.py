@@ -323,3 +323,28 @@ class TestCappedRun:
         assert out["buckets"]["LEG_MISS"] == []        # NOT a phantom leg-miss
         all_qids = [q for v in out["buckets"].values() for q in v]
         assert all_qids == ["q1"]
+
+
+class TestDocIdWithSpaces:
+    """Regression (tempdoc 916 §L.8): OHR-bench doc ids contain spaces. A
+    left-anchored ``parts[2]`` TREC read truncated them, so every space-bearing
+    gold looked absent from both the leg union and the final list — 105/962
+    reconciliation mismatches on mixed/ohr-bench-clean, all "projection says
+    absent, harness says present", biasing leg_union_recall by -0.1091."""
+
+    GOLD = "law/airtechinternationalgroupinc_05_08_2000-ex-10.4-franchise agreement_p8"
+
+    def test_space_bearing_gold_reconciles(self, synthetic_run_dir):
+        rd = synthetic_run_dir.run_dir
+        synthetic_run_dir.with_per_query("vector", [_pq("q1", [self.GOLD], 1.0)])
+        synthetic_run_dir.with_per_query("hybrid", [_pq("q1", [self.GOLD], 1.0, ndcg=1.0)])
+        _write_trec(rd, "vector", {"q1": [self.GOLD]})
+        _write_trec(rd, "hybrid", {"q1": [self.GOLD]})
+        synthetic_run_dir.with_qrels({"q1": {self.GOLD: 1}})
+
+        out = produce(rd)
+        assert out["reconciliation"] == {"checked": 1, "mismatches": 0, "applicable": True}
+        assert out["buckets"]["OK_RANK1"] == ["q1"]
+        assert out["buckets"]["LEG_MISS"] == []
+        assert out["aggregate"]["leg_union_recall"] == 1.0
+        assert out["aggregate"]["final_recall"] == 1.0

@@ -24,9 +24,9 @@ load-bearing discipline:
 This protocol is defined in full in
 [`slice-execution.md`](slice-execution.md) (§"closure protocol"); a conflict row
 here is one of the override artifacts that doc requires (alongside the commit
-message naming the verdict and a committed follow-up slice id). See also the
-`independent-reviewer-required` and `ux-audit-closure` rows in
-`docs/reference/contributing/tier-register.md`.
+message naming the verdict and a committed follow-up slice id). Both
+`independent-reviewer-required` and `ux-audit-closure` are honor-system rules,
+not build-enforced (the gates that enforced them were retired, tempdoc 563).
 
 ## How to add a row
 
@@ -47,5 +47,5 @@ The historical `C-001 … C-018` conflict family was authored during the
 frontend-rewrite kernel work (the retired `421` draft, ~2026-05) and was retired
 with that draft on 2026-06-09. Those rows are preserved in git history; the
 substrate-discipline lessons they produced live on as named principles in
-`docs/reference/contributing/agent-postmortems.md` and `docs/reference/contributing/tier-register.md`
-(rows `independent-reviewer-required`, `substrate-without-consumer-flavors`, etc.).
+`docs/reference/contributing/agent-postmortems.md`
+(`independent-reviewer-required`, `substrate-without-consumer-flavors`, etc.).

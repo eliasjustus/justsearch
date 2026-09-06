@@ -5,7 +5,7 @@ status: stable
 description: "HNSW search, SPLADE learned sparse retrieval, hybrid fusion, commit metadata system."
 ---
 
-# 18. Adapters-Lucene Deep Dive (The "Search Engine" Internals)
+# Adapters-Lucene Deep Dive
 
 The `modules/adapters-lucene` module provides the core search engine integration for JustSearch. It wraps Apache Lucene 10 with HNSW vector search, hybrid BM25+KNN fusion, and a sophisticated commit metadata system for schema evolution.
 
@@ -314,9 +314,12 @@ Detects weak signal from either ranking and adjusts fusion. When low signal is d
 
 For current low-signal detection thresholds and cap values, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 10](23-search-pipeline-overview.md).
 
-### 4.5 Stop-Word Short-Circuit
+### 4.5 Planner-Owned Dense Skip
 
-Skips expensive vector search for trivial queries (very short queries or single-word common stop words). For current thresholds, see [`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
+When another retrieval leg can run, the planner skips vector search for queries shorter than four
+characters or queries whose analyzed terms are all common in the indexed `content` corpus. It never
+applies this optimization to dense-only search or direct RAG. For current thresholds, see
+[`docs/explanation/23-search-pipeline-overview.md` §Stage 11](23-search-pipeline-overview.md).
 
 ## 4B. SPLADE (Learned Sparse Retrieval)
 
@@ -370,6 +373,14 @@ Both paths share the same `FeatureField` query building logic. The chunk
 path additionally includes `PARENT_TOKEN_COUNT` in its stored-field
 allowlist so downstream fusion can modulate SPLADE weight by parent
 document length (see [23-search-pipeline-overview.md § Stage 13b](23-search-pipeline-overview.md)).
+
+`rag.chunk_splade.enabled` controls the chunk-SPLADE stage on **both the
+write side and the query-side leg** (tempdoc 712, 931 §E item 8): with the
+flag off no backfill lane encodes chunk `splade` postings, `ChunkDocumentWriter`
+writes no `splade_status` on new chunks, and `SearchExecutor` does not run the
+chunk-SPLADE leg at all — so the leg cannot score against a partial population
+left over from an earlier flag-on window. The whole-doc path is unaffected by
+this flag.
 
 ### 4B.4 Known Limitation
 
@@ -497,7 +508,7 @@ boolean hasMore = topDocs.scoreDocs.length > limit;
 | Field | Type | Purpose |
 |-------|------|---------|
 | `doc_id` / `_id` | keyword | Primary key |
-| `doc_uid` | keyword | Tiebreaker for search-after |
+| `doc_uid` | keyword | Stable document identity and tiebreaker for search-after |
 | `vector` | vector | Document embeddings |
 | `chunk_vector` | vector | Chunk-level embeddings |
 | `parent_doc_id` | keyword | Links chunks to parent |
@@ -581,6 +592,9 @@ metadata.put("grammar_hash", sha256(intentGrammar));
 indexFingerprint(fieldsCatalog, analyzerDefs, vectorFormat, hnswParams, chunking,
         embeddingModelSha, spladeModelSha)   // IndexFingerprint.compute(...)
     .ifPresent(fp -> metadata.put("index_fingerprint", fp));   // omitted, never guessed, if indeterminate
+metadata.put("index_fingerprint_inputs", canonicalJson(...));  // ALWAYS stamped; the digest's own inputs,
+                                                               // compared (minus the ambiguous model keys)
+                                                               // whenever EITHER side lacks a digest
 metadata.put("boosts_fp", sha256(boostsConfig));               // benign — never a rebuild trigger
 ```
 
@@ -593,7 +607,11 @@ never compared:
 ```java
 void checkOnOpen(Path indexPath, Map<String, Object> expected) {
     Map<String, String> stored = readCommitMetadata(indexPath);
-    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);  // blank either side => skip, never "mismatch"
+    // blank stored/expected => skip, never "mismatch" — except that a blank digest on EITHER side falls
+    // back to comparing index_fingerprint_inputs minus the model keys neither side can state
+    // unambiguously, reported under the index_fingerprint key
+    // (docs/explanation/11-index-schema-migration.md).
+    List<Diff> diffs = ParityDiagnostics.diff(stored, expected);
     if (diffs.isEmpty()) {
         return;
     }

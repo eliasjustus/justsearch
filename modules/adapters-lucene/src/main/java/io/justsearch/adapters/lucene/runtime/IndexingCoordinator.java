@@ -199,6 +199,29 @@ public final class IndexingCoordinator {
     }
   }
 
+  /**
+   * Tempdoc 931 §E item 10 — purges deleted-but-unmerged documents from the active index.
+   * Serialized against every other mutation like the rest of the write path, because a force-merge
+   * concurrent with an in-flight RMW is exactly what the single-writer invariant exists to prevent.
+   *
+   * <p>Does NOT commit; the caller commits with {@link CommitReason#SETTLE}.
+   *
+   * @see WritePathOps#settle(boolean, int)
+   */
+  public void settle(boolean expungeDeletesOnly, int maxSegments) {
+    acquireReadLockTimed();
+    try {
+      dispatchLock.lock();
+      try {
+        writeOps.get().settle(expungeDeletesOnly, maxSegments);
+      } finally {
+        dispatchLock.unlock();
+      }
+    } finally {
+      session.writeBarrier.readLock().unlock();
+    }
+  }
+
   /** Pass-through convenience. Wipes the index; used by reset. */
   public void deleteAll() {
     var op = IndexWriteOperation.DeleteAll.of();
@@ -310,13 +333,15 @@ public final class IndexingCoordinator {
         if (fields == null) {
           throw new IllegalArgumentException("IndexDocument.fields() must not be null");
         }
+        FieldMapper.DroppedVectorReport droppedVectors = new FieldMapper.DroppedVectorReport();
         dispatchLock.lock();
         try {
-          writeOps.get().indexDocument(fields);
+          writeOps.get().indexDocument(fields, droppedVectors);
         } finally {
           dispatchLock.unlock();
         }
         session.pendingDocs.incrementAndGet();
+        reportDroppedVectors(droppedVectors, 1);
       } finally {
         session.queueDepth.decrementAndGet();
       }
@@ -343,6 +368,7 @@ public final class IndexingCoordinator {
         List<WritePathOps.DocWork> softDeletes = new ArrayList<>();
         List<WritePathOps.DocWork> updates = new ArrayList<>();
         List<String> hardDeletes = new ArrayList<>();
+        FieldMapper.DroppedVectorReport droppedVectors = new FieldMapper.DroppedVectorReport();
         for (IndexDocument doc : documents) {
           Map<String, Object> fields = doc.fields();
           if (fields == null) {
@@ -358,7 +384,7 @@ public final class IndexingCoordinator {
             hardDeletes.add(idValue);
             continue;
           }
-          Document luceneDoc = session.fieldMapper.toDocument(fields);
+          Document luceneDoc = session.fieldMapper.toDocument(fields, droppedVectors);
           boolean softDelete = asBoolean(fields.get(session.softDeleteField));
           if (softDelete) {
             softDeletes.add(new WritePathOps.DocWork(idValue, luceneDoc, fields));
@@ -373,6 +399,7 @@ public final class IndexingCoordinator {
           dispatchLock.unlock();
         }
         session.pendingDocs.addAndGet(documents.size());
+        reportDroppedVectors(droppedVectors, documents.size());
         TelemetryEvents events = session.telemetryEvents;
         if (events != null) {
           if (!hardDeletes.isEmpty()) events.onHardDelete(hardDeletes.size());
@@ -473,6 +500,27 @@ public final class IndexingCoordinator {
     TelemetryEvents events = session.telemetryEvents;
     if (events != null) {
       events.onValidationFailure(reason);
+    }
+  }
+
+  /**
+   * One WARN per write call for the dense-vector fields dropped in it (tempdoc 931 §C.3), naming at
+   * most three documents. Per-document logging would turn a corpus-wide encoder fault into log
+   * spam, which is why the report is accumulated across the batch and read once here.
+   */
+  private void reportDroppedVectors(FieldMapper.DroppedVectorReport report, int documentsInWrite) {
+    if (report == null || report.count() == 0) return;
+    log.warn(
+        "Dropped {} unusable vector field(s) across {} document(s) — documents were written"
+            + " without them and their embedding status set to FAILED; first {}: {} ({})",
+        report.count(),
+        documentsInWrite,
+        report.sampleDocIds().size(),
+        report.sampleDocIds(),
+        report.lastReason());
+    TelemetryEvents events = session.telemetryEvents;
+    if (events != null) {
+      events.onVectorFieldDropped(report.count());
     }
   }
 }

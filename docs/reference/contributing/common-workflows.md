@@ -10,9 +10,9 @@ description: "Step-by-step recipes for recurring JustSearch contribution tasks �
 On-demand recipes for recurring contribution tasks. This file is **not** loaded
 every session (tempdoc 620 residence relocation) — load it when you start one of
 these tasks. The four path-triggerable recipes (gRPC, REST, config key, agent
-tool) are *also* pushed just-in-time by `consult-doc-hint` when you edit the
-relevant region (see `governance/consult-register.v1.json`); this file is the
-full reference behind those nudges.
+tool) are *also* registered for just-in-time consultation in
+`governance/consult-register.v1.json` when you edit the relevant region; this
+file is the full reference behind those recipes.
 
 ## Add a gRPC method
 1. Define in `modules/ipc-common/src/main/proto/indexing.proto`
@@ -139,7 +139,7 @@ Load `/docs-maintenance` for the full regeneration checklist and doc quality rul
 - Regenerate llms.txt: `node scripts/docs/llmstxt-generate.mjs`
 - Refresh canonical documentation embedded in Claude skills: `node scripts/docs/skills-sync.mjs`; then manually review the corresponding Codex skills when the shared workflow or source material changed.
 - After changing cross-harness invariants: `node scripts/docs/agent-instructions-sync.mjs`
-- After changing hook bindings: `node scripts/codegen/gen-agent-hooks.mjs && node scripts/codegen/gen-codex-hooks.mjs`
+- After changing hook bindings: `node scripts/ci/regen-all.mjs --only agent-hooks-wiring,codex-hooks`. The Claude generator refreshes tracked `.claude/settings.json` and `.claude/settings.local.json.example`; `--check` verifies both without creating ignored local state.
 - After module changes: `node scripts/architecture/module-deps.mjs --update-canonical`
 - After config changes: `node scripts/docs/generate-runtime-config-matrix.mjs --write-doc docs/reference/configuration/runtime-config-ownership-matrix.md`
 
@@ -154,6 +154,35 @@ git-tracked. Whether a new worktree starts with them depends on whether your bas
 them at creation time — don't rely on it. `node scripts/dev/prepare-worktree.cjs` seeds any
 missing one from its committed `.example` file (never overwriting an existing copy), so it is
 always safe to run. `--no-dist` skips the Java dists (FE-only prep). See `MAINTAINING.md`.
+
+**Removing a registered worktree.** Run the removal tool from the owning repository root, with
+the shell's current directory outside the target. Preview the exact registered target first:
+
+```powershell
+node scripts/dev/remove-worktree.cjs <registered-path> --dry-run
+node scripts/dev/remove-worktree.cjs <registered-path> --allow-ignored --delete-branch --session-id SESSION_ID
+```
+
+Git registration is the authority, so linked worktrees may live under any parent directory and
+use arbitrary branch names; paths with spaces or Unicode and detached worktrees are supported.
+The tool refuses the main worktree, path aliases, nested registrations, locks, tracked/staged or
+untracked changes, and target-related runtime or helper state that is live or cannot be proven
+safe. Ignored paths are inventoried in the preview and require the explicit `--allow-ignored`
+option for removal. Preview performs no ref, telemetry, helper, register, or filesystem writes.
+
+Removal unlinks junctions link-only, deletes the validated tree, and then removes only that exact
+Git registration. `--delete-branch` deletes the captured local branch only when it still names the
+captured HEAD and no worktree uses it; detached HEAD skips branch deletion. The tool does not infer
+merge state or provide a general force bypass. Editor/task discovery is necessarily incomplete,
+and a process can start before its registration write becomes visible, so close target-scoped
+tools and tasks before removal; an observed in-progress registration write blocks teardown.
+
+Merge attribution is opt-in. A known explicit `--session-id` lets teardown use a supplied
+`--merge-commit` or query the branch's merged PR, then invoke `record-merge.mjs` with that exact
+session. Omit `--session-id`, or pass the supported `unknown` sentinel, for unattributed cleanup;
+both forms skip the merged-PR lookup and telemetry writer. Environment variables, the
+`current-session-id` pointer, and the worktree hash remain helper caller-identity fallbacks, but
+they never establish merge attribution during teardown.
 
 **Shared models / runtime resolution.** The dev-runner resolves `JUSTSEARCH_MODELS_DIR` from the
 **main** checkout automatically (tempdoc 618 §2). Runtime resolution is **GPU-only by design as

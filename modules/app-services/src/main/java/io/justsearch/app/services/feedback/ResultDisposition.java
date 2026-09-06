@@ -9,6 +9,9 @@ package io.justsearch.app.services.feedback;
  *
  * <p>This is ONE canonical stream fed by multiple {@link Contributor}s (the §17.3 anti-fork design:
  * the agentic-citation harvest and the search-UI interaction both land here, not in two stores).
+ * New persisted rows use the stable parent {@code doc_uid} in {@code docId}; pre-Phase-2 rows retain
+ * their path key and remain readable. Contributors may transiently produce a path-oriented id, but
+ * their owning capture boundary must resolve it before append rather than create a new path row.
  */
 public record ResultDisposition(
     String interactionId, String docId, Kind kind, Contributor contributor, long occurredAtMs) {

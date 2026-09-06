@@ -63,10 +63,8 @@ class EmbeddingBackfillOpsTest {
               anyInt()))
           .thenReturn(List.of("chunk1", "chunk2"));
       when(signalBus.isMainGpuActive()).thenReturn(false);
-      when(documentFieldOps.getDocumentField("chunk1", SchemaFields.CHUNK_CONTENT))
-          .thenReturn("content one");
-      when(documentFieldOps.getDocumentField("chunk2", SchemaFields.CHUNK_CONTENT))
-          .thenReturn("content two");
+      when(documentFieldOps.getDocumentContentBatch(List.of("chunk1", "chunk2")))
+          .thenReturn(Map.of("chunk1", "content one", "chunk2", "content two"));
     }
 
     @Test

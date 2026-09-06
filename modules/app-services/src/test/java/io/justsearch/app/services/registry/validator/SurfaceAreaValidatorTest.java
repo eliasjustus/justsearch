@@ -94,7 +94,7 @@ final class SurfaceAreaValidatorTest {
   /** Builds a ResourceCatalog of EVENT_STREAM Resources, each stamped with the given altitude role. */
   private static io.justsearch.agent.api.registry.ResourceCatalog resourceCatalog(
       Map<String, Role> idToRole) {
-    java.util.List<io.justsearch.agent.api.registry.Resource> defs = new java.util.ArrayList<>();
+    List<io.justsearch.agent.api.registry.Resource> defs = new java.util.ArrayList<>();
     idToRole.forEach(
         (id, role) ->
             defs.add(
@@ -120,7 +120,7 @@ final class SurfaceAreaValidatorTest {
   }
 
   private static SurfaceConsumes consumesResources(String... resourceIds) {
-    java.util.Set<ResourceRef> refs = new java.util.HashSet<>();
+    Set<ResourceRef> refs = new java.util.HashSet<>();
     for (String id : resourceIds) refs.add(new ResourceRef(id));
     return new SurfaceConsumes(refs, Set.of(), Set.of(), Set.of());
   }

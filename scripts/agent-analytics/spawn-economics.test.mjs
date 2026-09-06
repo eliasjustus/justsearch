@@ -8,7 +8,8 @@
 import assert from 'node:assert/strict';
 import {
   costOfCall, buildSpawnRows, buildMultiAgentSessionRows,
-  groupRequestedToActual, groupByAgentType, runLengthBuckets, topByCost,
+  groupRequestedToActual, groupByAgentType, groupByRoleModelEffort,
+  runLengthBuckets, topByCost,
   firstUserMessageCharsPercentile,
 } from './spawn-economics.mjs';
 import { makeCall } from './lib/ledger/record.mjs';
@@ -40,6 +41,7 @@ function spawnCall(overrides = {}) {
       description: overrides.description ?? 'test spawn',
     },
     synthetic: overrides.synthetic ?? false,
+    reasoningEffort: overrides.reasoningEffort ?? null,
   });
 }
 
@@ -72,10 +74,16 @@ run('buildSpawnRows groups by sessionId, sums cost, tracks peak context and last
   assert.equal(rows[0].calls, 2);
   assert.equal(rows[0].peakContextTokens, 300000);
   assert.equal(rows[0].actualModel, 'claude-sonnet-5', 'last-seen model in ts order wins');
+  assert.equal(rows[0].actualEffort, '(missing-effort)');
   assert.equal(rows[0].requestedModel, 'opus');
   assert.equal(rows[0].agentType, 'general-purpose');
   assert.equal(rows[0].parentSessionId, 'main-1');
   assert.ok(rows[0].costUsd > 0);
+});
+
+run('buildSpawnRows records the last-seen actual reasoning effort', () => {
+  const calls = [spawnCall({ reasoningEffort: 'high' })];
+  assert.equal(buildSpawnRows(calls)[0].actualEffort, 'high');
 });
 
 run('buildSpawnRows: an unpriced model contributes to unpricedTokens, not a silent-$0 cost', () => {
@@ -123,6 +131,16 @@ run('buildMultiAgentSessionRows returns [] when no session is multiAgent', () =>
   assert.deepEqual(buildMultiAgentSessionRows([], sessions), []);
 });
 
+run('buildMultiAgentSessionRows excludes attributed Codex child calls', () => {
+  const calls = [makeCall({
+    harness: 'codex-cli', sessionId: 'codex-child', model: 'gpt-5.6-luna',
+    lineage: { kind: 'spawn', parentSessionId: 'codex-parent', agentType: 'worker' },
+    contextTokens: 10, tokens: { fresh: 10, output: 1 },
+  })];
+  const sessions = [{ harness: 'codex-cli', sessionId: 'codex-child', multiAgent: true }];
+  assert.deepEqual(buildMultiAgentSessionRows(calls, sessions), []);
+});
+
 // --- grouping tables -----------------------------------------------------
 
 run('groupRequestedToActual keys by "requested -> actual" and sums spawns/cost/calls', () => {
@@ -149,6 +167,20 @@ run('groupByAgentType sums per agentType', () => {
   const gp = g.find((r) => r.agentType === 'general-purpose');
   assert.equal(gp.spawns, 2);
   assert.equal(gp.costUsd, 15);
+});
+
+run('groupByRoleModelEffort exposes the Codex routing outcome', () => {
+  const rows = [
+    { agentType: 'worker', actualModel: 'gpt-5.6-luna', actualEffort: 'high', costUsd: 0, calls: 7 },
+    { agentType: 'worker', actualModel: 'gpt-5.6-luna', actualEffort: 'high', costUsd: 0, calls: 5 },
+    { agentType: 'complex_worker', actualModel: 'gpt-5.6-sol', actualEffort: 'medium', costUsd: 0, calls: 3 },
+  ];
+  const groups = groupByRoleModelEffort(rows);
+  assert.deepEqual(groups[0], {
+    key: 'worker | gpt-5.6-luna | high', agentType: 'worker',
+    actualModel: 'gpt-5.6-luna', actualEffort: 'high',
+    spawns: 2, costUsd: 0, calls: 12,
+  });
 });
 
 // --- run-length buckets ------------------------------------------------------

@@ -58,9 +58,9 @@ the session continues (e.g., merging from main).
 2. **Never share a worktree** between two agent sessions. <!-- rule:never-share-worktree -->
 3. **One branch per worktree.** Git enforces this, but don't work around it. <!-- rule:one-branch-per-worktree -->
 4. **After compaction**, verify your worktree and branch. <!-- rule:after-compaction-verify -->
-   The `compact-restore` hook now writes a **Current worktree** block (dir + branch) into the
-   restored state (tempdoc 620) — confirm it matches; on a non-compaction session start, check
-   directly:
+   The `compact-restore` hook emits a one-shot **Current worktree** block (dir + branch) only
+   when it verifies the saved session, worktree, and branch — confirm it matches; on a
+   non-compaction session start or omitted snapshot, check directly:
    ```bash
    pwd
    git branch --show-current
@@ -83,26 +83,18 @@ the session continues (e.g., merging from main).
    618 §1 — local `main` can be dozens of commits ahead of `origin`) into an
    immediate, legible failure. <!-- rule:verify-worktree-base -->
 
-## Enforced by `bash-guard.mjs`
+## Enforced by native `permissions.deny`
 
-The following commands are **blocked by the PreToolUse hook** at
-`scripts/agent-analytics/hooks/bash-guard.mjs` (wired via
-`.claude/settings.local.json`) and will fail with an error message.
-This is not advisory — the hook prevents execution.
+`.claude/settings.json` carries `Bash(git push --force*)` / `Bash(git push -f*)`: the harness
+refuses them everywhere, including under `bypassPermissions`. Prefix-match, per
+compound-command segment. The refspec form `git push origin +main:main` is not expressible
+as a prefix rule and is **not** blocked — don't use it. <!-- rule:never-force-push -->
 
-**Blocked in the main worktree** (where `.git` is a directory):
-| Command | Why |
-|---------|-----|
-| `git checkout <branch>` / `git checkout -- .` | Main stays on `main`. Use worktrees. **Single-file restore `git checkout -- <path>` is allowed** (tempdoc 520 P0c). |
-| `git switch` | Same as checkout. |
-| `git reset --hard` | Destroys uncommitted tracked changes from other agents. |
-| `git clean -f` | Deletes untracked files (tempdocs, new code) from other agents. |
-| `git restore .` | Discards all uncommitted modifications. |
-
-**Blocked everywhere** (main and worktrees):
-| Command | Why |
-|---------|-----|
-| `git push --force` / `-f` | Rewrites shared remote history. <!-- rule:never-force-push --> |
+**Destructive git in the main worktree is a prose rule, not a block** (930 row 4: the hook
+had 0 true positives and 11 false over 30 days, and deny can't be scoped to one worktree).
+In the main checkout do not run `git checkout <branch>`, `git switch`, `git reset --hard`,
+`git clean -f`, `git restore .`, or whole-tree `git checkout -- .` — they destroy other
+agents' work. Single-file `git checkout -- <path>` is fine. Check `pwd` first.
 
 **Allowed in the main worktree:** `git status`, `git log`, `git diff`,
 `git add`, `git commit`, `git push`, `git merge`, `git worktree`,
@@ -158,19 +150,22 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
-3. `gh pr merge <N>` (no flag) enqueues once checks pass; the queue runs
-   `merge-group` CI and squash-merges. A rejection means CI failed —
+3. `node scripts/dev/run-gh.mjs enqueue <N>` revalidates the live squash and
+   managed review records, then enqueues once checks pass; the queue runs
+   `merge-group` CI and squash-merges. Direct `gh pr merge` bypasses that proof
+   and is blocked by the shared agent hook. A rejection means CI failed —
    investigate before retrying. Keep checkpoint/retry commits off `main`;
    use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
-5. Remove the worktree. GitHub deletes merged remote branches; delete local
-   branches after verifying the merge. On Windows, prefer
-   `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over
-   `git worktree remove` — it survives long `node_modules` paths and unlinks
-   `node_modules` junctions link-only, so a junction is removed without
-   deleting through into main's real `node_modules` (tempdoc 618 §2).
-   This teardown also records the `session_id → merge_commit` link; backfill
-   with `node scripts/agent-analytics/record-merge.mjs` if needed.
+5. After verifying the merge, keep the shell outside the target and, from the
+   owning repository root, preview its exact registration:
+   `node scripts/dev/remove-worktree.cjs <registered-path> --dry-run`.
+   Ignored paths need `--allow-ignored`; local branch deletion needs
+   `--delete-branch`. The tool preserves junction targets and
+   removes only that exact Git registration. Merge attribution requires an
+   explicit known `--session-id`; omission or `unknown` skips the merged-PR
+   lookup and telemetry writer. Full mechanics:
+   `docs/reference/contributing/common-workflows.md`.
 
 ### Publishing docs-only changes (history granularity) <!-- rule:docs-ride-along -->
 
@@ -191,10 +186,9 @@ question of whether a change should be its **own** public PR at all (tempdoc 653
   chain's root PR carried canonical docs, which this rule lets stand alone).
   Re-qualify each push on this rule's own terms.
 
-The `docs-granularity-hint` hook surfaces this at `git push` when a branch changes
-exactly ONE working-history file; it never blocks. Multi-file batches (a fold,
-several tempdoc edits) are what this rule asks for, so they don't trigger it
-(tempdoc 739 §6). Rationale and the worked example live in
+The trigger to self-check is a branch whose whole diff is exactly ONE working-history
+file. Multi-file batches (a fold, several tempdoc edits) are what this rule asks for.
+Rationale and the worked example live in
 `docs/reference/contributing/agent-guide.md` (History publication).
 
 ### Verifying whether squash-merged work already landed <!-- rule:squash-merge-verify-content-not-ancestry -->

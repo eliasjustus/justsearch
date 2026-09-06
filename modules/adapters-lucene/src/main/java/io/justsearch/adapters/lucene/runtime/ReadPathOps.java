@@ -146,6 +146,17 @@ public final class ReadPathOps {
         allow.add(def.id);
       }
     }
+    // chunk_content remains indexed but is no longer stored. Its public projection is synthesized
+    // from the exact parent slice, so fetch the geometry needed for that reconstruction without
+    // exposing it unless the caller requested it explicitly.
+    if (projectionFields.contains(SchemaFields.CHUNK_CONTENT)) {
+      allow.add(SchemaFields.PARENT_DOC_ID);
+      allow.add(SchemaFields.CHUNK_START_CHAR);
+      allow.add(SchemaFields.CHUNK_END_CHAR);
+      // Tempdoc 931 §E item 5: the revision those offsets address, so the reconstruction can
+      // refuse a parent that has been rewritten since (ChunkReadRevisionGuard).
+      allow.add(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
+    }
     return allow;
   }
 
@@ -338,6 +349,9 @@ public final class ReadPathOps {
                 projectionFields == null || projectionFields.isEmpty()
                     ? null
                     : buildStoredAllowlist(projectionFields);
+            boolean synthesizeChunkContent =
+                projectionFields != null
+                    && projectionFields.contains(SchemaFields.CHUNK_CONTENT);
 
             int take = Math.min(effectiveLimit, topDocs.scoreDocs.length);
 
@@ -350,6 +364,7 @@ public final class ReadPathOps {
             // Load stored fields for hits (avoid decoding huge stored content for interactive
             // search)
             List<SearchHit> hits = new ArrayList<>();
+            Map<String, DocumentFieldOps.ChunkSlice> chunkSlices = new java.util.LinkedHashMap<>();
             for (int i = 0; i < take; i++) {
               org.apache.lucene.search.ScoreDoc scoreDoc = topDocs.scoreDocs[i];
               Map<String, String> fields =
@@ -367,6 +382,12 @@ public final class ReadPathOps {
               if (docId == null) {
                 docId = "doc-" + scoreDoc.doc;
               }
+              if (synthesizeChunkContent) {
+                DocumentFieldOps.ChunkSlice slice = DocumentFieldOps.chunkSliceFrom(fields);
+                if (slice != null) {
+                  chunkSlices.put(docId, slice);
+                }
+              }
               // Projection semantics: we may internally fetch id fields to construct
               // SearchHit.id, but we should not leak them in the returned field map unless
               // explicitly requested.
@@ -379,6 +400,34 @@ public final class ReadPathOps {
                 }
               }
               hits.add(new SearchHit(docId, scoreDoc.score, fields));
+            }
+
+            if (synthesizeChunkContent && !chunkSlices.isEmpty()) {
+              Map<String, String> chunkContent =
+                  DocumentFieldOps.resolveChunkContents(
+                      searcher, idField, chunkSlices, Map.of(), session.telemetryEvents);
+              for (SearchHit hit : hits) {
+                String content = chunkContent.get(hit.docId());
+                if (content != null) {
+                  hit.fields().put(SchemaFields.CHUNK_CONTENT, content);
+                }
+              }
+            }
+            if (synthesizeChunkContent) {
+              for (SearchHit hit : hits) {
+                if (!projectionFields.contains(SchemaFields.PARENT_DOC_ID)) {
+                  hit.fields().remove(SchemaFields.PARENT_DOC_ID);
+                }
+                if (!projectionFields.contains(SchemaFields.CHUNK_START_CHAR)) {
+                  hit.fields().remove(SchemaFields.CHUNK_START_CHAR);
+                }
+                if (!projectionFields.contains(SchemaFields.CHUNK_END_CHAR)) {
+                  hit.fields().remove(SchemaFields.CHUNK_END_CHAR);
+                }
+                if (!projectionFields.contains(SchemaFields.CHUNK_PARENT_CONTENT_SHA256)) {
+                  hit.fields().remove(SchemaFields.CHUNK_PARENT_CONTENT_SHA256);
+                }
+              }
             }
 
             String nextCursor = null;

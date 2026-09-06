@@ -5,7 +5,7 @@ status: stable
 description: "Screenshot capture for UI verification and agent visual feedback."
 ---
 
-# UI Evidence Capture
+# Capture UI Evidence
 
 Capture UI screenshots **and a structured `<step>.measure.json` fact-sheet** for verification using the jseval
 toolkit (tempdoc 615). The harness drives the **live Lit `shell-v0`** UI.

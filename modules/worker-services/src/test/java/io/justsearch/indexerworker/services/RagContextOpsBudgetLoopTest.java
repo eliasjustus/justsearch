@@ -2,6 +2,7 @@
 package io.justsearch.indexerworker.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
@@ -195,6 +196,34 @@ final class RagContextOpsBudgetLoopTest {
         used.size(),
         "section i must stay the citation at position i — the contract sources[n-1] resolves");
     assertEquals("doc-a", used.get(0).fields().get(SchemaFields.PARENT_DOC_ID));
+  }
+
+  /**
+   * Tempdoc 931 §E item 5 — when the read-path revision guard refuses to reconstruct a chunk's text
+   * (its parent has been rewritten but the chunks are not regenerated yet), the hit reaches this
+   * loop with no {@code chunk_content}. It must be omitted from the context entirely: not appended,
+   * not cited, not counted. The alternative the guard exists to prevent — a slice of the newer
+   * parent revision — would reach the model as a confidently wrong passage with a citation on it.
+   */
+  @ParameterizedTest
+  @EnumSource(Kind.class)
+  @DisplayName("931: a chunk whose text could not be reconstructed is omitted, not cited")
+  void aChunkWithNoReconstructibleTextIsOmittedFromTheContext(Kind kind) {
+    var refused =
+        new LuceneRuntimeTypes.SearchHit(
+            "doc-refused#0", 2.0f, Map.of(SchemaFields.PARENT_DOC_ID, "doc-refused"));
+    var usable = chunkHit("doc-b", "the passage whose parent is still at the revision it was cut from");
+
+    Budgeter b = budgeter(kind, 1_000_000);
+    List<LuceneRuntimeTypes.SearchHit> used = new ArrayList<>();
+    boolean truncated =
+        ops().runBudgetLoop(
+            List.of(refused, usable), used, Map.of(), MAX_CHUNKS_PER_ARTICLE, b::append);
+
+    assertFalse(truncated, "omitting a chunk is not a budget event");
+    assertEquals(1, b.sectionCount(), "only the reconstructible chunk reached the context");
+    assertEquals(1, used.size(), "an omitted chunk must not be counted as included");
+    assertEquals("doc-b", used.get(0).fields().get(SchemaFields.PARENT_DOC_ID));
   }
 
   @ParameterizedTest

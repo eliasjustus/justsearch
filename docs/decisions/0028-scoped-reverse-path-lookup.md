@@ -1,12 +1,13 @@
 ---
-title: "Scoped Reverse Path-Hash Lookup"
+title: "ADR-0028: Scoped Reverse Path-Hash Lookup"
 type: decision
 status: accepted
 description: "Refines the tempdoc-410 ingestion-ledger privacy contract. Raw paths still never appear in any operator-visible export, telemetry stream, or support-bundle generation. They may now be returned by a single dedicated Worker RPC reachable only from one HTTP endpoint, invoked in direct response to a user's 'show filename' click in the local UI. Backed by a new internal-only `path_resolution` table and an ArchUnit guard."
 date: 2026-04-26
 probes:
   - adr-0028-one-http-resolver-caller
-last_reviewed: 2026-09-02
+  - adr-0028-document-identity-path-free
+last_reviewed: 2026-09-03
 ---
 
 # ADR-0028: Scoped Reverse Path-Hash Lookup
@@ -236,6 +237,22 @@ This is acceptable because:
   enumeration that tempdoc 418 was designed to remove.
 - Files still under watched roots will be re-resolved naturally on
   the next scan or watcher-driven update.
+
+## Amendment: path-free durable identity (2026-09-03)
+
+Schema V11 adds a second table to the same `jobs.db` file:
+`document_identity(path_hash, doc_uid, first_seen_at, last_seen_at)`. It contains no raw path. The
+random, content-independent UID is therefore outside the privacy and retention rationale that
+governs `path_resolution`; identity rows are not pruned on removal, retention expiry, or unwatch.
+`path_resolution` remains the only persistent table that can reverse a hash into a path.
+
+The Worker resolves this identity beside the existing path-resolution admission write and fails the
+job closed if the identity authority is unavailable. On first V11 boot, or after restoring an older
+pre-V11 queue backup, the serving index seeds missing parent mappings before indexing begins.
+Existing store mappings remain authoritative on later restarts. API-driven renames re-key the store
+before Lucene path fields are rewritten; a stale historical destination identity is displaced by the
+moving source. Watcher-driven filesystem renames are still observed as delete plus create and are not
+covered by that rename-preservation contract.
 
 ## Open questions
 

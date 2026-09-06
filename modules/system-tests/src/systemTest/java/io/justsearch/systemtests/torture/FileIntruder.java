@@ -135,10 +135,20 @@ public class FileIntruder implements AutoCloseable {
 
     // Cleanup any dangling locks
     for (FileLock lock : activeLocks) {
-      try { lock.release(); } catch (Exception e) {}
+      try {
+        lock.release();
+      } catch (Exception e) {
+        // Teardown of a harness that deliberately raced the OS on these handles: the lock may
+        // already be gone with the channel its holder closed. Failing here would mask the
+        // torture result the caller is about to read.
+      }
     }
     for (FileChannel ch : activeChannels) {
-      try { ch.close(); } catch (Exception e) {}
+      try {
+        ch.close();
+      } catch (Exception e) {
+        // Same: best-effort teardown, see above.
+      }
     }
     activeLocks.clear();
     activeChannels.clear();

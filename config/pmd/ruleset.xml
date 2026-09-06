@@ -47,4 +47,36 @@
 
   <!-- Logging hygiene: all output should go through SLF4J -->
   <rule ref="category/java/bestpractices.xml/SystemPrintln"/>
+
+  <!--
+    Tempdoc 930 chunk F — the Java half of the retired `todo-fixme` kernel gate. A parked marker
+    is a deferred fix nobody scheduled (CLAUDE.md `log-pre-existing-issues`): fix it now or route it.
+    PMD parses, so unlike the gate's raw-text scanner this cannot score the letters in an
+    identifier or a URL. The TypeScript half is ESLint `no-warning-comments` in
+    modules/ui-web/eslint.config.js.
+
+    No `message` override here: CommentContentRule reports with its own per-violation message
+    ("Line matches forbidden content regex (...)"), so a rule-level message attribute is silently
+    ignored. Verified by planting `// TODO ...` in modules/app-util and running
+    `./gradlew.bat :modules:app-util:pmdMain -PskipPmd=false` (2 violations, BUILD FAILED).
+
+    SCOPE — no Java source is out of it any more. Follow-up 2 wired `pmdMain` into `check`/`build`
+    and into CI (clearing 130 pre-existing violations of the other rules above); follow-up 10 did
+    the same for every non-`main` source set, which runs `ruleset-tests.xml` (a marker parked in a
+    test file now fails the build, not review) and cleared 569 more. CI runs `pmdAll`, the root
+    aggregate over every PMD task, as the `Static analysis (PMD, all source sets)` step of the
+    required `Build (no model blobs)` job.
+
+    THIS FILE IS THE AUTHORITY for the two derived rulesets beside it. They inline these rules
+    rather than referencing this file — PMD's `rule ref` resolves against the CLASSPATH, and a ref
+    it cannot resolve makes PMD analyse zero files while Gradle reports success. Adding a rule here
+    without adding it there therefore fails silently, so `scripts/ci/check-pmd-ruleset-sync.mjs`
+    enforces the relationship: derived == authority minus a declared, description-justified
+    subtraction.
+  -->
+  <rule ref="category/java/documentation.xml/CommentContent">
+    <properties>
+      <property name="forbiddenRegex" value="(?i)\b(todo|fixme|xxx)\b"/>
+    </properties>
+  </rule>
 </ruleset>

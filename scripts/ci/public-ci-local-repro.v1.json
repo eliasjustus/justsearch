@@ -1,0 +1,97 @@
+{
+  "kind": "justsearch-public-ci-local-repro.v1",
+  "version": 1,
+  "note": "Versioned local reproduction inventory for every required public check. local-subset entries are deterministic candidate-side approximations, not substitutes for hosted required checks; hosted-only entries state why no honest local analogue exists.",
+  "contexts": [
+    {
+      "check": "Public claims",
+      "mode": "local-subset",
+      "commands": [
+        "node scripts/ci/check-lockfile-completeness.mjs",
+        "npm ci --audit=false",
+        "node scripts/agent-analytics/run-all-tests.mjs",
+        "node scripts/ci/check-workflow-triggers.mjs",
+        "node scripts/ci/test-check-workflow-npm-audit-policy.mjs",
+        "node scripts/ci/check-workflow-npm-audit-policy.mjs",
+        "node scripts/ci/test-check-lockfile-completeness.mjs",
+        "node scripts/ci/verify-test-evidence-policy.mjs",
+        "node scripts/ci/check-root-readme.mjs",
+        "node scripts/ci/check-codex-agent-parity.mjs",
+        "node scripts/ci/check-always-loaded-budget.mjs",
+        "node scripts/governance/run-all-tests.mjs",
+        "node scripts/governance/run.mjs --self-test --mode gate",
+        "node scripts/ci/check-readme-benchmark-numbers.mjs",
+        "node scripts/docs/check-frontend-stack-claims.mjs",
+        "node scripts/docs/check-model-freshness.mjs",
+        "node scripts/docs/check-privacy-claims.mjs",
+        "node scripts/docs/verify-canonical-doc-links.mjs",
+        "node scripts/architecture/module-deps.mjs --check-canonical",
+        "npx markdownlint \"docs/explanation/**/*.md\" \"docs/reference/**/*.md\" \"docs/how-to/**/*.md\" \"docs/decisions/**/*.md\"",
+        "node scripts/docs/docs-validate.mjs",
+        "node scripts/docs/llmstxt-generate.mjs --check",
+        "node scripts/docs/skills-sync.mjs --check"
+      ]
+    },
+    {
+      "check": "License and notices",
+      "mode": "local-subset",
+      "commands": [
+        "npm ci --prefix modules/ui-web --audit=false",
+        "./gradlew.bat checkLicense --no-configuration-cache --no-parallel",
+        "node scripts/codegen/dump-cargo-licenses.mjs",
+        "cmd /c \"cd modules\\ui-web && npx --yes license-checker --production --json --relativeOnly > ..\\..\\build\\npm-licenses.json\"",
+        "node scripts/ci/regen-all.mjs --check --only notices"
+      ]
+    },
+    {
+      "check": "Build (no model blobs)",
+      "mode": "local-subset",
+      "commands": ["./gradlew.bat assemble -PskipWebBuild=false", "./gradlew.bat pmdAll --console=plain"]
+    },
+    {
+      "check": "Unit tests (app-ui)",
+      "mode": "local-subset",
+      "commands": ["./gradlew.bat :modules:app-agent:test :modules:app-agent-api:test :modules:app-api:test :modules:app-api-tck:test :modules:app-config:test :modules:app-launcher:test :modules:app-observability:test :modules:app-services:test :modules:app-util:test :modules:ui:test -PskipWebBuild=true --console=plain"]
+    },
+    {
+      "check": "Unit tests (search-worker)",
+      "mode": "local-subset",
+      "commands": ["./gradlew.bat :modules:adapters-lucene:test :modules:configuration:test :modules:core:test :modules:core-contracts:test :modules:indexer-worker:test :modules:indexing:test :modules:ipc-common:test :modules:worker-core:test :modules:worker-services:test -PskipWebBuild=true --console=plain"]
+    },
+    {
+      "check": "Unit tests (platform-contracts)",
+      "mode": "local-subset",
+      "commands": ["./gradlew.bat :modules:ai-backend:test :modules:api-contract-projection-java:test :modules:app-inference:test :modules:benchmarks:test :modules:dead-code-audit:test :modules:extension-substrate:test :modules:gpu-bridge:test :modules:infra-core:test :modules:ort-common:test :modules:prompt-support:test :modules:reranker:test :modules:ssot-tools:test :modules:system-tests:test :modules:telemetry:test :modules:test-support:test -PskipWebBuild=true --console=plain"]
+    },
+    {
+      "check": "Windows-native tests",
+      "mode": "hosted-only",
+      "reason": "Requires the pinned windows-latest runner image and Windows-only test selection; a developer workstation is not the hosted runner contract."
+    },
+    {
+      "check": "Shell crate tests (Rust)",
+      "mode": "hosted-only",
+      "reason": "Requires the workflow's pinned MSVC toolchain, cache, and staged bundle-resource placeholder."
+    },
+    {
+      "check": "Secret scan",
+      "mode": "local-subset",
+      "commands": ["gitleaks dir . --config .gitleaks.toml --redact"]
+    },
+    {
+      "check": "jseval Python suite",
+      "mode": "local-subset",
+      "commands": [
+        "node scripts/ci/check-jseval-lock.mjs",
+        "python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt",
+        "python -m pip install \"pytest>=7.0\" \"pyyaml>=6.0\" \"hypothesis>=6.0\" \"jsonschema>=4.0\"",
+        "python -m pytest scripts/jseval/tests -q -p no:cacheprovider"
+      ]
+    },
+    {
+      "check": "cla-assistant",
+      "mode": "hosted-only",
+      "reason": "Depends on GitHub contributor identity, signatures, and organization-side CLA state."
+    }
+  ]
+}

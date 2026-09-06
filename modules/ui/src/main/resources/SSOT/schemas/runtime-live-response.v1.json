@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ssot.justsearch/v1/schemas/runtime-live-response.v1.json",
+  "title": "JustSearch runtime liveness response",
+  "type": "object",
+  "properties": {
+    "alive": { "const": true },
+    "pid": { "type": ["integer", "null"] },
+    "instanceId": { "type": ["string", "null"] }
+  },
+  "required": ["alive", "pid", "instanceId"],
+  "additionalProperties": false
+}

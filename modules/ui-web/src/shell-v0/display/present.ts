@@ -9,8 +9,8 @@
  * here as private cases, so a consumer renders `present(ref).label` — never a
  * raw id/key/route. The render boundary takes the branded `DisplayLabel`, so a
  * raw string can't be passed where a presented label is expected (§5: tier-2 at
- * the seam; the html`` template itself is guarded by the presentation-purity
- * gate + ESLint, since Lit slots aren't type-checked).
+ * the seam; the html`` template itself is guarded by ESLint, since Lit slots
+ * aren't type-checked — the presentation-purity gate was retired in 930 chunk H).
  */
 import { getOperation } from '../../api/registry/OperationCatalogClient.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';
@@ -89,6 +89,13 @@ function routeToSurfaceId(target: string): string {
   return m ? m[1]! : target;
 }
 
+// Stable ids can outlive their product names. These exceptions belong inside the one display
+// projector so a missing message catalog cannot resurrect a superseded label. Most surfaces still
+// use the mechanical id fallback below; Search is the sole compatibility-id exception today.
+const SURFACE_FALLBACK_LABELS: Readonly<Record<string, string>> = {
+  'core.unified-chat-surface': 'Search',
+};
+
 /**
  * Surface label authority: the catalog's localized `presentation.labelKey`
  * wins when resolvable; otherwise the id-derived title. The `registry-surface.*`
@@ -104,7 +111,7 @@ function surfaceLabel(id: string): string {
     const localized = localizeResourceKey(labelKey);
     if (localized.length > 0 && localized !== labelKey) return localized;
   }
-  return deriveTitleFromSurfaceId(id) || id;
+  return SURFACE_FALLBACK_LABELS[id] ?? (deriveTitleFromSurfaceId(id) || id);
 }
 
 export function present(ref: EntityRef): Presented {

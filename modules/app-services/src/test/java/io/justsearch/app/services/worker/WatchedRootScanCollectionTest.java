@@ -79,7 +79,7 @@ final class WatchedRootScanCollectionTest {
           new RootLifecycleOps(
               watchedRoots,
               state,
-              () -> ExcludeMatcher.empty(true),
+              () -> ExcludeMatcher.empty(),
               (rootPath, collection, mode, globs, progress) -> {
                 scannedRoot.set(rootPath);
                 scannedCollection.set(collection);

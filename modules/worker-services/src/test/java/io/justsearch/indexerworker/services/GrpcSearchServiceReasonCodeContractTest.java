@@ -12,6 +12,7 @@ import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.indexing.chunking.ChunkParentRevision;
 import io.justsearch.ipc.PipelineConfig;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
@@ -44,7 +45,7 @@ final class GrpcSearchServiceReasonCodeContractTest {
           // Tempdoc 819 defect B: the rebuild drained with zero successful embeddings, so the
           // fingerprint attestation was refused instead of stamped over an empty vector space.
           "REBUILD_FAILED_NO_VECTORS",
-          // Tempdoc 517: 26th member — fall-through for unrecognised compat strings
+          // Tempdoc 517: fall-through for unrecognised compat strings
           // via SearchReasonCode.fromCompatString(...). Surfaces when the boundary
           // controller hands back a string the enum doesn't know.
           "EMBEDDING_COMPATIBILITY_UNKNOWN");
@@ -55,7 +56,9 @@ final class GrpcSearchServiceReasonCodeContractTest {
           "EMBEDDING_COMPATIBILITY_BLOCKED",
           "NO_EMBEDDING_SERVICE",
           "EMBEDDING_GENERATION_FAILED",
-          "EMBEDDING_EXCEPTION");
+          "EMBEDDING_EXCEPTION",
+          "SKIPPED_SHORT_QUERY",
+          "SKIPPED_NO_DISCRIMINATIVE_TERM");
 
   private static final Set<String> CHUNK_MERGE_REASON_CODES =
       Set.of(
@@ -584,6 +587,9 @@ final class GrpcSearchServiceReasonCodeContractTest {
     fields.put(SchemaFields.CHUNK_CONTENT, chunkContent);
     fields.put(SchemaFields.CHUNK_START_CHAR, "0");
     fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(Math.max(0, chunkContent.length())));
+    // Tempdoc 931 §C.1: the revision the offsets above address. Without it the read path refuses
+    // to re-slice the chunk's text out of the parent, and the chunk reads as textless.
+    fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(parentContent));
     fields.put(SchemaFields.PATH, parentDocId);
     fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
     fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
@@ -623,6 +629,7 @@ final class GrpcSearchServiceReasonCodeContractTest {
       fields.put(SchemaFields.CHUNK_CONTENT, d[2]);
       fields.put(SchemaFields.CHUNK_START_CHAR, "0");
       fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(Math.max(0, d[2].length())));
+      fields.put(SchemaFields.CHUNK_PARENT_CONTENT_SHA256, ChunkParentRevision.sha256Hex(d[1]));
       fields.put(SchemaFields.PATH, parentId);
       fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
       fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
@@ -693,10 +700,10 @@ final class GrpcSearchServiceReasonCodeContractTest {
     try {
       // Tempdoc 406 Gap A: resolvedConfig now lives directly on RuntimeSession
       // (RuntimeContext was deleted; field is reachable via session.resolvedConfig).
-      java.lang.reflect.Field sessionField = RunningRuntime.class.getDeclaredField("session");
+      Field sessionField = RunningRuntime.class.getDeclaredField("session");
       sessionField.setAccessible(true);
       Object session = sessionField.get(lifecycle);
-      java.lang.reflect.Field rcField = session.getClass().getDeclaredField("resolvedConfig");
+      Field rcField = session.getClass().getDeclaredField("resolvedConfig");
       rcField.setAccessible(true);
 
       var builder = io.justsearch.configuration.resolved.ResolvedConfig.builder();

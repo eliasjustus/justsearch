@@ -15,7 +15,6 @@ TID_SEARCH_INPUT = "search-input"
 TID_SEARCH_RESULT_ROW = "search-result-row"
 TID_RESULT_ROW_SNIPPET_TOGGLE = "result-row-snippet-toggle"
 TID_GLOBAL_COMMAND_CHROME = "global-command-chrome"
-TID_BRAIN_SWITCH_TO_ADVANCED = "brain-switch-to-advanced"
 # Tempdoc 840 Phase 5 — the per-component install list and the consent dialog it leads into.
 TID_INSTALL_COMPONENT_LIST = "install-component-list"
 TID_BRAIN_SIMPLE_ACTION = "brain-simple-action"
@@ -37,7 +36,6 @@ RAIL_SURFACE_SETTINGS = "core.settings-surface"
 RAIL_SURFACE_SECURITY = "core.security-surface"
 RAIL_SURFACE_HELP = "core.help-surface"
 RAIL_SURFACE_BROWSE = "core.browse-surface"
-RAIL_SURFACE_GOVERNANCE = "core.governance-surface"
 
 
 def rail_css(surface_id: str) -> str:
@@ -198,5 +196,4 @@ VIEWS: dict[str, str] = {
     "settings": RAIL_SURFACE_SETTINGS,
     "security": RAIL_SURFACE_SECURITY,
     "help": RAIL_SURFACE_HELP,
-    "governance": RAIL_SURFACE_GOVERNANCE,
 }

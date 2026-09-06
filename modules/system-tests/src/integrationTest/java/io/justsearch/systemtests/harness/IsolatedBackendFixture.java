@@ -101,8 +101,8 @@ public final class IsolatedBackendFixture {
    * deliberately left this fixture blind. Once this appears in the body, the Head has stopped
    * trying, so every remaining millisecond of the health budget is spent waiting for nothing.
    */
-  private static final java.util.List<String> TERMINAL_WORKER_REASONS =
-      java.util.List.of(
+  private static final List<String> TERMINAL_WORKER_REASONS =
+      List.of(
           "worker.spawn_recovery_exhausted",
           // Tempdoc 825 review F2(b): supervision's own give-up is equally terminal — boot recovery
           // deliberately does NOT supersede it (owner decision 2), so nothing will retry from here

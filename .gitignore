@@ -151,8 +151,6 @@ nul
 
 # Claude Code local settings (may contain tokens or permissions)
 .claude/settings.local.json
-# Auto-generated compaction state (written by compact-restore.mjs, session-specific)
-.claude/rules/compaction-state.md
 # Runtime lock files (e.g. .claude/scheduled_tasks.lock) — session-local state;
 # committing causes conflicts between concurrent Claude sessions.
 .claude/*.lock
@@ -228,6 +226,20 @@ datasets-*/
 
 # Eval toolkit scratch (session-specific outputs)
 scripts/jseval/tmp/
+
+# Campaign run outputs are never committed (tempdoc 930 chunk C; policy in
+# scripts/jseval/README.md "Data policy"). `runs/` is the destination for new
+# campaigns; the `*-run-*`/`*-pilot-*` forms cover the historical naming so a
+# resurrected campaign dir cannot be staged by accident. Two pre-930 evidence
+# sets are deliberately re-admitted below: they back the accepted, sha256-chained
+# agent-utility publication and canonical search-quality-register entries, so
+# deleting them would falsify a published claim.
+scripts/jseval/runs/
+scripts/jseval/*-run-*/
+scripts/jseval/*-pilot-*/
+!scripts/jseval/624-run-2026-07-03/
+!scripts/jseval/624-run-2026-07-18-confirmatory/
+!scripts/jseval/782-run-2026-07-28-hero/
 
 # stray commit-message temp files
 .git-msg.tmp

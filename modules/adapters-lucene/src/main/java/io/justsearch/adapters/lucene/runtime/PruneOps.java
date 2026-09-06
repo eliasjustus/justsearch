@@ -52,6 +52,23 @@ public final class PruneOps {
    * @return number of documents pruned, or -1 if aborted
    */
   public int pruneByPathPrefix(String pathPrefix, BooleanSupplier abortChecker, int throttleBatchSize) {
+    return pruneByPathPrefix(pathPrefix, abortChecker, throttleBatchSize, path -> {});
+  }
+
+  /**
+   * As {@link #pruneByPathPrefix(String, BooleanSupplier, int)}, additionally reporting each pruned
+   * document's file path to {@code confirmedDeletionSink}.
+   *
+   * <p>The sink exists so a Worker-side collaborator can act on the ONE place that establishes
+   * "this file is verifiably gone" without adapters-lucene taking a dependency on it (tempdoc 931
+   * §C.6 wires the document-identity deletion mark through it). Sink failures are the sink's
+   * problem; a throwing sink aborts the prune, so callers pass a swallowing one.
+   */
+  public int pruneByPathPrefix(
+      String pathPrefix,
+      BooleanSupplier abortChecker,
+      int throttleBatchSize,
+      java.util.function.Consumer<String> confirmedDeletionSink) {
     if (pathPrefix == null || pathPrefix.isBlank()) {
       throw new IllegalArgumentException("pruneByPathPrefix requires non-blank prefix");
     }
@@ -128,6 +145,7 @@ public final class PruneOps {
           if (!Files.exists(Path.of(filePath))) {
             indexingCoordinator.deleteById(docId);
             pruned++;
+            confirmedDeletionSink.accept(filePath);
             log.debug("pruneByPathPrefix: deleted orphan document: {}", docId);
           }
         }

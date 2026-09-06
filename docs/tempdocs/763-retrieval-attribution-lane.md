@@ -3,7 +3,7 @@ title: "retrieval attribution lane: replay every failed with-tool cell's queries
 type: tempdocs
 status: "EXECUTED (2026-07-21, same day — orchestrator-run, two pinned opus workers: extraction + live replay). Census complete; engine finding promoted to register F-039; see §F Results."
 created: 2026-07-21
-author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
+author: "agent (Fable orchestration), founder-directed analysis program (umbrella: 762)"
 category: eval-analysis / retrieval-quality
 related:
   - 762-agent-utility-analysis-program   # umbrella: priors §P, data §D, constraints §C — READ FIRST

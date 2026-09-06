@@ -1,5 +1,5 @@
 ---
-title: "Resource Category axis"
+title: "ADR-0036: Resource Category axis"
 type: decision
 status: accepted
 description: "Resource is one primitive with a typed Category axis (status, history, timeseries, …) rather than a primitive-per-kind, so new information shapes are typed values, not new primitives."

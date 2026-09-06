@@ -157,8 +157,8 @@ def start_backend(
                 f"JSEVAL_HEALTH_TIMEOUT_SEC must be numeric, got {raw_timeout!r}"
             ) from exc
     resolved_root = repo_root or REPO_ROOT
-    # Honor JUSTSEARCH_DATA_DIR pre-set by callers (e.g. jseval calibrate
-    # pointing every sub-run at the same cohort baseline registry).
+    # Honor JUSTSEARCH_DATA_DIR pre-set by callers (e.g. a driver pointing every
+    # sub-run at the same Worker data dir).
     # Only fall back to the default when neither arg nor env was supplied.
     if data_dir is None:
         env_data_dir = os.environ.get("JUSTSEARCH_DATA_DIR")
@@ -179,12 +179,12 @@ def start_backend(
         raise FileNotFoundError(f"{gradlew_name} not found at {gradlew}")
 
     if clean and resolved_data.is_dir():
-        # Tempdoc 716: nothing durable lives in the backend data dir anymore —
-        # calibration state (cohort_baselines/, non_determinism_envelopes/) is
-        # filed under the jseval-owned data root (_paths.DEFAULT_JSEVAL_DATA_DIR),
-        # so the tempdoc-400 protected-set carve-out is retired and --clean
-        # wipes the whole dir. Fail-closed semantics (verify + orphan sweep +
-        # hard error on survivors, tempdoc 711 item 4) are unchanged.
+        # Tempdoc 716: nothing durable lives in the backend data dir — jseval's own
+        # durable artifacts are filed under the jseval-owned data root
+        # (_paths.DEFAULT_JSEVAL_DATA_DIR), so the tempdoc-400 protected-set
+        # carve-out is retired and --clean wipes the whole dir. Fail-closed
+        # semantics (verify + orphan sweep + hard error on survivors, tempdoc 711
+        # item 4) are unchanged.
         log.info("Cleaning data directory: %s", resolved_data)
         _clean_data_dir(resolved_data)
 

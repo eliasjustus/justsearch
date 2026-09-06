@@ -71,16 +71,22 @@ public final class SchemaController {
           // is now authored under SSOT/schemas/ + synced to classpath.
           "timeseries-snapshot.v1.json",
           // Tempdoc 583 §D.3a (+ §C independent review): the OpenAPI export's per-route response
-          // $refs point at /api/schemas/<name>, so every schema named in RouteResponseSchemas MUST be
+          // $refs point at /api/schemas/<name>, so every schema named in RouteContractPolicy MUST be
           // served here or the $ref dangles (404). These three wire records are referenced by the
           // route manifest's responseSchema; classpath-synced via the `*.v1.json` Sync. The
-          // RouteResponseSchemasCoverageTest enforces RouteResponseSchemas ⊆ servedNames().
+          // RouteContractPolicyCoverageTest enforces RouteContractPolicy ⊆ servedNames().
           "knowledge-search-response.v1.json",
           "ai-runtime-status-response.v1.json",
           "effective-policy.v1.json",
           // Tempdoc 911 (885 UL.9): the substrate failed-jobs response, referenced by
-          // RouteResponseSchemas for both /api/indexing-jobs/failed routes.
-          "failed-indexing-jobs-response.v1.json");
+          // RouteContractPolicy for both /api/indexing-jobs/failed routes.
+          "failed-indexing-jobs-response.v1.json",
+          // Tempdoc 899 D6: canonical schemas for the six-operation runtime client projection.
+          "runtime-manifest-public.v1.json",
+          "runtime-ready-response.v1.json",
+          "runtime-live-response.v1.json",
+          "lifecycle-snapshot.v1.json",
+          "api-error-response.v1.json");
 
   private final Telemetry telemetry;
   private final Map<String, byte[]> bodyByName;

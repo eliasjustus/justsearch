@@ -14,6 +14,10 @@ import org.junit.jupiter.api.Test;
 /** Verifies the MCP-host orchestrator connects, projects tools, and registers handlers resiliently. */
 class McpHostServiceTest {
 
+  // Used as a method reference (McpHostServiceTest::fakeClient) against the
+  // Function<McpServerConfig, McpClient> factory target; the parameter is required by that
+  // functional-interface shape even though this fake never inspects it.
+  @SuppressWarnings("PMD.UnusedFormalParameter")
   private static McpClient fakeClient(McpServerConfig server) {
     return new McpClient(new FakeMcpTransport());
   }

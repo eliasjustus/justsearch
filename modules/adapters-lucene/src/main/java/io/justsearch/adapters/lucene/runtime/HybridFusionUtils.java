@@ -371,7 +371,7 @@ public final class HybridFusionUtils {
     double denseRange = scoreRange(denseScores, denseMin);
 
     Map<String, Double> ccScores = new HashMap<>();
-    var allDocIds = new java.util.HashSet<>(sparseScores.keySet());
+    var allDocIds = new HashSet<>(sparseScores.keySet());
     allDocIds.addAll(denseScores.keySet());
 
     for (String docId : allDocIds) {
@@ -531,7 +531,7 @@ public final class HybridFusionUtils {
     Map<String, double[]> modifiersByDoc = new HashMap<>();
     Map<String, double[]> normalizedScoresByDoc = new HashMap<>();
 
-    var allDocIds = new java.util.HashSet<>(result1Scores.keySet());
+    var allDocIds = new HashSet<>(result1Scores.keySet());
     allDocIds.addAll(result2Scores.keySet());
 
     for (String docId : allDocIds) {
@@ -734,7 +734,7 @@ public final class HybridFusionUtils {
     Map<String, double[]> effectiveWeightsByDoc = new HashMap<>();
     Map<String, double[]> modifiersByDoc = new HashMap<>();
 
-    var allDocIds = new java.util.HashSet<>(sparseScores.keySet());
+    var allDocIds = new HashSet<>(sparseScores.keySet());
     allDocIds.addAll(denseScores.keySet());
     allDocIds.addAll(spladeScores.keySet());
 

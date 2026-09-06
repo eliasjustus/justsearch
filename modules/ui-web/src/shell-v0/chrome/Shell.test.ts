@@ -33,7 +33,13 @@ import {
 } from '../router/storeRegistry.js';
 import { __resetBootstrapForTest } from '../router/bootstrap.js';
 import { __resetUserConfigForTest } from '../state/userConfigState.js';
-import { setUiMode, getUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
+import {
+  enqueueUiModePersistence,
+  UI_MODE_INTENT_HEADER,
+  setUiMode,
+  getUiMode,
+  __resetUiModeForTest,
+} from '../state/uiModeState.js';
 import { __activeSurfaceIdForTest, deactivateProjection } from '../router/URLProjector.js';
 import { subscribeMemberTab } from '../router/memberTabIntent.js';
 import {
@@ -45,6 +51,8 @@ import type { SettingsWindow } from './SettingsWindow.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 import type { StateSnapshot } from '../router/types.js';
 import type { TransportTag } from '../router/transports.js';
+import { __seedForTest as seedErrorCatalog, __resetForTest as resetErrorCatalog } from '../../i18n/errorCatalog.js';
+import { EPHEMERAL_TOAST_EVENT, type EphemeralToastSpec } from '../components/advisory/ephemeralToast.js';
 
 function makeRailSurface(id: string, mountTag: string): Surface {
   return {
@@ -68,6 +76,16 @@ function makeRailSurface(id: string, mountTag: string): Surface {
 
 const SEARCH = makeRailSurface('core.search-surface', 'jf-search-surface');
 const LIBRARY = makeRailSurface('core.library-surface', 'jf-library-surface');
+const UNIFIED_SEARCH: Surface = {
+  ...makeRailSurface('core.unified-chat-surface', 'jf-unified-chat-view'),
+  splitPairing: { secondary: 'core.library-surface' },
+};
+const LEGACY_ASK: Surface = {
+  ...makeRailSurface('core.ask-surface', 'jf-chat-shape-mount'),
+  placement: 'DEEPLINK',
+};
+const LEGACY_FREE_CHAT: Surface = { ...LEGACY_ASK, id: 'core.free-chat-surface' };
+const LEGACY_EXTRACT: Surface = { ...LEGACY_ASK, id: 'core.extract-surface' };
 
 function seedTwoSurfaces(): void {
   const catalog: SurfaceCatalog = {
@@ -140,6 +158,55 @@ describe('Shell — slice 492 substrate integration', () => {
     window.location.hash = '';
     vi.unstubAllGlobals();
     __resetUiModeForTest();
+    resetErrorCatalog();
+  });
+
+  it.each(['invoke', 'undo'] as const)('906: %s failure uses handler facts through the real client and toast channel', async (kind) => {
+    seedErrorCatalog({ 'errors.POLICY_ONLINE_AI_DISABLED': 'Online AI is disabled by administrator policy.' });
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/operations/') || url.includes('/api/undo/')) {
+        calls.push(url);
+        return new Response(JSON.stringify({ success: false, message: 'private-operation-id: internal exception',
+          errorClass: 'HANDLER_FAILURE', errorCode: 'POLICY_ONLINE_AI_DISABLED', retryable: false }), { status: 403 });
+      }
+      return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+    }));
+    await renderShell();
+    const toast = new Promise<EphemeralToastSpec>((resolve) => document.addEventListener(
+      EPHEMERAL_TOAST_EVENT, (e) => resolve((e as CustomEvent<EphemeralToastSpec>).detail), { once: true }));
+    document.dispatchEvent(new CustomEvent(kind === 'invoke' ? 'jf-invoke-operation' : 'jf-undo-operation', {
+      detail: { operationId: 'private-operation-id', executionId: 'execution-1', originator: 'user' },
+    }));
+    const shown = await toast;
+    expect(shown.message).toContain('Online AI is disabled by administrator policy.');
+    expect(shown.message).toContain('Resolve the restriction before trying again.');
+    expect(shown.message).not.toMatch(/private-operation-id|internal exception|You can try/);
+    expect(shown.severity).toBe('error');
+    expect(shown.onAction).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(kind === 'invoke' ? '/api/operations/' : '/api/undo/');
+  });
+
+  it('906: an uncertain mutation response asks users to check its effect, without retrying', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/operations/')) {
+        calls++;
+        throw new Error('private transport exception');
+      }
+      return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+    }));
+    await renderShell();
+    const toast = new Promise<EphemeralToastSpec>((resolve) => document.addEventListener(
+      EPHEMERAL_TOAST_EVENT, (e) => resolve((e as CustomEvent<EphemeralToastSpec>).detail), { once: true }));
+    document.dispatchEvent(new CustomEvent('jf-invoke-operation', { detail: { operationId: 'private-id' } }));
+    const shown = await toast;
+    expect(shown.message).toContain('verify whether the action took effect before trying again');
+    expect(shown.message).not.toContain('private');
+    expect(shown.onAction).toBeUndefined();
+    expect(calls).toBe(1);
   });
 
   it('Tempdoc 738 — the topbar Simple/Detailed toggle reflects the live uiMode and drives it on click', async () => {
@@ -160,6 +227,67 @@ describe('Shell — slice 492 substrate integration', () => {
     opts()[0]!.click();
     await shell.updateComplete;
     expect(getUiMode()).toBe('simple');
+  });
+
+  it('923 review — topbar persistence joins the shared cross-control mode queue', async () => {
+    const shell = await renderShell();
+    let release!: (response: Response) => void;
+    const blocker = enqueueUiModePersistence(
+      () => new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+    );
+    await Promise.resolve();
+
+    const detailed = Array.from(
+      shell.shadowRoot?.querySelectorAll<HTMLButtonElement>('.ui-mode-opt') ?? [],
+    ).find((button) => button.textContent?.trim() === 'Detailed');
+    detailed?.click();
+    await shell.updateComplete;
+    await Promise.resolve();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const settingsPosts = () => fetchMock.mock.calls.filter(([input, init]) =>
+      String(input).endsWith('/api/settings/v2')
+      && (init as RequestInit | undefined)?.method === 'POST');
+    expect(settingsPosts()).toHaveLength(0);
+
+    release(new Response('{}', { status: 200 }));
+    await blocker;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settingsPosts()).toHaveLength(1);
+    expect(new Headers((settingsPosts()[0]?.[1] as RequestInit | undefined)?.headers)
+      .get(UI_MODE_INTENT_HEADER)).toMatch(/:2$/);
+  });
+
+  it('923 F-22 — normalizes a persisted Ask pane to Search or its Library pair', () => {
+    seedSurfaceCatalog({
+      schemaVersion: '1.0.0',
+      catalogVersion: 1,
+      namespace: 'core',
+      primitive: 'Surface',
+      entries: [LIBRARY, UNIFIED_SEARCH, LEGACY_ASK, LEGACY_FREE_CHAT, LEGACY_EXTRACT],
+    });
+    const shell = document.createElement('jf-shell') as ShellElement & {
+      userConfig?: { secondaryActiveSurface?: string };
+      surfaces: Surface[];
+      resolveSecondarySurface(primaryId: string): Surface | null;
+    };
+    shell.userConfig = { secondaryActiveSurface: 'core.ask-surface' };
+    shell.surfaces = [LIBRARY, UNIFIED_SEARCH];
+
+    expect(shell.resolveSecondarySurface('core.library-surface')?.id).toBe(
+      'core.unified-chat-surface',
+    );
+    expect(shell.resolveSecondarySurface('core.unified-chat-surface')?.id).toBe(
+      'core.library-surface',
+    );
+    for (const legacyId of [
+      'core.ask-surface',
+      'core.free-chat-surface',
+      'core.extract-surface',
+    ]) {
+      expect(shell.resolveSecondarySurface(legacyId)?.id).toBe('core.library-surface');
+    }
   });
 
   describe('connectedCallback bootstrap', () => {

@@ -47,7 +47,14 @@ ok("KEEP: a tempdoc", isExcluded("docs/tempdocs/634-x.md") === null);
 ok("KEEP: docs/business-ish but not the dir (prefix is path-segment safe)", isExcluded("docs/business-plan.md") === null);
 
 // --- evaluateSettings (pure) ---
-ok("SETTINGS: flags a permissions block", evaluateSettings({ permissions: {} }).some((v) => v.includes("permissions")));
+ok(
+  "SETTINGS: flags an allow/ask permissions posture",
+  evaluateSettings({ permissions: { allow: [] } }).some((v) => v.includes("permissions"))
+);
+ok(
+  "SETTINGS: a deny-only permissions block is allowed (930 row 4 force-push rules)",
+  evaluateSettings({ permissions: { deny: ["Bash(git push --force*)"] } }).length === 0
+);
 ok("SETTINGS: flags an env block", evaluateSettings({ env: {} }).some((v) => v.includes("env")));
 ok(
   "SETTINGS: flags an excluded analytics hook",
@@ -57,7 +64,7 @@ ok(
 );
 ok(
   "SETTINGS: a guards-only template (a guard hook, no permissions/env) is clean",
-  evaluateSettings({ hooks: { PreToolUse: [{ hooks: [{ args: ["x/bash-guard.mjs"] }] }] } }).length === 0
+  evaluateSettings({ hooks: { PreToolUse: [{ hooks: [{ args: ["x/repeat-guard.mjs"] }] }] } }).length === 0
 );
 ok("SETTINGS: every excluded hook is detected", EXCLUDED_HOOKS.every((h) => evaluateSettings({ x: `${h}.mjs` }).length === 1));
 
@@ -77,7 +84,7 @@ try {
   // ...and a guards-only settings.json.
   fs.writeFileSync(
     path.join(tmp, ".claude", "settings.json"),
-    JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ args: ["x/bash-guard.mjs"] }] }] } })
+    JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ args: ["x/repeat-guard.mjs"] }] }] } })
   );
 
   const clean = evaluateSnapshot(tmp, { source: false });

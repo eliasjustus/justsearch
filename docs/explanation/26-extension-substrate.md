@@ -5,7 +5,7 @@ status: stable
 description: "How JustSearch is extended: one declaration model, one composer, four shared substrates, the host-owns-truth boundary, and trust-proportional isolation — the invariants every contributor (plugin, operation, resource, prompt, MCP tool, workflow, agent tool) shares."
 ---
 
-# 26 — The Extension Substrate
+# The Extension Substrate
 
 Everything that extends JustSearch is the **same kind of thing**. A user's
 plugin, a core operation, a resource, a prompt template, an external MCP tool,

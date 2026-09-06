@@ -22,6 +22,19 @@ public final class SchemaFields {
 
   // Content fields
   public static final String CONTENT = "content";
+  /**
+   * SHA-256 (lowercase hex) of this parent document's stored {@link #CONTENT} — its CONTENT
+   * REVISION (tempdoc 931 §C.6).
+   *
+   * <p>Identity ({@code doc_uid}) answers "which document is this"; this answers "which version of
+   * it". Feedback captures the pair, so a label collected against one revision can be recognised as
+   * stale after the file is edited instead of silently training on text that no longer exists.
+   * Stored-only: it is projected to the Head, never queried or sorted on. The digest is the same
+   * one {@link io.justsearch.indexing.chunking.ChunkParentRevision} defines for
+   * {@link #CHUNK_PARENT_CONTENT_SHA256}, so parent and chunk revisions are directly comparable.
+   */
+  public static final String CONTENT_SHA256 = "content_sha256";
+
   /** Small stored preview used for result list snippets (bounded length). */
   public static final String CONTENT_PREVIEW = "content_preview";
   public static final String TITLE = "title";
@@ -120,6 +133,14 @@ public final class SchemaFields {
   public static final String CHUNK_START_CHAR = "chunk_start_char";
   /** End character offset (exclusive) of this chunk within the parent document's extracted content (0-based). */
   public static final String CHUNK_END_CHAR = "chunk_end_char";
+  /**
+   * SHA-256 (lowercase hex) of the parent {@link #CONTENT} revision this chunk was cut from
+   * (tempdoc 931 §C.1). {@code chunk_content} is not stored, so a read-modify-write on a chunk
+   * re-slices it out of whatever parent content the current searcher shows; parent write and chunk
+   * regeneration are separate calls, so a same-length rewrite in between would silently produce
+   * wrong chunk text. This is the revision identity that makes the mismatch detectable.
+   */
+  public static final String CHUNK_PARENT_CONTENT_SHA256 = "chunk_parent_content_sha256";
 
   // Chunk navigation fields (F8 Tier 2: Citation UX - In-Document Navigation)
   /** Start line number of this chunk within the parent document (1-based). */
@@ -142,16 +163,10 @@ public final class SchemaFields {
   // NER Entity fields
   /** Raw person entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_PERSONS_RAW = "entity_persons_raw";
-  /** Analyzed person entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_PERSONS_TEXT = "entity_persons_text";
   /** Raw organization entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_ORGANIZATIONS_RAW = "entity_organizations_raw";
-  /** Analyzed organization entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_ORGANIZATIONS_TEXT = "entity_organizations_text";
   /** Raw location entity names extracted by NER (multi-valued keyword for filter/facet). */
   public static final String ENTITY_LOCATIONS_RAW = "entity_locations_raw";
-  /** Analyzed location entity names for BM25 search (ICU-tokenized text). */
-  public static final String ENTITY_LOCATIONS_TEXT = "entity_locations_text";
   /** NER processing status for this document. */
   public static final String NER_STATUS = "ner_status";
   public static final String NER_STATUS_PENDING = "PENDING";
@@ -297,6 +312,7 @@ public final class SchemaFields {
 
       // Content
       CONTENT,
+      CONTENT_SHA256,
       CONTENT_PREVIEW,
       TITLE,
 
@@ -326,6 +342,7 @@ public final class SchemaFields {
       CHUNK_CONTENT,
       CHUNK_START_CHAR,
       CHUNK_END_CHAR,
+      CHUNK_PARENT_CONTENT_SHA256,
 
       // Chunk navigation (F8 Tier 2)
       CHUNK_START_LINE,

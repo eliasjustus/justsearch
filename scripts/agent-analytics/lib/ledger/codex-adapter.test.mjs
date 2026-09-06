@@ -12,7 +12,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listCodexCalls, processCodexEntries } from './codex-adapter.mjs';
+import {
+  codexToolOutputText, listCodexCalls, listCodexToolExchanges,
+  processCodexEntries, processCodexToolExchanges,
+} from './codex-adapter.mjs';
 import { isCall, isToolEvent } from './record.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -134,6 +137,51 @@ run('a session with NO inter_agent_communication_metadata gets multiAgent = fals
   assert.deepEqual(result.calls.every((c) => c.lineage.kind === 'main'), true);
 });
 
+run('current thread_spawn metadata produces real Codex spawn lineage and effort', () => {
+  const entries = [
+    {
+      timestamp: '2026-09-06T00:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'codex-child-1',
+        cwd: 'F:\\FixtureProject',
+        model_provider: 'openai',
+        parent_thread_id: 'codex-parent-1',
+        source: { subagent: { thread_spawn: {
+          parent_thread_id: 'codex-parent-1', depth: 1,
+          agent_path: '/root/bounded_worker', agent_role: 'worker',
+        } } },
+      },
+    },
+    { timestamp: '2026-09-06T00:00:01.000Z', type: 'turn_context', payload: { model: 'gpt-5.6-luna', effort: 'high' } },
+    {
+      timestamp: '2026-09-06T00:00:02.000Z', type: 'event_msg',
+      payload: { type: 'token_count', info: {
+        last_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, reasoning_output_tokens: 4 },
+        total_token_usage: { input_tokens: 100, total_tokens: 110 },
+      } },
+    },
+  ];
+  const result = processCodexEntries(entries, { file: 'codex-child.jsonl' });
+  assert.equal(result.calls.length, 1);
+  assert.deepEqual(result.calls[0].lineage, {
+    parentSessionId: 'codex-parent-1', kind: 'spawn', agentType: 'worker',
+    requestedModel: null, description: '/root/bounded_worker',
+  });
+  assert.equal(result.calls[0].model, 'gpt-5.6-luna');
+  assert.equal(result.calls[0].reasoningEffort, 'high');
+  assert.deepEqual(result.session.lineage, result.calls[0].lineage);
+});
+
+run('a subagent label without a source parent edge does not fabricate lineage', () => {
+  const entries = [{
+    timestamp: '2026-09-06T00:00:00.000Z', type: 'session_meta',
+    payload: { id: 'unlinked-child', thread_source: 'subagent', agent_role: 'worker' },
+  }];
+  const result = processCodexEntries(entries, { file: 'unlinked-child.jsonl' });
+  assert.deepEqual(result.session.lineage, { parentSessionId: null, kind: 'main' });
+});
+
 // --- BLOCKER 2: tool events, real vocabulary, no agent_message ToolEvent ---
 
 run('function_call + function_call_output join into one shell ToolEvent (name: shell_command)', () => {
@@ -163,6 +211,181 @@ run('exactly 2 tool events total (shell_command, apply_patch) -- agent_message e
   assert.equal(toolEvents.length, 2);
 });
 
+// --- raw tool exchanges for attribution readers ----------------------------
+
+run('codexToolOutputText flattens desktop numeric-key text blocks in order', () => {
+  const output = {
+    0: { type: 'input_text', text: 'header' },
+    1: { type: 'input_text', text: 'body' },
+  };
+  assert.equal(codexToolOutputText(output), 'header\nbody');
+});
+
+run('processCodexToolExchanges pairs full input/output and retains a missing output', () => {
+  const entries = [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'exchange-session', cwd: 'F:\\JustSearch', model_provider: 'openai' } },
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'done', name: 'exec', input: 'Get-Content .agents/skills/example/SKILL.md' } },
+    { timestamp: '2026-08-03T00:00:02.000Z', type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'done', output: { 0: { type: 'input_text', text: 'first' }, 1: { type: 'input_text', text: 'second' } } } },
+    { timestamp: '2026-08-03T00:00:03.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'pending', name: 'shell_command', arguments: '{"command":"cat .agents/skills/pending/SKILL.md"}' } },
+  ];
+  const result = processCodexToolExchanges(entries, { file: 'fixture.jsonl' });
+  assert.equal(result.exchanges.length, 2);
+  assert.equal(result.exchanges[0].outputText, 'first\nsecond');
+  assert.equal(result.exchanges[0].missingOutput, false);
+  assert.equal(result.exchanges[0].project, 'F:\\JustSearch');
+  assert.equal(result.exchanges[1].callId, 'pending');
+  assert.equal(result.exchanges[1].missingOutput, true);
+  assert.equal(result.exchanges[1].outputText, null);
+});
+
+run('listCodexToolExchanges uses the same fixture discovery and project filter', () => {
+  const raw = listCodexToolExchanges({ codexHome: FIXTURE_CODEX_HOME, projectFilter: /fixtureproject/i });
+  assert.equal(raw.sessions.length, 1);
+  assert.equal(raw.fragmentsDiscovered, 1);
+  assert.equal(raw.fragmentsContributing, 1);
+  assert.equal(raw.exchanges.length, 2);
+  assert.equal(raw.unreadableFragments, 0);
+  assert.equal(raw.malformedLines, 0);
+  assert.equal(raw.untimestampedExchanges, 0);
+  assert.equal(raw.untimestampedOutputs, 0);
+  assert.equal(raw.sourceRootsAvailable, 1);
+  assert.equal(raw.sourceRootsMissing, 1);
+  assert.equal(raw.sourceRootErrors.length, 0);
+  assert.equal(raw.duplicateExchangeCopies, 0);
+  assert.equal(raw.conflictingExchangeCopies, 0);
+  assert.ok(raw.exchanges.some((exchange) => exchange.name === 'shell_command'));
+  const applyExchange = raw.exchanges.find((exchange) => exchange.name === 'apply_patch');
+  assert.ok(applyExchange.outputText.length > 65536, 'raw attribution output must not inherit the neutral ToolEvent cap');
+});
+
+run('fixed until is an as-of boundary that later output cannot rewrite', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-asof-test-'));
+  const dir = path.join(tmp, 'sessions', '2026', '08', '03');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'rollout-asof.jsonl');
+  const entries = [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'asof-session', cwd: 'F:\\JustSearch' } },
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'custom', payload: {} },
+    { timestamp: '2026-08-03T00:00:02.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'read', name: 'shell_command', arguments: '{"command":"cat .agents/skills/example/SKILL.md"}' } },
+  ];
+  fs.writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+
+  const options = {
+    codexHome: tmp,
+    sinceMs: Date.parse('2026-08-03T00:00:00.000Z'),
+    untilMs: Date.parse('2026-08-03T00:00:03.000Z'),
+  };
+  const before = listCodexToolExchanges(options);
+  assert.equal(before.exchanges.length, 1);
+  assert.equal(before.exchanges[0].missingOutput, true);
+
+  fs.appendFileSync(file, JSON.stringify({
+    timestamp: '2026-08-03T00:00:04.000Z',
+    type: 'response_item',
+    payload: { type: 'function_call_output', call_id: 'read', output: 'late result' },
+  }) + '\n', 'utf8');
+  const after = listCodexToolExchanges(options);
+  assert.deepEqual(after.exchanges, before.exchanges);
+});
+
+run('active and archived fragments are unioned without double-counting copied exchanges', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-union-test-'));
+  const activeDir = path.join(tmp, 'sessions', '2026', '08', '03');
+  const archivedDir = path.join(tmp, 'archived_sessions');
+  fs.mkdirSync(activeDir, { recursive: true });
+  fs.mkdirSync(archivedDir, { recursive: true });
+  const meta = { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'union-session', cwd: 'F:\\JustSearch' } };
+  const copied = [
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'copied', name: 'shell_command', arguments: '{}' } },
+    { timestamp: '2026-08-03T00:00:02.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'copied', output: 'same' } },
+  ];
+  fs.writeFileSync(
+    path.join(activeDir, 'rollout-active.jsonl'),
+    [meta, ...copied].map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+    'utf8',
+  );
+  const archivedOnly = [
+    { timestamp: '2026-08-03T00:00:03.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'archived-only', name: 'shell_command', arguments: '{}' } },
+    { timestamp: '2026-08-03T00:00:04.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'archived-only', output: 'archived' } },
+  ];
+  const copiedWithEquivalentOffsets = copied.map((entry) => ({
+    ...entry,
+    timestamp: entry.timestamp.replace('.000Z', '.000+00:00'),
+  }));
+  fs.writeFileSync(
+    path.join(archivedDir, 'rollout-archived.jsonl'),
+    [meta, ...copiedWithEquivalentOffsets, ...archivedOnly].map((entry) => JSON.stringify(entry)).join('\n') + '\n',
+    'utf8',
+  );
+
+  const raw = listCodexToolExchanges({
+    codexHome: tmp,
+    untilMs: Date.parse('2026-08-03T00:00:05.000Z'),
+  });
+  assert.equal(raw.fragmentsDiscovered, 2);
+  assert.equal(raw.fragmentsContributing, 2);
+  assert.equal(raw.sessions.length, 1);
+  assert.equal(raw.exchanges.length, 2);
+  assert.equal(raw.duplicateExchangeCopies, 1);
+  assert.equal(raw.conflictingExchangeCopies, 0);
+});
+
+run('conflicting copies are counted and quarantined', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-conflict-test-'));
+  for (const relative of [path.join('sessions', '2026', '08', '03'), 'archived_sessions']) {
+    fs.mkdirSync(path.join(tmp, relative), { recursive: true });
+  }
+  const makeEntries = (output) => [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'conflict-session', cwd: 'F:\\JustSearch' } },
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'same-id', name: 'shell_command', arguments: '{}' } },
+    { timestamp: '2026-08-03T00:00:02.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'same-id', output } },
+  ];
+  fs.writeFileSync(path.join(tmp, 'sessions', '2026', '08', '03', 'rollout-a.jsonl'), makeEntries('short').map(JSON.stringify).join('\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(tmp, 'archived_sessions', 'rollout-b.jsonl'), makeEntries('longer output').map(JSON.stringify).join('\n') + '\n', 'utf8');
+
+  const raw = listCodexToolExchanges({ codexHome: tmp });
+  assert.equal(raw.exchanges.length, 0);
+  assert.equal(raw.duplicateExchangeCopies, 1);
+  assert.equal(raw.conflictingExchangeCopies, 1);
+});
+
+run('untimestamped exchanges are omitted and counted', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-untimestamped-test-'));
+  const dir = path.join(tmp, 'sessions', '2026', '08', '03');
+  fs.mkdirSync(dir, { recursive: true });
+  const entries = [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'untimestamped-session', cwd: 'F:\\JustSearch' } },
+    { type: 'response_item', payload: { type: 'function_call', call_id: 'no-time', name: 'shell_command', arguments: '{}' } },
+  ];
+  fs.writeFileSync(path.join(dir, 'rollout-no-time.jsonl'), entries.map(JSON.stringify).join('\n') + '\n', 'utf8');
+  const raw = listCodexToolExchanges({
+    codexHome: tmp,
+    untilMs: Date.parse('2026-08-03T00:00:05.000Z'),
+  });
+  assert.equal(raw.exchanges.length, 0);
+  assert.equal(raw.untimestampedExchanges, 1);
+});
+
+run('untimestamped outputs are retained but marked as as-of indeterminate', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-output-time-test-'));
+  const dir = path.join(tmp, 'sessions', '2026', '08', '03');
+  fs.mkdirSync(dir, { recursive: true });
+  const entries = [
+    { timestamp: '2026-08-03T00:00:00.000Z', type: 'session_meta', payload: { id: 'output-time-session', cwd: 'F:\\JustSearch' } },
+    { timestamp: '2026-08-03T00:00:01.000Z', type: 'response_item', payload: { type: 'function_call', call_id: 'read', name: 'shell_command', arguments: '{}' } },
+    { type: 'response_item', payload: { type: 'function_call_output', call_id: 'read', output: 'result without event time' } },
+  ];
+  fs.writeFileSync(path.join(dir, 'rollout-output-no-time.jsonl'), entries.map(JSON.stringify).join('\n') + '\n', 'utf8');
+  const raw = listCodexToolExchanges({
+    codexHome: tmp,
+    untilMs: Date.parse('2026-08-03T00:00:05.000Z'),
+  });
+  assert.equal(raw.exchanges.length, 1);
+  assert.equal(raw.exchanges[0].missingOutput, false);
+  assert.equal(raw.exchanges[0].outputTimestampUnknown, true);
+  assert.equal(raw.untimestampedOutputs, 1);
+});
+
 // --- resilience --------------------------------------------------------------
 
 run('listCodexCalls returns an empty result for a nonexistent codexHome, never throws', () => {
@@ -170,6 +393,27 @@ run('listCodexCalls returns an empty result for a nonexistent codexHome, never t
   const missing = path.join(tmp, 'does-not-exist');
   const r = listCodexCalls({ codexHome: missing });
   assert.deepEqual(r, { calls: [], toolEvents: [], sessions: [], skipped: [] });
+});
+
+run('listCodexToolExchanges returns an empty result for a nonexistent codexHome', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exchange-test-'));
+  const r = listCodexToolExchanges({ codexHome: path.join(tmp, 'does-not-exist') });
+  assert.deepEqual(r, {
+    exchanges: [],
+    sessions: [],
+    skipped: [],
+    sourceRootsAvailable: 0,
+    sourceRootsMissing: 2,
+    sourceRootErrors: [],
+    fragmentsDiscovered: 0,
+    fragmentsContributing: 0,
+    unreadableFragments: 0,
+    malformedLines: 0,
+    untimestampedExchanges: 0,
+    untimestampedOutputs: 0,
+    duplicateExchangeCopies: 0,
+    conflictingExchangeCopies: 0,
+  });
 });
 
 run('a rollout file under an "archived_sessions" directory is skipped (walk-level, not skip-list)', () => {
@@ -267,6 +511,8 @@ run('a malformed JSON line on a NON-token-count line is tolerated, NOT skipped -
   assert.equal(r.skipped.length, 0, 'a malformed non-token line must not cause a skip');
   assert.equal(r.calls.length, 1, 'the real token_count line after the malformed one still parses');
   assert.equal(r.calls[0].sessionId, 'malformed-line-session');
+  const raw = listCodexToolExchanges({ codexHome: tmp });
+  assert.equal(raw.malformedLines, 1, 'the attribution reader must expose tolerated parse loss');
 });
 
 run('a genuine thrown error during entry processing PROPAGATES, is not swallowed', () => {

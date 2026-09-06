@@ -14,10 +14,10 @@ import org.slf4j.LoggerFactory;
  * feedback stores into the real-label triple file the trainer reads.
  *
  * <p>Reads the canonical per-query {@link FeatureSnapshot}s (P1) and {@link ResultDisposition}s
- * (P2/P3/P4), joins them by {@code interactionId}, and rebuilds
+ * (P2/P3/P4), joins them by {@code interactionId} plus document key, and rebuilds
  * {@code feedback/real-feedback-triples.ndjson} — kept distinct from the GPL synthetic store so the
- * synthetic set demotes to a cold-start prior (the F-021 reconciliation). Idempotent: each rebuild
- * clears and reprojects.
+ * synthetic set demotes to a cold-start prior (the F-021 reconciliation). New rows use stable parent
+ * UIDs; legacy rows retain path keys. Idempotent: each rebuild clears and reprojects.
  */
 public final class FeedbackLabels {
 

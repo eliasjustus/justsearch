@@ -495,9 +495,7 @@ public final class BackfillScheduler {
                   SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)
               : 0;
       if (pendingEmbedForSplade < pacing().embeddingBackfillBatchSize()) {
-        int spladePendingBefore =
-            indexCountOps.countByField(
-                SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+        int spladePendingBefore = spladePendingCount();
         StageOutcome outcome = processSpladeBackfill();
         recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
         anyActivity |= outcome.docsProcessed() > 0;
@@ -720,6 +718,29 @@ public final class BackfillScheduler {
             log));
   }
 
+  /**
+   * Whether chunk documents are SPLADE work at all (tempdoc 712 {@code rag.chunk_splade.enabled}).
+   *
+   * <p>Flag off, no lane may select a chunk on {@code splade_status}: chunks written during an
+   * earlier flag-on window still carry PENDING ({@code ChunkDocumentWriter} omits the field
+   * entirely while the flag is off), so a lane that ignores this flag encodes sparse data
+   * the configuration says not to produce, and the chunk-sparse retrieval leg
+   * ({@code SearchExecutor#chunkMerge}) then scores against a population that depends on how far
+   * backfill happened to get.
+   */
+  private boolean chunkSpladeEnabled() {
+    return resolvedConfigSupplier.get().rag().chunkSpladeEnabled();
+  }
+
+  /** Outstanding SPLADE work over the population the lanes will actually select from. */
+  private int spladePendingCount() {
+    return chunkSpladeEnabled()
+        ? indexCountOps.countByField(
+            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING)
+        : indexCountOps.countNonChunkByField(
+            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
+  }
+
   private StageOutcome processSpladeBackfill() {
     BgeM3Encoder bge = bgeM3EncoderSupplier.get();
     if (bge != null) {
@@ -733,6 +754,7 @@ public final class BackfillScheduler {
               running::get,
               pacing().bgeM3BackfillBatchSize(),
               true,
+              chunkSpladeEnabled(),
               log));
     }
     return SpladeBackfillOps.processSpladeBackfill(
@@ -745,6 +767,7 @@ public final class BackfillScheduler {
             running::get,
             pacing().spladeBackfillBatchSize(),
             true,
+            chunkSpladeEnabled(),
             log));
   }
 
@@ -761,6 +784,7 @@ public final class BackfillScheduler {
               running::get,
               pacing().bgeM3InterleaveBatchSize(),
               false,
+              chunkSpladeEnabled(),
               log));
     }
     return SpladeBackfillOps.processSpladeBackfill(
@@ -773,6 +797,7 @@ public final class BackfillScheduler {
             running::get,
             pacing().spladeInterleaveBatchSize(),
             false,
+            chunkSpladeEnabled(),
             log));
   }
 

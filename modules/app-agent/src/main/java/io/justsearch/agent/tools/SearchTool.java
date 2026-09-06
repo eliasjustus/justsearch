@@ -5,6 +5,7 @@ import tools.jackson.databind.JsonNode;
 import io.justsearch.agent.api.registry.OperationHandler;
 import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.core.util.ContextBudget;
+import io.justsearch.app.api.knowledge.KnowledgeSearchHitIdentity;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequestFiltersBuilder;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
@@ -333,7 +334,10 @@ public final class SearchTool implements OperationHandler {
     int rank = 0;
     for (KnowledgeSearchResponse.Hit hit : response.results()) {
       rank++;
-      feedback.add(feedbackFeatures(hit, rank));
+      Map<String, Object> hitFeedback = feedbackFeatures(hit, rank);
+      if (hitFeedback != null) {
+        feedback.add(hitFeedback);
+      }
       var fields = hit.fields();
       var item = new LinkedHashMap<String, Object>();
       item.put("title", fields.getOrDefault("title", fields.getOrDefault("filename", "")));
@@ -377,15 +381,28 @@ public final class SearchTool implements OperationHandler {
   }
 
   /**
-   * Tempdoc 580 §17 P4 (Fix B) — the per-leg retrieval features for one hit, keyed by the
-   * {@code parentDocId} that agent citations reference (same id-space as a search {@code hit.id()}).
-   * Read from the hit's {@link SearchTrace.HitStage} scores, mirroring {@code FeatureSnapshots.capture};
-   * the FUSION score falls back to the hit's overall score when the stage is absent.
+   * Tempdoc 580 §17 P4 (Fix B) — the per-leg retrieval features for one hit. {@code docId} retains
+   * the path-oriented id that agent citations reference; {@code docUid} is the stable parent
+   * identity used by the persisted feedback join. Missing or inconsistent UID evidence produces no
+   * feedback row. The rendered {@code searchResults} remain unchanged.
    */
   private static Map<String, Object> feedbackFeatures(KnowledgeSearchResponse.Hit hit, int rank) {
+    String docId = KnowledgeSearchHitIdentity.sourceDocId(hit);
+    String docUid = KnowledgeSearchHitIdentity.stableParentDocUid(hit);
+    if (docId == null || docUid == null) {
+      return null;
+    }
     SearchTrace.LegScores legs = SearchTrace.legScores(hit.trace(), (float) hit.score());
     var f = new LinkedHashMap<String, Object>();
-    f.put("docId", hit.fields().getOrDefault("parent_doc_id", hit.id()));
+    f.put("docId", docId);
+    f.put("docUid", docUid);
+    // Tempdoc 931 §C.6 — the parent content revision this hit was ranked at, so an agent-captured
+    // label ages the same way a UI-captured one does. Omitted (not null-valued) when the hit
+    // carries none, matching the map's other absent-means-unknown entries.
+    String contentRevision = KnowledgeSearchHitIdentity.contentRevision(hit);
+    if (contentRevision != null) {
+      f.put("contentRevision", contentRevision);
+    }
     f.put("rank", rank);
     f.put("sparse", legs.sparse());
     f.put("dense", legs.dense());
@@ -581,13 +598,13 @@ public final class SearchTool implements OperationHandler {
 
   /** The corrected query from the unified trace's CORRECTION stage, or null when not applied. */
   private static String correctedQueryFromTrace(
-      io.justsearch.app.api.knowledge.SearchTrace trace) {
+      SearchTrace trace) {
     if (trace == null || trace.stages() == null) {
       return null;
     }
     for (var st : trace.stages()) {
-      if (st.id() == io.justsearch.app.api.knowledge.SearchTrace.StageId.CORRECTION
-          && st.status() == io.justsearch.app.api.knowledge.SearchTrace.StageStatus.EXECUTED) {
+      if (st.id() == SearchTrace.StageId.CORRECTION
+          && st.status() == SearchTrace.StageStatus.EXECUTED) {
         return st.detail();
       }
     }

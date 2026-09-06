@@ -5,7 +5,7 @@ status: stable
 description: "The 4-tier Test Pyramid, Chaos testing, and AI Judge."
 ---
 
-# 09. Testing Strategy: The "Test Pyramid"
+# Testing Strategy
 
 JustSearch employs a rigorous 4-tier testing strategy (`modules/system-tests`), crucial for a multi-process application where "Unit Tests" alone cannot catch deadlock or IPC bugs.
 
@@ -105,7 +105,9 @@ retired TS e2e tier described below:
   below. It drives the real Lit `shell-v0` UI (not a mock/demo tree) and produces a screenshot plus
   a structured `.measure.json` fact-sheet — accessibility tree, axe violations, geometry, console
   errors — so correctness is judged from facts, not eyeballing a PNG. `jseval ui-shot <step>`
-  captures one surface; `jseval ui-a11y-gate` / `ui-proportion-gate` gate regressions;
+  captures one surface; `jseval ui-a11y-gate` / `ui-proportion-gate` gate regressions
+  (`ui-a11y-gate` also runs on PRs as the advisory `Measured axe` job — ADR-0026 amendment
+  2026-09-05; `ui-proportion-gate` stays local-only);
   `jseval ui-diff` / `ui-critic` / `ui-fuzz` are deeper situational passes. Load the `/ui-check`
   skill for the full reference.
 
@@ -131,6 +133,7 @@ Evidence tiers:
 | Tier | Default evidence | Ownership rule |
 |---|---|---|
 | Hosted-required unit evidence | `Unit tests (app-ui)`, `Unit tests (search-worker)`, and `Unit tests (platform-contracts)` with `-PskipWebBuild=true` | Must stay deterministic on standard hosted runners and produce attribution from JUnit XML. |
+| Hosted-required harness evidence | `jseval Python suite` — `scripts/jseval/tests` on the hosted Linux runner, without the `agent`/`ui`/`scan` extras so their `pytest.importorskip` guards are exercised | Required since 2026-09-05 (ADR-0044 amendment). Must stay fully mocked and backend-free; a test that needs a live backend belongs in another tier. |
 | Local parser/fixture evidence | PDF/OCR/Office fixture tests disabled under `CI=true` | Must be declared in `scripts/ci/test-evidence-policy.v1.json` with replacement evidence and cadence. |
 | Local worker-process integration evidence | `src/integrationTest` cases that spawn worker/server processes | Must be declared when skipped under `CI=true`; run locally before changing the owned integration surface. |
 | Opt-in system/AI evidence | `modules/system-tests` tags and opt-in Gradle flags | Owned by the system-tests source sets and documented tags. |
@@ -204,7 +207,7 @@ As of 2026-01-18, `./gradlew check --no-configuration-cache` is a **green gate**
 
 - Compilation success
 - Unit + integration tests
-- PMD static analysis (see `config/pmd/ruleset.xml` for the full rule set) + Error Prone compile-time checks
+- PMD static analysis over **every** Java source set, test sources included — `config/pmd/ruleset.xml` for `main`, `config/pmd/ruleset-tests.xml` for the rest (`./gradlew.bat pmdAll`) — plus Error Prone compile-time checks
 - Spotless code formatting
 - Architecture guardrails
 
@@ -219,7 +222,7 @@ node scripts/governance/run.mjs --gate wire --mode gate
 
 ### Test-efficacy (mutation adequacy on law-bearing seams)
 
-Beyond *volume* (the `test-to-code` ratchet) and *execution* (JaCoCo coverage), the **`test-efficacy`**
+Beyond *execution* (JaCoCo coverage), the **`test-efficacy`**
 discipline gate (tempdoc 555) measures whether tests on designated **law-bearing seams** actually
 *constrain* them — via PIT mutation **test-strength** (killed/covered) plus a no-coverage ceiling, over
 the pure seams declared in `governance/logic-seams.v1.json`. Because PIT re-runs the suite per mutant,

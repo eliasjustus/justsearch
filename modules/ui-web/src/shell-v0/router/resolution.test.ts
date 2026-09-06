@@ -16,7 +16,7 @@ const SURFACES: CatalogEntry[] = [
   { id: 'core.help-surface', label: 'Help' },
   { id: 'core.logs-surface', label: 'Logs' },
   { id: 'core.ask-surface', label: 'Ask' },
-  { id: 'core.unified-chat-surface', label: 'Unified Chat' },
+  { id: 'core.unified-chat-surface', label: 'Search' },
   { id: 'core.free-chat-surface', label: 'Free Chat' },
   { id: 'core.extract-surface', label: 'Extract' },
   { id: 'core.activity-surface', label: 'Activity' },

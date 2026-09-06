@@ -628,7 +628,7 @@ public final class RuntimeReconciler implements AutoCloseable {
 
   /** Overlay a reason/message onto the ENGINE condition without inventing a new axis. */
   private RuntimeStatus overlayEngine(RuntimeStatus base, String reason, String message) {
-    java.util.List<RuntimeStatus.Condition> updated = new java.util.ArrayList<>();
+    List<RuntimeStatus.Condition> updated = new java.util.ArrayList<>();
     for (RuntimeStatus.Condition c : base.conditions()) {
       if (c.axis() == RuntimeStatus.Axis.ENGINE) {
         updated.add(

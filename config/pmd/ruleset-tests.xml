@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="JustSearch PMD Ruleset — Java test sources"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+  <description>
+    Ruleset for every Java source set that is not `main` — `test`, `integrationTest`,
+    `systemTest`, `soakTest`, `determinismTest`, `testFixtures`. Applied by
+    `JvmBaseConventionsPlugin` to every `Pmd` task except `pmdMain` (tempdoc 930 §22.2
+    follow-up 10, which put those tasks in `check`/`build`).
+
+    It is `ruleset.xml` minus exactly two rules, each dropped because its PREMISE — not
+    merely its noise level — is false in a test source set. Both counts were measured on
+    the 569 pre-existing violations cleared by that change:
+
+      SystemPrintln (127 violations). The rule exists so that shipped output is routable
+      and level-filterable through SLF4J. A test's console output IS its report: it is read
+      by whoever ran the suite, from the Gradle/CI log, and there is no operator to
+      reconfigure. Same reasoning as `ruleset-cli-tools.xml` applies to CLI entry points.
+
+      NonThreadSafeSingleton (17 violations). The rule detects racing lazy initialisation of
+      a static field. All 17 were `@BeforeAll`/`@AfterAll` fixture setup and teardown of the
+      shape `if (worker != null) { worker.close(); worker = null; }`. JUnit runs lifecycle
+      callbacks once, serialised by the framework, so no race is expressible there.
+
+    Everything else in `ruleset.xml` is kept, deliberately: `CommentContent` (a parked marker
+    in a test is the same deferred fix as one in main), the whole `Unused*` family (dead test
+    code is the easiest kind to accumulate), `UnnecessaryFullyQualifiedName`, and
+    `EmptyCatchBlock` — whose `allowCommentedBlocks` / `allowExceptionNameRegex` properties
+    already exempt a documented empty catch and an `expected`-named one, which is every
+    legitimate case a test has.
+
+    KEEP IN SYNC with `ruleset.xml` — rules are inlined rather than referenced because PMD's
+    `rule ref` resolves against the classpath, not the working directory; a file-path ref
+    fails with "Cannot resolve rule/ruleset reference" and PMD then analyses NOTHING while
+    Gradle still reports success (probed 2026-09-05). `scripts/ci/check-pmd-ruleset-sync.mjs`
+    enforces the sync so that silent-dormancy mode cannot be reached by drift.
+  </description>
+
+  <!-- Codestyle -->
+  <rule ref="category/java/codestyle.xml/UnnecessaryFullyQualifiedName"/>
+
+  <!-- Error-prone patterns -->
+  <rule ref="category/java/errorprone.xml/BrokenNullCheck"/>
+  <rule ref="category/java/errorprone.xml/DoNotTerminateVM"/>
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+      <property name="allowExceptionNameRegex" value="^expected$"/>
+    </properties>
+  </rule>
+  <rule ref="category/java/errorprone.xml/EqualsNull"/>
+  <rule ref="category/java/errorprone.xml/ImplicitSwitchFallThrough"/>
+  <rule ref="category/java/errorprone.xml/MisplacedNullCheck"/>
+  <rule ref="category/java/errorprone.xml/OverrideBothEqualsAndHashcode"/>
+  <rule ref="category/java/errorprone.xml/ReturnFromFinallyBlock"/>
+  <rule ref="category/java/errorprone.xml/UnconditionalIfStatement"/>
+  <rule ref="category/java/errorprone.xml/UselessOperationOnImmutable"/>
+
+  <!-- Multithreading (excludes NonThreadSafeSingleton vs main ruleset) -->
+  <rule ref="category/java/multithreading.xml/AvoidThreadGroup"/>
+  <rule ref="category/java/multithreading.xml/DoubleCheckedLocking"/>
+
+  <!-- Security -->
+  <rule ref="category/java/security.xml/HardCodedCryptoKey"/>
+  <rule ref="category/java/security.xml/InsecureCryptoIv"/>
+
+  <!-- Best practices - unused code detection (excludes SystemPrintln vs main ruleset) -->
+  <rule ref="category/java/bestpractices.xml/UnusedLocalVariable"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateField"/>
+  <rule ref="category/java/bestpractices.xml/UnusedPrivateMethod"/>
+  <rule ref="category/java/bestpractices.xml/UnusedAssignment"/>
+  <rule ref="category/java/bestpractices.xml/UnusedFormalParameter"/>
+
+  <!-- Parked-marker ban — mirrors `ruleset.xml`; a test is no more entitled to a TODO. -->
+  <rule ref="category/java/documentation.xml/CommentContent">
+    <properties>
+      <property name="forbiddenRegex" value="(?i)\b(todo|fixme|xxx)\b"/>
+    </properties>
+  </rule>
+</ruleset>

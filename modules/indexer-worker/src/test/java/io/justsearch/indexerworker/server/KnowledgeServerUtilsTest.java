@@ -271,6 +271,7 @@ class KnowledgeServerUtilsTest {
       try {
         return c.getDeclaredField(name);
       } catch (NoSuchFieldException ignored) {
+        // Not declared at this level of the hierarchy; fall through and try the superclass.
       }
     }
     throw new NoSuchFieldException(name);

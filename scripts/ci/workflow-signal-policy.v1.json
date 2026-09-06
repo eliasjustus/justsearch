@@ -1,6 +1,6 @@
 {
   "kind": "justsearch-workflow-signal-policy.v1",
-  "version": 5,
+  "version": 6,
   "defaultStaleDays": 14,
   "branchProtection": {
     "requireBranchesUpToDateBeforeMerging": false
@@ -25,7 +25,8 @@
         "Unit tests (platform-contracts)",
         "Windows-native tests",
         "Shell crate tests (Rust)",
-        "Secret scan"
+        "Secret scan",
+        "jseval Python suite"
       ]
     },
     {
@@ -48,6 +49,17 @@
       "owner": "tempdoc 374 / Production-Reality Verification",
       "failureDefault": "release-blocking-failure",
       "staleDays": 14,
+      "blocking": true,
+      "advisory": false
+    },
+    {
+      "name": "Update Preserves Models",
+      "path": ".github/workflows/update-preserves-models.yml",
+      "class": "release-gate",
+      "expectedTriggers": ["workflow_dispatch"],
+      "owner": "tempdoc 617 D2 section 9 items 3-5 / tempdoc 930 section 18.1 row 11",
+      "failureDefault": "release-blocking-failure",
+      "staleDays": 365,
       "blocking": true,
       "advisory": false
     },

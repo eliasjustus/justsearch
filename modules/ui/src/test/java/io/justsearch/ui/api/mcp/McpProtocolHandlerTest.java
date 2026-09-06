@@ -61,6 +61,36 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void malformedToolCallsSerializeMatchingValidationFacts() {
+    for (String body : List.of(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":null}",
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{}}")) {
+      Context ctx = mock(Context.class);
+      when(ctx.body()).thenReturn(body);
+      when(ctx.contentType(anyString())).thenReturn(ctx);
+      ArgumentCaptor<String> response = ArgumentCaptor.forClass(String.class);
+      when(ctx.result(response.capture())).thenReturn(ctx);
+
+      handler.handlePost(ctx);
+
+      Map<String, Object> wire = MAPPER.readValue(response.getValue(), Map.class);
+      Map<String, Object> result = (Map<String, Object>) wire.get("result");
+      assertEquals(Boolean.TRUE, result.get("isError"));
+      Map<String, Object> facts = (Map<String, Object>) result.get("structuredContent");
+      assertEquals("INVALID_REQUEST", facts.get("errorCode"));
+      assertEquals("VALIDATION", facts.get("errorClass"));
+      assertEquals(Boolean.FALSE, facts.get("retryable"));
+      List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+      String text = (String) content.getFirst().get("text");
+      assertTrue(text.startsWith((String) facts.get("error")));
+      assertTrue(text.contains("Error code: INVALID_REQUEST"));
+      assertTrue(text.contains("Error class: VALIDATION"));
+      assertTrue(text.contains("Retryable: false"));
+    }
+  }
+
+  @Test
   void initialize_returnsCapabilities() throws Exception {
     Context ctx = mock(Context.class);
     when(ctx.header("Mcp-Session-Id")).thenReturn(null);
@@ -885,7 +915,7 @@ class McpProtocolHandlerTest {
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
                 + "{\"clientInfo\":{\"name\":\"Claude Code\",\"version\":\"1.0\"}}}");
     ArgumentCaptor<String> sessionIdCaptor = ArgumentCaptor.forClass(String.class);
-    when(initCtx.header(org.mockito.ArgumentMatchers.eq("Mcp-Session-Id"), sessionIdCaptor.capture()))
+    when(initCtx.header(eq("Mcp-Session-Id"), sessionIdCaptor.capture()))
         .thenReturn(initCtx);
     when(initCtx.result(anyString())).thenReturn(initCtx);
     when(initCtx.contentType(anyString())).thenReturn(initCtx);

@@ -70,7 +70,9 @@ have caught: an integration conflict with something that landed while you waited
 ### PMD violation
 
 ```bash
-./gradlew.bat pmdMain pmdTest                     # reproduce
+./gradlew.bat pmdAll                              # reproduce (every source set; CI runs this task)
+# Test sources use config/pmd/ruleset-tests.xml, main uses ruleset.xml. Edited a ruleset?
+#   node scripts/ci/check-pmd-ruleset-sync.mjs
 # Fix the code to satisfy the rule. Do NOT add @SuppressWarnings.
 # If rule is wrong for this case, check agent-guide §3.3 PMD table for exceptions.
 ```

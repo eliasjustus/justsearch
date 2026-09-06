@@ -47,9 +47,8 @@ import {
 import { buildDevRunnerArgsStart } from './justsearch-dev-mcp/cli.mjs';
 import { createRequire } from 'node:module';
 
-// server.mjs installs process-level uncaughtException/unhandledRejection handlers that LOG rather
-// than exit, so a top-level abort in this file would otherwise leave exit code 0 — a green that
-// ran nothing. Fail closed: non-zero until the runner at the bottom clears it.
+// Fail closed: non-zero until the runner at the bottom clears it, so a top-level abort cannot leave
+// a green result that ran only part of the suite.
 process.exitCode = 1;
 
 const HERE = import.meta.dirname;
@@ -154,6 +153,30 @@ const foreignTests = [
     // `source` (tempdoc 844 D3) distinguishes this from a self-declared run; the assertion stays
     // exhaustive so a silently-added field still fails here.
     assert.deepEqual(r[0], { port: 33221, kind: 'backend', probePath: '/api/status', attribution: 'unowned', source: 'observed' });
+  }],
+  ['an UNREGISTERED backend returning 503 is still reported as a live listener', async () => {
+    const r = await probeForeignRuns({
+      enabled: true,
+      hasActiveRun: false,
+      ports: [33221],
+      inferencePort: 8080,
+      probe: async (url) => Number(new URL(url).port) === 33221 ? 503 : null,
+    });
+    assert.equal(r.length, 1);
+    assert.equal(r[0].port, 33221);
+    assert.equal(r[0].source, 'observed');
+  }],
+  ['UNKNOWN owned-run state never guesses that an observed backend is unowned', async () => {
+    const r = await probeForeignRuns({
+      enabled: true,
+      ownedRunState: 'UNKNOWN',
+      ports: [33221],
+      inferencePort: 8080,
+      probe: listening(33221),
+    });
+    assert.equal(r.length, 1);
+    assert.equal(r[0].source, 'observed');
+    assert.equal(r[0].attribution, 'unknown');
   }],
   ['33221 is the DEFAULT probed port (jseval binds it hardcoded)', () => {
     assert.ok(FOREIGN_BACKEND_PORTS.includes(33221));
@@ -262,6 +285,34 @@ const registerTests = [
     assert.equal(f.attribution, 'unowned');
     assert.equal(f.recordFile, 'tmp/dev-runner/foreign/jseval-4242.json');
     assert.deepEqual(f.liveness, { portAnswered: true, pidAlive: true });
+  }],
+  ['a registered backend returning 503 remains live and keeps its identity', async () => {
+    const registerDir = await makeRegister({ 'jseval-4242.json': REC() });
+    const r = await probeForeignRuns({
+      enabled: true,
+      hasActiveRun: false,
+      registerDir,
+      isPidAlive: alivePid,
+      probe: async (url) => Number(new URL(url).port) === 33221 ? 503 : null,
+    });
+    assert.equal(r.length, 1);
+    assert.equal(r[0].state, 'live');
+    assert.equal(r[0].source, 'registered');
+    assert.equal(r[0].producer, 'jseval');
+    assert.deepEqual(r[0].liveness, { portAnswered: true, pidAlive: true });
+  }],
+  ['UNKNOWN owned-run state never guesses that a registered backend is unowned', async () => {
+    const registerDir = await makeRegister({ 'jseval-4242.json': REC() });
+    const r = await probeForeignRuns({
+      enabled: true,
+      ownedRunState: 'UNKNOWN',
+      registerDir,
+      isPidAlive: alivePid,
+      probe: listening(33221),
+    });
+    assert.equal(r.length, 1);
+    assert.equal(r[0].source, 'registered');
+    assert.equal(r[0].attribution, 'unknown');
   }],
   ['a live record has no identityStale flag when its pid is alive', async () => {
     const registerDir = await makeRegister({ 'jseval-4242.json': REC() });

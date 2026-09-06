@@ -8,7 +8,7 @@
  * TypeScript by `scripts/codegen/gen-wire-schema-types.mjs` (registered in
  * `governance/contract-surfaces.v1.json` as `SurfaceWire`). Regenerate with
  * `./gradlew.bat :modules:app-api:updateSchemas` then
- * `node scripts/codegen/gen-wire-schema-types.mjs`; `check-wire-schema-types-regen` fails on drift.
+ * `node scripts/codegen/gen-wire-schema-types.mjs`; `regen-all --check` fails on drift.
  *
  * This file is not a mirror and must not become one again. Everything below is one of:
  *  1. a re-export or projection of `SurfaceWire` (the field SET comes from Java, mechanically);
@@ -59,20 +59,16 @@ export const AUDIENCES: readonly Audience[] = [
  * Chrome-zone placement axis, projected from `SurfaceWire`.
  *
  * Adding a value is a Java change (`Placement.java`), not an edit here: the union is generated,
- * so a new zone appears in this type automatically and `check-a11y-closure` then demands a
- * landmark-role mapping for it.
+ * so a new zone appears in this type automatically. A new zone's landmark-role mapping
+ * (shell-v0/display/landmarks.ts) is a review-tier obligation (tempdoc 930 chunk H retired the
+ * static `check-a11y-closure` gate that used to assert this by parsing the list below).
  */
 export type Placement = SurfaceWire['placement'];
 
 /**
  * Closed list useful for exhaustive switches.
  *
- * This is a runtime VALUE, which is why it is hand-maintained rather than projected — and it is
- * load-bearing beyond TypeScript: `scripts/ci/check-a11y-closure.mjs` parses this declaration's
- * literal to assert every placement has a landmark role. Keep the declaration's exact shape and
- * its quoted constants. (Do not restate the declaration's syntax anywhere above it in this file:
- * that check takes the FIRST match in the file, so a prose copy of it shadows the real one and the
- * gate reports zero placements.)
+ * This is a runtime VALUE, which is why it is hand-maintained rather than projected.
  *
  * The `readonly Placement[]` annotation checks only that every entry IS a `Placement` — a subset
  * type-checks fine, so it cannot catch a dropped or newly-added zone. `PLACEMENT_CLOSURE` below is

@@ -24,8 +24,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Tempdoc 626 §Axis-C — the per-root index-drift legibility tap. Realizes the tempdoc's titular thesis
@@ -49,8 +47,6 @@ import org.slf4j.LoggerFactory;
  * completeness (595).
  */
 public final class IndexDriftHealthTap {
-  private static final Logger log = LoggerFactory.getLogger(IndexDriftHealthTap.class);
-
   static final String CONDITION_ID = "index.drift-unknown";
   private static final String REASON = "DeleteDetectionUnverified";
   private static final Severity SEVERITY = Severity.WARNING;

@@ -77,7 +77,7 @@ class VduStatusTransitionsTest {
   @BeforeEach
   void setUp() throws Exception {
     tempDir = Files.createTempDirectory("vdu-status-test-");
-    runtime = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(createVduCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(tempDir).open();
+    runtime = IndexSchema.fromCatalog(createVduCatalog(), TEST_METADATA_SOURCE, TEST_VALIDATOR).atPath(tempDir).open();
   }
 
   @AfterEach

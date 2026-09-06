@@ -96,8 +96,8 @@ class McpToolProjectionTest {
 
     assertEquals("vendor.mcphost.reference", plugin.id().value());
     assertEquals(
-        io.justsearch.agent.api.registry.TrustTier.TRUSTED_PLUGIN, plugin.trustTier());
-    assertEquals(io.justsearch.agent.api.registry.Audience.AGENT, plugin.audience());
+        TrustTier.TRUSTED_PLUGIN, plugin.trustTier());
+    assertEquals(Audience.AGENT, plugin.audience());
     assertEquals(2, plugin.contributions().operations().size());
     assertTrue(
         plugin.contributions().operations().contains(McpToolProjection.refFor("reference", "add")));

@@ -134,11 +134,9 @@ export function createMockHostApi(overrides?: {
     },
     ai: {
       invokeShape: async () => ({ text: '', events: [] }),
-      // eslint-disable-next-line require-yield
       streamShape: async function* () {},
       openSession: () => ({
         id: 'test-session',
-        // eslint-disable-next-line require-yield
         send: async function* () {},
         close: () => {},
       }),

@@ -5,7 +5,7 @@ status: stable
 description: "Telemetry, NDJSON logs, and Distributed Tracing."
 ---
 
-# 08. Observability: "Verify, Don't Guess"
+# Observability & Telemetry
 
 Because JustSearch runs locally on user machines, we cannot rely on cloud logging (Splunk/Datadog). Instead, we embed a "Black Box" recorder inside the application to allow for post-mortem debugging and real-time introspection.
 
@@ -254,6 +254,15 @@ pattern:
    ZIP including status snapshots, logs, telemetry NDJSON, and policy
    snapshots.
 
+For a pasteable bug-report aid, Help & Support also exposes
+`core.copy-diagnostic-summary`. This is deliberately not derived from the ZIP: the app-services
+composer emits only a deterministic typed allowlist (build and Runtime Contract versions, platform,
+lifecycle states and known reason codes, safe GPU capability, and parseable crash
+timestamp/process/exception type), sanitizes and caps values, and caps the whole UTF-8 payload at
+8 KiB. It reads no logs, stack traces, exception messages, environment dump, debug state, or runtime
+manifest. The UI copies the transient operation result directly and renders only fixed receipt text;
+the `METADATA_ONLY` operation audit records no summary payload.
+
 V2 (2026-04-28) extends the pattern with three named-question events
 consuming the same substrate, all following the existing
 `OperationalMetrics.ThroughputMonitor` discipline (rolling-window state
@@ -387,6 +396,8 @@ Not an exhaustive list, but the metrics below are intentionally low-cardinality 
   | `index.runtime.soft_delete_total` | Counter | none | Per soft-delete (count > 0) |
   | `index.runtime.backpressure_total` | Counter | none | When the IndexingLoop applies backpressure |
   | `index.runtime.validation_failure_total` | Counter | `reason` (bounded enum, ~6 values) | Per document validation failure |
+  | `index.runtime.vector_dropped_total` | Counter | none | Per dense-vector FIELD dropped because the value could not be normalized (zero-magnitude or non-finite embedding, tempdoc 931 §C.3). The document is still written, minus that field, with its embedding status set to `FAILED` — so this is an encoder-health signal, not an indexing-failure one |
+  | `index.runtime.chunk_revision_mismatch_total` | Counter | none | Per chunk READ whose text could not be reconstructed because the parent is no longer at the revision the chunk's offsets address (tempdoc 931 §E item 5). The read returns no text for that chunk — empty excerpt, omitted RAG passage — rather than a slice of the newer revision, so this counts reads landing inside the parent-rewrite / chunk-regeneration window; a sustained non-zero trend means regeneration is not keeping up with parent rewrites |
   | `index.runtime.swap_started_total` | Counter | `reason` (same enum as `swap_duration_ms`) | At the start of every `drainAndClose` — pairs with `swap_duration_ms` |
   | `index.runtime.drain_timeout_total` | Counter | none | When `drainAndClose` writeLock acquire times out before in-flight writes complete (rare; signals the drain timeout was too tight or the queue too deep) |
 
@@ -656,10 +667,10 @@ Spans are exported via `NdjsonSpanExporter` to `<dataDir>/telemetry/traces.ndjso
 the `attrs` object): `trace_id`, `span_id`, `parent_span_id`, `name`,
 `start`, `end` (ISO-8601 millisecond-precision), `status`, and
 `duration_ms` (double, nanosecond-sourced). The `duration_ms` field was
-added by tempdoc 400 §23.8 D-1 specifically so Layer-4 projections
-(notably `encoder_drift`) can read span durations without re-parsing
-ISO timestamps — start/end are ms-truncated at export and lossy for
-sub-ms encoder calls. Consumers should prefer `duration_ms` and fall
+added by tempdoc 400 §23.8 D-1 specifically so span consumers (notably
+the `encoder_latency` summary block) can read span durations without
+re-parsing ISO timestamps — start/end are ms-truncated at export and
+lossy for sub-ms encoder calls. Consumers should prefer `duration_ms` and fall
 back to `(end − start)` only for legacy `traces.ndjson` files produced
 before D-1 landed.
 
@@ -739,7 +750,7 @@ calibrated non-determinism envelope for this cohort (if one exists).
 **Informational-only fields (`_VOLATILE_FIELDS`, excluded from hash):**
 
 `run_id`, `timestamp`, `workflow_run_id`, `manifest_hash` itself,
-`non_determinism_envelope`, `status_snapshot`, `debug_state_snapshot`,
+`status_snapshot`, `debug_state_snapshot`,
 `inference_status_snapshot`, `env_fingerprint`, `telemetry_health_tag`.
 These carry runtime state (uptime, queue depths, searcher generation,
 per-commit UUIDs, captured_at timestamps) that varies per run and
@@ -747,57 +758,26 @@ would destabilize the cohort hash — preserved on the manifest
 document for operator inspection but not hashed. See tempdoc 400 §24
 for the Q1 finding that drove this separation.
 
-**Calibrated envelope workflow (LR1-b).**
+**Cohort-hash stability** across identical reruns is guarded by
+`scripts/jseval/regression/manifest_hash_stability.py` (runs 3
+identical smokes and asserts matching hashes — not in PR gate
+because of the ~12-min cost; invoke manually after changes to
+`manifest.py` or state-endpoint shapes).
 
-1. Run `jseval calibrate --dataset <name> --modes <list> --runs N`
-   — repeats N identical `--clean --pipeline` smokes, captures
-   mean + sample-stdev per mode per metric, and writes a facet file
-   at `<data-dir>/cohort_baselines/<cohort_hash>/envelope.json`,
-   where `--data-dir` defaults to the jseval-owned data root
-   `scripts/jseval/tmp/` since tempdoc 716 — physically outside the
-   Worker's `JUSTSEARCH_DATA_DIR`, so a backend `--clean` can never
-   destroy calibration state (Phase 3 layout per §26.6 Decision 2;
-   see `docs/tempdocs/400-*.md`). Calibrated metrics: nDCG@10, P@1,
-   R@10, RR@10, AP@10, latency.mean_ms, latency.p50_ms. Excluded:
-   p95/p99/max (cold-start-dominated, cv ≥ 64% on N=3 runs — would
-   inflate the envelope to uselessness). Default `--runs 5` (~20 min
-   cost); override for cheaper/richer calibration.
-
-2. Subsequent `jseval run` invocations with matching cohort identity
-   auto-embed the envelope into their `manifest.json` (via
-   `compute_manifest`'s registry lookup against the jseval data root;
-   pre-716 envelopes inside a backend data dir still resolve read-only,
-   with a deprecation WARN).
-   Consumers (Phase 3's LR4-b bootstrap CI, Phase 4+ LR5-d bisection)
-   can distinguish noise (±2·stdev inside the envelope) from signal
-   (outside) by definition rather than by hope. Envelopes written at
-   the legacy Phase-2 path
-   (`<dataDir>/non_determinism_envelopes/<cohort_hash>.json`) are
-   still *read* via a backward-compat shim in `calibrate.read_envelope`
-   during the transition.
-
-3. Cohort-hash stability across identical reruns is guarded by
-   `scripts/jseval/regression/manifest_hash_stability.py` (runs 3
-   identical smokes and asserts matching hashes — not in PR gate
-   because of the ~12-min cost; invoke manually after changes to
-   `manifest.py` or state-endpoint shapes).
-
-**Envelope freshness policy — deferred.** The facet file stamps
-`calibrated_at` + `git_sha` so operators can assess staleness, but no
-automatic invalidation fires on GPU driver updates, model reloads, or
-schema changes. Phase 3/4 decides the freshness rule.
-
-**Cohort baseline facet registry (Phase 3).** The Phase-2 envelope
-sidecar generalizes into a per-cohort directory that can hold multiple
-facet files:
-
-- `envelope.json` — scalar metric calibration (unchanged content).
-- `span_distributions.json` — per-encoder `encoder.ort_run` duration
-  samples, seeded by the first run in a cohort and consumed by the
-  LR4-g PSI drift projection.
-
-Future facets (per-query score distributions, per-mode latency
-histograms) drop into the same directory without schema pollution.
+**Run-to-run variation (tempdoc 930 §18.1 row 7).** There is no
+calibrated cohort envelope: the `jseval calibrate` /
+`calibrate-drift-baseline` machinery (LR1-b + LR4-g), the
+`cohort_baselines/` facet registry, and the `encoder_drift` PSI
+projection were removed after producing no artefact on any machine in
+their lifetime — the cohort hash changes with any input, so a baseline
+of N warm runs went stale faster than it could be captured. Variation
+is now reported *per run* instead of calibrated *per cohort*: each
+`summary.json` carries `per_mode.<mode>.latency_stats` (p50/p95/p99/max
+over that run's queries) and an `encoder_latency.encoders.<name>` block
+with absolute p50/p95 ms per ONNX encoder, read from the same
+`encoder.ort_run` spans the PSI projection consumed. A silently slower
+encoder path shows up as a moved absolute number plus the product's own
+`cpu_fallback.triggered` event; nothing thresholds or gates on it.
 
 **Layer-4 projections (Phase 3).** Every `jseval run` now invokes
 every registered projection against the run artifacts via
@@ -812,7 +792,6 @@ every registered projection against the run artifacts via
 | `rank_diff` | LR4-e | Auto rank-diff vs latest prior in-cohort sibling run |
 | `cpu_fallback_counts` | LR4-f | `cpu_fallback.triggered` aggregation by encoder + cause |
 | `stratified_metrics` | LR4-c | 2-dim stratified metrics (query-length × first-relevant-rank) |
-| `encoder_drift` | LR4-g | PSI over `encoder.ort_run` duration distributions vs cohort baseline |
 
 Projections are pure functions from `run_dir` to a JSON document;
 failures are quarantined so a broken projection cannot abort
@@ -824,17 +803,16 @@ export + adding its filename to `_PROJECTION_MODULE_NAMES` in
 **Eval-history schema (LR4-h).** Each run appends to
 `<outDir>/eval-history.db`:
 - `runs` table gains a `manifest_hash` column (indexed).
-- New `envelope_metrics(run_id, cohort_hash, mode, metric, mean, stdev,
-  n, calibrated_at)` table — normalized so metric-set evolution
-  needs zero ALTER TABLEs.
 - `check_trend(dataset, mode, ..., manifest_hash=<hash>)` filters the
   regression window to in-cohort runs when the kwarg is supplied
   (§26.6 Decision 3).
 
-**Drift gate (manual).** `jseval calibrate` (5-run calibration) + `jseval run`
-+ `jseval gate` asserts σ(nDCG@10) within ±10% of the B2 baseline (0.00108).
-(Phase 6 / 6.13: relocated from `scripts/ci/phase3_observability_gate.py`
-into the jseval package.) This was previously wrapped by
+**Projection-presence gate (manual).** `jseval run` + `jseval gate` asserts the
+latest run directory has a readable `manifest.json` and the four required LR4
+projection outputs. (Phase 6 / 6.13: relocated from
+`scripts/ci/phase3_observability_gate.py` into the jseval package; tempdoc 930
+§18.1 row 7 removed its σ(nDCG@10) band arm along with the envelope it read.)
+This was previously wrapped by
 `.github/workflows/phase-3-observability-nightly.yml`, a scheduled-cron
 workflow; per ADR-0026 (self-hosted runner-availability policy) the cron
 trigger was removed before it ever fired, and the workflow was deleted
@@ -843,12 +821,11 @@ available as a manual CLI sequence; no automated wrapper currently invokes
 it.
 
 **Files:** `scripts/jseval/jseval/manifest.py` (cohort identity),
-`scripts/jseval/jseval/calibrate.py` (envelope calibration),
-`scripts/jseval/jseval/cohort_baselines.py` (facet registry),
+`scripts/jseval/jseval/encoder_latency.py` (per-encoder p50/p95 summary block),
 `scripts/jseval/jseval/history.py` (schema + check_trend),
 `scripts/jseval/jseval/projections/` (Layer-4 projections),
-`scripts/jseval/jseval/gate.py` (drift gate), CLI entries
-`jseval calibrate` + `jseval gate`.
+`scripts/jseval/jseval/gate.py` (projection-presence gate), CLI entry
+`jseval gate`.
 
 **Layer-5 experiment runners (Phase 4).** Four runner subcommands
 cover cross-run causal analysis (LR5-d), concurrency behaviour

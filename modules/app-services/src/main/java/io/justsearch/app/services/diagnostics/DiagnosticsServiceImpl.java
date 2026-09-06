@@ -5,6 +5,8 @@ import io.justsearch.app.api.DebugStateProvider;
 import io.justsearch.app.api.DiagnosticsService;
 import io.justsearch.app.api.EnterprisePolicyService;
 import io.justsearch.app.api.StatusSnapshotProvider;
+import io.justsearch.app.api.runtime.RuntimeContract;
+import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemAccess;
 import io.justsearch.gpu.GpuCapabilitiesService;
@@ -59,10 +61,12 @@ public final class DiagnosticsServiceImpl implements DiagnosticsService {
   private static final long MAX_NDJSON_BYTES = 5L * 1024 * 1024; // 5 MB cap per file
   private static final int MAX_ROTATED_METRICS_FILES = 3;
 
-  // Path redaction patterns (same as ApiErrorHandler.sanitizeMessage)
-  private static final Pattern WINDOWS_PATH = Pattern.compile("[A-Z]:\\\\[^\\s,\"]+");
+  // Diagnostics-ZIP path redaction. Quoted JSON/log fields may contain spaces or commas, so a
+  // whitespace/comma boundary is not safe; stop only at a quote or line boundary.
+  private static final Pattern WINDOWS_PATH =
+      Pattern.compile("(?i)[a-z]:\\\\[^\\r\\n\"]+");
   private static final Pattern UNIX_PATH =
-      Pattern.compile("/(?:home|usr|var|tmp|opt)[/][^\\s,\"]+");
+      Pattern.compile("/(?:home|usr|var|tmp|opt)[/][^\\r\\n\"]+");
 
   private final EnterprisePolicyService policyService;
   private final GpuCapabilitiesService gpuCapabilitiesService;
@@ -145,12 +149,46 @@ public final class DiagnosticsServiceImpl implements DiagnosticsService {
       if (feTelemetryJson != null && !feTelemetryJson.isBlank()) {
         addBytesRedacted(
             zos,
-            feTelemetryJson.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            feTelemetryJson.getBytes(StandardCharsets.UTF_8),
             "frontend/fe-telemetry.json");
       }
     }
 
     return outZip;
+  }
+
+  @Override
+  public String buildDiagnosticSummary() {
+    DiagnosticSummaryComposer.LifecycleMetadata lifecycle = null;
+    DiagnosticSummaryComposer.GpuMetadata gpu = null;
+    if (statusSnapshotProviderSupplier != null) {
+      try {
+        StatusSnapshotProvider provider = statusSnapshotProviderSupplier.get();
+        Object statusSnapshot = provider == null ? null : provider.buildStatusSnapshot();
+        lifecycle = DiagnosticSummaryComposer.lifecycleFrom(statusSnapshot);
+        gpu = DiagnosticSummaryComposer.safeGpuFrom(statusSnapshot);
+      } catch (RuntimeException ignored) {
+        // Optional typed snapshot: omit it when the Head is still wiring or shutting down.
+      }
+    }
+
+    DiagnosticSummaryComposer.CrashMetadata crash = null;
+    try {
+      crash =
+          DiagnosticSummaryComposer.latestCrash(PlatformPaths.resolveDataDir().resolve("crashes"));
+    } catch (RuntimeException ignored) {
+      // Optional local metadata: an unresolved data directory is represented by omission.
+    }
+
+    return new DiagnosticSummaryComposer()
+        .compose(
+            new DiagnosticSummaryComposer.Inputs(
+                EnvRegistry.APP_VERSION.get().orElse(null),
+                RuntimeContract.current(),
+                DiagnosticSummaryComposer.currentPlatform(),
+                lifecycle,
+                gpu,
+                crash));
   }
 
   private void addTelemetryFiles(ZipOutputStream zos, Path dataDir) {

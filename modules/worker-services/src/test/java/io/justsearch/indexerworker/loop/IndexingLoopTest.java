@@ -23,6 +23,7 @@ import io.justsearch.indexerworker.fixtures.TestDocumentBuilder;
 import io.justsearch.indexerworker.ingest.IngestionOutcome;
 import io.justsearch.indexerworker.ingest.IngestionOutcomeClass;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
+import io.justsearch.indexerworker.identity.DocumentIdentityStore;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
@@ -431,7 +432,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               /* precomputedEmbedding */ null,
-              new IndexingDocumentOps.SourceFileMetadata(123L, 456L));
+              new IndexingDocumentOps.SourceFileMetadata(123L, 456L),
+              "test-doc-uid");
 
       Map<String, Object> fields = doc.fields();
       assertEquals("SUCCESS_PARTIAL", fields.get(SchemaFields.EXTRACTION_STATUS));
@@ -465,7 +467,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertEquals(
           IngestionReasonCodes.SUCCESS_PARTIAL,
@@ -494,7 +497,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertFalse(doc.fields().containsKey(SchemaFields.EXTRACTION_REASON_CODE));
     }
@@ -511,7 +515,7 @@ class IndexingLoopTest {
               policy.policyId(),
               "tika-policy-structured",
               false,
-              java.util.List.of("warn-1", "warn-2", "warn-3"));
+              List.of("warn-1", "warn-2", "warn-3"));
       ValidatedExtractionArtifact artifact = rawWithWarnings.validate(policy, "warned-hash");
 
       IndexDocument doc =
@@ -527,7 +531,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertEquals(3L, doc.fields().get(SchemaFields.PARSER_WARNINGS_COUNT));
     }
@@ -554,7 +559,8 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               null,
-              new IndexingDocumentOps.SourceFileMetadata(11L, 22L));
+              new IndexingDocumentOps.SourceFileMetadata(11L, 22L),
+              "test-doc-uid");
 
       assertFalse(doc.fields().containsKey(SchemaFields.PARSER_WARNINGS_COUNT));
     }
@@ -817,7 +823,7 @@ class IndexingLoopTest {
       // EMBEDDING_STATUS_COMPLETED, which IS the evidence the stamp must be earned from.
       loop.getWriter()
           .write(
-              (io.justsearch.indexerworker.loop.ExtractedJob) extractedJob(file, "body"),
+              (ExtractedJob) extractedJob(file, "body"),
               new float[] {0.1f, 0.2f});
       verify(ecc).noteSuccessfulEmbeddingObserved();
     }
@@ -998,8 +1004,8 @@ class IndexingLoopTest {
             + "coordinator exception (W2.6: isolation test for the seam Appendix A.1 named)")
     void staleSourceHandlerReturnsOneOnSuccessZeroOnException() throws Exception {
       IndexingCoordinator successCoordinator = mock(IndexingCoordinator.class);
-      io.justsearch.indexerworker.loop.StaleSourceHandler okHandler =
-          new io.justsearch.indexerworker.loop.StaleSourceHandler(successCoordinator);
+      StaleSourceHandler okHandler =
+          new StaleSourceHandler(successCoordinator);
       Path file = Files.writeString(Files.createTempFile("js-stale-ok", ".txt"), "body");
       assertEquals(1, okHandler.deleteMissingSource(file),
           "Successful coordinator.deleteByIdAndChunks must surface as 1 so the caller bumps "
@@ -1009,11 +1015,84 @@ class IndexingLoopTest {
       IndexingCoordinator throwingCoordinator = mock(IndexingCoordinator.class);
       doThrow(new RuntimeException("simulated lucene failure"))
           .when(throwingCoordinator).deleteByIdAndChunks(anyString());
-      io.justsearch.indexerworker.loop.StaleSourceHandler failHandler =
-          new io.justsearch.indexerworker.loop.StaleSourceHandler(throwingCoordinator);
+      StaleSourceHandler failHandler =
+          new StaleSourceHandler(throwingCoordinator);
       assertEquals(0, failHandler.deleteMissingSource(file),
           "Coordinator exception must be swallowed and surfaced as 0 so the caller does not "
               + "bump indexedSinceCommit on a no-op (best-effort delete semantics).");
+    }
+
+    @Test
+    @DisplayName(
+        "StaleSourceHandler marks identity deleted only when the source is really gone "
+            + "(tempdoc 931 §C.6 — the DELETED classification also fires on an IOException)")
+    void staleSourceHandlerMarksIdentityOnlyForAVerifiedAbsentSource() throws Exception {
+      List<String> marked = new java.util.ArrayList<>();
+      DocumentIdentityStore recorder =
+          new DocumentIdentityStore() {
+            @Override
+            public void markDeleted(String pathHash, long nowMs) {
+              marked.add(pathHash);
+            }
+
+            @Override
+            public Identity resolve(String pathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Identity importExisting(String pathHash, String docUid, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public int importExisting(
+                java.util.Collection<ImportedIdentity> identities, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public long identityCount() {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean hasImportRecord(String generationId) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void recordImport(ImportRecord record) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RekeyResult rekey(String oldPathHash, String newPathHash, long nowMs) {
+              throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public java.util.Optional<Identity> lookup(String pathHash) {
+              throw new UnsupportedOperationException();
+            }
+          };
+      StaleSourceHandler handler =
+          new StaleSourceHandler(
+              mock(IndexingCoordinator.class), recorder);
+
+      Path stillThere = Files.writeString(Files.createTempFile("js-stale-present", ".txt"), "body");
+      assertEquals(1, handler.deleteMissingSource(stillThere));
+      assertTrue(
+          marked.isEmpty(),
+          "the source is present, so the index delete is not evidence of a deletion");
+
+      Path gone = Files.createTempDirectory("js-stale-gone").resolve("gone.txt");
+      assertEquals(1, handler.deleteMissingSource(gone));
+      assertEquals(
+          List.of(
+              DocumentIdentityStore.pathHash(
+                  io.justsearch.indexerworker.util.PathNormalizer.normalizeKey(gone))),
+          marked);
     }
 
 
@@ -1120,11 +1199,11 @@ class IndexingLoopTest {
               null); // W7.2 followup — default IndexingLoopOptions
 
       // ECC reports REBUILDING + completion confirmed.
-      io.justsearch.indexerworker.embed.EmbeddingCompatibilityController ecc =
-          mock(io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.class);
+      EmbeddingCompatibilityController ecc =
+          mock(EmbeddingCompatibilityController.class);
       when(ecc.state())
           .thenReturn(
-              io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State.REBUILDING);
+              EmbeddingCompatibilityController.State.REBUILDING);
       // Tempdoc 726 F1: queueDepth no longer gates certification, so match any depth.
       when(ecc.checkRebuildCompletion(anyLong(), eq(0))).thenReturn(true);
       loop.getEmbeddingLifecycle().setEmbeddingCompatController(ecc);
@@ -1198,11 +1277,11 @@ class IndexingLoopTest {
       // Rebuild has completed (queue drained, no pending embeddings) but — modelling a worker
       // that stops right after completion, before any further loop iteration — nothing else has
       // called tryFinalizeEmbeddingRebuild() yet.
-      io.justsearch.indexerworker.embed.EmbeddingCompatibilityController ecc =
-          mock(io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.class);
+      EmbeddingCompatibilityController ecc =
+          mock(EmbeddingCompatibilityController.class);
       when(ecc.state())
           .thenReturn(
-              io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State.REBUILDING);
+              EmbeddingCompatibilityController.State.REBUILDING);
       when(ecc.checkRebuildCompletion(0L, 0)).thenReturn(true);
       loop.getEmbeddingLifecycle().setEmbeddingCompatController(ecc);
 
@@ -1221,7 +1300,7 @@ class IndexingLoopTest {
       verify(ecc).onFingerprintStamped();
       // The indexedSinceCommit == 0 branch of the shutdown block must NOT also fire a redundant
       // INDEXING_LOOP_SHUTDOWN commit.
-      verify(commitOps, org.mockito.Mockito.never())
+      verify(commitOps, never())
           .commitAndTrack(io.justsearch.adapters.lucene.runtime.CommitReason.INDEXING_LOOP_SHUTDOWN);
     }
 
@@ -1229,6 +1308,15 @@ class IndexingLoopTest {
       DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
       IndexCountOps indexCountOps = mock(IndexCountOps.class);
       WorkerSignalBus signalBus = mock(WorkerSignalBus.class);
+      DocumentIdentityStore identityStore = mock(DocumentIdentityStore.class);
+      lenient()
+          .when(identityStore.resolve(anyString(), anyLong()))
+          .thenAnswer(
+              invocation -> {
+                String hash = invocation.getArgument(0);
+                long now = invocation.getArgument(1);
+                return new DocumentIdentityStore.Identity(hash, "test-uid-" + hash, now, now);
+              });
       queue.indexingCoordinator = mock(IndexingCoordinator.class);
       return new IndexingLoop(
           queue,
@@ -1248,7 +1336,7 @@ class IndexingLoopTest {
               Duration.ofSeconds(5),
               (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
           null, // W7.2 — default EncoderBindings
-          null); // W7.2 followup — default IndexingLoopOptions
+          new IndexingLoopOptions(false, null, identityStore, null, null, null));
     }
 
     private Object invokeExtractJob(IndexingLoop loop, Path file) throws Exception {
@@ -1262,7 +1350,7 @@ class IndexingLoopTest {
 
     private void invokeWriteExtractedJob(IndexingLoop loop, Object extractedJob) throws Exception {
       // W5.1: writeExtractedJob moved to JobBatchWriter.write.
-      loop.getWriter().write((io.justsearch.indexerworker.loop.ExtractedJob) extractedJob, null);
+      loop.getWriter().write((ExtractedJob) extractedJob, null);
     }
 
     private void invokeProcessBatch(IndexingLoop loop, List<JobQueue.IndexJob> jobs) throws Exception {
@@ -1298,12 +1386,13 @@ class IndexingLoopTest {
       ValidatedExtractionArtifact artifact =
           ExtractionArtifact.full(extraction, TikaExtractionPolicy.defaults(), "test-structured", truncated)
               .validate(TikaExtractionPolicy.defaults(), envelope.pathHash());
-      return new io.justsearch.indexerworker.loop.ExtractedJob(
+      return new ExtractedJob(
           file,
           null,
           artifact,
           System.currentTimeMillis(),
-          envelope);
+          envelope,
+          "00000000-0000-4000-8000-000000000001");
     }
 
     private ContentExtractorProvider providerReturning(String content) {
@@ -1617,7 +1706,7 @@ class IndexingLoopTest {
      * the full sequence (the prior single-{@code lastOutcome} field collapsed multiple calls
      * into the last one, which masked the LEDGER ↔ DOCUMENT inconsistency the slice fixes).
      */
-    final java.util.List<IngestionOutcome> capturedOutcomes = new java.util.ArrayList<>();
+    final List<IngestionOutcome> capturedOutcomes = new java.util.ArrayList<>();
 
     boolean done;
     boolean terminalFailed;
@@ -1641,13 +1730,13 @@ class IndexingLoopTest {
     public void open() {}
 
     @Override
-    public int enqueue(java.util.List<Path> paths, String collection) {
+    public int enqueue(List<Path> paths, String collection) {
       return paths == null ? 0 : paths.size();
     }
 
     @Override
-    public java.util.List<IndexJob> pollPending(int limit) {
-      return java.util.List.of();
+    public List<IndexJob> pollPending(int limit) {
+      return List.of();
     }
 
     @Override

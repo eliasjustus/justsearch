@@ -239,6 +239,6 @@ final class ActionLedgerChangeRegistryTest {
     assertEquals(1, log.size(), "the one log received the appended operation");
     assertEquals(
         "core.reindex",
-        ((io.justsearch.app.observability.ledger.ActionEvent.Operation) log.get(0)).operationId());
+        ((ActionEvent.Operation) log.get(0)).operationId());
   }
 }

@@ -106,6 +106,15 @@ final class AgentControllerApprovalDispatchTest {
   }
 
   @Test
+  void rejectsAnAgentGateByCallId() {
+    GateStubService svc = new GateStubService("sess-a", "call-agent");
+    AgentController ctrl = controller(svc, new WorkflowGateRegistry());
+
+    assertTrue(ctrl.resolveApprovalGate("sess-a", "call-agent", false, "User rejected"));
+    assertEquals("call-agent", svc.lastRejectedCallId);
+  }
+
+  @Test
   void fallsThroughToTheWorkflowGateWhenNoAgentGateMatches() throws Exception {
     GateStubService svc = new GateStubService("sess-a", "call-agent"); // won't match the workflow callId
     WorkflowGateRegistry reg = new WorkflowGateRegistry();

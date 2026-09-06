@@ -485,7 +485,7 @@ final class ConversationEngineTest {
     var event =
         new AgentEvent.ToolCallProposed(
             call, io.justsearch.agent.api.registry.RiskTier.LOW, TraceContext.none());
-    SseEvent sse = AgentEventSseTranslator.translate(event, null, java.util.Map.of());
+    SseEvent sse = AgentEventSseTranslator.translate(event, null, Map.of());
     assertEquals("tool_call_proposed", sse.name());
     assertEquals("call-1", sse.payload().get("callId"));
     assertEquals("core_search_index", sse.payload().get("toolName"));
@@ -531,10 +531,10 @@ final class ConversationEngineTest {
   private static final class RecordingStreamConsumer
       implements io.justsearch.agent.api.conversation.StreamConsumer {
     final String id;
-    final io.justsearch.agent.api.conversation.SseEvent emittedEvent;
+    final SseEvent emittedEvent;
     final AtomicReference<String> capturedFullText = new AtomicReference<>();
 
-    RecordingStreamConsumer(String id, io.justsearch.agent.api.conversation.SseEvent emitted) {
+    RecordingStreamConsumer(String id, SseEvent emitted) {
       this.id = id;
       this.emittedEvent = emitted;
     }
@@ -567,7 +567,7 @@ final class ConversationEngineTest {
     var urlExtractor =
         new RecordingStreamConsumer(
             "core.url-extractor",
-            new io.justsearch.agent.api.conversation.SseEvent(
+            new SseEvent(
                 "navigate.url_extracted",
                 Map.of("index", 0, "target", "core.library-surface")));
     var registry = StreamConsumerRegistry.of(List.of(urlExtractor));

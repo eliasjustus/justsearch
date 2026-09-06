@@ -16,7 +16,7 @@ class VariantSelectorTest {
 
   @Test
   void optimalSelection_fp32OnCpu() throws Exception {
-    Path modelFile = createFile("onnx/embed/model.onnx");
+    createFile("onnx/embed/model.onnx");
     InstallContract contract = contractWith("embedding", "model.onnx", ModelPrecision.FP32,
         ExecutionProvider.CPU, "onnx/embed");
 
@@ -31,7 +31,7 @@ class VariantSelectorTest {
 
   @Test
   void optimalSelection_fp16OnCuda() throws Exception {
-    Path modelFile = createFile("onnx/embed/model_fp16.onnx");
+    createFile("onnx/embed/model_fp16.onnx");
     InstallContract contract = contractWith("embedding", "model_fp16.onnx", ModelPrecision.FP16,
         ExecutionProvider.CUDA, "onnx/embed");
 

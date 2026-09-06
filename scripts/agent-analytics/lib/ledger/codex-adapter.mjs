@@ -3,10 +3,11 @@
  * projected onto the neutral `Call`/`ToolEvent` shape (tempdoc 886 §12 PR 1,
  * independent-review fix-up).
  *
- * Source: `${codexHome}/sessions/**\/rollout-*.jsonl` (recursing the
- * `YYYY/MM/DD` layout). `archived_sessions` is skipped wherever it appears in
- * the walk (it lives as a SIBLING of `sessions/` on this machine, but the
- * skip is defensive against a layout that nests it).
+ * Neutral-ledger source: `${codexHome}/sessions/**\/rollout-*.jsonl`
+ * (recursing the `YYYY/MM/DD` layout). `archived_sessions` is skipped wherever
+ * it appears in that walk. The raw attribution reader intentionally has a
+ * wider source contract: it reads both active and archived fragments and
+ * performs event-time snapshotting/deduplication itself.
  *
  * Every rule below is from tempdoc 886 §11's derisk pass (A1/A2/A7), verified
  * against the real corpus (51,740 `token_count` events, 289 sessions) before
@@ -32,16 +33,13 @@
  * A `rate_limits`-only `token_count` event (`info: null`) carries no usage at
  * all and is skipped outright, not counted as a repeat.
  *
- * LINEAGE (independent review fix, 886 §12 PR 1): every Codex `Call` has
- * `lineage.kind = 'main'`. `inter_agent_communication_metadata` was
- * originally read as a per-call `'thread'` lineage kind; on real corpus
- * payloads (`{trigger_turn: false}`, no parent id) it names no PARENT, so no
- * per-call edge is derivable from it — asserting `'thread'` from it was
- * fabricating lineage evidence that was not there. What IS real is a
- * SESSION-level fact ("this session had multi-agent communication at some
- * point"), surfaced as `session.multiAgent`, not as a per-call kind. See
- * `record.mjs`'s `VALID_LINEAGE_KINDS` doc for what would need to be true
- * for a future adapter to legitimately produce `'thread'`.
+ * LINEAGE: current Codex child rollouts carry an explicit parent edge in
+ * `session_meta.payload.source.subagent.thread_spawn`, including
+ * `parent_thread_id`, `agent_role`, and `agent_path`. Those sessions produce
+ * `lineage.kind = 'spawn'`; sessions without that evidence remain `main`.
+ * `inter_agent_communication_metadata` still names no parent and remains only
+ * the session-level `multiAgent` fact. `turn_context.payload.effort` supplies
+ * the actual reasoning effort used for each call.
  *
  * TOOL EVENTS (independent review fix): `agent_message` payloads are plain
  * assistant reply text, not tool activity, so this adapter no longer creates
@@ -60,41 +58,49 @@ export const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');
 const OUTPUT_CHAR_CAP = 65536;
 const ARCHIVED_DIR_NAME = 'archived_sessions';
 
-function walkRolloutFiles(dir, out) {
+function walkRolloutFiles(dir, out, errors = null) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    if (errors) errors.push({ path: dir, code: error.code ?? 'READ_ERROR' });
+    return false;
   }
   for (const e of entries) {
     if (e.name === ARCHIVED_DIR_NAME) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      walkRolloutFiles(p, out);
+      walkRolloutFiles(p, out, errors);
     } else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) {
       out.push(p);
     }
   }
+  return true;
 }
 
-function parseLines(file) {
+function parseLinesWithDiagnostics(file) {
   let content;
   try {
     content = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
+  } catch (error) {
+    return { entries: [], malformedLines: 0, readError: error };
   }
-  const out = [];
+  const entries = [];
+  let malformedLines = 0;
   for (const raw of content.split('\n')) {
     if (!raw.trim()) continue;
     try {
-      out.push(JSON.parse(raw));
+      entries.push(JSON.parse(raw));
     } catch {
       // truncated/corrupt line — skip it, matching every other reader's per-line tolerance
+      malformedLines += 1;
     }
   }
-  return out;
+  return { entries, malformedLines, readError: null };
+}
+
+function parseLines(file) {
+  return parseLinesWithDiagnostics(file).entries;
 }
 
 function outputStringOf(payload) {
@@ -105,6 +111,64 @@ function outputStringOf(payload) {
   } catch {
     return '';
   }
+}
+
+/**
+ * Flatten the text-bearing portions of a Codex tool result without retaining
+ * its wrapper shape. Desktop custom tools commonly return an object whose
+ * numeric keys contain `input_text` blocks, while CLI tools more often return
+ * a plain string. Attribution readers need the text itself; the neutral
+ * ToolEvent above deliberately keeps only its capped size.
+ */
+export function codexToolOutputText(output) {
+  const pieces = [];
+  const seen = new Set();
+
+  function visit(value) {
+    if (typeof value === 'string') {
+      pieces.push(value);
+      return;
+    }
+    if (value == null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+
+    if (typeof value.text === 'string') {
+      pieces.push(value.text);
+      return;
+    }
+    if (Object.hasOwn(value, 'output')) {
+      visit(value.output);
+      return;
+    }
+    if (Object.hasOwn(value, 'content')) {
+      visit(value.content);
+      return;
+    }
+
+    const numericKeys = Object.keys(value)
+      .filter((key) => /^\d+$/.test(key))
+      .sort((a, b) => Number(a) - Number(b));
+    if (numericKeys.length > 0) {
+      for (const key of numericKeys) visit(value[key]);
+      return;
+    }
+
+    // Unknown structured outputs are uncommon, but JSON text is a more useful
+    // fail-closed representation than silently discarding them.
+    try {
+      pieces.push(JSON.stringify(value));
+    } catch {
+      // Cyclic/host objects are not valid rollout JSON; ignore only this leaf.
+    }
+  }
+
+  visit(output);
+  return pieces.join('\n');
 }
 
 function inputStringOf(payload) {
@@ -125,9 +189,92 @@ function inputStringOf(payload) {
  * swallowed (independent review, 886 §12 PR 1 fix-up — the previous version
  * caught everything here, which also hid real bugs).
  */
+function findSessionMetadata(entries) {
+  return entries.find((e) => e.type === 'session_meta')?.payload ?? null;
+}
+
 function findSessionId(entries) {
-  const metaEntry = entries.find((e) => e.type === 'session_meta');
-  return metaEntry?.payload?.id || null;
+  return findSessionMetadata(entries)?.id || null;
+}
+
+function lineageFromSessionMetadata(metadata) {
+  const spawn = metadata?.source?.subagent?.thread_spawn;
+  const parentSessionId = spawn?.parent_thread_id ?? metadata?.parent_thread_id ?? null;
+  if (!spawn || !parentSessionId) {
+    return { parentSessionId: null, kind: 'main' };
+  }
+  return {
+    parentSessionId,
+    kind: 'spawn',
+    agentType: spawn.agent_role ?? metadata.agent_role ?? null,
+    requestedModel: null,
+    description: spawn.agent_path ?? metadata.agent_path ?? null,
+  };
+}
+
+/**
+ * Pair raw Codex tool inputs with their full text outputs. This is the narrow
+ * escape hatch for attribution readers whose question cannot be answered from
+ * the privacy-safer, size-only ToolEvent projection. Callers must aggregate in
+ * memory and must not persist `input` or `outputText`.
+ */
+export function processCodexToolExchanges(entries, { file } = {}) {
+  const sessionId = findSessionId(entries);
+  if (!sessionId) {
+    return { exchanges: [], session: null, skip: { file, reason: 'no usable sessionId (missing or empty session_meta.payload.id)' } };
+  }
+
+  const metaEntry = entries.find((entry) => entry.type === 'session_meta');
+  const project = metaEntry?.payload?.cwd ?? null;
+  const pendingByCallId = new Map();
+  const exchanges = [];
+
+  for (const entry of entries) {
+    if (entry.type !== 'response_item' || !entry.payload) continue;
+    const p = entry.payload;
+
+    if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+      pendingByCallId.set(p.call_id, {
+        sessionId,
+        project,
+        file,
+        callId: p.call_id,
+        name: p.name,
+        input: inputStringOf(p),
+        outputText: null,
+        rawOutputChars: null,
+        missingOutput: true,
+        outputTimestampUnknown: false,
+        startedTs: entry.timestamp ?? null,
+        completedTs: null,
+      });
+      continue;
+    }
+
+    if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+      const pending = pendingByCallId.get(p.call_id);
+      if (!pending) continue;
+      exchanges.push({
+        ...pending,
+        outputText: codexToolOutputText(p.output),
+        rawOutputChars: outputStringOf(p).length,
+        missingOutput: false,
+        outputTimestampUnknown: timestampMs(entry.timestamp) == null,
+        completedTs: entry.timestamp ?? null,
+      });
+      pendingByCallId.delete(p.call_id);
+    }
+  }
+
+  // A read-like call at EOF with no result is evidence too. Preserve it so an
+  // attribution reader can distinguish "never returned" from "returned no
+  // matching bytes" instead of silently dropping the attempt.
+  exchanges.push(...pendingByCallId.values());
+  return {
+    exchanges,
+    session: { harness: 'codex-cli', sessionId, project },
+    skip: null,
+  };
 }
 
 /**
@@ -139,7 +286,8 @@ function findSessionId(entries) {
  * round-trip). `file` is carried through only for the skip-reason record.
  */
 export function processCodexEntries(entries, { file } = {}) {
-  const sessionId = findSessionId(entries);
+  const sessionMetadata = findSessionMetadata(entries);
+  const sessionId = sessionMetadata?.id || null;
   if (!sessionId) {
     return { calls: [], toolEvents: [], session: null, skip: { file, reason: 'no usable sessionId (missing or empty session_meta.payload.id)' } };
   }
@@ -157,6 +305,7 @@ export function processCodexEntries(entries, { file } = {}) {
   let project = null;
   let provider = 'openai';
   let currentModel = null;
+  let currentReasoningEffort = null;
   let compactionPending = false;
   let compactedTs = null;
   let prevCumulativeTotal = null;
@@ -169,7 +318,7 @@ export function processCodexEntries(entries, { file } = {}) {
   let resets = 0;
   let repeatsDropped = 0;
 
-  const lineage = { parentSessionId: null, kind: 'main' };
+  const lineage = lineageFromSessionMetadata(sessionMetadata);
 
   for (const entry of entries) {
     const ts = entry.timestamp ?? null;
@@ -186,6 +335,7 @@ export function processCodexEntries(entries, { file } = {}) {
 
     if (entry.type === 'turn_context') {
       currentModel = entry.payload?.model ?? currentModel;
+      currentReasoningEffort = entry.payload?.effort ?? currentReasoningEffort;
       continue;
     }
 
@@ -234,6 +384,7 @@ export function processCodexEntries(entries, { file } = {}) {
           lineage,
           ts,
           model: currentModel,
+          reasoningEffort: currentReasoningEffort,
           tokens: {
             fresh,
             cacheRead: L.cached_input_tokens ?? 0,
@@ -307,6 +458,7 @@ export function processCodexEntries(entries, { file } = {}) {
       lineage,
       ts: compactedTs,
       model: currentModel,
+      reasoningEffort: currentReasoningEffort,
       tokens: { fresh: 0, cacheRead: 0, cacheWrite5m: null, cacheWrite1h: null, output: 0, reasoning: 0 },
       contextTokens: 0,
       compactionBoundary: true,
@@ -326,6 +478,7 @@ export function processCodexEntries(entries, { file } = {}) {
       lastTs,
       calls: calls.length,
       multiAgent,
+      lineage,
       selfCheck: { deltaInputSum, maxCumulativeInput, resets, repeatsDropped },
     },
     skip: null,
@@ -336,6 +489,93 @@ export function processCodexEntries(entries, { file } = {}) {
 function processCodexFile(file) {
   const entries = parseLines(file);
   return processCodexEntries(entries, { file });
+}
+
+function rolloutFilesInWindow({ codexHome, sinceMs, untilMs }) {
+  const home = codexHome ?? DEFAULT_CODEX_HOME;
+  const sessionsRoot = path.join(home, 'sessions');
+  const discovered = [];
+  walkRolloutFiles(sessionsRoot, discovered);
+
+  const files = [];
+  for (const file of discovered) {
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    if (sinceMs != null && stat.mtimeMs < sinceMs) continue;
+    if (untilMs != null && stat.mtimeMs > untilMs) continue;
+    files.push(file);
+  }
+  return files;
+}
+
+function rawRolloutFiles(codexHome) {
+  const home = codexHome ?? DEFAULT_CODEX_HOME;
+  const discovered = [];
+  const sourceRootErrors = [];
+  let sourceRootsAvailable = 0;
+  let sourceRootsMissing = 0;
+  for (const root of [path.join(home, 'sessions'), path.join(home, ARCHIVED_DIR_NAME)]) {
+    const walkErrors = [];
+    if (walkRolloutFiles(root, discovered, walkErrors)) {
+      sourceRootsAvailable += 1;
+      sourceRootErrors.push(...walkErrors);
+      continue;
+    }
+    const missingRoot = walkErrors.some((error) => error.path === root && error.code === 'ENOENT');
+    if (missingRoot) sourceRootsMissing += 1;
+    sourceRootErrors.push(...walkErrors.filter((error) => !(error.path === root && error.code === 'ENOENT')));
+  }
+  return {
+    files: [...new Set(discovered)].sort(),
+    sourceRootsAvailable,
+    sourceRootsMissing,
+    sourceRootErrors,
+  };
+}
+
+function timestampMs(value) {
+  const millis = Date.parse(value ?? '');
+  return Number.isFinite(millis) ? millis : null;
+}
+
+function entriesAsOf(entries, untilMs) {
+  if (untilMs == null) return entries;
+  return entries.filter((entry) => {
+    const millis = timestampMs(entry?.timestamp);
+    if (entry?.type === 'session_meta') return millis == null || millis <= untilMs;
+    if (millis == null && entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call_output' || entry.payload?.type === 'custom_tool_call_output')) {
+      return true;
+    }
+    return millis != null && millis <= untilMs;
+  });
+}
+
+function exchangeStartInWindow(exchange, sinceMs, untilMs) {
+  const millis = timestampMs(exchange.startedTs);
+  if (millis == null) return false;
+  if (sinceMs != null && millis < sinceMs) return false;
+  if (untilMs != null && millis > untilMs) return false;
+  return true;
+}
+
+function exchangeIdentity(exchange) {
+  return `${exchange.sessionId}\u0000${exchange.callId ?? ''}\u0000${timestampMs(exchange.startedTs) ?? 'invalid'}`;
+}
+
+function exchangeContentSignature(exchange) {
+  return JSON.stringify([
+    exchange.name ?? null,
+    exchange.input ?? null,
+    exchange.outputText ?? null,
+    exchange.missingOutput,
+    exchange.outputTimestampUnknown,
+    timestampMs(exchange.completedTs),
+  ]);
 }
 
 /**
@@ -349,11 +589,7 @@ function processCodexFile(file) {
  * PROPAGATES — this function does not swallow it.
  */
 export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, projectFilter = null } = {}) {
-  const home = codexHome ?? DEFAULT_CODEX_HOME;
-  const sessionsRoot = path.join(home, 'sessions');
-
-  const files = [];
-  walkRolloutFiles(sessionsRoot, files);
+  const files = rolloutFilesInWindow({ codexHome, sinceMs, untilMs });
 
   const calls = [];
   const toolEvents = [];
@@ -361,15 +597,6 @@ export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, proj
   const skipped = [];
 
   for (const file of files) {
-    let stat;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      continue;
-    }
-    if (sinceMs != null && stat.mtimeMs < sinceMs) continue;
-    if (untilMs != null && stat.mtimeMs > untilMs) continue;
-
     const result = processCodexFile(file);
     if (result.skip) {
       skipped.push(result.skip);
@@ -383,4 +610,106 @@ export function listCodexCalls({ codexHome, sinceMs = null, untilMs = null, proj
   }
 
   return { calls, toolEvents, sessions, skipped };
+}
+
+/**
+ * Full raw tool exchanges for Codex attribution readers. Unlike the neutral
+ * ledger, this includes both active and archived rollout fragments and uses
+ * exchange-start event time rather than file mtime. `untilMs` is an as-of
+ * boundary: entries after it are removed before calls and outputs are paired,
+ * so later appends cannot rewrite a fixed-window missing-output observation.
+ * Duplicate fragment copies are unioned by session/call/start identity.
+ * Outputs are not capped. Nothing is written to disk here.
+ */
+export function listCodexToolExchanges({ codexHome, sinceMs = null, untilMs = null, projectFilter = null } = {}) {
+  const discovery = rawRolloutFiles(codexHome);
+  const exchangeStates = new Map();
+  const sessionsById = new Map();
+  const skipped = [];
+  let fragmentsDiscovered = 0;
+  let fragmentsContributing = 0;
+  let unreadableFragments = 0;
+  let malformedLines = 0;
+  let untimestampedExchanges = 0;
+  let untimestampedOutputs = 0;
+  let duplicateExchangeCopies = 0;
+  let conflictingExchangeCopies = 0;
+
+  for (const file of discovery.files) {
+    const parsed = parseLinesWithDiagnostics(file);
+    malformedLines += parsed.malformedLines;
+    if (parsed.readError) {
+      unreadableFragments += 1;
+      skipped.push({ file, reason: `could not read rollout: ${parsed.readError.code ?? parsed.readError.message}` });
+      continue;
+    }
+    const allEntries = parsed.entries;
+    const entries = entriesAsOf(allEntries, untilMs);
+    if (entries.length === 0) continue;
+    fragmentsDiscovered += 1;
+    const result = processCodexToolExchanges(entries, { file });
+    if (result.skip) {
+      const hasInWindowEvent = entries.some((entry) => {
+        const millis = timestampMs(entry?.timestamp);
+        return millis != null
+          && (sinceMs == null || millis >= sinceMs)
+          && (untilMs == null || millis <= untilMs);
+      });
+      if (hasInWindowEvent) skipped.push(result.skip);
+      continue;
+    }
+    if (projectFilter && !(result.session.project && projectFilter.test(result.session.project))) continue;
+
+    untimestampedExchanges += allEntries.filter((entry) => (
+      entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
+      && timestampMs(entry.timestamp) == null
+    )).length;
+    untimestampedOutputs += allEntries.filter((entry) => (
+      entry?.type === 'response_item'
+      && (entry.payload?.type === 'function_call_output' || entry.payload?.type === 'custom_tool_call_output')
+      && timestampMs(entry.timestamp) == null
+    )).length;
+
+    const inWindow = [];
+    for (const exchange of result.exchanges) {
+      if (timestampMs(exchange.startedTs) == null) continue;
+      if (exchangeStartInWindow(exchange, sinceMs, untilMs)) inWindow.push(exchange);
+    }
+    if (inWindow.length === 0) continue;
+    fragmentsContributing += 1;
+    if (!sessionsById.has(result.session.sessionId)) sessionsById.set(result.session.sessionId, result.session);
+
+    for (const exchange of inWindow) {
+      const key = exchangeIdentity(exchange);
+      const signature = exchangeContentSignature(exchange);
+      const state = exchangeStates.get(key);
+      if (!state) {
+        exchangeStates.set(key, { exchange, signature, conflicted: false });
+        continue;
+      }
+      duplicateExchangeCopies += 1;
+      if (state.signature !== signature) {
+        conflictingExchangeCopies += 1;
+        state.conflicted = true;
+      }
+    }
+  }
+
+  return {
+    exchanges: [...exchangeStates.values()].filter((state) => !state.conflicted).map((state) => state.exchange),
+    sessions: [...sessionsById.values()],
+    skipped,
+    sourceRootsAvailable: discovery.sourceRootsAvailable,
+    sourceRootsMissing: discovery.sourceRootsMissing,
+    sourceRootErrors: discovery.sourceRootErrors,
+    fragmentsDiscovered,
+    fragmentsContributing,
+    unreadableFragments,
+    malformedLines,
+    untimestampedExchanges,
+    untimestampedOutputs,
+    duplicateExchangeCopies,
+    conflictingExchangeCopies,
+  };
 }

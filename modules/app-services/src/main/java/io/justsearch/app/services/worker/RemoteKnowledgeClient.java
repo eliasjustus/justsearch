@@ -198,7 +198,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     // Shared via this::getExcludeMatcher supplier with RootLifecycleOps.
     private final Object excludeLock = new Object();
     private volatile String excludeRawCache = null;
-    private volatile ExcludeMatcher excludeCache = ExcludeMatcher.empty(PlatformPaths.isWindows());
+    private volatile ExcludeMatcher excludeCache = ExcludeMatcher.empty();
 
     /** Default batch size used when not specified. */
     private static final int DEFAULT_BATCH_SIZE = 5000;
@@ -803,7 +803,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     public io.justsearch.app.api.status.WorkerDebugView getDebugWorkerState() {
         StatusResponse status = getStatus();
         io.justsearch.app.api.status.HealthNodeView healthNode;
-        java.util.Map<String, String> effectiveConfig;
+        Map<String, String> effectiveConfig;
         try {
             var health = getHealthCheck();
             healthNode = WorkerStatusMapper.buildHealthNode(health);
@@ -812,7 +812,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
             effectiveConfig = health.getEffectiveConfigMap();
         } catch (Exception e) {
             healthNode = new io.justsearch.app.api.status.HealthNodeView(false, "", 0, "", false, false);
-            effectiveConfig = java.util.Map.of();
+            effectiveConfig = Map.of();
         }
         return WorkerStatusMapper.toDebugWorkerState(status, healthNode, effectiveConfig);
     }
@@ -997,7 +997,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         String raw = resolvedExcludePatterns();
         if (raw.isBlank()) {
             excludeRawCache = "";
-            excludeCache = ExcludeMatcher.empty(windows);
+            excludeCache = ExcludeMatcher.empty();
             return excludeCache;
         }
         if (raw.equals(excludeRawCache)) {
@@ -1151,6 +1151,12 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return migrationOps.runIndexGc(keepLatest, pruneMarkedOnly);
     }
 
+    @Override
+    public IndexingService.SettleIndexOutcome settleIndex(
+            boolean expungeDeletesOnly, int maxSegments) {
+        return migrationOps.settleIndex(expungeDeletesOnly, maxSegments);
+    }
+
     /**
      * Projects the Worker's gRPC quiescence message onto the app-api contract record.
      *
@@ -1225,7 +1231,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
 
     @Override
     public List<IndexingService.FailedJobInfo> listFailedJobsByPathPrefix(
-            java.nio.file.Path pathPrefix, int limit) {
+            Path pathPrefix, int limit) {
         if (pathPrefix == null) {
             return List.of();
         }
@@ -1246,7 +1252,7 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
     }
 
     @Override
-    public IndexingService.JobCounts countJobsByPathPrefix(java.nio.file.Path pathPrefix) {
+    public IndexingService.JobCounts countJobsByPathPrefix(Path pathPrefix) {
         if (pathPrefix == null) {
             return IndexingService.JobCounts.zero();
         }

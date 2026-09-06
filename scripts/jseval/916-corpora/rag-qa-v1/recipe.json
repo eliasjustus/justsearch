@@ -1,0 +1,82 @@
+{
+  "schema": "916-rag-qa.v1",
+  "name": "rag-qa-v1",
+  "tempdoc": 916,
+  "part": 1,
+  "created": "2026-09-03",
+  "method": "qrel-derived-span-v1",
+  "generator": "scripts/jseval/916-corpora/rag-qa-v1/generate.py",
+  "llm_used": false,
+  "seed": null,
+  "seed_note": "There is no seed because there is no sampling. The fixture is the first N eligible qrel query ids in lexicographic order, so the recipe plus the generator reproduce it exactly; a seed would imply a randomness this method does not have.",
+  "content_committed": false,
+  "content_note": "No corpus, query, span or answer TEXT is committed here. That is the convention every other real-external-dataset member follows (scripts/jseval/789-corpora/enron-qa-answers/recipe.json, scripts/jseval/707-corpora/*/member.v1.json) and it matches .gitignore's wholesale exclusion of datasets/. Materialize with `python generate.py`; the digests below bind what it must produce.",
+  "derivation": {
+    "question": "The qrel's query text, verbatim. Its SHAPE differs per corpus and is recorded per entry as question_type.",
+    "gold_doc": "The lexicographically first corpus id the qrel marks relevant (score >= 1) whose document is at least min_gold_chars long.",
+    "gold_span": "The sentence of the gold document maximizing |Q intersect S| / sqrt(|S|) over lowercased Unicode word tokens, sentences shorter than 20 chars excluded, ties broken to the earliest sentence. Located back into the raw document with jseval.evidence_offset.locate_offset (tempdoc 783 section B.1) — the same primitive corpus_inject.evidence_offsets_for_injection uses, so this is a projection of the existing evidence-offsets.v1 representation, not a second one.",
+    "sentence_splitter": "(?<=[.!?])\\s+ — ChunkSplitter.SENTENCE_END, so a gold span never straddles a boundary the chunker would not have chosen either.",
+    "no_gold_answer": "None of the three corpora ships an answer string (every legal-clerc-200 queries.json `answer` is empty; enron-qa and BEIR have no answer field). The gold SPAN occupies the `answer` slot of the MultiHop-RAG shape, which makes correct_exact and correct_substring meaningless by construction. Read correct_has_intersection and the AI-judge tier only."
+  },
+  "parameters": {
+    "per_corpus": 50,
+    "min_gold_chars": 2000
+  },
+  "min_gold_chars_note": "2000 is the shipped CHUNK_THRESHOLD_CHARS. Only gold documents long enough to be CHUNKED are eligible: a fixture of un-chunked gold documents would be blind to the exact variable this campaign sweeps.",
+  "outputs": {
+    "queries.json": "MultiHop-RAG shape consumed by `python -m jseval tier2-eval --queries <path>`; keys query, answer, question_type, evidence_list[{title, doc_id}], gold_doc_id, gold_span_score, query_family_id.",
+    "evidence_offsets.json": "schema evidence-offsets.v1 — {doc_id: {char_offset, doc_len, evidence}}, the sidecar shape offset_recall.py resolves first."
+  },
+  "digests_note": "Raw file-byte sha256 (hashlib.sha256(path.read_bytes())), the same definition corpus_certify.py:114 uses for query_gold_sha256 — NOT the canonical-JSON digest corpus_inject.py uses for assembled_digest. Files are written with sort_keys=True, indent=2, ensure_ascii=False and LF newlines so the bytes are platform-stable.",
+  "corpora": {
+    "mixed/enron-qa": {
+      "question_shape": "natural-question",
+      "questions": 50,
+      "gold_docs": 50,
+      "eligible_qrel_queries": 300,
+      "skipped_gold_below_min_chars": 13,
+      "skipped_span_unresolved": 0,
+      "query_gold_sha256": "ca75031b89bc640675511516ee22fcf08fbc18a4f91ef6983fcf35ac049ccdff",
+      "evidence_offsets_sha256": "f8cd1debd98a9b11292bb89e2c23890cceb82554a89f2aefcd68fa48a7a7f7ab",
+      "source": "EnronQA (MichaelR207/enron_qa_0922), arXiv 2505.00263, split train, user dasovich-j, grounded_only",
+      "license": "EnronQA is derived from the public Enron email corpus (CALO/FERC public release). See the upstream dataset card; no content is redistributed here."
+    },
+    "mixed/legal-clerc-200": {
+      "question_shape": "citation-retrieval-passage",
+      "questions": 50,
+      "gold_docs": 50,
+      "eligible_qrel_queries": 200,
+      "skipped_gold_below_min_chars": 1,
+      "skipped_span_unresolved": 0,
+      "query_gold_sha256": "10fb979f1fd27eb3bb3de8e19a8acb7b43b554c51a99ab5c3326075325649ecd",
+      "evidence_offsets_sha256": "3edf871558daaca7b709fdb611468b974ded038e2e37a5f036bbe8eeaead1987",
+      "source": "jhu-clsp/CLERC, sampled by jseval corpus-fetch with seed 666 (datasets/mixed/legal-clerc-200/metadata.json generation_provenance)",
+      "license": "CLERC is built on US federal case law (public domain opinions). See the upstream dataset card; no content is redistributed here."
+    },
+    "beir/scifact": {
+      "question_shape": "claim-to-verify",
+      "questions": 50,
+      "gold_docs": 43,
+      "eligible_qrel_queries": 300,
+      "skipped_gold_below_min_chars": 133,
+      "skipped_span_unresolved": 0,
+      "query_gold_sha256": "a0181d6524d85035300d4d42b7e6d41593f8fd71fa1511c075178491802ac033",
+      "evidence_offsets_sha256": "2cc9190a0dce91c2e20838b68d40627192b5b4ecddaea6bf524dedcea426895e",
+      "gold_docs_note": "43 gold documents for 50 questions: several scifact claims share a gold abstract. 133 of the 300 qrel queries were skipped because their gold abstract is below 2000 chars — scifact is a short corpus (p50 1426 chars), which is exactly why it is the campaign's control rather than an arm.",
+      "source": "beir/scifact/test via ir_datasets, resolved from the shared dataset-fetch cache (tempdoc 709)",
+      "license": "BEIR / SciFact — see the BEIR project's licensing terms. No content is redistributed here."
+    }
+  },
+  "instrument": {
+    "mechanical": "python -m jseval tier2-eval --queries <out>/<slug>/queries.json --base-url http://127.0.0.1:<api-port> --llm-url http://127.0.0.1:8080 --top-k 10 --max-context-tokens 4096 --output-dir <dir>",
+    "mechanical_entry_point": "scripts/jseval/jseval/commands/eval_cmds.py:154-202 -> scripts/jseval/jseval/agent_retrieval_eval.py:832-885",
+    "chat_profile": "standard — tier2-eval refuses a compact model (CompactModelNotAllowedError, agent_retrieval_eval.py:879-885, markers at :57), so `ai_activate {chatProfile:\"standard\"}` is required and --allow-compact-model must NOT be passed for a quality reading.",
+    "judge_tier": "Tier 4: AI Judge (Semantic Eval), docs/explanation/09-testing-strategy.md — agent-driven, on demand, not an automated pipeline. The gold span is what the judge grades groundedness against.",
+    "not_this_one": "`python -m jseval rag-eval` cannot consume this fixture: it is a Gradle wrapper around RagQualityEvalTest whose question set is a baked-in Java resource (rag-eval-truth.v1.json), not a CLI argument. Its --profile flag is also inert — modules/system-tests/build.gradle.kts never reads ragEvalProfile."
+  },
+  "known_limits": [
+    "The gold-doc binding tier2-eval performs is TITLE-to-parent_doc_id path matching (_doc_id_matches_title, agent_retrieval_eval.py). This fixture writes the corpus id into evidence_list[].title because that is what the ingested filename stem is expected to be. That expectation is NOT verified offline and MUST be checked in the first sweep window before any retrieval-recall number from this fixture is believed.",
+    "correct_exact and correct_substring are meaningless here (the answer slot holds a span, not an answer).",
+    "legal-clerc-200 questions are ~1600-char passages, so this corpus measures citation retrieval under chunking, not question answering."
+  ]
+}
