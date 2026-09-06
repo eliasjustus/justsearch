@@ -292,10 +292,18 @@ CLOSED, so decide close-or-merge). Nine dependabot PRs; 6 show a mixed FAILURE/S
 Ordered. AGENT = an agent can do it in a PR; OWNER = needs the owner's hands or decision.
 
 1. **OWNER: pick the version and the sv3 stance.** `0.2.1` (fixes only, sv3 stays hidden,
-   move or satisfy the 2026-09-30 cutover deadline) or `0.3.0` (promote sv3 first — 852 S5–S11
-   is weeks of work and is the wrong thing to start before an architecture change). The
-   deadline gate must be handled either way or CI goes red on 2026-09-30 regardless of the
-   release.
+   move or satisfy the 2026-09-30 cutover deadline) or `0.3.0` (promote sv3 first). Sizing the
+   promotion honestly: S0–S4 all merged on one day (2026-08-19), so the coding velocity was
+   high, not "weeks". What remains is (a) an owner decision Q1 (does the `retrieve` tier exist —
+   gates S4-rest + S5–S7), (b) the flip itself, which is two lines (audience `USER` +
+   `governance/window-cutover.done`), (c) the S8–S11 sweep deleting `UnifiedChatView.ts` and its
+   consumers (857 `:737-770`: composition-surfaces register loses its only adopter, 18 ui-shot
+   steps remapped, spine modules orphaned, run-renderers register rows), and (d) 859's 13 open
+   sv3 live findings (no stop affordance during an answer, negative `budget.remaining`,
+   DOM-transition unhandled rejections, an axe serious violation, contrast below 3:1). The real
+   cost is shipping a brand-new chat surface with zero soak time in the same release that
+   precedes an architecture change — a risk judgment, not a calendar one. The deadline gate
+   must be handled either way or CI goes red on 2026-09-30 regardless of the release.
 2. **AGENT: publish `codex/905-operational-closeout`** (red-lane fix + signing record). Rebase
    onto current `origin/main`, PR, merge. Then re-dispatch an unsigned `build-installer.yml` on
    `main` to confirm `installer_verify` is green end to end.
