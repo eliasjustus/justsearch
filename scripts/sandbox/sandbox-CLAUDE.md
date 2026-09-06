@@ -1,4 +1,7 @@
-# Claude Code Instructions for JustSearch Sandbox Validation
+# Agent Instructions for JustSearch Sandbox Validation
+
+(Staged as both `CLAUDE.md` and `AGENTS.md` — one charter for either harness,
+Claude Code or Codex. Harness-specific bits are called out where they differ.)
 
 You are running inside a **Windows Sandbox** — an ephemeral, clean Windows
 environment with no development tools, no source code, and no pre-existing
@@ -109,7 +112,12 @@ An installed build serves **no HTTP SPA at all** — every route probed returns
 to point at. Either blocker alone is fatal; both apply. Do not stage or
 recommend the Chrome MSI for this purpose again.
 
-**Recommended default: the native PowerShell GUI tier**, staged at
+**If your harness has a computer-use capability (Codex: Computer Use), drive
+the GUI with it** — it exercises the app the way a user does, which is the
+point of this round. The only hard requirement is that each surface ends up
+as a PNG on disk under its coverage filename.
+
+**Guaranteed floor: the native PowerShell GUI tier**, staged at
 `<mapped folder>\gui\` (`snap.ps1`, `win-capture.ps1`, `click.ps1`,
 `crop.ps1`, `gui-approve.ps1` — see `gui/README.md`). It drives the **real**
 Tauri WebView2 shell via `System.Drawing.Graphics.CopyFromScreen` capture and
@@ -120,7 +128,8 @@ account, and no network, and it caught a HIGH-severity trust-surface finding
 (an expired pending authorization presenting a live-looking but dead
 Approve/Deny ceremony) that the API tier's clean PASS on the same feature
 could not see. Coverage credits the PNGs these scripts write, exactly like any
-other screenshot.
+other screenshot — so it is also the fallback for writing the evidence file
+when a computer-use tool cannot save its screenshot to a path you choose.
 
 Alternative for the future: the tauri-driver/WebView2 path (tempdoc 374 item
 4, POC'd) — structured, element-based targeting instead of pixel coordinates,
@@ -183,8 +192,9 @@ required sequence.
 ## What's available
 
 - **Mapped folder** at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` —
-  contains the JustSearch installer, this CLAUDE.md, `coverage-brief.md`,
-  `validation-mode.md`, `docs/`, `.claude/`, `collect-evidence.ps1`, the
+  contains the JustSearch installer, this file (as `CLAUDE.md` and `AGENTS.md`),
+  `coverage-brief.md`, `validation-mode.md`, `docs/`, `.claude/` (Claude Code),
+  `.codex/` + `.agents/` (Codex), `collect-evidence.ps1`, the
   `gui/` native GUI capture/input harness (see *GUI-capture launch
   requirement* below and `gui/README.md`), and a `tools/` directory for
   installers staged from the host.
@@ -193,7 +203,8 @@ required sequence.
   `pre-staged-models` mode. Read `validation-mode.md`; never set
   `JUSTSEARCH_MODELS_DIR` during a `fresh-install` round.
 - **PowerShell** and standard Windows tools; **internet access** (for model
-  downloads, Claude OAuth, Git/Chrome installs if not pre-staged in `tools/`).
+  downloads, Claude OAuth / Codex sign-in, Git/Chrome installs if not pre-staged
+  in `tools/`).
 
 ## What's NOT available
 
@@ -201,7 +212,8 @@ required sequence.
 - No `jseval`, no JustSearch **dev-tools MCP**, no worktrees, no agent telemetry
   (these are developer tooling — unrelated to the product `/mcp` endpoint above)
 - `nvidia-smi.exe` is NOT on PATH in the sandbox (don't use it as a CUDA probe)
-- No automatic install — you install Git, Claude Code, and JustSearch yourself.
+- No automatic install — you install Git and JustSearch yourself (the operator
+  installed the harness you are running in).
 
 ## GPU characteristics (durable)
 
@@ -230,14 +242,16 @@ its published `SHA256SUMS` / GitHub Release (the 726 asset pipeline), per
 
 1. **Git** — run `tools\Git-Setup.exe /VERYSILENT /NORESTART /NOCANCEL /SP-`
    (or download Git for Windows if not pre-staged).
-2. **Claude Code** — single command:
-   ```powershell
-   irm https://claude.ai/install.ps1 | iex; $bin = "$env:USERPROFILE\.local\bin"; $u = [System.Environment]::GetEnvironmentVariable("Path","User"); if ($u -notlike "*$bin*") { [System.Environment]::SetEnvironmentVariable("Path","$u;$bin","User") }; $env:Path += ";$bin"
-   ```
-   Run `claude` from the mapped folder. The staged `.claude/settings.json` sets
-   `permissions.defaultMode = "bypassPermissions"`, so Claude Code starts in
-   bypass mode automatically. If ignored, launch with
-   `claude --dangerously-skip-permissions`.
+2. **Your harness is already installed and configured** — the operator did
+   that (install, sign-in, trust: `sandbox-environment.md`, operator-facing).
+   One harness-specific check, Codex only: this file reaches you as
+   `AGENTS.md`, and Codex stops reading at 32 KiB unless the staged
+   `.codex/config.toml` was loaded (it only loads for a trusted folder).
+   **Confirm you can see this file's last section ("Independence invariant")
+   before doing anything else**; if you cannot, stop and tell the operator to
+   trust the folder and restart you. Permissions are already handled for
+   either harness (bypass mode / no inner sandbox — Windows Sandbox is the
+   isolation boundary).
 3. **JustSearch** — run the `*-setup.exe` in the mapped folder. Per ADR-0024, the
    NSIS installer is **per-user** and lands at `%LOCALAPPDATA%\JustSearch\`, NOT
    `C:\JustSearch\`. User data (downloaded models, index, logs, runtime state)
