@@ -11,10 +11,12 @@ Make the existing scripts/dev/remove-worktree.cjs usable for this repository's
 registered linked worktrees regardless of their parent directory or branch naming.
 The user requested the plan skill followed by implementation delegated to Sol or
 below. Implement the tool, its regression tests, and the documentation it supersedes.
-Do not clean up existing user worktrees, reconcile main, publish, or open a PR.
+The implementation phase excluded cleanup and publication. The subsequent user request
+authorizes publication and retirement of stale worktrees whose contents are accounted for.
+Reconciliation of the divergent main checkout remains outside scope.
 
 Base: public origin/main b96cd999875e6aabb5f0d8903c79f023c92c6738.
-Parent worktree: F:/justsearch-public-worktrees/936-worktree-removal.
+Parent branch: `codex/936-worktree-removal` in a dedicated linked worktree.
 Local main is deliberately not the implementation base: the preceding audit found
 297 local-only commits and uncommitted work. No changes to that checkout are needed.
 
@@ -162,10 +164,11 @@ Verification evidence:
   canonical module-dependency check, runtime-config-matrix check, targeted docs validation, and
   prompt-surface inventory (130 surfaces, zero suspicious tokens). `git diff --check` passed.
 - Parent read-only real-repository smoke ran
-  `node scripts/dev/remove-worktree.cjs F:/justsearch-public-worktrees/899-project-operations-publish --dry-run --allow-ignored`.
+  `node scripts/dev/remove-worktree.cjs <registered-path> --dry-run --allow-ignored`
+  against an existing completed publication checkout.
   It identified `codex/899-publication-closeout` at
   `049637b9cd09f2c2cf1d29bb68160d0c5792716e`, inventoried ignored paths, classified the live
-  shared run `b72df35c-00e9-4609-a8df-c5455d8f7c97` as proven unrelated, exited zero, and left
+  shared run as proven unrelated, exited zero, and left
   the checkout intact.
 
 One bounded discovery limit remains: a process can start before even its temporary registration
@@ -209,12 +212,12 @@ implementation worktree are recorded below.
   scoped registration removal, and the evidence behind the regressions.
 - After confirming the worker was finished, its checkout was clean, and its content was
   integrated, ran the new CLI from this retained worktree against only
-  `F:/justsearch-public-worktrees/936-removal-implementation`: first
+  the temporary `936-removal-implementation` checkout: first
   `--dry-run --allow-ignored --delete-branch`, then `--allow-ignored --delete-branch`.
   Both exited zero. Before/after Git registration comparison showed exactly that one
   registration removed; its actual `codex/936-removal-implementation` branch was deleted.
   The target directory was absent afterward and the junction target
-  `F:/justsearch-public/node_modules` remained present. No merge fact was invented for
+  main's `node_modules` remained present. No merge fact was invented for
   this unpublished temporary branch; the tool correctly reported merge recording skipped.
 - `node scripts/agent-analytics/world-state.mjs --json` at
   `2026-09-06T02:35:29.682Z` reported 48 registered worktrees, including this retained
@@ -228,6 +231,6 @@ implementation worktree are recorded below.
   main's existing `node_modules` so its Node tooling is runnable without duplicate installs.
 
 Implementation, review, appropriate verification, and local integration are complete.
-Remaining work is optional publication and separately authorized selection/removal of existing
-worktrees; neither is part of this implementation task. The discovery limits above remain
+The next user request authorizes publication and selection/removal of stale worktrees.
+The discovery limits above remain
 explicit rather than being treated as a complete process/editor inventory.
