@@ -1,7 +1,7 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "IMPLEMENTED AND VERIFIED (2026-09-06) — accepted §U complete; local, unpushed"
+status: "IMPLEMENTED — REVIEW FOLLOW-UP OPEN (2026-09-06): §W async MCP classification; local, unpushed"
 created: 2026-09-02
 updated: 2026-09-06
 lite-class: false
@@ -625,7 +625,7 @@ separate terminal-disposition semantics and the event's severity/title.
   Replace Shell operation/undo exception prose using existing OperationError
   information. Regression tests must exercise actual consumers, including a 502
   typed body and a permanent/policy operation failure; no automatic mutation retry.
-- [x] U2 — MCP failure facts: remove unconditional transience claims, reuse
+- [ ] U2 — MCP failure facts: remove unconditional transience claims, reuse
   existing exception classification/sanitization, preserve text-client legibility,
   add structured code/class/retryability only when justified by source information,
   and test permanent/transient/validation/unknown paths and serialization.
@@ -639,7 +639,7 @@ separate terminal-disposition semantics and the event's severity/title.
 - [x] U5 — Integration/teardown/docs: remove superseded raw-string paths in the
   touched consumers; update canonical behavior docs and 889 ownership, without
   claiming deferred features shipped. Regenerate/check affected documentation.
-- [x] U6 — Verification and independent review: frontend typecheck, full unit
+- [ ] U6 — Verification and independent review: frontend typecheck, full unit
   suite, relevant UI gates; affected Java tests and required build/multi-module
   tests with serialized Gradle use. Validate real Lit UI through browser/harness
   with measured accessibility evidence, exercise MCP live and a real model query
@@ -792,3 +792,44 @@ The owned dev run was stopped through MCP with `portsClosed: true`. Repository
 own-session helper sweeps confirmed cleanup of the two screenshot Vite helpers
 and the final accessibility-sweep helper; unrelated records were retained.
 Closeout world state is recorded in `tmp/906-world-closeout.log`.
+
+## §W. Requested review-changes pass — 2026-09-06
+
+This review supersedes §V's completion verdict: **one P2 remains open**. No
+product code was changed during this review. An independent Sol reviewer and
+the parent independently checked the failure path; no other substantive finding
+survived. Fresh targeted Vitest verification passed 94 tests in six files
+(`tmp/906-review-tests.log`). Earlier build, full-suite and live evidence was
+re-read rather than described as newly rerun.
+
+### W1 — Async MCP answer failures lose the cause's classification
+
+`McpToolSurface.java:597` waits on `retrieveContext(...).toCompletableFuture().get`.
+An exceptional completion arrives as `ExecutionException`; the catch at line 619
+passes it to `toolFailureContent`, which classifies that wrapper directly at
+line 2075. `ApiErrorHandler.resolve` recognizes the underlying gRPC exception,
+but not these async wrappers, so its fallback is INTERNAL_ERROR/PERMANENT.
+
+Runnable reproduction: `tmp/Review906AsyncFailure.java`, executed against the
+built UI install classpath; output `tmp/906-review-async-failure.log`. A real
+`CompletableFuture.failedFuture(Status.UNAVAILABLE.asRuntimeException()).get()`
+fed into the actual MCP helper produced:
+
+```text
+cause=SERVICE_UNAVAILABLE
+wrapper=INTERNAL_ERROR
+structuredContent: errorCode=INTERNAL_ERROR, errorClass=PERMANENT, retryable=false
+```
+
+This is a reproduced failed-completion interface path, not a reproduced live
+outage: the current RemoteDocumentService commonly converts gRPC failures to
+fallback results. `McpErrorLegibilityTest.java:127` throws synchronously, which
+does not exercise the wrapper and cannot catch this classification loss.
+
+Fix plan: unwrap completion/execution wrappers at the async error boundary,
+preserve the existing classifier as the policy authority, and use the same
+resolved cause for message and structured facts. Add a regression that returns
+an exceptionally completed future through the real `justsearch_answer` consumer,
+covering transient, validation and permanent causes plus an unknown fallback.
+Run affected Java tests and the required build, then independently review the
+fix and update U2/U6. Publication remains unrequested.
