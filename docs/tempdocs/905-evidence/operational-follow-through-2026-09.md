@@ -57,3 +57,17 @@ The sequential preflight's directory-mode secret scan later inspected ignored ge
 output from earlier lanes and produced a false match. Execution now rejects any staged, unstaged, or
 non-ignored untracked candidate before scanning committed Git content and history; the hosted
 clean-checkout directory scan remains unchanged. Both repairs have focused tests.
+
+## Publication outcome (2026-09-06)
+
+Fresh PR `justsearch-app/justsearch#692` reviewed head
+`acd896684d5a89b48dff370a85fd08db8f65b44c`. Branch CI run `34029407235` passed all required
+contexts after earlier run `34029125903` exposed the 800-line tempdoc cap and the bulk chronology
+moved into this evidence sidecar. The managed review record and squash-message preview both passed.
+
+The protected merge queue tested synthetic SHA
+`e1ed33e8a932e49d270461cb5515534a9523c7ec` in merge-group CI run `34029800355`; every lane passed.
+PR `#692` then squash-merged as that same SHA. A direct tree diff against reviewed head `acd896684`
+was empty, and post-merge `main` CI run `34030213192` passed on the exact landed commit. GitHub removed
+the remote topic branch automatically. No release, signing-provider call, WinGet/Scoop mutation, or
+model publication occurred during this publication.
