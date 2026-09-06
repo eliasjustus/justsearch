@@ -530,6 +530,11 @@ export class Sv3Palette extends JfElement {
         ?data-selected=${selected}
         ?data-highlighted=${highlighted}
         data-testid="sv3-palette-item"
+        @mousedown=${(event: MouseEvent) => {
+          // Options use aria-activedescendant, so focus stays in the combobox. Otherwise
+          // a native pointer press blurs it to body and the host dismisses before click.
+          if (event.button === 0) event.preventDefault();
+        }}
         @click=${() => this.run(command)}
         @pointermove=${() => {
           // The pointer MOVES the highlight rather than painting a third fill of its own — one fill,

@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+import { localizeError } from '../../i18n/errorCatalog.js';
+import { OperationError } from './OperationClient.js';
+
+/** Shell failure copy projects the existing handler code and retry hint. Dispatch classes
+ * remain a separate axis; raw exception messages can contain operation IDs and paths. */
+export function operationFailureMessage(error: unknown, undo = false): string {
+  const fallback = undo ? 'The action could not be undone.' : 'The action could not be completed.';
+  if (!(error instanceof OperationError)) {
+    return `${fallback} Open Health for details.`;
+  }
+  const message = localizeError({
+    code: error.errorCode ?? error.errorClass,
+    message: fallback,
+  }).message;
+  if (error.errorClass === 'CONFIRMATION_REQUIRED') {
+    return `${message} Start the action again if you want to review its approval request.`;
+  }
+  if (error.errorClass === 'NETWORK_ERROR' || error.errorClass === 'SERIALIZATION_ERROR') {
+    return `${message} Check Health and verify whether the action took effect before trying again.`;
+  }
+  const recovery = error.retryable === true
+    ? 'You can try the action again. If it still fails, open Health for details.'
+    : error.retryable === false
+      ? 'Resolve the restriction before trying again. Open Health for details.'
+      : 'Open Health for details before trying again.';
+  return `${undo ? 'Undo failed. ' : ''}${message} ${recovery}`;
+}

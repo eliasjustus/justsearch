@@ -69,6 +69,7 @@ export type ComponentTag =
   | 'jf-hover-preview-host'
   | 'jf-indexing-overlay'
   | 'jf-indexing-overlay-host'
+  | 'jf-ingestion-summary'
   | 'jf-interaction-retrospective-panel'
   | 'jf-library-surface'
   | 'jf-list-items'
@@ -214,6 +215,7 @@ export const COMPONENT_TAGS: readonly ComponentTag[] = [
   'jf-hover-preview-host',
   'jf-indexing-overlay',
   'jf-indexing-overlay-host',
+  'jf-ingestion-summary',
   'jf-interaction-retrospective-panel',
   'jf-library-surface',
   'jf-list-items',

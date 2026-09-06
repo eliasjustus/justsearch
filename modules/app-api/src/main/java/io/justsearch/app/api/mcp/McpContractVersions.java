@@ -107,8 +107,12 @@ public final class McpContractVersions {
    * {@code justsearch_search} the undeclared key WAS functional — {@code McpToolSurface#parseFilters}
    * coerced a bare string via {@code toStringList} — so a client that discovered it out-of-band must
    * now send an array.
+   *
+   * <p>0.7.0: tool failures gain optional structured error code, class and retryability,
+   * preserving the same known facts in text. Generic failures no longer suggest transience
+   * independently of the existing API classification. Tool names and input schemas are unchanged.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.6.0";
+  public static final String TOOL_SURFACE_VERSION = "0.7.0";
 
   private McpContractVersions() {}
 }

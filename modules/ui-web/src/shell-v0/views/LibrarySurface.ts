@@ -19,6 +19,7 @@ import { html, css, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import '../components/OpButton.js';
 import '../components/Button.js';
+import '../components/IngestionSummary.js';
 // Tempdoc 571 §11 / 578 — Library ⊇ Browse: Library hosts the Browse file-tree as a tab.
 import '../components/SurfaceTabs.js';
 import type { SurfaceTabItem } from '../components/SurfaceTabs.js';
@@ -1322,6 +1323,10 @@ export class LibrarySurface extends JfElement {
           : this.renderCardsRegion()}
 
       ${this.renderOtherSources()}
+
+      ${this.activeTab === 'folders'
+        ? html`<jf-ingestion-summary .host_=${this.host_}></jf-ingestion-summary>`
+        : nothing}
 
       <div class="excludes-section">
         <div class="excludes-header">

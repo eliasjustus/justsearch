@@ -65,25 +65,22 @@ export const MAIN_EMPTY: Sv3EmptyCopy = {
 };
 
 /**
- * The state {@link MAIN_EMPTY} must never be mistaken for: the search never reached the backend, so
- * nothing is known about the corpus. Its description is the shipped wording for exactly this
- * condition (`state/readinessNotice.ts` `binding.unreachable`), read through the one authority rather
- * than re-phrased here — this window is a second consumer of that vocabulary, not a second author.
+ * A failed search establishes no match count. This includes a backend rejection as well as
+ * a transport failure; the store supplies the specific explanation and recovery guidance.
  */
 export const MAIN_UNREACHABLE: Sv3EmptyCopy = {
-  title: 'Search backend unreachable',
-  description: reasonFor('binding.unreachable').wording,
+  title: 'Search could not be completed',
+  description: 'No search results are available for this attempt.',
 };
 
 /**
  * The conversation's canonical record could not be read (tempdoc 822 Phase F6; inventory D2 /
  * tempdoc 727 F-8). It is a THIRD state, distinct from both of the two above: {@link MAIN_EMPTY} says
- * the corpus held nothing, {@link MAIN_UNREACHABLE} says a SEARCH never reached the backend, and this
+ * the corpus held nothing, {@link MAIN_UNREACHABLE} says a search failed, and this
  * says the window is showing a conversation it could not fully load. 727 F-8's finding was that the
  * shipped window's empty-on-failure fallback was *completely silent* — a reader stared at a thread
  * with no hint anything was missing — so the notice states the shortfall AND that what is on screen
- * is still real. The detail line is the same `readinessNotice` wording {@link MAIN_UNREACHABLE} reads,
- * because it is the same condition underneath and this window authors no second phrasing of it.
+ * is still real. Its connection detail comes from the existing `readinessNotice` wording.
  */
 export const RECORD_UNREACHABLE: Sv3EmptyCopy = {
   title: "Couldn't load this conversation's full record — showing what's here.",

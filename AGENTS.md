@@ -91,9 +91,10 @@ Exploration, independent research, review, and separable implementation chunks
 are suitable. Shared-state changes, migrations, destructive git, merge/release
 work, and unsupervised dev-stack ownership are not.
 
-Use the active harness's native agent roles and model identifiers. Codex agents
-inherit project guidance and use `.codex/agents/*.toml`; do not copy Claude
-model names or the Claude-only explicit-model guard into Codex configuration.
+Codex roles: `explorer`/`worker` (Luna/high),
+`complex_worker` (Sol/medium), and `reviewer` (Sol/high). Set `fork_turns` to
+`"none"` or a positive integer; omitted/`"all"` inherits the parent model and
+effort and bypasses role pins. Workers return escalation evidence to the parent.
 System or session restrictions on delegation override repository preferences.
 
 ## Shared development stack

@@ -1,12 +1,25 @@
 ---
 title: "Library Indexing Activity Panel — Frontend Implementation Guide"
 type: how-to
-status: planning
+status: draft
 audience: frontend
 related: tempdoc 419 (WP1, WP4), tempdoc 410 (privacy contract), ADR-0028 (scoped reverse-path-lookup)
 ---
 
 # Library Indexing Activity Panel — Frontend Implementation Guide
+
+The Library Folders view now implements the **retained-outcome summary** through
+`shell-v0/components/IngestionSummary.ts`. It reads
+`GET /api/diagnostics/ingestion/summary?since=0`, groups recorded event counts by
+outcome and reason, and exposes loading, empty, refresh and fetch-error states.
+`ingestionSummaryPresentation.ts` words the current reason vocabulary; its test
+checks coverage against the Java constants. Counts are retained events, not unique
+files or a current-readiness verdict. No path hashes are resolved by this panel.
+
+The recent-event drawer, filename resolution and live scan-progress flows described
+below remain planned. Their delivery must be verified separately. The historical
+nine-row wording example is illustrative; the implementation's complete wording
+projection is the maintained consumer.
 
 This document is the frontend implementation guide for the **Library
 Indexing Activity panel** (tempdoc 419 / WP1) and the live **scan
