@@ -45,7 +45,7 @@ is warranted; retire any extra coordination once the existing owner guarantees t
 - [x] I3: reconcile calibrated-decision consumption and supported result-redundancy scope with executable
   tests; preserve completed adjudication and explicitly bound any still-unmeasured cohort.
 - [ ] I4: validate a fresh inference-capable production path, then complete realdocs extraction/VDU and
-  subsequent enrichment; emit a reconciled aggregate with exact terminal exclusions.
+  subsequent enrichment (Worker heap failure blocks it); emit a reconciled aggregate with exact terminal exclusions.
 - [x] I5: run all legal retrieval modes and capture final-hybrid redundancy with stable snapshot identity;
   run comparable SciFact regression gates against authoritative floors without baseline changes.
 - [ ] I6: reconcile acceptance and §M, update 639/register/canonical docs, regenerate/check documentation,

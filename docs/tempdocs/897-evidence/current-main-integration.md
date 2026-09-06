@@ -305,3 +305,26 @@ multiple PRs. Neither completion labels nor commit/line counts establish relativ
 complete cross-tempdoc effort ledger was collected here. The source record supports these causal
 findings, not a numerical allocation of total effort. The takeover request correctly warned about
 stale assumptions; no user-prompt correction was needed.
+
+## Live enrichment failure invalidates the runtime ETA — 2026-09-06
+
+At 13:20:33 CEST the active isolated Worker's indexing loop died with `OutOfMemoryError: Java heap
+space` in `OnnxEmbeddingEncoder.createChunks:952`, through `embedBatchWithChunking` and individual
+`EmbeddingBackfillOps`. The current `worker.log` records both the fatal error and uncaught-thread
+termination. Process configuration confirms `-Xms1g -Xmx1g`; the readiness log's 7.7 GB heap ceiling
+does not describe this Worker. API/Worker health remains reachable, so health alone does not prove
+that indexing can progress. No speculative heap increase or restart was performed during diagnosis.
+
+The 13:46–13:49 CEST checkpoint reports 619 indexed parents, 101 pending VDU (21 visual-text and
+80 visual-enrichment), and one ready job. Parent completion is 277/619 dense, 340/619 SPLADE and
+25/619 NER; 109,225 chunks remain pending dense embedding with zero complete. VDU RPC updates
+continue independently, but enrichment has plateaued. No final terminal-exclusion reconciliation or
+aggregate exists, and waiting alone cannot finish this run in its current state.
+
+The retained Worker log rotations record 19 VDU result dispositions from 12:19:58 through 13:45:50,
+including failures/rejection; these are resolved attempts, not 19 successful text extractions. Recent
+rates suggest roughly 5–10 further hours for 101 visual items if that heterogeneous workload retains
+similar cost. This is only a rough VDU projection; no total completion ETA is defensible until the
+embedding failure is repaired and chunk throughput is observed. The original two-hour jseval wait
+deadline is approximately 14:15 CEST and must not be reported as a completion forecast. Preserve the
+runtime and resume the existing index after resolving the failure; do not repeat source ingestion.
