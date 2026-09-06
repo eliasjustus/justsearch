@@ -306,7 +306,7 @@ Script: `scripts/sandbox/sandbox-launch.py`
 Current behavior:
 - Stages the newest NSIS installer, project docs, sandbox `CLAUDE.md`, and a sanitized `.claude/` config into `tmp/sandbox/share/`.
 - Generates a `.wsb` file with **16 GB RAM** allocation that maps `tmp/sandbox/share/` to `Desktop\JustSearchTest` inside the sandbox and (optionally) maps the host `models/` directory to `Desktop\JustSearchModels`.
-- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically — Git, Claude Code, and JustSearch are installed manually by the user inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` for the exact commands).
+- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically — Git, one agent harness (Claude Code or Codex), and JustSearch are installed manually by the user inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` "Setup (manual)" for the exact commands). The launcher stages entry points for both harnesses: the charter as `CLAUDE.md` and `AGENTS.md`, a sanitized `.claude/`, and a generated credential-free `.codex/config.toml` + `.agents/skills/start/` (tempdoc 939). Graders are harness-agnostic — they only read the evidence files.
 - Drop any host-pre-staged installers (e.g. Git for Windows) into `tmp/sandbox/share/tools/` before launch; they appear inside the sandbox at `Desktop\JustSearchTest\tools\`.
 - `--upgrade-from <installer>` stages the exact previous published installer
   for an installer-over-release arrival test.

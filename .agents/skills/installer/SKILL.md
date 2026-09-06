@@ -307,9 +307,9 @@ See: `modules/shell/src-tauri/nsis/installer-hooks.nsh`
 Script: `scripts/sandbox/sandbox-launch.py`
 
 Current behavior:
-- Stages the newest NSIS installer and project documentation into `tmp/sandbox/share/`. Before using the sandbox for Codex validation, also stage `AGENTS.md`, `.agents/`, and the credential-free `.codex/` project configuration from the candidate checkout.
+- Stages the newest NSIS installer and project documentation into `tmp/sandbox/share/`, plus both harness entry points (tempdoc 939): the sandbox charter as `CLAUDE.md` **and** `AGENTS.md`, a sanitized `.claude/` for Claude Code, and for Codex a generated credential-free `.codex/config.toml` (model pin, no inner sandbox/approvals, raised `project_doc_max_bytes`, Computer Use allowlist) + `.agents/skills/start/`. The repo's own `.codex/` is deliberately NOT copied — it declares a required MCP server that does not exist in the sandbox.
 - Generates a `.wsb` file with **16 GB RAM** allocation that maps `tmp/sandbox/share/` to `Desktop\JustSearchTest` inside the sandbox and (optionally) maps the host `models/` directory to `Desktop\JustSearchModels`.
-- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically. Install Git, Codex CLI, and JustSearch manually inside the sandbox, then verify that the checkout is trusted and that repository skills, hooks, and the `justsearch-dev` MCP server are visible before treating the sandbox as a Codex validation environment.
+- LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically. Install Git, ONE agent harness (Claude Code or Codex), and JustSearch manually inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` "Setup (manual)"). Under Codex, accept the trust prompt for the mapped folder or the staged `.codex/config.toml` is ignored. There is no checkout, no hooks, and no `justsearch-dev` MCP server in the sandbox — the round runs against the installed product only.
 - Drop any host-pre-staged installers (e.g. Git for Windows) into `tmp/sandbox/share/tools/` before launch; they appear inside the sandbox at `Desktop\JustSearchTest\tools\`.
 - `--upgrade-from <installer>` stages the exact previous published installer
   for an installer-over-release arrival test.
