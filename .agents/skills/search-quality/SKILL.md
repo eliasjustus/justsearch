@@ -541,6 +541,27 @@ tempdoc citations that use P0/P1/P2 names.
 
 Settled empirical facts. Each was an open question that got answered.
 
+### Format breadth and duplicate prevalence (897, 2026-09-06)
+
+| Evidence | Finding | Scope |
+|---|---|---|
+| Ten deterministic format cases through installed Worker ingestion/search | Marker and structure assertions characterize support and explicit MIME/embedded-identity/flattening gaps | Capability characterization, not a prevalence or source-diverse robustness estimate |
+| CMU Enron eligible-body census, n=352,208 | Raw-body exact 77.009%; normalized-body exact 77.626% | Source-body proxy, not file-byte/Tika/personal-drive prevalence |
+| Frozen uniform Enron sample, n=5,000 | Selected threshold 0.90 yields 5.46% in non-singleton near-duplicate components; 95% component stability interval 4.506–6.391% | Model-assisted calibration/holdout; conditional sample result, not archive prevalence |
+| Production realdocs and legal | Current-main recapture is pending; prior legal census was 199 docs with zero byte/content-exact duplicates | Realdocs has no queries; legal query-visible redundancy remains unmeasured |
+
+The new `duplicate-prevalence` instrument binds raw manifests, production extraction revisions and
+aggregate denominators. Its result-set component extends `staged_recall_accounting` with a private,
+collision-safe identity join; current query redundancy uses content-exact clusters only. It does not
+transfer the Enron near-duplicate threshold to another cohort. The separate 33-file format sibling has
+one source per format (16 EML/9 RTF/8 ZIP) and is excluded from prevalence headlines.
+
+Evidence and verification: tempdoc 897 §M and its `897-evidence/current-main-integration.md` record.
+Command contracts: [jseval Pipeline Reference](jseval-pipeline-reference.md).
+Keep product dedup deferred: no authorized personal-corpus prevalence plus query-visible evidence exists.
+ANN recall and any later product-collapse design remain with 639. No retrieval baseline changes.
+
+
 ### Corpus provenance note (2026-07-01, tempdoc 664 twelfth pass)
 
 `golden/needle-burial-v1`'s corpus content was **regenerated** on this date: the original generator had a
@@ -3220,7 +3241,7 @@ above)*
 
 - **Question:** Tempdoc 639 (candidate-set integrity — ANN recall at scale + near-duplicate collapse), a stub spawned by 636's coverage analysis, will need to *measure* candidate-set completeness (did retrieval return the relevant docs) and non-redundancy. Should that measurement **extend** 636's **Staged Recall Accounting** — whose `leg-recall` layer is already "did each leg surface the gold doc", a governed projection of the run artifacts with a self-reconciliation oracle — or build a **separate** recall instrument?
 - **Why it matters:** A parallel recall instrument is the exact one-authority **fork** that 553 (one canonical record; every surface a governed projection) and 636 §Reach (the *layer-invariant* observe-by-survival / one-canonical-authority principle) warn against — two un-coordinated answers to "did retrieval keep the right doc", guaranteed to drift. ANN-recall is a *refinement* of leg-recall (it asks whether the ANN index returned the true neighbours a leg *should* have surfaced), so it composes as a sub-measure of the same projection rather than a rival.
-- **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
+- **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status (897, 2026-09-06):** non-redundancy measurement now extends the existing projection with content-exact cluster joins. ANN refinement and product collapse remain unimplemented in 639; Enron proxy calibration is not personal-corpus evidence.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
 ### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030(678)

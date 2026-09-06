@@ -19,6 +19,23 @@ related:
 
 # 639 — Candidate-set integrity: completeness (ANN recall) and non-redundancy (dedup / diversity)
 
+## Non-redundancy measurement update — 2026-09-06
+
+[897](897-format-breadth-corpus-and-duplicate-measurement.md) now owns the non-redundancy measurement
+instrument and its scoped evidence. It extends the existing staged-recall projection with content-exact
+result clusters and strict private identity reconciliation; it does not create a second recall authority.
+The frozen Enron eligible-body census measures 77.009% raw-body exact and 77.626% normalized-body exact
+membership among 352,208 eligible messages. Its frozen uniform 5,000-document sample has 5.46%
+near-duplicate component membership at the frozen calibration-selected 0.90 threshold, with model-assisted
+holdout limitations and component-resampling stability uncertainty. These are research email-body proxies.
+Fresh realdocs extraction and legal query-visible redundancy remain pending in 897's current execution.
+
+**Recommendation: keep product dedup deferred.** No authorized personal-corpus prevalence and query-visible
+redundancy pair exists. The historical statements below about typical personal-file/query behavior remain
+hypotheses, not findings established by these proxy measurements. ANN recall stays wholly in 639; this
+update neither measures ANN nor starts product-collapse design. Exact hashes, denominators and validation
+are recorded in [897's integration evidence](897-evidence/current-main-integration.md).
+
 ## The idea
 
 Recent retrieval work has optimized the **per-item ranking** of results — how the dense / lexical / sparse

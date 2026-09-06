@@ -95,3 +95,9 @@ Review recheck closed the auth, containment, dense-pending and deadline findings
 chunk-SPLADE probe exposed the ordinary 99.9% readiness tolerance hiding a failed chunk; production
 waiting now requires the published completed count to equal its full chunk denominator and exact 100%
 coverage for a nonempty enabled stage. Final focused pass: **157 passed**, 10.79 s, same regression log.
+
+Before observed VDU processing, the runtime profile was changed from the dev default compact 4B to
+standard `Qwen_Qwen3.5-9B-Q4_K_M.gguf` through the owned activation tool. Activation completed and
+`ai_runtime_status.active` confirmed `chatProfile=standard`, `mmprojActive=true`, CUDA and full GPU
+layers. Pre-switch visual status still showed pending work and `vduProcessing=false`; final model
+provenance must be checked again when the production capture completes.
