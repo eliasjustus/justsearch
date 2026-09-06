@@ -287,6 +287,13 @@ Design choices in the current inference runtime, with rationale.
 - **Revisit when:** late chunking gains a streaming single-pass encoder whose partial state is itself
   resumable, or the scheduler replaces cycle/share suppliers with an explicit typed stop reason.
 
+The window encoder also bounds Java-heap allocations: `TokenWindows` materializes only requested
+windows and computes their count arithmetically. Parent batch embedding pools vectors as inference
+completes and omits unused per-window outputs; parent content collection has a 512,000-character
+batch budget, allowing one whole oversized document. The original token arrays remain input-sized.
+This addresses eager-window Java-heap exhaustion, independently of BFC/GPU arena recovery. It does
+not establish a whole-corpus speedup or change window geometry, pooling order, or ranking formulas.
+
 ### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
 
 - **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`

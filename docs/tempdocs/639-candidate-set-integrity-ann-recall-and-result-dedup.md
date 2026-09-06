@@ -31,7 +31,8 @@ holdout limitations and component-resampling stability uncertainty. These are re
 Fresh legal production capture reconciles 199 documents with zero byte/content-exact duplicates.
 All four retrieval modes ran comparably; final-hybrid content-exact redundancy is zero affected queries
 out of 200 and zero redundant delivered hits out of 2,000 at depth ten. The projection reports the final
-mode, not separate leg redundancy aggregates. Realdocs completion remains pending in 897's execution.
+mode, not separate leg redundancy aggregates. Realdocs production prevalence remains unmeasured: the
+full campaign was skipped under 897's explicit three-hour cap after enrichment repair and a bounded probe.
 
 **Recommendation: keep product dedup deferred.** No authorized personal-corpus prevalence and query-visible
 redundancy pair exists. The historical statements below about typical personal-file/query behavior remain

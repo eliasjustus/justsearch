@@ -300,6 +300,13 @@ Design choices in the current inference runtime, with rationale.
 - **Revisit when:** late chunking gains a streaming single-pass encoder whose partial state is itself
   resumable, or the scheduler replaces cycle/share suppliers with an explicit typed stop reason.
 
+The window encoder also bounds Java-heap allocations: `TokenWindows` materializes only requested
+windows and computes their count arithmetically. Parent batch embedding pools vectors as inference
+completes and omits unused per-window outputs; parent content collection has a 512,000-character
+batch budget, allowing one whole oversized document. The original token arrays remain input-sized.
+This addresses eager-window Java-heap exhaustion, independently of BFC/GPU arena recovery. It does
+not establish a whole-corpus speedup or change window geometry, pooling order, or ranking formulas.
+
 ### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
 
 - **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`
@@ -724,6 +731,7 @@ Delegates to package-private collaborators: **`LlamaServerOps`** (process spawn/
 *   **Default:** CPU-only (GPU offload is opt-in via `JUSTSEARCH_EMBED_GPU_ENABLED`).
 *   **GPU Coordination:** `IndexingLoop` unloads/reloads the embedding backend based on `WorkerSignalBus.isMainGpuActive()`.
 *   **Model File Selection:** `ModelManifest.loadOrDefault()` reads `model_manifest.json` from the model directory to determine which `.onnx` file to use for CPU vs GPU. External directories without a manifest fall back to convention (`model.onnx` CPU, `model_fp16.onnx` GPU).
+*   **Long-document memory:** Parent batch embedding uses pooled-only ONNX results, retaining a running sum per document instead of unused chunk vectors. Token windows are copied only for the current inference batch (at most eight); window counting is arithmetic. Parent backfill admits at most 512,000 characters per batch, or one whole oversized document bounded by extraction policy. Original token arrays and explicitly requested chunk-vector outputs still scale with input; this is not a constant-memory tokenizer.
 
 ### ONNX Runtime Infrastructure (`ort-common`)
 

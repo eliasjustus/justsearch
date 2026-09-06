@@ -116,6 +116,8 @@ function formatIndexState(state: string): string {
       return 'Unavailable';
     case 'ERROR':
       return 'Error';
+    case 'FAILED':
+      return 'Indexing failed';
     default:
       return state || 'Unknown';
   }
@@ -1045,7 +1047,7 @@ export class HealthSurface extends JfElement {
             ? 'var(--accent-success)'
             : rawIndexState === 'INDEXING'
               ? 'var(--accent-warning)'
-              : rawIndexState === 'ERROR' || rawIndexState === 'UNAVAILABLE'
+              : rawIndexState === 'ERROR' || rawIndexState === 'FAILED' || rawIndexState === 'UNAVAILABLE'
                 ? 'var(--accent-danger)'
                 : 'var(--text-secondary)'}"
           >${indexState}</span

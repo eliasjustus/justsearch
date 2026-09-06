@@ -143,6 +143,7 @@ message CoreIndexView {
   bool index_healthy = 1 [json_name = "indexHealthy"];
   int64 indexed_documents = 2 [json_name = "indexedDocuments"];
   int64 pending_jobs = 3 [json_name = "pendingJobs"];
+  // Worker states: IDLE, INDEXING, ERROR (document failures), FAILED (fatal indexing-loop death).
   string index_state = 4 [json_name = "indexState"];
   int64 index_size_bytes = 5 [json_name = "indexSizeBytes"];
   int32 pending_vdu_count = 6 [json_name = "pendingVduCount"];

@@ -268,6 +268,9 @@ indexes and valid partial corpus resumes are accepted; final capture still verif
 source revisions. Inspection, registration, and readiness share the requested time budget and session token.
 This path awaits VDU and subsequent enabled enrichment
 stages, including the declared terminal-failure disposition that ordinary pipeline readiness cannot accept.
+Every readiness wait fails immediately with `indexing_loop_failed` on a fresh `indexState=FAILED`
+snapshot. Stale snapshots retain the freshness rules; ordinary document `ERROR` can still satisfy
+the production predicate when every terminal failure matches its exact declaration.
 Chunk completion requires zero pending/failed dense work and complete enabled chunk-SPLADE accounting;
 the search-readiness tolerance of 99.9% cannot hide an unfinished production chunk. Registration forwards
 `JUSTSEARCH_SESSION_TOKEN` and shares the requested time budget with readiness polling. Generated outputs

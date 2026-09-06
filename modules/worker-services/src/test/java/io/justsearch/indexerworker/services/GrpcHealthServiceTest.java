@@ -120,6 +120,16 @@ final class GrpcHealthServiceTest {
     assertTrue(observer.single().getOnnxModelsList().isEmpty());
   }
 
+  @Test
+  void fatalLoopStateIsVisibleWithoutDisablingHealthySearchServing() {
+    GrpcHealthService service =
+        new GrpcHealthService("1.0.0", null, null, null, () -> "FAILED", List.of());
+    CapturingObserver<HealthCheckResponse> observer = new CapturingObserver<>();
+    service.check(HealthCheckRequest.getDefaultInstance(), observer);
+    assertEquals("FAILED", observer.single().getWorkerState());
+    assertTrue(observer.single().getServing(), "fatal ingest must not falsely mark search unavailable");
+  }
+
   private static final class CapturingObserver<T> implements StreamObserver<T> {
     private T value;
     boolean completed = false;

@@ -39,6 +39,7 @@ message KnowledgeStatusView {
   string migration_pause_reason = 17 [json_name = "migrationPauseReason"];
   int64 migration_paused_at_ms = 18 [json_name = "migrationPausedAtMs"];
   bool healthy = 19;
+  // Worker states: IDLE, INDEXING, ERROR (document failures), FAILED (fatal indexing-loop death).
   string index_state = 20 [json_name = "indexState"];
 
   // Promoted from extras (slice 366: enrichment coverage)

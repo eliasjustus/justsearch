@@ -1,7 +1,7 @@
 ---
 title: "Format capability characterization and duplicate-prevalence measurement: production-path extraction fixtures, representative cached corpora, and calibrated non-redundancy evidence"
 type: tempdocs
-status: "IMPLEMENTING (2026-09-06) — task-only current-main integration and measurement reconciliation"
+status: "COMPLETE LOCALLY (2026-09-06) — realdocs skipped under runtime cap; unpublished"
 created: 2026-09-02
 updated: 2026-09-06
 lane: 887 L13
@@ -44,11 +44,11 @@ is warranted; retire any extra coordination once the existing owner guarantees t
   independently review the combined production changes before corpus execution.
 - [x] I3: reconcile calibrated-decision consumption and supported result-redundancy scope with executable
   tests; preserve completed adjudication and explicitly bound any still-unmeasured cohort.
-- [ ] I4: validate a fresh inference-capable production path, then complete realdocs extraction/VDU and
-  subsequent enrichment (Worker heap failure blocks it); emit a reconciled aggregate with exact terminal exclusions.
+- [x] I4: repair enrichment and make the bounded runtime decision. The 15.9-minute probe projects
+  4.3–6.3 more hours of visual work alone; skip realdocs under the three-hour cap, aggregate unmeasured.
 - [x] I5: run all legal retrieval modes and capture final-hybrid redundancy with stable snapshot identity;
   run comparable SciFact regression gates against authoritative floors without baseline changes.
-- [ ] I6: reconcile acceptance and §M, update 639/register/canonical docs, regenerate/check documentation,
+- [x] I6: reconcile acceptance and §M, update 639/register/canonical docs, regenerate/check documentation,
   finish independent review and commit the authorized work. No PR, push, merge or publication.
 
 ## Reassessment — 2026-09-06 (basis for integration)
@@ -646,10 +646,10 @@ Historical execution/verification: [E8 — Worker repair investigation record](8
 - [x] Reproduce the pinned PPT privately and retain exception class/stack evidence without committing source
   bytes or paths. Repair only a proven product defect; otherwise add a strict, aggregate denominator contract
   for terminal source failures and its jseval tests.
-- [ ] Rerun `mixed/realdocs-v1` to VDU quiescence under a full inference-capable stack. Its extraction rerun is
-  complete, but the eval backend cannot activate inference and correctly left the production aggregate
-  unmeasured. `mixed/legal-clerc-200` enrichment and strict production capture are complete; query-result
-  decoration was not recovered from the final integrated run.
+- [x] Resolve realdocs under the user's three-hour cap: enrichment is repaired; a preserved-index probe
+  leaves 95 visual tasks pending after 15.9 minutes. Skip the full campaign and retain no accepted aggregate.
+  Normal dev-runner writable settings plus the eval property provide isolated full inference. Legal
+  production capture, all four query modes, and final-hybrid decoration are complete in integration evidence.
 - [x] Update the inference runtime register and any 897/jseval canonical documentation required by shipped
   behavior, run docs regeneration/checks, full scoped verification, `git diff --check`, and an independent
   refute-first review. Remove no superseded corpus/config/baseline; the only teardown is the fixed 2 MiB
@@ -659,13 +659,13 @@ Historical execution/verification: [E8 — Worker repair investigation record](8
   are reported. Keep the single-source EML/RTF/ZIP cohort and unavailable families explicitly
   deterministic-only; `.msg` remains optional. A future representative robustness claim still requires
   source-diverse samples under §C.
-- [ ] Run corpus prevalence on immutable `realdocs-v1` and the pre-dedup Enron stages. Run query-visible
-  redundancy on `mixed/legal-clerc-200` only if its identity, source terms, and query/qrel provenance pass;
-  otherwise record it unmeasured.
+- [x] Record Enron prevalence and provenance-validated legal query redundancy; realdocs is explicitly
+  skipped/unmeasured under the user's bounded-run decision. Preserve each cohort's denominator and
+  evidence limits without transferring thresholds or manufacturing a private aggregate.
 - [x] Obtain disjoint model-assisted calibration/holdout labels; measure approximate candidate recall against
   exhaustive all-pairs Jaccard on a tractable slice. Do not tune and validate on the same labels, and retain
   the weaker-than-independent-human labeling limitation.
-- [ ] Fill §M from content-addressed artifacts. Update 639 only with non-redundancy evidence and the
+- [x] Fill §M from content-addressed artifacts. Update 639 only with non-redundancy evidence and the
   evidence-permitted recommendation; ANN recall remains in 639. Update the search-quality register row
   only after artifacts exist.
 
@@ -703,16 +703,16 @@ Historical execution/verification: [E8 — Worker repair investigation record](8
   ambiguous/missing identities; leaf filename stems are forbidden as the join authority.
 - [x] Any production-content snapshot reconciles its exported count and opaque ids to the expected manifest
   and ingest state; folder-browse pagination/direct-child behavior cannot silently omit nested documents.
-- [ ] §M reports per-format capability and per-corpus prevalence with denominators/intervals; synthetic,
-  pre-deduplicated, and private cohorts are visibly separated.
+- [x] §M reports per-format capability and measured-cohort prevalence with denominators/intervals;
+  skipped/unmeasured cells are explicit, and synthetic, pre-deduplicated, and private cohorts stay separate.
 - [x] Real-format characterization reports per-format source diversity; unsupported source coverage is
   labeled rather than generalized from one generated producer.
-- [ ] 639 receives only the non-redundancy evidence and a recommendation allowed by the evidence gate;
+- [x] 639 receives only the non-redundancy evidence and a recommendation allowed by the evidence gate;
   ANN recall remains in 639. The search-quality register gains a “format breadth / duplicate prevalence”
   row. No baseline changes.
 - [x] Focused Worker and jseval tests pass; if a corpus test exceeds 60 seconds, tag/document it in
   `docs/explanation/09-testing-strategy.md` and run the repository’s docs-maintenance sequence.
-- [ ] Refute-first review verifies that every claimed production layer is actually exercised and that
+- [x] Refute-first review verifies that every claimed production layer is actually exercised and that
   the measurement cannot pass on a filtered/deduplicated input by mistake.
 
 Historical execution/verification: [E9 — Historical takeover verification and confidence](897-evidence/execution-history.md#e9).
@@ -746,7 +746,7 @@ The separate 33-file sibling has one source per format (16 EML, 9 RTF, 8 ZIP): c
 |---|---:|---:|---:|---:|---:|---|---|
 | CMU Enron eligible-body proxy — full exact census | 352,208 | 77.009% | 77.626% | unmeasured | n/a | no query set | `scripts/jseval/897-run-2026-09-04/enron-duplicate-prevalence.v1.json`; SHA-256 `4ebf994d…e492c` |
 | CMU Enron — frozen uniform analyzer sample | 5,000 | 4.46% descriptive | 4.54% descriptive | 5.46% at threshold `0.90` (sample only); model-assisted holdout precision `1.0`, recall `0.985507`, F1 `0.992701`; archive prevalence unmeasured | n/a | no query set | selected aggregate `2807b0dd…83da6`; frozen decision `66fcd1e8…10a907` |
-| `mixed/realdocs-v1` production extraction | 620 source / 619 expected indexed / 1 declared terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | isolated full-inference rerun active; prior full-app index included five bundled help documents and is not accepted evidence |
+| `mixed/realdocs-v1` production extraction | 620 source / 619 expected indexed / 1 declared terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | skipped under the user's three-hour cap after enrichment repair and bounded probe; no accepted aggregate |
 | `mixed/legal-clerc-200` production extraction | 199 | 0.0% | 0.0% | `UNDECIDED`; sweep observed no confirmed edge | unmeasured | hybrid: 0/200 affected; 0/2,000 redundant delivered hits@10 | current-main aggregate SHA-256 `ba8267a7…938a20`; canonical `eb378f91…d44bfb`; projection `41e3c00b…cf4c71` |
 
 ## Historical close state (2026-09-04; current state is above)

@@ -173,7 +173,8 @@ public class IndexingLoop implements Closeable {
   public enum LoopState {
     IDLE,
     RUNNING,
-    PAUSED
+    PAUSED,
+    FAILED
   }
 
   private volatile LoopState currentState = LoopState.IDLE;
@@ -563,6 +564,7 @@ public class IndexingLoop implements Closeable {
    */
   public void start() {
     if (running.compareAndSet(false, true)) {
+      currentState = LoopState.IDLE;
       // Tempdoc 798: publish the third backfill-yield signal. This loop owns the job queue, so it
       // is the only component that can answer "is primary indexing work waiting"; BackfillScheduler
       // reads it through the signal bus alongside shouldYieldGpuBackfill().
@@ -573,8 +575,10 @@ public class IndexingLoop implements Closeable {
       // so isRunning() (which ANDs loopThread.isAlive()) doesn't keep advertising a dead loop.
       loopThread.setUncaughtExceptionHandler(
           (thread, ex) -> {
-            log.error("Indexing loop thread '{}' died uncaught — indexing has halted", thread.getName(), ex);
+            // Publish before logging: a heap failure can prevent the logger from allocating.
+            currentState = LoopState.FAILED;
             running.set(false);
+            log.error("Indexing loop thread '{}' died uncaught — indexing has halted", thread.getName(), ex);
           });
       loopThread.start();
       log.info("IndexingLoop started");
@@ -753,8 +757,9 @@ public class IndexingLoop implements Closeable {
         // Tempdoc 588 F-1: OOM / StackOverflow / InternalError — the JVM is unsafe to continue, so
         // stop, but observably: flip `running` (so isRunning() is honest) and re-throw (the uncaught
         // handler is the backstop). A fatal loop death must be visible, not silent.
-        log.error("Fatal VM error in indexing loop — stopping the loop", e);
+        currentState = LoopState.FAILED;
         running.set(false);
+        log.error("Fatal VM error in indexing loop — stopping the loop", e);
         throw e;
       } catch (Throwable t) {
         // Tempdoc 588 F-1: a non-VM Error escaped one batch (e.g. a plugin LinkageError, an
@@ -994,6 +999,11 @@ public class IndexingLoop implements Closeable {
     return running.get() && loopThread != null && loopThread.isAlive();
   }
 
+  /** True only after a fatal loop event; an intentional stop or deferred startup is not failure. */
+  public boolean hasFailed() {
+    return currentState == LoopState.FAILED;
+  }
+
   /**
    * Stop intake processing at a batch boundary and wait for the loop's existing shutdown commit.
    * Unlike {@link #close()}, this preserves owned services and can be reversed by
@@ -1031,7 +1041,8 @@ public class IndexingLoop implements Closeable {
 
   /**
    * Returns the current state of the indexing loop as a wire-stable string
-   * ({@code "IDLE"} / {@code "RUNNING"} / {@code "PAUSED"}, produced via {@link Enum#name()}).
+   * ({@code "IDLE"} / {@code "RUNNING"} / {@code "PAUSED"} / {@code "FAILED"}, produced via
+   * {@link Enum#name()}). FAILED denotes a fatal loop event, not an intentional stop.
    *
    * <p>Backed by {@link LoopState}; new callers should prefer {@link #loopState()} for
    * type safety. This String accessor is retained for the worker-state wire emission

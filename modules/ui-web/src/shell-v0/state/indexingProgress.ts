@@ -87,7 +87,7 @@ export interface EnrichSettleSample {
 }
 
 export interface IndexingProgress {
-  /** §3a phase. `unknown` ⟹ the worker did not report; NO number below may be rendered. */
+  /** §3a phase. `unknown` ⟹ no trustworthy progress observation; NO number below may be rendered. */
   phase: IndexingPhase;
   /** Non-terminal job rows (PENDING + PROCESSING) — `worker.core.pendingJobs` (the queueDepth projection). */
   jobsPending: number;
@@ -200,7 +200,7 @@ export interface IndexingProgress {
  * (`WorkerStatusCache.status()` / `CoreIndexView.fallback`), so its zeros are absence, not "settled".
  * Reading them as `ready` is the "0 == done" lie this allowlist exists to prevent.
  */
-const WORKER_REPORTED_INDEX_STATES: ReadonlySet<string> = new Set(['IDLE', 'INDEXING', 'ERROR']);
+const WORKER_REPORTED_INDEX_STATES: ReadonlySet<string> = new Set(['IDLE', 'INDEXING', 'ERROR', 'FAILED']);
 
 /**
  * Does this snapshot carry a WORKER-REPORTED index block (as opposed to the hard-zeroed fallback
@@ -406,6 +406,8 @@ function derivePhase(jobsPending: number, work: EnrichmentWork): IndexingPhase {
 export function selectIndexingPhase(status: StatusResponse | null | undefined): IndexingPhase {
   const core = status?.worker?.core;
   if (!isWorkerReportedIndex(status) || !core) return 'unknown';
+  // The counts remain real, but no progress or completion claim survives a fatal loop death.
+  if (core.indexState === 'FAILED') return 'unknown';
   return derivePhase(count(core.pendingJobs), readEnrichmentWork(status));
 }
 
@@ -547,7 +549,7 @@ export function selectIndexingProgress(
   enrichSettleSamples: readonly EnrichSettleSample[],
 ): IndexingProgress {
   const core = status?.worker?.core;
-  if (!isWorkerReportedIndex(status) || !core) {
+  if (!isWorkerReportedIndex(status) || !core || core.indexState === 'FAILED') {
     return { ...EMPTY, live: snapshotLive };
   }
 

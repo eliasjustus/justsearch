@@ -679,7 +679,7 @@ message CoreStatus {
   int64 queue_depth = 1;
   int64 doc_count = 2;
   bool is_healthy = 3;
-  string state = 4;                   // IDLE, INDEXING, ERROR
+  string state = 4;                   // IDLE, INDEXING, ERROR (document failures), FAILED (fatal indexing-loop death)
   int64 last_commit_timestamp = 5;
   int64 signal_bus_activity_ts = 6;
   int64 signal_bus_heartbeat_ts = 7;
@@ -1740,7 +1740,7 @@ message HealthCheckResponse {
   bool serving = 1;
   string version = 2;
   int64 pid = 3;              // Worker process ID (for zombie/watchdog tests)
-  string worker_state = 4;    // Worker state: RUNNING, PAUSED, IDLE (for time-lord tests)
+  string worker_state = 4;    // Worker loop state: RUNNING, PAUSED, IDLE, FAILED (fatal death); STARTING when deferred
   // DEPRECATED: actually reports embedding readiness, not LLM readiness.
   // Use embedding_ready (field 6) instead. Kept for wire compatibility.
   // The LLM (llama-server) runs in the Head process and is not visible to the Worker.

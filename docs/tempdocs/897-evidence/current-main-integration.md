@@ -1,7 +1,7 @@
 ---
 title: "897 current-main integration evidence"
 type: tempdocs
-status: active
+status: complete-locally
 created: 2026-09-06
 updated: 2026-09-06
 ---
@@ -275,7 +275,8 @@ skill synchronization, canonical links and prompt-surface inventory checks passe
 
 The full jseval suite passed **3433 tests**, with 15 skipped and 83 warnings, in 522.75 s
 (`scripts/jseval/tmp/897-pre-ingest-full-pytest.log`). No Java/runtime code changed after the
-recorded full build, module tests, installed-Worker matrix and four SciFact gates.
+recorded full build, module tests, installed-Worker matrix and four SciFact gates at that checkpoint.
+The later enrichment repair supersedes that freshness claim; its current-tree checks are recorded below.
 
 ## Effort retrospective — 2026-09-06
 
@@ -328,3 +329,183 @@ similar cost. This is only a rough VDU projection; no total completion ETA is de
 embedding failure is repaired and chunk throughput is observed. The original two-hour jseval wait
 deadline is approximately 14:15 CEST and must not be reported as a completion forecast. Preserve the
 runtime and resume the existing index after resolving the failure; do not repeat source ingestion.
+
+## Enrichment repair and bounded campaign decision — 2026-09-06
+
+The user directed stopping the run, investigating enrichment first, and skipping the full campaign if
+the repaired end-to-end run would exceed roughly 2–3 hours. Three hours is the hard maximum, not a new
+unbounded wait. Owned run `8724186f-d376-4deb-b3b8-c00bcdfaaedc` stopped with `clean=none` at about
+14:04 CEST; the dev runner confirmed ports closed. Source files and runtime/index remain preserved.
+The strict wait ended without an aggregate. This supersedes mandatory completion of the expensive
+realdocs campaign; skipped measurements must remain visibly unmeasured, with no readiness bypass.
+
+Source investigation identifies retained allocation across stages: individual backfill fetches up to
+100 full texts, the encoder retains copied token windows across all tokenization groups, and the generic
+backend boxes all chunk vectors even though parent backfill consumes only the pooled document vector.
+Tokenizing in 512k-character groups alone does not bound those retained inputs or outputs. Increasing
+heap would only move the limit. The existing window and pooling geometry remain the semantic authority.
+
+Repair plan: (1) generate token windows on demand and release each tokenization group's inputs before
+the next group; preserve exact overlap/tail handling, ordering and pooling. (2) Use bounded inference
+and pooled-only results for parent-vector consumers, and bound individual backfill content collection;
+retain full chunk-vector results for callers that request them. (3) Trace fatal-loop health propagation
+and repair missing reporting through the existing lifecycle authority if confirmed. No new runtime knob,
+alternate embedding algorithm, truncation policy, or heap-default change is warranted.
+
+Verification: synthetic negative regressions for retained-window memory and large-parent batching;
+small exact geometry/pooling/ordering comparisons; affected Worker suites and build, independent review,
+then a bounded preserved-index live probe with unchanged corpus/model settings. Use jseval telemetry
+to assess end-to-end cost, including VDU; an embedding speedup alone does not justify a campaign whose
+remaining visual work exceeds the cap. Record accepted or explicitly skipped corpus evidence and finish
+the remaining documentation/review closeout. The broader lesson is to bound retained work across a stage
+boundary, not only individual native calls; this is demonstrated by the constrained-memory regression,
+and no additional abstraction is needed once existing owners enforce that bound.
+
+The implementation now uses lazy `TokenWindows`, a bounded eight-window inference accumulator,
+and an ONNX pooled-only parent route. Content collection stops before a second document would exceed
+512,000 characters; an oversized first document remains whole. Independent review caught and corrected
+that mixed-size boundary and preserved the service's empty-result, first-dimension and telemetry rules.
+`EmbeddingServicePooledBatchTest` exercises the actual service route, so reverting to the generic boxed
+chunk response cannot pass by leaving only helper tests green.
+
+`LoopState.FAILED` is published before logging a fatal VM/uncaught event. The same loop instance feeds
+core status (`FAILED`, unhealthy), while search serving stays separately probed. Fresh FAILED snapshots
+terminate every jseval readiness wait with `indexing_loop_failed`; stale snapshots and declared ordinary
+document ERROR retain their existing contracts. The Health UI names the failure and suppresses false
+progress/ETA. Independent source review found no remaining blockers in this propagation chain.
+
+Focused evidence: `897-enrichment-focused.log` passed in 7m15s, including lazy-window geometry,
+bounded pooling and parent collection. Its 128 MiB child-process regression uses identical synthetic
+three-million-token inputs: lazy iteration completes (7,813 windows), the former eager algorithm raises
+heap OOM. `897-enrichment-model-health.log` passed in 8m: the real-model pooled/full comparison took
+9.078s; the existing cross-group ordering comparison took 419.480s (two model tests, zero skipped).
+The same command passed fatal-loop, core-status, serving-health and parent-budget regressions.
+Broader Java/UI/Python verification and fresh four-mode SciFact gates are recorded below.
+
+CPU contention was observed independently of the evaluation stack: a first sample identified Windows
+Defender as the largest consumer; later total CPU was 31%, of which the serial model test used about
+20 percentage points. The stopped corpus run cannot establish a post-repair speedup. Builds now use
+one Gradle worker, and the live timing probe must have no concurrent build or test from this session.
+
+Current repair verification: `897-enrichment-final-java.log` passed the full Java suite (9,260 cases,
+26 skipped, zero failures/errors). Earlier reruns exposed only two test-wiring corrections: the new
+Mockito service test belongs in Worker services, and the scheduler fixture must supply its same seeded
+text through incremental content reads. Behavioral assertions were retained. `897-enrichment-build-pmd-install.log`
+passed `build -x test`, `pmdAll`, integration checks and both installed distributions in 1m28s.
+`897-enrichment-installed-worker-live.log` explicitly enabled and reran the installed-Worker format matrix
+and ten directory tests in 45s; the first invocation without the opt-in was skipped and is not evidence.
+UI type checking and all 6,335 unit tests passed (`897-enrichment-ui-typecheck.log`, `897-enrichment-ui-unit.log`).
+Current Python scopes: readiness/production capture 131 passed; UI capture forwarding/index 12 passed.
+The previously recorded full Python suite predates these narrowly tested readiness/capture-tool changes.
+
+Affected UI capture exposed an ignored `--fixtures` flag: the CLI's affected-step branch dropped the
+existing per-shot options. The existing owner now forwards fixture, measurement, trace and recording
+options, with CLI-to-owner-to-shot tests. Corrected captures are under `897-enrichment-health-ui-fixed/`:
+three Health variants render with no document overflow and no network errors. Health completion has
+zero axe findings; ordinary dark/light Health retains the registered `color-contrast` debt on the
+unchanged unknown-presence label. The harness also records a DOM view-transition timeout; captures are
+visual smoke evidence, not a claim of zero UI diagnostics. Fatal-state rendering is covered by the new
+`HealthSurface.render.test.ts` and `indexingProgress.test.ts` cases.
+
+At 15:09 CEST an owned, preserved-index probe started as `27b6b8f4-fe2c-4117-85dc-deb3affd816e`.
+Preflight passed every check; MCP reports FRESH artifacts (`headDistStamp=b0be3df6fa335916`) and the
+correct worktree/data directory. Standard CUDA activation completed in 45.801s, then indexing intent was
+recorded. No ingestion was repeated. `897-enrichment-probe.log` and its timeline use a 1,200-second
+strict wait, including the visual scheduler's idle window. Worker PID 20416 still uses `-Xms1g -Xmx1g`;
+the readiness log's 7.7 GB maximum describes Head heap, not Worker heap. This probe's sources are the
+verified working-tree repair recorded above; its runtime provenance still names checkpoint `efe744cca`.
+
+### Bounded decision: skip the full realdocs campaign
+
+The probe ended early at about 15:27 CEST once the runtime decision was clear. MCP shutdown confirmed
+ports closed and retained the runtime/index (`clean=none`). The strict wait then failed on the deliberately
+stopped backend and persisted 476 timeline rows; this is an intentional stop, not another pipeline crash
+or a completed aggregate. No production aggregate exists at `897-enrichment-probe-prevalence.json`.
+
+Fresh observations span elapsed 0.5–954.6 seconds. Indexed parents remain 619. Parent embedding rises
+45.1%→57.8%, SPLADE 57.5%→66.6%, and NER 27→82 (537 still pending). Chunk coverage remains 0.0%.
+`vdu_pending` falls only 99→95; `vdu_processing` is one at both endpoints. These are backlog dispositions,
+not a count of successful document conversions. The same standard model was verified as
+`Qwen_Qwen3.5-9B-Q4_K_M.gguf`; no model, parser, readiness or heap setting was relaxed.
+
+At this observed net drain rate, 95 pending visual tasks project about **6.3 further hours**. Even
+discounting a full five minutes from the observation as startup/idle overhead gives about **4.3 hours**,
+before unfinished dense/NER/chunk work. These are alternative drain-rate projections, not a confidence
+interval or a claim that heterogeneous future documents all have equal cost. They are sufficient to
+reject continuation under the user's three-hour maximum. The repair restores real enrichment progress
+and removes the reproduced retained-allocation failure, but it does not make the end-to-end campaign
+short enough. Realdocs byte/content/near-duplicate production cells remain explicitly unmeasured.
+Completed Enron, legal and deterministic format evidence remains usable within its recorded scope.
+
+Independent final review found no blockers in the capture-option fix or the smoke-only UI evidence
+wording. Fresh post-repair four-mode SciFact verification used a separate disposable eval index;
+it did not resume the skipped realdocs campaign.
+
+### Post-repair SciFact regression evidence
+
+Run `897-scifact-enrichment-repair/20260906T133913_scifact` completed at about 15:39 CEST, exit zero
+(`897-scifact-enrichment-repair.log`). Run identity: `8f9766b3-1c7c-4375-a218-a93f3a740415`;
+summary SHA-256: `c8e03e3d00015c2ea69bcac4e350143e81ff5b1b504aca5096539cc40bb335b7`.
+The installed repair was verified above; the manifest names its pre-commit checkpoint `efe744cca`.
+All four modes are comparable, with 300 queries each, zero query errors and cross-encoder coverage
+300/300 in each mode, zero silent drops. nDCG@10: vector 0.7495996, lexical 0.7252984,
+SPLADE 0.5700250, hybrid 0.7543339. These are regression observations, not a causal quality gain.
+
+All four commands used `--run-dir tmp/897-scifact-enrichment-repair/20260906T133913_scifact`
+and pinned dataset `--dataset beir/scifact`. Saved logs are `897-enrichment-relevance-gate.log`,
+`897-enrichment-perf-gate.log`, `897-enrichment-leak-gate.log` and `897-enrichment-union-recall-gate.log`.
+Relevance passes 0.7543339 ≥ 0.7371906; leak rate passes 0.0300 ≤ 0.0766667; union recall passes
+0.9300 ≥ 0.8833333. Performance passes all nine pinned checks: hybrid CE p50 150 ms, retrieval
+p50 3 ms, primary throughput 91.0 documents/s and enrichment 14.9 documents/s, plus five footprint
+checks. No baseline was changed. Initial gate invocations used `--data-dir` incorrectly, then the
+short `scifact` name skipped the performance baseline; neither invocation counts as gate evidence.
+
+Readiness accepted 5,184 parents (5,183 corpus documents plus the canonical sentinel); settled index
+contains 6,739 live documents in one segment. The recorded settle operation changed maxDoc 7,633→6,739
+without changing numDocs. Chunk vector coverage reached 100% at 237.9 seconds. Total ingest/readiness
+was 348.62 seconds. Throughput and latency vary with host load; this run does not establish a repair
+speedup over the earlier run or a counterfactual duration without CPU contention.
+
+Independent final artifact review confirms that the offline chunk-expectation guard does not validate
+this ir_datasets BEIR route: `run.py:940-962` reads a local `corpus.jsonl` that this route does not create,
+so the existing oracle returns expected=0. Its `chunk-free` label is not a corpus fact. Live status
+independently records 1,555 completed chunk documents, zero failures and 100% vector coverage
+(`summary.json:746-750`). The four pinned gates passed, but no offline chunk-expectation validation is
+claimed. A nonblocking diagnostic follow-up is to distinguish an unavailable offline oracle from a
+genuinely chunk-free corpus in `chunk_completeness.py:216-225`; no threshold, verdict or saved artifact
+was changed to conceal this existing scope limitation.
+
+MCP `quick_health` after shutdown reports `ABSENT`, no foreign runs and no inference orphan. The final
+repository helper sweep leaves the UI capture Vite (PID 42192, this worktree) because its original
+registration has an unattributed owner; lease renewal does not transfer ownership. It also reports the
+shared ownerless OTLP sink (PID 14468), which is deliberately never reaped. Neither process was killed
+outside the ownership protocol. No evaluation or corpus backend remains running.
+
+Documentation regeneration and all seven checks passed: llmstxt, generated skill sync, canonical links,
+module dependency projection, runtime configuration matrix, prompt-surface inventory and UI step coverage
+(`897-enrichment-doc-check-0.log` through `897-enrichment-doc-check-6.log`, in that order).
+The corresponding manual Codex skill changes were reviewed directly. `git diff --check` passed.
+The branch is intentionally local and unpublished; opening/pushing/merging a PR is not authorized.
+At final world-state inspection, origin/main had advanced by two release/documentation commits
+(`e1ed33e8a`, `b684b7860`), whose changed paths do not overlap this repair. Publication must refresh
+integration against the then-current main rather than treating this local verification as merge CI.
+
+Closeout lessons: bound a live probe before committing to a campaign, and use its slowest unfinished
+stage to enforce the user's wall-clock budget. Shared-host timing cannot prove an isolated speedup.
+Keep regression fixtures aligned with existing module dependencies and the production read seam to
+avoid wasted build reruns. Inspect gate CLI options and the pinned dataset key before invoking them;
+an exit-zero skip is not a tested floor. Set the available session-identity environment variable before
+starting helpers; renewing an unattributed lease cannot repair its original ownership record. Bounded
+independent reviews found useful semantic and fixture issues without competing for the single build
+or dev stack. No user prompt caused the delays; obsolete runtime assumptions and discovered defects did.
+
+### Close state
+
+Authorized implementation and local verification are complete, including the user's explicit decision
+to skip the full realdocs campaign when the repaired probe cannot fit the three-hour limit. Realdocs
+production duplicate prevalence remains unmeasured; neither its preserved index nor the older archive
+is accepted aggregate evidence. Completed format, Enron and legal observations retain the exact scope
+and uncertainty recorded above. Independent repair, fatal-state, UI forwarding and final artifact
+reviews found no remaining 897 blocker. There are no pending corpus runs or required local tests.
+The next publication step requires separate authorization and a fresh main integration check. The UI
+capture ownership refusal and existing BEIR diagnostic-label limitation above remain visible follow-ups.

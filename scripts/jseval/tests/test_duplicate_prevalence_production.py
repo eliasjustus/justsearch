@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from jseval import duplicate_prevalence_production as production
+from jseval import readiness
 from jseval import result_identity
 from jseval.raw_corpus_manifest import RawCorpusContext, build_raw_manifest
 
@@ -328,6 +329,30 @@ def test_production_readiness_allows_only_exact_declared_failure_disposition():
         production._required_production_readiness_reasons(
             undeclared, expected_indexed_count=2, expected_failed_count=1,
         )
+
+
+@pytest.mark.parametrize("index_state,passed", [("ERROR", True), ("FAILED", False)])
+def test_production_poll_distinguishes_declared_document_error_from_fatal_loop(
+    monkeypatch, index_state, passed,
+):
+    status = _production_ready_status(2, failed_jobs=1)
+    status["indexState"] = index_state
+    status["meta"] = {"workerRpcStale": False}
+    fetch = Mock(return_value=status)
+    sleep = Mock()
+    monkeypatch.setattr(readiness, "_fetch_status", fetch)
+    monkeypatch.setattr(readiness.time, "sleep", sleep)
+    result = readiness._poll_until_stable(
+        "http://127.0.0.1:33221",
+        lambda snapshot: production._required_production_readiness_reasons(
+            snapshot, expected_indexed_count=2, expected_failed_count=1,
+        ),
+        600, 1, 1,
+    )
+    assert result.passed is passed
+    assert result.failure_reasons == ([] if passed else ["indexing_loop_failed"])
+    fetch.assert_called_once()
+    sleep.assert_not_called()
 
 
 def test_production_readiness_structural_schema_error_is_not_swallowed():

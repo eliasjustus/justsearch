@@ -55,11 +55,13 @@ final class IndexingLoopErrorResilienceTest {
     try {
       // Reaching IDLE proves the loop recovered from the Error and continued polling.
       awaitLoopState(loop, IndexingLoop.LoopState.IDLE, 5_000L);
+      verify(queue, timeout(5_000L).atLeast(2)).pollPending(anyInt());
 
       Thread thread = reflectThread(loop, "loopThread");
       assertNotNull(thread, "loopThread set after start()");
       assertTrue(thread.isAlive(), "loop thread survived the recoverable Error");
       assertTrue(loop.isRunning(), "isRunning() true after recovering from a non-fatal Error");
+      assertFalse(loop.hasFailed(), "recoverable errors must not publish terminal failure");
     } finally {
       loop.close();
     }
@@ -93,12 +95,37 @@ final class IndexingLoopErrorResilienceTest {
           reflectRunning(loop).get(),
           "`running` flag cleared after a fatal loop death (so the loop is honest AND restartable)");
       assertFalse(loop.isRunning(), "isRunning() also reports false after a fatal loop death");
+      assertTrue(loop.hasFailed(), "fatal event must be available to status consumers");
+      assertEquals(IndexingLoop.LoopState.FAILED, loop.loopState());
+      assertEquals("FAILED", loop.getCurrentState(), "health supplier must not report stale RUNNING");
     } finally {
       loop.close();
     }
   }
 
   // ---- helpers (mirror IndexingLoopRestartTest's real-thread harness) ----
+
+  @Test
+  void intentionalQuiescenceAndCloseAreNotFatalFailure() throws Exception {
+    JobQueue queue = mock(JobQueue.class);
+    lenient().when(queue.pollPending(anyInt())).thenReturn(List.of());
+    IndexingLoop loop = newLoop(queue);
+    assertFalse(loop.isRunning());
+    assertFalse(loop.hasFailed(), "a not-yet-started loop is not failed");
+    loop.start();
+    try {
+      assertTrue(loop.quiesceForUpgrade(5_000L));
+      assertFalse(loop.isRunning());
+      assertFalse(loop.hasFailed(), "upgrade quiescence must not become a fatal event");
+      loop.resumeAfterUpgradePreparation();
+      assertTrue(loop.isRunning());
+      assertFalse(loop.hasFailed());
+    } finally {
+      loop.close();
+    }
+    assertFalse(loop.isRunning());
+    assertFalse(loop.hasFailed(), "ordinary close must not become a fatal event");
+  }
 
   private static IndexingLoop newLoop(JobQueue queue) {
     IndexingCoordinator coordinator = mock(IndexingCoordinator.class);

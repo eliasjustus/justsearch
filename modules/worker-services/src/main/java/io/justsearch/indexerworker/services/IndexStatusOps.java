@@ -309,8 +309,11 @@ final class IndexStatusOps {
       buildingDocCount = docCount;
     }
 
+    boolean loopFailed = indexingLoop != null && indexingLoop.hasFailed();
     String state;
-    if (queueDepth > 0) {
+    if (loopFailed) {
+      state = IndexingLoop.LoopState.FAILED.name();
+    } else if (queueDepth > 0) {
       state = "INDEXING";
     } else if (failures != null && failures.failedCount() > 0) {
       state = "ERROR";
@@ -318,7 +321,7 @@ final class IndexStatusOps {
       state = "IDLE";
     }
 
-    boolean healthy = failures == null || failures.failedCount() == 0;
+    boolean healthy = !loopFailed && (failures == null || failures.failedCount() == 0);
 
     IndexGenerationManager.State stateSnapshot =
         indexGenerationManager == null ? null : indexGenerationManager.readStateBestEffort();
