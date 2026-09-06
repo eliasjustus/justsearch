@@ -76,11 +76,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 - Failure details survive into the UI and MCP responses instead of being flattened away (#688)
 - The failed-files drawer lays out correctly, its retry chips stay reachable, and its data contract has a parse boundary (#616, #614)
 - The updater's release sequence is derived from published releases, so renaming the build workflow can no longer permanently block updates (#497)
+- An agent request that selects tools the index cannot offer yet says which tools are withheld and why, instead of a bare "no tools available"
+- Tool failures during a Worker restart reach the model as "the index is restarting, retry shortly" instead of a raw internal error, and the failure class is carried on the wire
+- The failed-files drawer shows the real scan id of a failed job instead of a placeholder
+- Undoing an agent file operation no longer garbles non-ASCII text in the response; every JSON response now declares UTF-8
+- An agent transcript written while the index was restarting is indexed once the index is back, instead of being skipped forever
 
 ### Security
 - The per-boot mutation token fails closed, per ADR-0046 (#597)
 - The MCP endpoint validates the `Origin` header, closing the DNS-rebinding gap in Streamable HTTP (#426)
 - File-acting agent tools are bounded by a consent lattice — a risk ceiling per grant, argument scope, and undo contained to the run (#581)
+- Undoing an agent operation now passes the same trust gate as the operation itself, so a reversal can no longer run with less consent than the forward action
 
 #### Known Issues
 

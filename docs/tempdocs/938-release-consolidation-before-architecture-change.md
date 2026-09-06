@@ -399,3 +399,19 @@ ui-shot, axe measured; (6) update 852 status and the CHANGELOG [Unreleased] Adde
 Done means: check-window-cutover passes on the real clock, run-ui-web-gates green, no
 search-v3 DEVELOPER/DEEPLINK residue, the old window absent from the tree and every register,
 and an independent reviewer (not the implementer) signs the live round.
+
+## Progress (2026-09-06, consolidation branch `worktree-938-release-consolidation`)
+
+Owner decision: version 0.3.0, Search v3 promoted by a dedicated agent (Appendix B).
+
+| Item | State | Where |
+|---|---|---|
+| 2 publish 905 closeout | done on origin: #692 carries the exit-code fix, run 34027810568 verified `installer_verify` green on that content; #693 closed the record. No re-dispatch needed. | origin/main |
+| 3 CHANGELOG | written under `[Unreleased]`, every bullet verified against its PR; 0.2.0-tag PRs, dev-only defaults (#480) and eval plumbing (#664) dropped; sv3 bullets carried under an HTML comment for the sv3 agent to confirm; Known Issues as an h4 (the gate allows only the six Keep-a-Changelog h3s). `release-changelog.mjs check` and `prepare --version 0.3.0` pass. | this branch |
+| 4 shipped-window bugs | 868 NO_TOOLS: binding was sound, the availability cause was already closed by 876; the residual (one constant message for every empty-offering cause) now names withheld vs unknown tools. 877: `errorCode`/`retryable` projected on `tool_exec_completed`; signal-bus-down mapped to SERVICE_UNAVAILABLE with the retry guidance. 911: `scan_id` plumbed SQL to proto to `IndexingJobView`, placeholder deleted. 875: `undo()` gated on the trust lattice; JSON responses declare `charset=utf-8` via one after-handler. 909 §E.1: durable `.md.pending` marker, reconciliation re-submits. The undo gate makes every real undo TYPED_CONFIRM, so the FE undo path was routed through the existing authorization broker (follow-up worker). 859 blank-stage stays with the sv3 agent (the window is being deleted). | this branch |
+| 5 stale claims | README + 05/13/16 explanation docs now say chat requires a supported NVIDIA GPU, search-only without one (`Necessity.java:27-36`, `InstallPlanner.java:207-224`). | this branch |
+| 6 version bump | `gradle.properties` 0.3.0, `sync-version.ps1`, Cargo.lock shell crate, mcpb manifest/server.json, `check-mcpb-consistency` OK, THIRD_PARTY_NOTICES regenerated. | this branch |
+| 7 runbook drift | environment-approval pause, environment exists (repo-scoped codesign secret copies still present — owner cleanup), verify lane runs post-publish, dispatch-inputs table. | this branch |
+| 8, 9, 10, 11 | owner: sandbox `upgrade-from-release` round, tag dispatch, post-publish README, branch disposition (§D). | open |
+
+Not verified live: none of the backend fixes were exercised against a running stack (dev stack leased elsewhere); unit, controller-level (real Javalin) and full-suite tests only. The sandbox round is the live tier for them.
