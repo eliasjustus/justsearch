@@ -61,12 +61,29 @@ public final class AgentToolErrors {
       LOG.warn("{} failed: {}: {}", tool, cause.getClass().getSimpleName(), detail);
     }
 
+    // The MODEL gets the actionable sentence for a Worker outage; the raw transport detail stays in
+    // the WARN line above, where a reader (not a language model) can use it. Live during a
+    // `/api/worker/restart` chaos run the model was handed "Browse error: No valid port in signal
+    // bus" — an internal invariant it cannot act on, and which does not say the one thing that
+    // matters: waiting fixes this (877 open items).
+    String modelFacing =
+        code == ApiErrorCode.SERVICE_UNAVAILABLE ? WORKER_UNAVAILABLE_GUIDANCE : detail;
+
     return OperationResult.failure(
-        userMessagePrefix + ": " + detail,
+        userMessagePrefix + ": " + modelFacing,
         code.name(),
         Map.of("tool", tool),
         code.isRetryable());
   }
+
+  /**
+   * The Worker-outage sentence the model sees, in the shape {@code
+   * OperationExecutorImpl.capabilityUnavailableMessage} already uses for {@code worker-online}: name
+   * the condition, say it self-heals, name the retry. One wording for one condition, whether the
+   * dispatcher refused the call up front or the tool got as far as the transport.
+   */
+  static final String WORKER_UNAVAILABLE_GUIDANCE =
+      "the knowledge worker is not reachable; the index is restarting — retry shortly";
 
   /**
    * A malformed-argument failure the tool detected itself (a missing required field, an unusable
@@ -89,10 +106,36 @@ public final class AgentToolErrors {
     if (cause instanceof TimeoutException) {
       return ApiErrorCode.TIMEOUT;
     }
-    if (isWorkerUnreachable(cause)) {
+    if (isWorkerUnreachable(cause) || isWorkerRestarting(cause)) {
       return ApiErrorCode.SERVICE_UNAVAILABLE;
     }
     return ApiErrorCode.INTERNAL_ERROR;
+  }
+
+  /**
+   * The Worker outage that never reaches the transport. When the Worker process is being replaced,
+   * the Head's client re-discovers its port through the shared signal bus, and
+   * {@code RemoteKnowledgeClient.reconnect} throws a plain {@link IllegalStateException} before any
+   * gRPC call exists to fail — so {@link #isWorkerUnreachable} (which looks for transport types)
+   * cannot see it and the failure landed in {@code INTERNAL_ERROR}, with its internal invariant
+   * text copied to the model.
+   *
+   * <p>Matched on the message for the same reason the transport types are matched by name: the
+   * thrower lives in {@code app-services}, which {@code app-agent} does not depend on. The two
+   * literals are the complete set {@code reconnect} can throw
+   * ({@code RemoteKnowledgeClient.java:404} and its PID-validation sibling below it), both meaning
+   * "the Worker is mid-restart".
+   */
+  private static boolean isWorkerRestarting(Throwable cause) {
+    if (!(cause instanceof IllegalStateException)) {
+      return false;
+    }
+    String message = cause.getMessage();
+    if (message == null) {
+      return false;
+    }
+    return message.contains("No valid port in signal bus")
+        || message.contains("PID mismatch after reconnect");
   }
 
   /**

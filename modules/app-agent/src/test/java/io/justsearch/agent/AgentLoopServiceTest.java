@@ -2122,6 +2122,118 @@ class AgentLoopServiceTest {
     assertEquals("NO_TOOLS", error.errorCode());
     assertEquals("PERMANENT", error.errorClass());
     assertEquals("ABORT", error.retryAction());
+    assertEquals("No tools available", error.error(), "no selection ⇒ the unqualified message");
+  }
+
+  /** An emitter that offers nothing — the availability filter's state, not a broken selection. */
+  private static io.justsearch.agent.api.registry.AgentToolEmitter offersNothingEmitter() {
+    return new io.justsearch.agent.api.registry.AgentToolEmitter() {
+      @Override
+      public List<Operation> offer(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        return List.of();
+      }
+
+      @Override
+      public List<Map<String, Object>> emit(
+          OperationCatalog catalog, java.util.Collection<String> selectedNames) {
+        return List.of();
+      }
+    };
+  }
+
+  @Test
+  @DisplayName("868 D.4: a selection of REAL tools that are withheld says so, and names them")
+  void noToolsWithSelectionOfExistingTools_namesThemAsUnavailable() {
+    // The live 868 §C.3 shape: `tools: ["core_search_index"]` matched the catalog, then the
+    // availability filter (index.unavailable asserted) dropped the survivor, so the offering was
+    // empty. The run said "No tools available" — indistinguishable from a typo'd tool name, and
+    // pointing at the wrong remedy.
+    var service =
+        new AgentLoopService(
+            new ScriptedAiService(List.of()),
+            stubCatalog(new StubTool("search_index", RiskTier.LOW, "ok")),
+            stubExecutor(),
+            offersNothingEmitter(),
+            null,
+            null);
+
+    var events =
+        runWithRequest(
+            service, new AgentRequest(userMessage("hi"), List.of("core_search_index"), 1));
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("NO_TOOLS", error.errorCode());
+    assertTrue(
+        error.error().contains("not available right now"),
+        "the message must name the cause, not just the symptom: " + error.error());
+    assertTrue(error.error().contains("core_search_index"), error.error());
+  }
+
+  @Test
+  @DisplayName("868 D.4: the OperationRef form of the same selection is diagnosed identically")
+  void noToolsWithRefIdSelection_namesItAsUnavailable() {
+    var service =
+        new AgentLoopService(
+            new ScriptedAiService(List.of()),
+            stubCatalog(new StubTool("search_index", RiskTier.LOW, "ok")),
+            stubExecutor(),
+            offersNothingEmitter(),
+            null,
+            null);
+
+    var events =
+        runWithRequest(
+            service, new AgentRequest(userMessage("hi"), List.of("core.search-index"), 1));
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertTrue(
+        error.error().contains("not available right now"),
+        "both accepted identifier spaces resolve against the catalog: " + error.error());
+    assertTrue(error.error().contains("core.search-index"), error.error());
+  }
+
+  @Test
+  @DisplayName("868 D.4: a selection naming nothing that exists still fires NO_TOOLS, and says so")
+  void noToolsWithUnknownSelection_saysTheNamesAreUnknown() {
+    var service =
+        new AgentLoopService(
+            new ScriptedAiService(List.of()),
+            stubCatalog(new StubTool("search_index", RiskTier.LOW, "ok")),
+            stubExecutor(),
+            offersNothingEmitter(),
+            null,
+            null);
+
+    var events =
+        runWithRequest(service, new AgentRequest(userMessage("hi"), List.of("core_nope"), 1));
+
+    var error = lastEventOfType(events, AgentEvent.AgentError.class);
+    assertNotNull(error);
+    assertEquals("NO_TOOLS", error.errorCode());
+    assertEquals("PERMANENT", error.errorClass());
+    assertEquals("ABORT", error.retryAction());
+    assertTrue(
+        error.error().contains("None of the selected tools exist"),
+        "the guard must still fire, for the unknown-name reason: " + error.error());
+    assertTrue(error.error().contains("core_nope"), error.error());
+  }
+
+  @Test
+  @DisplayName("868 D.4: a mixed selection reports the ones that exist as unavailable")
+  void noToolsMessage_partitionsKnownFromUnknown() {
+    OperationCatalog catalog = stubCatalog(new StubTool("search_index", RiskTier.LOW, "ok"));
+
+    String message =
+        AgentLoopService.noToolsMessage(catalog, List.of("core_search_index", "core_nope"));
+
+    assertTrue(message.contains("not available right now"), message);
+    assertTrue(message.contains("core_search_index"), message);
+    assertFalse(
+        message.contains("core_nope"),
+        "an unknown name alongside a known one must not be reported as withheld: " + message);
   }
 
   // ---------------------------------------------------------------------------

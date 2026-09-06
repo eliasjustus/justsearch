@@ -295,6 +295,14 @@ public final class AgentEventPayloads {
    * measured", never "nothing was truncated" — the same absent-emits-no-key discipline {@code
    * structuredData} and {@code contextInclusion} already apply, so every record persisted before
    * this field stays readable as what it is: silent.
+   *
+   * <p>Tempdoc 877 §open-items — {@code errorCode} / {@code retryable} ride the same discipline.
+   * {@code AgentToolErrors} has classified every tool failure since 877 ({@code BAD_REQUEST} for a
+   * malformed model argument, {@code TIMEOUT}, {@code SERVICE_UNAVAILABLE} for a Worker that is not
+   * reachable), and none of it reached the wire: a consumer saw {@code success:false} plus prose and
+   * could not tell "the model sent bad arguments" from "the index is restarting". Both keys are
+   * absent when the producing tool classified nothing, so an unclassified failure is not
+   * retroactively described as an unknown code.
    */
   private static Map<String, Object> toolCompletedPayload(AgentEvent.ToolExecutionCompleted e) {
     var payload = new LinkedHashMap<String, Object>();
@@ -306,6 +314,8 @@ public final class AgentEventPayloads {
       payload.put("outputCharsToModel", e.outputCharsToModel());
       payload.put("truncatedForModel", e.truncatedForModel());
     }
+    e.result().errorCode().ifPresent(code -> payload.put("errorCode", code));
+    e.result().retryable().ifPresent(retryable -> payload.put("retryable", retryable));
     if (!e.result().structuredData().isEmpty()) {
       payload.put("structuredData", e.result().structuredData());
     }

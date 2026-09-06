@@ -966,17 +966,12 @@ public class IndexingController {
    * <p>{@code retryAfterMs} is 0: these rows are terminal (no retry is scheduled), which is exactly
    * what "no backoff deadline" means on this record.
    *
-   * <p><b>{@code scanId} is a KNOWN PLUMBING GAP on this projection, not "no scan"</b> (tempdoc 911
-   * review S2-3). {@link IndexingJobView} defines {@code ""} as "single-file ingest, watcher, or a
-   * pre-{@code scan_id} row" — a real state — so hardcoding it here makes this surface assert
-   * something it has not checked. The data exists: {@code SqliteJobQueue} writes {@code scan_id} on
-   * every enqueue, but four layers drop it before it could reach here — the {@code listFailedJobs}
-   * SELECT does not select it, the proto {@code FailedJob} message has no field for it, {@code
-   * RemoteKnowledgeClient} therefore cannot pass it, and {@code IndexingService.FailedJobInfo} has
-   * no component for it. All four are worker/app-services surfaces. It is emitted rather than
-   * dropped because dropping the key is what left this wire un-typeable; it is NOT marked nullable
-   * because that would weaken a record two other surfaces share to describe one projection's gap.
-   * Fixing it means plumbing all four layers — tracked in tempdoc 911 §F.
+   * <p>{@code scanId} is now the queue's own value, read end to end (tempdoc 911 §F closed): the
+   * {@code listFailedJobs}/{@code listFailedJobsByPathPrefix} SELECTs project {@code scan_id}, the
+   * proto {@code FailedJob} message carries it as field 7, {@code RemoteKnowledgeClient} passes it,
+   * and {@code IndexingService.FailedJobInfo} holds it. So {@code ""} here means what {@link
+   * IndexingJobView} says it means — single-file ingest, watcher, or a pre-{@code scan_id} row —
+   * rather than "this surface never looked".
    */
   private static IndexingJobView toJobView(IndexingService.FailedJobInfo j) {
     return new IndexingJobView(
@@ -987,15 +982,8 @@ public class IndexingController {
         j.errorMessage() == null ? "" : j.errorMessage(),
         0L,
         j.collection() == null ? "default" : j.collection(),
-        SCAN_ID_NOT_PLUMBED);
+        j.scanId() == null ? "" : j.scanId());
   }
-
-  /**
-   * The {@code scanId} this projection can supply for a failed-job row: none. Named rather than
-   * inlined as {@code ""} so the gap is greppable and cannot be mistaken for a checked "no scan"
-   * (tempdoc 911 §F.2).
-   */
-  private static final String SCAN_ID_NOT_PLUMBED = "";
 
   public void handleClearFailedJobs(Context ctx) {
     try {

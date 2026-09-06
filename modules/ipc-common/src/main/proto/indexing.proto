@@ -1435,6 +1435,11 @@ message FailedJob {
   // guessed "FAILED" for every row -- relabelling a job that gave up after a week of retries as
   // one whose content could not be parsed.
   string state = 6;
+  // Tempdoc 911 §F: the directory scan that enqueued this job. The queue has written scan_id on
+  // every enqueue since tempdoc 812 D2, but this message had no field for it, so the failed-jobs
+  // API had to emit a placeholder. Empty means "no scan" (single-file ingest, watcher, or a
+  // pre-scan_id row) -- the same meaning IndexingJobView.scanId gives "".
+  string scan_id = 7;
 }
 
 message ListFailedJobsResponse {
