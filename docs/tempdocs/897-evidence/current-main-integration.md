@@ -204,3 +204,48 @@ File SHA-256 values:
 - `result_identity.v1.json`: `3b762b05bda6fd06a73348871e6b1aec91566313b731bc8aafe2fcea4c16d336`.
 - `summary.json`: `eb1c1bc5e8f6584538f8f8276fbe00e610547c106e75e53154b838eb9c1fc70a`.
 - `projections/staged_recall_accounting.json`: `41e3c00b9a54afa587e8940c3c5e7ed1802acabd5fd3ea1db04b779866cf4c71`.
+
+## Full-inference corpus isolation — 2026-09-06
+
+The first full-app realdocs run reached 624 global parents: root substrate independently confirmed
+619 realdocs parents and one terminal parser failure, while five additional parents existed outside
+that watched root. `KnowledgeServerBootstrap.java:991-1038` explains those extras: normal application
+startup ingests the five bundled help files into reserved `justsearch-help`. The production adapter's
+exact whole-index reconciliation would reject this state. No aggregate was produced and no helper
+document was filtered out, counted as a terminal failure, or deleted to manufacture a match.
+
+Two independent source reviews established an existing isolation route. The normal dev runner
+preserves ambient `JAVA_OPTS` (`dev-runner.cjs:727-739,1733-1739`) and writable settings; adding
+`-Djustsearch.eval.mode=true` skips bundled help. The incompatible behavior of `runHeadlessEval`
+comes from its separate `justsearch.ui.settings.mode=IN_MEMORY` property, not from the eval flag.
+Relevant direct regressions cover help skipping, JVM-option preservation and default READ_WRITE
+settings. The canonical reference and both jseval/dev-stack skill surfaces now distinguish these routes;
+stale claims that retrying `--start-backend --llm` would activate inference were corrected.
+
+Stopped owned run `048e9843-f54d-400b-86d5-83e33b09b3d8` with `clean=none`, preserving all its runtime
+and source data. The old strict wait exited after five unreachable-backend probes and persisted a
+792-row timeline; its accurate early-failure message does not claim a two-hour elapsed timeout.
+Its runtime remains useful recovery/diagnostic evidence but is not the isolated measurement index.
+
+New owned run `8724186f-d376-4deb-b3b8-c00bcdfaaedc` started through the normal dev-runner CLI from
+commit `cd68bc31b`, with the eval JVM property, a fresh verified-absent data directory, standard profile,
+7200-second lease, explicit session id and `clean=none`. It uses the direct worktree-relative runtime
+`scripts/jseval/tmp/897-realdocs-isolated-runtime` (no doubled worktree prefix). Startup log:
+`scripts/jseval/tmp/897-realdocs-isolated-start.log`. MCP subsequently confirmed the same run and
+session ownership with FRESH distributions and ready Worker. Before ingestion, jseval preflight proved
+IDLE and exactly zero indexed documents, no help marker existed, and standard CUDA activation
+completed successfully in 13.843 seconds. The owned mode endpoint then recorded indexing intent.
+
+At 10:15 UTC the unchanged strict input spec began a new `duplicate-prevalence --ingest
+--wait-timeout-seconds 7200` campaign. Its ignored paths are `897-realdocs-isolated.log`,
+`897-realdocs-isolated-timeline.tsv`, and `897-realdocs-isolated-prevalence.json` under
+`scripts/jseval/tmp/`. The new aggregate requires the original 619 indexed plus one exact terminal
+exclusion, with no extra documents. No auxiliary manifest or extraction-schema extension was added.
+
+An independent acceptance check also confirmed the instrument cannot pass only by emitting zero:
+`test_write_run_decorates_private_snapshot_without_leaking_source_material` exercises a nonzero
+production content-exact redundancy result; `test_delivered_order_top_10_is_independent_of_trec_rank`
+proves delivered-order top-ten accounting while recall retains TREC ordering. Added two direct assertions
+to the existing declared-terminal-exclusion test: all three fixture sources remain byte-exact eligible,
+while only two successful extractions are content-exact eligible. Production suite: **64 passed**,
+3.55 s (`897-production-denominator-regression.log`).

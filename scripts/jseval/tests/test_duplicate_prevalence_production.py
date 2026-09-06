@@ -1257,6 +1257,8 @@ def test_capture_reconciles_one_declared_terminal_source_exclusion(tmp_path):
     assert artifact["denominators"]["extraction_successes"] == 2
     assert artifact["denominators"]["extraction_failures"] == 1
     assert artifact["denominators"]["terminal_excluded_documents"] == 1
+    assert artifact["byte_exact"]["eligible_documents"] == 3
+    assert artifact["content_exact"]["eligible_documents"] == 2
     assert artifact["denominators"]["terminal_exclusion_reasons"] == {
         "corrupt-or-unsupported-parser-input": 1
     }

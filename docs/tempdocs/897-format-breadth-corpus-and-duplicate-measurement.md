@@ -746,7 +746,7 @@ The separate 33-file sibling has one source per format (16 EML, 9 RTF, 8 ZIP): c
 |---|---:|---:|---:|---:|---:|---|---|
 | CMU Enron eligible-body proxy — full exact census | 352,208 | 77.009% | 77.626% | unmeasured | n/a | no query set | `scripts/jseval/897-run-2026-09-04/enron-duplicate-prevalence.v1.json`; SHA-256 `4ebf994d…e492c` |
 | CMU Enron — frozen uniform analyzer sample | 5,000 | 4.46% descriptive | 4.54% descriptive | 5.46% at threshold `0.90` (sample only); model-assisted holdout precision `1.0`, recall `0.985507`, F1 `0.992701`; archive prevalence unmeasured | n/a | no query set | selected aggregate `2807b0dd…83da6`; frozen decision `66fcd1e8…10a907` |
-| `mixed/realdocs-v1` production extraction | 620 source / 619 indexed / 1 exact terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | extraction defects fixed; inference-disabled eval backend left 121 VDU pending, so no aggregate |
+| `mixed/realdocs-v1` production extraction | 620 source / 619 expected indexed / 1 declared terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | isolated full-inference rerun active; prior full-app index included five bundled help documents and is not accepted evidence |
 | `mixed/legal-clerc-200` production extraction | 199 | 0.0% | 0.0% | `UNDECIDED`; sweep observed no confirmed edge | unmeasured | hybrid: 0/200 affected; 0/2,000 redundant delivered hits@10 | current-main aggregate SHA-256 `ba8267a7…938a20`; canonical `eb378f91…d44bfb`; projection `41e3c00b…cf4c71` |
 
 ## Historical close state (2026-09-04; current state is above)

@@ -282,6 +282,20 @@ for this wait/ingest path must reside outside the raw corpus so the watcher cann
 remain blank rather than being reported as zero. The caller owns stack startup, inference activation,
 clean data-directory selection, and shutdown through the dev-stack workflow.
 
+An isolated full-inference measurement must start with zero indexed documents. Normal application
+startup adds bundled help documents, which correctly fail this adapter's exact corpus reconciliation.
+Use the normal dev runner with a fresh data directory and append `-Djustsearch.eval.mode=true` to its
+ambient `JAVA_OPTS`. Keep normal writable settings: `runHeadlessEval` separately pins settings to
+`IN_MEMORY`, which prevents inference activation. The eval property alone skips bundled help and
+enables eval diagnostics; it does not disable inference or change the production extraction pipeline.
+After MCP `quick_health` and `preflight`, the existing CLI route is
+`node scripts/dev/dev-runner.cjs start --json --dist-from <worktree> --data-dir <fresh-directory> --clean none --session-id <session> --lease-duration-sec 7200 --chat-profile standard --api-port 33221`.
+Scope the environment change to that launcher process and preserve existing JVM options. The CLI uses
+the same ownership/lease register as MCP; MCP startup currently has no ambient-JVM-option argument.
+Verify MCP ownership/readiness, an initial zero-document index, and successful standard-model activation
+before registering the corpus. Do not remove reserved help documents, forge the help-ingestion marker,
+or filter an unexpected extra document out of capture. MCP shutdown retains ownership enforcement.
+
 For a corpus requiring VDU, activate the intended model profile through the dev MCP, then use
 `api_call {method:"POST", path:"/api/inference/mode", body:{mode:"indexing"}}` on the owned run.
 Leaving interactive inference online defers automatic VDU. In indexing mode the production
@@ -638,11 +652,9 @@ ambiguous assignments, or order mismatches fail the projection instead of produc
   PID/cmdline instead of silently proceeding on a dirty data dir. This
   also runs on `stop_backend()` after every `--start-backend` run, not
   only under `--clean`.
-  `--llm` enables Brain/llama-server with autostart and extended
-  health timeout (waits for model load + inference readiness).
-  Auto-detects llama-server from the dev layout; override with
-  `JUSTSEARCH_SERVER_EXE` if needed. **Cold starts may fail once**
-  (Worker port discovery races with GGUF disk read) — retry resolves it
+  `--llm` with this eval-backend entry point is rejected: its read-only
+  settings discard the runtime activation intent. Inference-capable measurement uses the owned
+  normal dev-runner recipe above, with writable settings and explicit activation.
 - **Index reset**: `--reset` calls `POST /api/debug/reset-index` before
   ingestion — wipes index without process restart (requires running
   backend in eval mode). Mutually exclusive with `--start-backend`.
@@ -666,7 +678,7 @@ ambiguous assignments, or order mismatches fail the projection instead of produc
 | `--embedding` | Wait for embedding coverage ≥ 99.9% |
 | `--splade` | Wait for SPLADE coverage ≥ 99.9% |
 | `--start-backend` | Start runHeadlessEval, stop when done |
-| `--llm` | Enable LLM/llama-server in backend (requires `--start-backend`) |
+| `--llm` | Rejected with `--start-backend`: eval settings are read-only; use the owned full-inference dev-stack recipe |
 | `--clean` | Clean data dir before start (requires `--start-backend`); fail-closed — wipes the WHOLE backend data dir (tempdoc 716: calibration state lives under `scripts/jseval/tmp/`, not here), sweeps orphan Worker processes on a delete failure, raises rather than proceeding if a survivor remains (711 item 4) |
 | `--reset` | Reset index via API before ingestion (eval mode, no restart) |
 | `--timeline PATH` | Record status snapshots to TSV during wait |
