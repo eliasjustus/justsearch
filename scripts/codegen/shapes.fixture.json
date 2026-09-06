@@ -323,6 +323,22 @@
             "objectType": null
           },
           {
+            "name": "errorCode",
+            "type": "STRING",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
+            "name": "retryable",
+            "type": "BOOLEAN",
+            "optional": true,
+            "enumValues": [],
+            "elementType": null,
+            "objectType": null
+          },
+          {
             "name": "trace",
             "type": "OBJECT",
             "optional": true,

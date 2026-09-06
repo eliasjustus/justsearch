@@ -1662,7 +1662,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
-          SELECT path, error_message, attempts, last_updated, collection, state
+          SELECT path, error_message, attempts, last_updated, collection, state, scan_id
           FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED')
           ORDER BY last_updated DESC
           LIMIT ?
@@ -1679,7 +1679,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                 rs.getInt(3),
                 rs.getLong(4),
                 rs.getString(5),
-                rs.getString(6)));
+                rs.getString(6),
+                rs.getString(7)));
           }
         }
       }
@@ -1726,7 +1727,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
-          SELECT path, error_message, attempts, last_updated, collection, state
+          SELECT path, error_message, attempts, last_updated, collection, state, scan_id
           FROM jobs WHERE state IN ('FAILED', 'RETRY_EXHAUSTED') AND path >= ? AND path < ?
           ORDER BY last_updated DESC
           LIMIT ?
@@ -1745,7 +1746,8 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                 rs.getInt(3),
                 rs.getLong(4),
                 rs.getString(5),
-                rs.getString(6)));
+                rs.getString(6),
+                rs.getString(7)));
           }
         }
       }

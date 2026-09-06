@@ -107,7 +107,17 @@ public final class AgentRunShape {
               // Every record persisted before this field falls in the second case and must stay
               // readable as silent rather than be retroactively described as complete.
               EventField.number("outputCharsToModel").asOptional(),
-              EventField.bool("truncatedForModel").asOptional()),
+              EventField.bool("truncatedForModel").asOptional(),
+              // Tempdoc 877 open items — the classification AgentToolErrors has produced since 877,
+              // finally on the wire. `errorCode` is an ApiErrorCode name (BAD_REQUEST for a model
+              // argument the tool could not use, TIMEOUT, SERVICE_UNAVAILABLE for a Worker that is
+              // not reachable); `retryable` is that code's own answer, not a second opinion.
+              //
+              // OPTIONAL for the same load-bearing reason as the pair above: a failure the
+              // producing tool did not classify writes NEITHER key, so "unclassified" cannot be
+              // read as a code, and a successful call carries neither.
+              EventField.string("errorCode").asOptional(),
+              EventField.bool("retryable").asOptional()),
           EventDescriptor.ofTraced(
               "tool_call_rejected", EventField.string("callId"), EventField.string("reason")),
           EventDescriptor.ofTraced(

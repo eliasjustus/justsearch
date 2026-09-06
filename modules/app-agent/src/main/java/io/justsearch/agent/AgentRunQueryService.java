@@ -97,7 +97,19 @@ final class AgentRunQueryService implements io.justsearch.agent.api.AgentRunQuer
     if (op == null) {
       return OperationResult.failure("Unknown tool: " + toolName);
     }
-    return operationExecutor.undo(op, executionId);
+    // Tempdoc 875 §C.7: undo meets the trust lattice, so it must carry the transport it really
+    // arrived on. This surface is the agent-history "undo the AI" affordance, which is the
+    // AGENT_LOOP ingress — declaring it (rather than defaulting to SYSTEM_INTERNAL) is what
+    // makes the gate evaluate the true source tier. No token: a reversal that needs one gets a
+    // ConfirmationRequiredException, which the route surfaces.
+    return operationExecutor.undo(
+        op,
+        executionId,
+        io.justsearch.agent.api.registry.InvocationProvenance.fromTransport(
+            io.justsearch.agent.api.registry.TransportTag.AGENT_LOOP,
+            java.util.Optional.empty(),
+            java.time.Instant.now()),
+        java.util.Optional.empty());
   }
 
   @Override

@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { OperationClient, OperationError } from './OperationClient';
+import { operationFailureMessage } from './operationFailureMessage';
 
 function fakeResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -398,5 +399,158 @@ describe('OperationClient', () => {
       ),
     ).rejects.toMatchObject({ errorClass: 'CONFIRMATION_REQUIRED' });
     expect(fetchImpl.mock.calls.some(c => String(c[0]).includes('/authorizations/approve'))).toBe(false);
+  });
+});
+
+/**
+ * Tempdoc 875 §C.7 — the reversal of an operation is an operation and inherits its risk class.
+ * The backend now runs the SAME (SourceTier × RiskTier) lattice on `POST /api/undo/{id}` that it
+ * runs on invoke (`OperationsController.handleUndo`), so the undo affordance must take the SAME
+ * consent path, not a second one. The only undo-supported operation (`core.file-operations`) is
+ * HIGH risk and resolves to TYPED_CONFIRM under every source tier, so before this every real undo
+ * answered 428 and surfaced as an unexplained failure.
+ */
+describe('OperationClient.undo — trust-gated reversal (tempdoc 875 §C.7)', () => {
+  /** A fetch that gates the first undo, mints on approve, and succeeds once a capsule arrives. */
+  function gatedUndoFetch(gate: Record<string, unknown>) {
+    return vi.fn<typeof fetch>().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/authorizations/approve')) {
+        return Promise.resolve(fakeResponse({ capsule: 'cap-undo-1' }));
+      }
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      return Promise.resolve(
+        body.confirmationToken
+          ? fakeResponse({ success: true, message: 'reverted 3 files', executionId: 'exec-1' })
+          : fakeResponse({ success: false, errorClass: 'CONFIRMATION_REQUIRED', ...gate }, 428),
+      );
+    });
+  }
+
+  it('a 428 opens the confirmation flow and retries with a capsule bound to the canonical {"executionId"} arguments', async () => {
+    const fetchImpl = gatedUndoFetch({
+      pendingId: 'pa-undo-7',
+      gateBehavior: 'TYPED_CONFIRM',
+      riskTier: 'HIGH',
+      undoSupported: true,
+      argsSummary: 'executionId=exec-1',
+      message: 'Reversal requires confirmation',
+    });
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+    const prompts: unknown[] = [];
+
+    await client.undoWithConsent('core_file_operations', 'exec-1', {
+      requestConsent: async (p) => {
+        prompts.push(p);
+        return { approved: true, allowAlways: false };
+      },
+    });
+
+    // The ceremony saw the backend-issued pending + gate + risk context.
+    expect(prompts).toEqual([
+      {
+        pendingId: 'pa-undo-7',
+        operationId: 'core_file_operations',
+        gateBehavior: 'TYPED_CONFIRM',
+        riskTier: 'HIGH',
+        // Deliberately false, though the 428 echoed true: `undoSupported` on the wire reports the
+        // FORWARD operation's reversibility. Reversing a reversal is not offered, so a `true` here
+        // would tell the user this act is undoable at the moment they decide — it is not.
+        undoSupported: false,
+        argsSummary: 'executionId=exec-1',
+        purpose: 'Reversal requires confirmation',
+      },
+    ]);
+
+    // Approval went through approve-by-pendingId (never an arbitrary mint for (op,args)).
+    const approve = fetchImpl.mock.calls.find((c) => String(c[0]).includes('/authorizations/approve'));
+    expect(approve).toBeDefined();
+    expect(JSON.parse((approve![1] as RequestInit).body as string)).toMatchObject({
+      pendingId: 'pa-undo-7',
+    });
+
+    // The retry carries the capsule AND exactly the canonical undo arguments the backend binds it
+    // to — `OperationDispatcher.undoArguments(executionId)` is `{"executionId":"<id>"}`, so an
+    // extra argument key here would put the capsule out of argument scope and re-gate the retry.
+    const retry = fetchImpl.mock.calls.filter((c) => String(c[0]).includes('/api/undo/')).at(-1)!;
+    expect(String(retry[0])).toBe('http://localhost:33221/api/undo/core_file_operations');
+    const retryBody = JSON.parse((retry[1] as RequestInit).body as string);
+    expect(retryBody.confirmationToken).toBe('cap-undo-1');
+    expect(retryBody.executionId).toBe('exec-1');
+    expect(Object.keys(retryBody).filter((k) => k !== 'confirmationToken')).toEqual(['executionId']);
+  });
+
+  it('a confirmed retry resolves with the undo result', async () => {
+    const fetchImpl = gatedUndoFetch({ pendingId: 'pa-undo-8', gateBehavior: 'TYPED_CONFIRM' });
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+
+    const result = await client.undoWithConsent('core_file_operations', 'exec-1', {
+      requestConsent: async () => ({ approved: true, allowAlways: false }),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      message: 'reverted 3 files',
+      executionId: 'exec-1',
+    });
+  });
+
+  it('a declined ceremony rethrows the gate error and never mints a capsule', async () => {
+    const fetchImpl = gatedUndoFetch({ pendingId: 'pa-undo-9', gateBehavior: 'TYPED_CONFIRM' });
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+
+    await expect(
+      client.undoWithConsent('core_file_operations', 'exec-1', {
+        requestConsent: async () => ({ approved: false, allowAlways: false }),
+      }),
+    ).rejects.toMatchObject({ errorClass: 'CONFIRMATION_REQUIRED' });
+    expect(fetchImpl.mock.calls.some((c) => String(c[0]).includes('/authorizations/approve'))).toBe(false);
+  });
+
+  it('a 403 TRUST_DENIED surfaces as a denial, not a generic failure, and is never retried', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      fakeResponse(
+        {
+          success: false,
+          errorClass: 'TRUST_DENIED',
+          message: 'Trust gate denied undo of operation core.file-operations',
+        },
+        403,
+      ),
+    );
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+    const requestConsent = vi.fn();
+
+    const err = await client
+      .undoWithConsent('core_file_operations', 'exec-1', { requestConsent })
+      .then(() => null, (e: unknown) => e);
+
+    expect(err).toBeInstanceOf(OperationError);
+    expect(err).toMatchObject({ errorClass: 'TRUST_DENIED', httpStatus: 403 });
+    // A DENY is not a missing confirmation: no ceremony is opened and no capsule is minted,
+    // because no human gesture can satisfy a lattice cell that denies.
+    expect(requestConsent).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The user-facing copy names the denial instead of inviting the retry the lattice refused.
+    const copy = operationFailureMessage(err, true);
+    expect(copy).toContain('Undo denied.');
+    expect(copy).not.toContain('trying again');
+  });
+
+  it('an AUTO-gated undo (direct 200) resolves without opening any dialog', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(fakeResponse({ success: true, message: 'undone', executionId: 'exec-2' }));
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+    const requestConsent = vi.fn();
+
+    const result = await client.undoWithConsent('core.ping-backend', 'exec-2', { requestConsent });
+
+    expect(result).toMatchObject({ success: true, message: 'undone', executionId: 'exec-2' });
+    expect(requestConsent).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // No capsule was invented for an ungated reversal.
+    const body = JSON.parse((fetchImpl.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.confirmationToken).toBeUndefined();
   });
 });

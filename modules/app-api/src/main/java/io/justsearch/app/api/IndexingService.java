@@ -341,6 +341,10 @@ public interface IndexingService {
    * @param lastUpdatedMs epoch millis of last state transition
    * @param collection collection tag, or null for default
    * @param state terminal state: {@code FAILED} or {@code RETRY_EXHAUSTED} (tempdoc 885 item 21b)
+   * @param scanId the directory scan that enqueued this job, or {@code ""}/null for a single-file
+   *     ingest, a watcher event, or a pre-{@code scan_id} row — the same vocabulary {@link
+   *     io.justsearch.app.api.indexing.IndexingJobView#scanId()} defines, so the failed-jobs
+   *     projection reports a checked value instead of a placeholder (tempdoc 911 §F)
    */
   record FailedJobInfo(
       String path,
@@ -348,7 +352,8 @@ public interface IndexingService {
       int attempts,
       long lastUpdatedMs,
       String collection,
-      String state) {}
+      String state,
+      String scanId) {}
 
   /** Lists jobs in FAILED state, ordered by most recent failure first. */
   default List<FailedJobInfo> listFailedJobs(int limit) {

@@ -59,8 +59,8 @@ build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how
 |---|---|
 | **OS** | **Windows 10 or 11, 64-bit (x64) only** — macOS/Linux are not in the current scope ([NON-GOALS](NON-GOALS.md)). Verified on Windows 11; Windows 10 x64 is the expected WebView2 baseline but is not yet explicitly tested. WebView2, the VC++ runtime, and a Java runtime are bundled by the installer; there is nothing to install first. |
 | **Disk** | 249 MB installer + ~0.7 GB installed + **~9 GB one-time model download** + the search index (grows with your corpus). Plan for **≥ 15 GB free**. |
-| **RAM** | **16 GB recommended.** 8 GB is a conservative floor for keyword/semantic search only (not a benchmarked minimum). The on-device chat model (~5.9 GB file) is loaded into RAM when answering on CPU. |
-| **GPU** | **Optional.** Everything runs on CPU by default. An NVIDIA GPU with **≥ 8 GB VRAM** enables CUDA acceleration for chat and reranking (the app requires ~7.5 GB free VRAM before it will run the chat model on GPU; below that it stays on CPU). |
+| **RAM** | **16 GB recommended.** 8 GB is a conservative floor for keyword/semantic search only (not a benchmarked minimum; chat needs the GPU below regardless of RAM). The on-device chat model (~5.9 GB file) is loaded into memory when answering. |
+| **GPU** | **Required for chat.** Search and semantic ranking run on CPU — no GPU needed for those. Chat requires an NVIDIA GPU with **≥ 8 GB VRAM** (the app needs ~7.5 GB free VRAM to run the chat model). Without a supported NVIDIA GPU, or below that VRAM floor, no install path offers the chat model — chat does **not** fall back to CPU, so the app is search-only. |
 | **Network** | Only for the one-time model download. Nothing else, ever — see [Privacy](#privacy). |
 
 ## Two ways to use it

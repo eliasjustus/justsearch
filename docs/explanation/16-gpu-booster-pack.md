@@ -53,7 +53,10 @@ Practical note (allowlisting runtime packs):
 
 ## 1. Why v3 needs a GPU Booster Pack
 
-- v1 ships a **CPU-only** `llama-server` runtime and runs Online mode on CPU by default.
+- v1 ships a **CPU-only** `llama-server` binary, but Online mode (chat) requires a supported NVIDIA
+  GPU regardless: no install path offers a chat/GGUF model without a CUDA-functional GPU (see
+  `docs/explanation/05-ai-architecture.md`), so the CPU-only binary alone never yields a working
+  chat feature.
 - GPU acceleration requires a CUDA-capable runtime plus vendor runtime DLLs (cuBLAS, cuBLASLt, cudart, etc).
 - We maintain security posture by avoiding arbitrary binary downloads:
   - GPU support is enabled only by importing an allowlisted offline pack.

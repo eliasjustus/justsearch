@@ -30,6 +30,7 @@ import { type NoticeTone, type NoticeLive } from '../SystemNotice.js';
 import { presentationForSeverity } from '../../state/messageClasses.js';
 import '../SystemNotice.js';
 import type { OperationClient } from '../../operations/OperationClient.js';
+import { requestAuthorization } from '../../operations/authorizationBroker.js';
 import '../DispatchSource.js';
 import { isWindowFocused } from '../../../utils/windowFocus.js';
 import { sendDesktopNotification } from '../../../utils/notify.js';
@@ -418,7 +419,12 @@ export class AdvisoryToastHost extends JfElement {
         ? JSON.parse(action.defaultArgsJson)
         : {};
       if (record.event.primaryActionKind === 'undo' && args.executionId) {
-        await this.operationClient.undo(action.target, args.executionId);
+        // Tempdoc 875 §C.7 — same lattice as the forward form, so the same consent
+        // path as the invoke branch below (shared ceremony host via the broker).
+        await this.operationClient.undoWithConsent(action.target, args.executionId, {
+          transport: 'BUTTON',
+          requestConsent: requestAuthorization,
+        });
       } else {
         await this.operationClient.invoke(action.target, {
           args,

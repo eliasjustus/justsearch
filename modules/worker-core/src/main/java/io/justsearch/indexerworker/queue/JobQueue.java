@@ -461,6 +461,10 @@ public interface JobQueue extends Closeable {
    * @param lastUpdatedMs epoch millis of last state transition
    * @param collection collection tag, or null for default
    * @param state terminal state: {@code FAILED} or {@code RETRY_EXHAUSTED} (tempdoc 885 item 21b)
+   * @param scanId the directory scan that enqueued this job, or {@code ""}/null for a single-file
+   *     ingest, a watcher event, or a row written before the {@code scan_id} column existed
+   *     (tempdoc 911 §F — the queue has always written this column; the failed-jobs projection just
+   *     did not read it)
    */
   record FailedJobInfo(
       String path,
@@ -468,7 +472,8 @@ public interface JobQueue extends Closeable {
       int attempts,
       long lastUpdatedMs,
       String collection,
-      String state) {}
+      String state,
+      String scanId) {}
 
   /**
    * Privacy-safe append-only ingestion event.

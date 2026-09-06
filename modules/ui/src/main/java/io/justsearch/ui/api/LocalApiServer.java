@@ -400,6 +400,12 @@ public class LocalApiServer {
       config.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
     });
 
+    // Tempdoc 875 open item: Javalin's ctx.json declares bare `application/json`, so a client that
+    // honours the response charset decoded UTF-8 bytes as Latin-1 (the undo summary's em-dash
+    // arrived as the "a-circumflex euro" mojibake while SSE, which declares its charset, was
+    // clean). One after-handler over the whole JSON plane; see JsonResponseCharset.
+    JsonResponseCharset.install(app);
+
     // HttpResponseException handler — preserves handler-set body while
     // propagating the exception's HTTP status.
     //

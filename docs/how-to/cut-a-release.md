@@ -183,6 +183,17 @@ when **all** of:
 This exists so one non-core defect doesn't hold an entire release hostage, while keeping every
 known defect visible, owned, and headed toward an actual fix rather than indefinite tolerance.
 
+## `build-installer.yml` dispatch inputs
+
+`workflow_dispatch` accepts four inputs (definitions in the workflow's `on.workflow_dispatch.inputs` block):
+
+| Input | Type | Default | What it does | When to set it |
+|---|---|---|---|---|
+| `sign` | boolean | `false` | Authenticode-signs the build with the configured `JUSTSEARCH_CODESIGN_*` credential. Off by default because eSigner signings are metered (~8 per build with the signed mirrors); a `v*` tag ref always signs regardless of this input. | Set `true` for a branch dispatch that needs a real signature (e.g. a signed rehearsal or the signed-mirror procedure); leave `false` for an ordinary unsigned validation build. |
+| `sandboxTestMode` | boolean | `false` | Compiles the shell with `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1`, permitting loopback HTTP feeds and runtime trust-root overrides in `updater.rs` (`pinned_release_value` / `ensure_https`). The workflow refuses this input on a `v*` tag ref — a qualification build must never be published. | Set `true` together with `candidateVersion` to produce the unsigned qualification candidates the in-app N->N+1 updater lane needs — tempdoc 617 §9 item 2 calls for two updater-capable candidate versions (or an equivalent previous-source build plus target) so that upgrade path can actually be exercised in the Sandbox. |
+| `candidateVersion` | string | `''` (unset) | Overrides the built version (e.g. `0.2.1-qual.1`) instead of reading `gradle.properties`. Only honoured together with `sandboxTestMode`. | Set alongside `sandboxTestMode` to produce a second, differently-versioned candidate for the N->N+1 lane. A real release cut leaves this unset and takes its version from `gradle.properties` as usual. |
+| `providerRemainingSignatures` | string | `''` (unset) | The provider portal's remaining signing allocation immediately before a production-signed run; required for a `v*` tag or `sign=true` unless the self-signed rehearsal variable is on. | Read the provider portal value and pass it whenever dispatching a signed build (see step 6 below). |
+
 ## The asset set the build produces
 
 One build produces a complete, hash-consistent asset set in `dist/installer/`:
@@ -268,10 +279,21 @@ Owner-only steps (require repo permissions):
    gh workflow run build-installer.yml --ref v<version> -f providerRemainingSignatures=<portal-value>
    ```
 
+   The job runs under the protected `release-signing` Environment, which has a required-reviewer
+   rule: every dispatch pauses at "Waiting for review" on the run's Actions page, and no step
+   executes until the owner approves it there. Dispatch, then watch the run and approve it.
+
    It builds, runs
    `build-release-assets.ps1`, round-trip verifies the draft asset set, and publishes the Release
    only after verification succeeds.
 
+   > **The separate `installer_verify` job cannot hold the release in draft.** It runs `needs:
+   > build-windows-installer`, i.e. after that job (including its publish step) has already
+   > finished, so a red `installer_verify` always follows a release that is already public. Treat
+   > a failure there as a post-publish signal: check that job's run log for what specifically
+   > failed, then ship a follow-up patch release, or manually un-publish
+   > (`gh release edit <tag> --draft`) if the defect is severe enough to pull the asset.
+   >
    > **Where the release sequence comes from.** The sequence shipped inside `release.v1.json`
    > is derived by `scripts/ci/derive-release-sequence.mjs`: `max(sequence` over every published
    > release's `release.v1.json` asset`) + 1`, never below a checked-in floor of **41** (v0.2.0's
@@ -388,10 +410,15 @@ full `-Release` contract. `scripts/ci/sign-windows.ps1` selects a credential mod
 | `store` | `JUSTSEARCH_CODESIGN_THUMBPRINT` | Cert from the Windows cert store — how USB-token / HSM CSP-backed non-exportable keys present locally (`signtool /sha1`). |
 | `command` | `JUSTSEARCH_CODESIGN_COMMAND` (a template with a `{file}` placeholder) | Any vendor CLI (Azure Trusted Signing, eSigner, …) — pluggable with zero further repo changes. |
 
-**One-time setup:** create the protected GitHub Environment named `release-signing`, put
-`JUSTSEARCH_CODESIGN_MODE` and the selected mode's credential secret(s) there, validate both paid
-signing workflows, then remove any repository-scoped copies. Environment creation and secret
-migration are owner actions; workflow code cannot perform or verify the secret-value move.
+**Environment setup (current).** The protected GitHub Environment `release-signing` exists
+(created 2026-09-03), enforces a required-reviewer rule on every dispatch, and holds
+`JUSTSEARCH_CODESIGN_MODE` (`command`) and `JUSTSEARCH_CODESIGN_COMMAND`. The repo variable
+`JUSTSEARCH_RELEASE_DESCRIPTOR_URL` points at
+`https://github.com/justsearch-app/justsearch/releases/latest/download/release.v1.json`.
+Repository-scoped copies of the same two secret names still exist alongside the Environment
+copies — the migration step from the original one-time setup was not completed; treat the
+Environment copies as authoritative and the repo-scoped ones as a pending cleanup, not a second
+source of truth.
 
 **eSigner (SSL.com) via `command` mode — validated template.** Sandbox-validated end-to-end
 (2026-07-22, CodeSignTool 1.3.3, demo credentials; tempdoc 760): signs in place, non-interactive,

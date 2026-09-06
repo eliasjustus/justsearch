@@ -33,6 +33,7 @@ import {
 } from './AdvisoryClassChrome.js';
 import '../DispatchSource.js';
 import { transportChrome } from '../TransportChrome.js';
+import { requestAuthorization } from '../../operations/authorizationBroker.js';
 import type { PropertyValues } from 'lit';
 
 interface FilterState {
@@ -406,7 +407,13 @@ export class AdvisoryInboxDrawer extends JfElement {
         ? JSON.parse(action.defaultArgsJson)
         : {};
       if (record.event.primaryActionKind === 'undo' && args.executionId) {
-        await this.operationClient.undo(action.target, args.executionId);
+        // Tempdoc 875 §C.7 — the reversal meets the same trust lattice its forward
+        // form did, so it takes the same consent path as the invoke branch below
+        // (the shared `<jf-authorization-host>` ceremony via the broker).
+        await this.operationClient.undoWithConsent(action.target, args.executionId, {
+          transport: 'BUTTON',
+          requestConsent: requestAuthorization,
+        });
       } else {
         await this.operationClient.invoke(action.target, {
           args,
