@@ -381,3 +381,21 @@ Ordered. AGENT = an agent can do it in a PR; OWNER = needs the owner's hands or 
 
 ### Removed
 - Search v2 (dev-deeplink only) built in #401–#403 and retired in #486 — never user-visible; omit or mention as internal
+
+## Appendix B — brief for the Search v3 completion agent (2026-09-06)
+
+Goal: make Search v3 the shipped chat window and delete the old one, so the next release is 0.3.0.
+Authority: tempdoc 852 (slices S0-S4 landed 2026-08-19, S4-rest + S5-S11 open), 857 section 8
+(sweep obligations), 859 (13 open live findings), scripts/ci/check-window-cutover.mjs (the gate:
+audience USER in CorePlugin.ts + governance/window-cutover.done, deadline 2026-09-30).
+Work from a fresh worktree off origin/main; load /ui-check before touching modules/ui-web.
+Order: (1) get the owner's Q1 answer (does the retrieve tier exist) and finish S4-rest + S5-S7 on
+that basis; (2) fix the 859 findings that a user would hit (stop affordance while answering,
+negative budget.remaining, DOM-transition unhandled rejections, axe serious target-size, composer
+contrast); (3) flip audience + create the marker; (4) sweep UnifiedChatView.ts and its consumers
+per 857:737-770, regenerating ui_step_index.json, ui-step-coverage, composition-surfaces and
+run-renderers registers in the same PR; (5) live round with ai_activate, screenshots via jseval
+ui-shot, axe measured; (6) update 852 status and the CHANGELOG [Unreleased] Added section.
+Done means: check-window-cutover passes on the real clock, run-ui-web-gates green, no
+search-v3 DEVELOPER/DEEPLINK residue, the old window absent from the tree and every register,
+and an independent reviewer (not the implementer) signs the live round.
