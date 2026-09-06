@@ -735,57 +735,19 @@ Residual owner actions:
 
 ## Operational follow-through (2026-09-03)
 
-- PR `justsearch-app/justsearch#629` merged through the protected merge queue as
-  `7aa4a916fbee342ac4678bcf5603570f5fc1a0a0`. Merge-group CI run `33797308631` and post-merge
-  `main` CI run `33797753403` passed. The published merge tree exactly matched the reviewed PR head.
-- GitHub Environment `release-signing` now requires owner review, disables administrator bypass,
-  and restricts normal deployment refs to branch `main` or tags matching `v*`.
-- Repository variable `JUSTSEARCH_RELEASE_DESCRIPTOR_URL` now points to
-  `https://github.com/justsearch-app/justsearch/releases/latest/download/release.v1.json`.
-- Environment configuration was completed through a no-echo, non-persisting credential-entry path.
-  Provider account identifiers, authentication factors, subscription details, balance, and recovery
-  history are intentionally omitted from the public record.
-- A narrow, explicitly non-qualifying whole-product Windows Sandbox probe used WinGet `v1.29.290`.
-  The clean final result validated the schema-1.12 manifest bundle, downloaded the published v0.2.0
-  installer, verified SHA-256
-  `cba354165c38c90628082020d40fe00986814a3fa57da49c62dd18acb0f11772`, installed silently,
-  observed the expected `JustSearch` version `0.2.0` registration, verified the installed executable's
-  Authenticode status as `Valid` with the Elias Justus signer, and observed a successful 20-second
-  boot. Earlier probe attempts are retained as harness evidence: Windows Sandbox lacks WinGet until
-  the documented `Microsoft.WinGet.Client` bootstrap runs; `--exact` is invalid with `--manifest`;
-  and pre-submission `winget list --id` cannot map a local-manifest identity back to the ARP record.
-- The upstream-ready bundle was submitted from `eliasjustus/winget-pkgs` as
-  `microsoft/winget-pkgs#429017`. Local duplicate checks found no existing package or open PR before
-  submission. All ten Microsoft validation stages passed. The owner then decided not to pursue WinGet
-  distribution and explicitly requested withdrawal, so pull request `#429017` was closed on
-  2026-09-04 before merge. No CLA was accepted and no package was published to WinGet. The local
-  deterministic manifest projection remains available if that distribution choice changes later.
-- With explicit owner authorization, non-release `build-installer.yml` run `33807983478` exercised
-  the protected Environment under the workflow's fail-closed signing ceiling. The signing/build job,
-  local signature verification, and extracted-installer executable census passed, and no release was
-  published. This proves the installer workflow can use the Environment-backed signer without putting
-  provider account state into the repository.
-- The separate packaged-verification job then passed its fresh-install, restart/session-token, and
-  upgrade-arrival product legs before its EvidenceBundle Node process aborted during stdout teardown
-  with Windows exit `0xC0000409` / libuv `UV_HANDLE_CLOSING`. The bundle path had already been emitted;
-  the failure was the capture CLI's direct `process.exit()` racing Node's delayed fetch/Undici and
-  stdout-pipe cleanup, not a signing or packaged-product failure. The follow-up replaces forced exit
-  with `process.exitCode` so Node drains naturally, adds a loopback-fetch child-process regression that
-  enforces the one-line stdout contract and forbids forced exits on both completion paths, and wires
-  that test into public CI. The focused regression passes locally. No retry of the paid signing build
-  is justified for this harness-only failure; the fix can be validated without another provider call.
-  The regression also passes on Windows under the workflow's exact Node `24.14.0`; the post-merge full
-  Gradle build/test suites, frontend typecheck, and all 6,269 frontend unit tests pass. After the fix
-  was pushed to `codex/905-operational-closeout`, ordinary no-signing CI run `33810680856` passed every
-  Windows-native, public-claims, license/notices, build, unit, integration, Rust, secret-scan, and
-  reporting lane. In particular, the new evidence-capture regression passed on GitHub's Windows runner
-  with Node `24.14.0`; this validates the harness correction without consuming another signing credit.
+PR `#629` merged through the protected queue with green merge-group and post-merge CI. The
+`release-signing` Environment and transferred-repository descriptor are configured, a non-qualifying
+WinGet Sandbox probe passed, and the later upstream WinGet submission was withdrawn by owner choice.
+An owner-authorized non-release run proved the protected signer and final executable census without
+publishing a release. Its packaged consumer then exposed a Windows Node teardown failure after writing
+valid evidence; the follow-up drains handles naturally and passes both public Windows CI and an
+unsigned complete packaged-verifier run. The detailed run IDs, hashes, observations, and failure
+chronology moved to `905-evidence/operational-follow-through-2026-09.md` when the tempdoc-size gate
+required bulk evidence to leave this main record.
 
-Residual owner-dependent work is now limited to validation of the mirror signer during its next
-natural upstream refresh, provider-authoritative admission before every later paid dispatch, tempdoc
-617's exact N→N+1 updater lanes, and a future model candidate with approved immutable assets,
-provenance, license, quality, and publication authority. Do not re-sign unchanged mirrors solely for
-validation; wait for the next necessary refresh. Scoop remains deliberately deferred.
+Residual owner-dependent work is limited to mirror-signer validation during its next necessary
+refresh, provider-authoritative admission before later paid dispatches, tempdoc 617's exact N→N+1
+updater lanes, and a future approved model candidate. Scoop remains deliberately deferred.
 
 ## Publication completion plan (2026-09-06)
 
@@ -793,25 +755,12 @@ The implementation and operational follow-through above are complete. The remain
 publication of the packaged-verifier cleanup without reopening superseded distribution choices or
 spending another signing credit.
 
-- [x] Incorporate current `origin/main` into `codex/905-operational-closeout`, confirm the merge is
-  clean, and prove the resulting content diff is limited to the capture fix, its Windows regression,
-  CI wiring, the publication-runner portability repair exposed by the caught-up candidate, and this
-  tempdoc's operational record.
-- [x] Re-run the focused evidence-capture regression and the repository's current full verification
-  suite against the caught-up candidate. Re-run all current publication and public-content gates;
-  do not rely on the September 3 green run after `main` has moved. The caught-up candidate exposed a
-  pre-existing Windows portability defect in the newly landed local publication runner: commands
-  beginning with `./gradlew.bat` were passed to `cmd.exe`, which rejects that path spelling. Normalize
-  only that wrapper prefix to `.\\gradlew.bat` at execution time and cover both platform branches
-  before re-running the complete preflight. The sequential runner also caused its later directory-mode
-  secret scan to inspect ignored build output generated by earlier lanes, producing a false match in a
-  generated protobuf source. Require a clean candidate (including non-ignored untracked files) before
-  executing any local subset, then scan the committed Git candidate and history; the hosted
-  clean-checkout directory scan remains unchanged.
-  The focused regression, full Gradle build and test suite, frontend typecheck, all 6,333 frontend
-  unit tests, and the complete publication preflight passed. The preflight included all deterministic
-  public-claims, notice/license, build, PMD, JVM unit-shard, 663-commit secret-scan, and jseval lanes;
-  jseval completed with 3,094 passed and 12 skipped tests.
+- [x] Incorporate current `origin/main` and prove the clean content diff is limited to the capture
+  repair, regression, publication-preflight corrections, operator guidance, and this record.
+- [x] Re-run the focused regression and full caught-up verification. The Windows Gradle-launcher
+  repair and clean-candidate guard exposed by that process are covered by tests. All local publication
+  subsets passed; detailed commands, counts, and the generated-output secret-scan diagnosis are in the
+  evidence sidecar.
 - [x] Dispatch one **unsigned** branch `build-installer.yml` run and require the complete packaged
   verifier job to pass. This closes the capability-realization gap on the exact consumer path without
   invoking the provider signer or consuming a metered signing. The job still requires the protected
