@@ -70,8 +70,9 @@ class IndexingControllerFailedJobsWireContractTest {
 
   /** A worker-reported row exactly as {@code RemoteKnowledgeClient} hands it to the Head. */
   private static IndexingService.FailedJobInfo info(
-      String path, String error, int attempts, String collection, String state) {
-    return new IndexingService.FailedJobInfo(path, error, attempts, 1_700_000_000_000L, collection, state);
+      String path, String error, int attempts, String collection, String state, String scanId) {
+    return new IndexingService.FailedJobInfo(
+        path, error, attempts, 1_700_000_000_000L, collection, state, scanId);
   }
 
   private static final Path ROOT = Path.of("C:", "corpus").toAbsolutePath();
@@ -79,18 +80,21 @@ class IndexingControllerFailedJobsWireContractTest {
   /**
    * Three rows that between them cover every branch of the projection: a plain FAILED row, the
    * terminal RETRY_EXHAUSTED row the drawer must be able to tell apart, and a row whose optional
-   * fields the worker left null/blank (the defaulting branch).
+   * fields the worker left null/blank (the defaulting branch). The three {@code scanId} values are
+   * the three the queue can now report (911 §F): a real scan, a scan-less row, and a null the
+   * projection must normalize.
    */
   private static final List<IndexingService.FailedJobInfo> ROWS =
       List.of(
-          info(ROOT.resolve("a.pdf").toString(), "parse error", 3, "default", "FAILED"),
+          info(ROOT.resolve("a.pdf").toString(), "parse error", 3, "default", "FAILED", "scan-42"),
           info(
               ROOT.resolve("b.docx").toString(),
               "extraction timed out",
               41,
               "notes",
-              IndexingJobView.STATE_RETRY_EXHAUSTED),
-          info(ROOT.resolve("c.txt").toString(), null, 1, null, "  "));
+              IndexingJobView.STATE_RETRY_EXHAUSTED,
+              ""),
+          info(ROOT.resolve("c.txt").toString(), null, 1, null, "  ", null));
 
   private static IndexingService stubService() {
     return new IndexingService() {
@@ -209,6 +213,11 @@ class IndexingControllerFailedJobsWireContractTest {
     assertEquals("FAILED", jobs.get(0).get("state").asString());
     assertEquals(IndexingJobView.STATE_RETRY_EXHAUSTED, jobs.get(1).get("state").asString());
     assertTrue(jobs.get(0).has("scanId"), "scanId must be on the wire, not dropped");
+    // 911 §F: scanId is the queue's own value now, not a placeholder every row shares. The three
+    // rows must differ, or a hardcoded "" would pass the has()-check above unnoticed.
+    assertEquals("scan-42", jobs.get(0).get("scanId").asString(), "the real scan id must survive");
+    assertEquals("", jobs.get(1).get("scanId").asString(), "a scan-less row stays scan-less");
+    assertEquals("", jobs.get(2).get("scanId").asString(), "a null scan id normalizes to empty");
     // A blank worker state defaults to FAILED rather than reaching the FE as "" — the drawer's
     // exhausted arm keys on an exact spelling, so an empty state must not be a third thing.
     assertEquals("FAILED", jobs.get(2).get("state").asString());

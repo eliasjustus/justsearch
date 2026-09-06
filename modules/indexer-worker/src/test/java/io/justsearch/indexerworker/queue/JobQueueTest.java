@@ -736,6 +736,51 @@ final class JobQueueTest {
         "The listed job should be alpha's failed file");
   }
 
+  /**
+   * Tempdoc 911 §F: the failed-jobs SELECTs did not project {@code scan_id}, so the column the
+   * queue writes on every enqueue could not reach the Head and the failed-files drawer showed a
+   * placeholder. Both listing methods must report the enqueueing scan — and must report a scan-less
+   * row (a single-file ingest or a watcher event) as empty/null rather than borrowing a neighbour's
+   * id, which is the way a plumbed column silently goes wrong.
+   */
+  @Test
+  void listFailedJobs_reportsTheEnqueueingScanId() {
+    Path fromScan = Path.of("/scanid/alpha/scanned.txt");
+    Path fromWatcher = Path.of("/scanid/alpha/watched.txt");
+    jobQueue.enqueueEntries(
+        List.of(JobQueue.EnqueueEntry.ofUnknownSize(fromScan)), null, "scan-7f3c");
+    jobQueue.enqueue(List.of(fromWatcher)); // no scan: the watcher/single-file path
+    for (Path p : List.of(fromScan, fromWatcher)) {
+      for (int i = 0; i < 6; i++) { // drive to FAILED
+        jobQueue.pollPending(10);
+        jobQueue.markFailed(p, "permanent");
+      }
+    }
+
+    for (String method : List.of("all", "byPrefix")) {
+      List<JobQueue.FailedJobInfo> jobs =
+          method.equals("all")
+              ? jobQueue.listFailedJobs(100)
+              : jobQueue.listFailedJobsByPathPrefix(
+                  Path.of("/scanid/alpha").toAbsolutePath().toString(), 100);
+
+      JobQueue.FailedJobInfo scanned = pick(jobs, "scanned.txt", method);
+      JobQueue.FailedJobInfo watched = pick(jobs, "watched.txt", method);
+      assertEquals("scan-7f3c", scanned.scanId(), method + ": the scan id must survive the SELECT");
+      assertTrue(
+          watched.scanId() == null || watched.scanId().isEmpty(),
+          method + ": a scan-less row must stay scan-less, not inherit one: " + watched.scanId());
+    }
+  }
+
+  private static JobQueue.FailedJobInfo pick(
+      List<JobQueue.FailedJobInfo> jobs, String fileName, String method) {
+    return jobs.stream()
+        .filter(j -> j.path().toLowerCase(java.util.Locale.ROOT).contains(fileName))
+        .findFirst()
+        .orElseThrow(() -> new AssertionError(method + ": no failed row for " + fileName));
+  }
+
   // ============================================================================
   // failureSummary() — failed-job aggregation
   // ============================================================================

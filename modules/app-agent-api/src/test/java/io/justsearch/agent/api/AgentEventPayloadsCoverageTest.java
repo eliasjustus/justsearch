@@ -221,6 +221,62 @@ final class AgentEventPayloadsCoverageTest {
   }
 
   /**
+   * Tempdoc 877 open items — the tool-error classification reaches the wire.
+   *
+   * <p>{@code AgentToolErrors} has typed every tool failure since 877 ({@code BAD_REQUEST} for the
+   * model's own bad argument, {@code SERVICE_UNAVAILABLE} for a Worker outage) and the payload
+   * dropped all of it: a consumer saw {@code success:false} plus prose and could not tell a model
+   * mistake from a system fault — the exact distinction 877 created the codes to carry.
+   *
+   * <p>Absence stays load-bearing, as with the pair above: an unclassified failure writes NEITHER
+   * key rather than a placeholder code.
+   */
+  @Test
+  @DisplayName("877: tool_exec_completed carries errorCode + retryable, and stays silent when unset")
+  void toolCompletedCarriesTheErrorClassification() {
+    var unclassified =
+        io.justsearch.agent.api.registry.OperationResult.failure("Browse error: something");
+    Map<String, Object> silent =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c1", unclassified));
+    assertFalse(
+        silent.containsKey("errorCode"),
+        "a tool that classified nothing must not be given a code on the wire");
+    assertFalse(silent.containsKey("retryable"), "and neither half appears alone");
+
+    var classified =
+        io.justsearch.agent.api.registry.OperationResult.failure(
+            "Browse error: the knowledge worker is not reachable",
+            "SERVICE_UNAVAILABLE",
+            Map.of("tool", "core_browse_folders"),
+            true);
+    Map<String, Object> payload =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c2", classified));
+    assertEquals("SERVICE_UNAVAILABLE", payload.get("errorCode"));
+    assertEquals(true, payload.get("retryable"));
+    assertEquals(false, payload.get("success"), "the classification rides the failure, not replaces it");
+
+    var modelInput =
+        io.justsearch.agent.api.registry.OperationResult.failure(
+            "Read error: \"offset_chars\" must be a number",
+            "BAD_REQUEST",
+            Map.of("tool", "core_read_document"),
+            false);
+    Map<String, Object> inputPayload =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c3", modelInput));
+    assertEquals("BAD_REQUEST", inputPayload.get("errorCode"));
+    assertEquals(
+        false,
+        inputPayload.get("retryable"),
+        "the distinction the FE needs: retrying the same arguments cannot help");
+
+    var ok = io.justsearch.agent.api.registry.OperationResult.success("done");
+    Map<String, Object> okPayload =
+        AgentEventPayloads.base(new AgentEvent.ToolExecutionCompleted("c4", ok));
+    assertFalse(okPayload.containsKey("errorCode"), "a success carries no error classification");
+    assertFalse(okPayload.containsKey("retryable"), okPayload.toString());
+  }
+
+  /**
    * Tempdoc 878 review B1 — the count is a fraction OF THE OUTPUT, so it can never exceed it.
    *
    * <p>The first implementation measured the string {@code AgentContextCompressor.truncate}

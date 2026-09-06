@@ -350,7 +350,7 @@ Interaction / memory surfaces (tempdoc 561 P-A/P-B + 565):
 - `tool_call_approved`
 - `directive_acknowledged` (565 §30 — the agent loop drained a human steering directive at a step boundary; payload `{directiveText}`)
 - `tool_exec_started`
-- `tool_exec_completed`
+- `tool_exec_completed` — optional `errorCode` + `retryable` carry the failure classification `AgentToolErrors` put on the `OperationResult` (tempdoc 877); both keys are ABSENT when the executor did not classify (a success, or a pre-877 emitter), so a consumer can tell "not classified" from "classified as not retryable"
 - `tool_call_rejected`
 - `budget_update` (`phase`, `tokensConsumed`, `tokensRemaining`)
 - `done` (`finalResponse`, `iterationsUsed`, `toolCallsExecuted`, `totalTokensUsed`, optional `sources[]`, optional `citations[]`) — note: `toolCallsExecuted` counts tool calls from the primary agent only; sub-agent calls (via handoff) are not included in this count. **Grounding (tempdoc 565 §3.A):** `sources[]` is the one citation authority — each `AgentSource` is a chunk-identified local passage (`parentDocId`, `chunkIndex`, `path`, `title`, `excerpt`, `startLine`, `endLine`, `headingText`); `citations[]` are the per-sentence inline-mark links (`AgentSentenceCite`: `sentenceText`, `sourceIndex`, `similarity`), present only when the answer↔source matcher ran. Both are declared on the `core.agent-run` shape's `done` `EventDescriptor` (so the generated FE type is truthful — §13.8) and emitted by `AgentController`/`ToolIteratingShapeRunner`. Empty/absent ⇒ ungrounded answer.
