@@ -43,6 +43,7 @@ import {
 } from '../../api/registry/SurfaceCatalogClient.js';
 import type { Surface } from '../../api/types/surface.js';
 import { OperationClient } from '../operations/OperationClient.js';
+import { operationFailureMessage } from '../operations/operationFailureMessage.js';
 import { originatorToTransport } from '../operations/originatorTransport.js';
 import { startDragDetect, type DragKind } from '../utils/dragDetect.js';
 import { startAiStateStore, subscribeAiState } from '../state/aiStateStore.js';
@@ -1196,7 +1197,7 @@ export class Shell extends JfElement {
         .catch((err) => {
           if (taskId) completeTask(taskId, 'failed');
           emitEphemeralToast({
-            message: `invoke-operation '${operationId}' failed: ${err instanceof Error ? err.message : String(err)}`,
+            message: operationFailureMessage(err),
             severity: 'error',
           });
         });
@@ -1220,7 +1221,7 @@ export class Shell extends JfElement {
         this.operationClient ?? new OperationClient({ apiBase: this.apiBase });
       void client.undo(operationId, executionId).catch((err) => {
         emitEphemeralToast({
-          message: `undo '${operationId}' failed: ${err instanceof Error ? err.message : String(err)}`,
+          message: operationFailureMessage(err, true),
           severity: 'error',
         });
       });

@@ -51,6 +51,8 @@ import type { SettingsWindow } from './SettingsWindow.js';
 import type { Surface, SurfaceCatalog } from '../../api/types/surface.js';
 import type { StateSnapshot } from '../router/types.js';
 import type { TransportTag } from '../router/transports.js';
+import { __seedForTest as seedErrorCatalog, __resetForTest as resetErrorCatalog } from '../../i18n/errorCatalog.js';
+import { EPHEMERAL_TOAST_EVENT, type EphemeralToastSpec } from '../components/advisory/ephemeralToast.js';
 
 function makeRailSurface(id: string, mountTag: string): Surface {
   return {
@@ -156,6 +158,55 @@ describe('Shell — slice 492 substrate integration', () => {
     window.location.hash = '';
     vi.unstubAllGlobals();
     __resetUiModeForTest();
+    resetErrorCatalog();
+  });
+
+  it.each(['invoke', 'undo'] as const)('906: %s failure uses handler facts through the real client and toast channel', async (kind) => {
+    seedErrorCatalog({ 'errors.POLICY_ONLINE_AI_DISABLED': 'Online AI is disabled by administrator policy.' });
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/operations/') || url.includes('/api/undo/')) {
+        calls.push(url);
+        return new Response(JSON.stringify({ success: false, message: 'private-operation-id: internal exception',
+          errorClass: 'HANDLER_FAILURE', errorCode: 'POLICY_ONLINE_AI_DISABLED', retryable: false }), { status: 403 });
+      }
+      return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+    }));
+    await renderShell();
+    const toast = new Promise<EphemeralToastSpec>((resolve) => document.addEventListener(
+      EPHEMERAL_TOAST_EVENT, (e) => resolve((e as CustomEvent<EphemeralToastSpec>).detail), { once: true }));
+    document.dispatchEvent(new CustomEvent(kind === 'invoke' ? 'jf-invoke-operation' : 'jf-undo-operation', {
+      detail: { operationId: 'private-operation-id', executionId: 'execution-1', originator: 'user' },
+    }));
+    const shown = await toast;
+    expect(shown.message).toContain('Online AI is disabled by administrator policy.');
+    expect(shown.message).toContain('Resolve the restriction before trying again.');
+    expect(shown.message).not.toMatch(/private-operation-id|internal exception|You can try/);
+    expect(shown.severity).toBe('error');
+    expect(shown.onAction).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain(kind === 'invoke' ? '/api/operations/' : '/api/undo/');
+  });
+
+  it('906: an uncertain mutation response asks users to check its effect, without retrying', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/operations/')) {
+        calls++;
+        throw new Error('private transport exception');
+      }
+      return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+    }));
+    await renderShell();
+    const toast = new Promise<EphemeralToastSpec>((resolve) => document.addEventListener(
+      EPHEMERAL_TOAST_EVENT, (e) => resolve((e as CustomEvent<EphemeralToastSpec>).detail), { once: true }));
+    document.dispatchEvent(new CustomEvent('jf-invoke-operation', { detail: { operationId: 'private-id' } }));
+    const shown = await toast;
+    expect(shown.message).toContain('verify whether the action took effect before trying again');
+    expect(shown.message).not.toContain('private');
+    expect(shown.onAction).toBeUndefined();
+    expect(calls).toBe(1);
   });
 
   it('Tempdoc 738 — the topbar Simple/Detailed toggle reflects the live uiMode and drives it on click', async () => {

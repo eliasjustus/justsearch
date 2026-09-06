@@ -13,8 +13,8 @@
  * which is a decision about explain-tier work — not something plain search should trigger on its way
  * past.
  *
- * FOUR OUTCOMES, ALL DISTINCT. A window that renders "nothing matched" when the request never
- * reached the backend is making a claim about the corpus it has no evidence for; `unreachable` and
+ * FOUR OUTCOMES, ALL DISTINCT. A window that renders "nothing matched" after a failed request
+ * is making a claim about the corpus it has no evidence for; `unreachable` and
  * `empty` are therefore separate states with separate copy, and the tests assert they differ.
  */
 import type { SearchHit, SearchState } from '../../state/searchState.js';
@@ -44,7 +44,7 @@ export interface Sv3ResultsView {
   readonly ranked: number;
   /** The match scan hit its cap, so `matched` is a lower bound and the label renders "M+". */
   readonly truncated: boolean;
-  /** The store's own failure text (`HTTP 502`, `Failed to fetch`) — shown as detail, never as prose. */
+  /** The store's readable failure explanation and recovery guidance. */
   readonly failure: string;
 }
 

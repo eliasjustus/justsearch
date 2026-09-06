@@ -3106,14 +3106,14 @@ export class Sv3Main extends JfElement {
   }
 
   /**
-   * The request never reached the backend, so NOTHING is known about the corpus — which is why this
-   * is its own state rather than the zero-results one wearing different words.
+   * A failed request (including typed backend rejections) is distinct from a successful empty search.
    */
   private unreachable(failure: string): TemplateResult {
     return html`
       <jf-sv3-empty
         roomy
         data-testid="sv3-main-unreachable"
+        role="alert"
         glyph="&#9634;"
         heading=${MAIN_UNREACHABLE.title}
         description=${MAIN_UNREACHABLE.description}
