@@ -77,37 +77,37 @@ Preserve identity-attributed merge recording without writing it during a refused
 
 ## Implementation and delegation plan
 
-- [ ] A. Sol worker implements admission/preview/runtime checks, exact branch handling,
+- [x] A. Sol worker implements admission/preview/runtime checks, exact branch handling,
   and scoped registration cleanup in the existing tool (small helper only if justified).
-- [ ] B. Same worker adds real-Git regression fixtures, updates existing holder fixtures,
+- [x] B. Same worker adds real-Git regression fixtures, updates existing holder fixtures,
   and retains junction/long-path/self-holder regressions. No weakening test intent.
-- [ ] C. Same worker updates canonical worktree mechanics and directly stale CLI guidance;
+- [x] C. Same worker updates canonical worktree mechanics and directly stale CLI guidance;
   remove superseded substring/naming assumptions in code, tests, and current docs.
-- [ ] D. Parent integrates explicit paths and performs a critical pass; independent Sol
+- [x] D. Parent integrates explicit paths and performs a critical pass; independent Sol
   reviewer attempts to refute path/branch/runtime safety and the tests' causal validity.
-- [ ] E. Fix findings through Sol worker, run appropriate checks, record evidence, and
+- [x] E. Fix findings through Sol worker, run appropriate checks, record evidence, and
   commit the completed result locally. No PR/push/actual cleanup without further request.
 
 ## Acceptance and required verification
 
-- [ ] Exact registered external path with spaces and codex branch is removable in a
+- [x] Exact registered external path with spaces and codex branch is removable in a
   scratch repository; guessed similarly named branch survives; detached HEAD works.
-- [ ] Main, arbitrary/misleading .claude/worktrees substring paths, wrong repository,
+- [x] Main, arbitrary/misleading .claude/worktrees substring paths, wrong repository,
   target aliases, nested registered trees, locked and dirty trees are refused intact.
-- [ ] Ignored evidence appears in preview; preview changes nothing; removal needs
+- [x] Ignored evidence appears in preview; preview changes nothing; removal needs
   --allow-ignored when applicable; ignored junction targets remain intact.
-- [ ] A live/unknown target-referencing shared/foreign backend blocks removal even when
+- [x] A live/unknown target-referencing shared/foreign backend blocks removal even when
   ownership lease is stale; unrelated live state does not block a proven unrelated tree.
-- [ ] Existing registered-other-session holder refusal and authorized same-session
+- [x] Existing registered-other-session holder refusal and authorized same-session
   helper teardown still work through real Git fixtures with isolated state roots.
-- [ ] Git/runtime probes failing cannot silently admit removal; selected registration
+- [x] Git/runtime probes failing cannot silently admit removal; selected registration
   cleanup leaves unrelated stale registrations/branches intact.
-- [ ] Run targeted new CLI integration tests, scripts/dev/remove-worktree.test.mjs,
+- [x] Run targeted new CLI integration tests, scripts/dev/remove-worktree.test.mjs,
   scripts/dev/test-remove-worktree.cjs, and
   scripts/agent-analytics/861-w5-remove-worktree-teardown.test.mjs; nearby tests for any
   modified shared helpers. Falsify representative membership/runtime/branch guards
   against isolated fixtures to prove tests fail for the intended reason.
-- [ ] Run lint for changed JS; relevant docs regeneration/checks, git diff --check,
+- [x] Run lint for changed JS; relevant docs regeneration/checks, git diff --check,
   and agent-analytics suite where this integration is discovered. Known wallclock
   failures require the documented isolated rerun before attribution.
 
@@ -117,8 +117,63 @@ All destructive verification occurs only in newly created disposable fixture roo
 
 ## Execution evidence and remaining work
 
-Planning completed after current world-state refresh (45 registered checkouts; #936
-next free). Implementation and verification remain unchecked above.
+Planning completed after the initial world-state refresh (45 registered checkouts; #936
+next free). The Sol implementation ran in the assigned isolated branch from
+9d5fe89ba61a726948bda414a99823c3d9f75fcf; no existing worktree, shared runtime, or
+main-checkout state was removed or modified.
+
+The removal CLI now derives admission from a NUL-delimited exact Git worktree listing and
+revalidates target Git root/common directory/HEAD/branch, main identity, aliases, locks,
+nested registrations, changes, and ignored inventory. It reads shared and foreign runtime
+state and helper registrations fail closed, including visible pending atomic writes,
+runtime-owned path overlap in either containment direction, complete process identity for
+stale proof, and typed listener outcomes. Preview uses query-only Git and pure helper
+classification. Actual removal retains link-only junction handling, removes only the selected
+registration, and deletes only a captured unchanged local branch that no worktree still uses.
+
+Verification evidence:
+
+- `node scripts/agent-analytics/936-remove-worktree-cli.test.mjs` — **20 passed**. Real scratch
+  Git fixtures cover arbitrary external paths/spaces/codex branches, detached HEAD, main and
+  separate-Git-dir layouts, arbitrary/wrong-repository/alias/nested/locked/dirty refusal,
+  ignored junction survival, exact stale-registration cleanup, shared/foreign runtime
+  provenance and owned roots, pending records, mixed invalid PIDs, typed timeout, and dry-run
+  zero-write fingerprints. The zero-write snapshot hashes content and records mtimes for the
+  target, isolated state/telemetry, both Git indexes, refs, worktree list, and worktree admin.
+- The same test contains bounded copied-CLI mutants under disposable roots. Removing the two
+  main-identity guards erased only the fixture main tree before Git refused registration
+  cleanup; suppressing the live shared-runtime blocker erased only its held fixture; restoring
+  basename branch guessing deleted the wrong fixture branch and left the actual branch. These
+  outcomes falsify the representative membership, runtime, and branch safeguards causally.
+- `node scripts/agent-analytics/861-w5-remove-worktree-teardown.test.mjs` — **5 passed** with
+  real Git worktrees; `861-w5-agent-spawn-sweep.test.mjs` — **19 passed / 0 skipped**;
+  `861-w1-process-record.test.mjs` — **22 passed**. These include execution-time reap refusal,
+  pending helper writes, strict relation errors, and symlink/nonregular records.
+- `node --test scripts/dev/remove-worktree.test.mjs` — **10 passed**; and
+  `node scripts/dev/test-remove-worktree.cjs` — **5 passed** with the expected held-handle
+  diagnostic from the long-path fallback fixture.
+- `node scripts/agent-analytics/run-all-tests.mjs` — **52/53 files passed** under concurrent
+  load. The sole `861-w5-remove-worktree-teardown.test.mjs` failure was the documented
+  wall-clock/process-table timestamp budget (`readAt` observed about 2.4 seconds in the future);
+  its immediate isolated rerun passed **5/5**. No assertion or threshold was weakened.
+- Focused ESLint over all seven changed JS files passed with zero warnings. Documentation
+  regeneration/checks passed: llmstxt generation/check, skills sync/check, canonical link check,
+  canonical module-dependency check, runtime-config-matrix check, targeted docs validation, and
+  prompt-surface inventory (130 surfaces, zero suspicious tokens). `git diff --check` passed.
+- Parent read-only real-repository smoke ran
+  `node scripts/dev/remove-worktree.cjs F:/justsearch-public-worktrees/899-project-operations-publish --dry-run --allow-ignored`.
+  It identified `codex/899-publication-closeout` at
+  `049637b9cd09f2c2cf1d29bb68160d0c5792716e`, inventoried ignored paths, classified the live
+  shared run `b72df35c-00e9-4609-a8df-c5455d8f7c97` as proven unrelated, exited zero, and left
+  the checkout intact.
+
+One bounded discovery limit remains: a process can start before even its temporary registration
+entry becomes visible. Closing that interval requires a broader lifecycle lock/database and is
+outside this change. Visible pending writes, malformed records, permission/I/O uncertainty, and
+unreachable relevant processes all block removal. Editor and task discovery likewise cannot prove
+the absence of unregistered holders, so canonical guidance tells operators to close target-scoped
+tools and run from outside the target. No Gradle, frontend, live-model, publication, push, or real
+worktree-removal action was appropriate or performed for this CLI-only change.
 
 ### Parent design probes (2026-09-06)
 

@@ -158,11 +158,15 @@ an upstream "do X" as covering the whole downstream merge/publish chain.
    use the PR title/body.
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
 5. Remove the worktree. GitHub deletes merged remote branches; delete local
-   branches after verifying the merge. On Windows, prefer
-   `node scripts/dev/remove-worktree.cjs <path> [--delete-branch]` over
-   `git worktree remove` — it survives long `node_modules` paths and unlinks
-   `node_modules` junctions link-only, so a junction is removed without
-   deleting through into main's real `node_modules` (tempdoc 618 §2).
+   branches after verifying the merge. From the repository root, with the
+   shell outside the target, first run
+   `node scripts/dev/remove-worktree.cjs <registered-path> --dry-run`.
+   Ignored paths require `--allow-ignored`; local branch deletion requires
+   `--delete-branch`. The tool admits only an exact linked-worktree
+   registration, blocks locks/changes/nested registrations/unsafe runtime
+   state, preserves junction targets, and removes only the selected Git
+   registration. See the canonical worktree mechanics in
+   `docs/reference/contributing/common-workflows.md`.
    This teardown also records the `session_id → merge_commit` link; backfill
    with `node scripts/agent-analytics/record-merge.mjs` if needed.
 

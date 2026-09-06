@@ -11,13 +11,15 @@
  *   2. deletes the remaining tree with long-path support (Node fs, then a `\\?\` .NET fallback —
  *      both verified in the 618 de-risk pass: .NET Directory.Delete is junction-safe and handles
  *      >260-char paths);
- *   3. prunes git's worktree registry so no stale admin entry remains.
+ *   3. removes only that worktree's Git registration.
  *
  * Usage:
- *   node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]
+ *   node scripts/dev/remove-worktree.cjs <worktree-path> [--dry-run] [--allow-ignored]
+ *     [--delete-branch]
  *
- * Safety: refuses any path that is not under `.claude/worktrees/` so it can never touch the main
- * checkout or an arbitrary directory.
+ * Safety: admission comes from the owning repository's exact registered-worktree list, not a
+ * pathname convention. Main, aliases, nested registrations, locks, changes, and relevant live or
+ * unknown runtime provenance are refused before filesystem mutation.
  *
  * Tempdoc 746 item 4 — junction-unlink KEPT (not superseded by Claude Code >=2.1.205's native
  * junction handling), for two independent reasons:
@@ -25,8 +27,8 @@
  *      standalone from a shell (its documented usage above), a path native handling never sees.
  *   2. Deletion here never goes through `git worktree remove` (junction-safety of which would be
  *      moot anyway) — `main()` deletes the tree itself via `deleteTree` (fs.rmSync, falling back
- *      to a `\\?\`-prefixed .NET `Directory.Delete`) and only runs `git worktree prune` afterward,
- *      to clear the now-stale registry entry. Empirically probed both of `deleteTree`'s own
+ *      to a `\\?\`-prefixed .NET `Directory.Delete`) and removes the selected registration afterward,
+ *      without a repository-wide prune. Empirically probed both of `deleteTree`'s own
  *      methods against a scratch junction (temp-dir fixture, Node v24.12.0 / Windows 11):
  *      fs.rmSync(recursive) turned out to already be junction-safe on its own (unlinks the
  *      reparse point, leaves the target untouched) — but the `.NET Directory.Delete` FALLBACK is
@@ -40,17 +42,32 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { PROCESS_TABLE_PS_COMMAND, describeJsonParseFailure } = require('./lib/process-identity.cjs');
+const {
+  PROCESS_TABLE_PS_COMMAND,
+  describeJsonParseFailure,
+  readProcessTable,
+} = require('./lib/process-identity.cjs');
 const {
   consultAgentSpawnsForTeardown,
+  inspectAgentSpawnsForTeardown,
   describeEntry,
   resolveMainRepoRoot,
   resolveCallerSessionId,
+  resolveDevRunnerStateRoot,
 } = require('./lib/agent-spawn-sweep.cjs');
+const {
+  resolveForeignRegisterDir,
+  readForeignRegister,
+} = require('./lib/process-record.cjs');
+
+let runtimeProbeModule = null;
+async function probeRuntimePort(url) {
+  if (!runtimeProbeModule) runtimeProbeModule = await import('./justsearch-dev-mcp/observations.mjs');
+  return runtimeProbeModule.probeLoopbackHttpStatus(url, { timeoutMs: 800 });
+}
 
 function fail(msg) {
-  console.error(`[remove-worktree] ERROR: ${msg}`);
-  process.exit(1);
+  throw new Error(msg);
 }
 
 // 1. Unlink directory junctions link-only so we never recurse through them into shared targets.
@@ -285,12 +302,451 @@ function flagValue(argv, name) {
   return eq ? eq.slice(`--${name}=`.length).trim() : null;
 }
 
-/** The branch checked out in the worktree we are about to delete. */
-function worktreeBranch(abs) {
-  const r = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: abs, encoding: 'utf8' });
-  if (r.status !== 0) return null;
-  const b = (r.stdout || '').trim();
-  return b && b !== 'HEAD' ? b : null;
+const QUERY_ENV = Object.freeze({ GIT_OPTIONAL_LOCKS: '0' });
+
+function pathKey(p) {
+  const resolved = path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function samePath(a, b) {
+  return pathKey(a) === pathKey(b);
+}
+
+function isWithin(candidate, root) {
+  const child = pathKey(candidate);
+  const parent = pathKey(root);
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
+function realpathNearestSync(p) {
+  const abs = path.resolve(p);
+  let head = abs;
+  const tail = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(head);
+      return tail.length ? path.join(real, ...tail) : real;
+    } catch (err) {
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err;
+      const parent = path.dirname(head);
+      if (parent === head) return abs;
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+function gitQuery(repoRoot, args, { cwd = repoRoot } = {}) {
+  return spawnSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    env: { ...process.env, ...QUERY_ENV },
+  });
+}
+
+function requireGit(repoRoot, args, label, options) {
+  const result = gitQuery(repoRoot, args, options);
+  if (result.status !== 0) {
+    fail(`${label} failed: ${String(result.stderr || result.stdout || `git exited ${result.status}`).trim()}`);
+  }
+  return result.stdout || '';
+}
+
+/** Lossless parser for `git worktree list --porcelain -z`. */
+function parseWorktreePorcelainZ(raw) {
+  const entries = [];
+  let entry = null;
+  for (const field of String(raw || '').split('\0')) {
+    if (field === '') {
+      if (entry) entries.push(entry);
+      entry = null;
+      continue;
+    }
+    const split = field.indexOf(' ');
+    const key = split === -1 ? field : field.slice(0, split);
+    const value = split === -1 ? null : field.slice(split + 1);
+    if (key === 'worktree') {
+      if (entry) entries.push(entry);
+      entry = {
+        path: value,
+        head: null,
+        branchRef: null,
+        detached: false,
+        bare: false,
+        locked: null,
+        prunable: null,
+      };
+      continue;
+    }
+    if (!entry) fail(`git worktree list returned ${JSON.stringify(key)} before a worktree field`);
+    if (key === 'HEAD') entry.head = value;
+    else if (key === 'branch') entry.branchRef = value;
+    else if (key === 'detached') entry.detached = true;
+    else if (key === 'bare') entry.bare = true;
+    else if (key === 'locked') entry.locked = value || '(no reason supplied)';
+    else if (key === 'prunable') entry.prunable = value || '(no reason supplied)';
+    else {
+      if (!entry.extra) entry.extra = [];
+      entry.extra.push({ key, value });
+    }
+  }
+  if (entry) entries.push(entry);
+  return entries;
+}
+
+function listRegisteredWorktrees(repoRoot) {
+  const raw = requireGit(repoRoot, ['worktree', 'list', '--porcelain', '-z'], 'git worktree membership query');
+  const entries = parseWorktreePorcelainZ(raw);
+  if (entries.length === 0) fail('git worktree membership query returned no entries');
+  return entries;
+}
+
+function repositoryFacts(repoRoot, entries) {
+  const commonDir = path.resolve(
+    repoRoot,
+    requireGit(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], 'git common-directory query').trim(),
+  );
+  const isBare = requireGit(repoRoot, ['rev-parse', '--is-bare-repository'], 'git bare-repository query').trim() === 'true';
+  const configuredWorktree = gitQuery(repoRoot, ['config', '--path', '--get', 'core.worktree']);
+  if (configuredWorktree.status !== 0 && configuredWorktree.status !== 1) {
+    fail(`core.worktree query failed: ${String(configuredWorktree.stderr || configuredWorktree.stdout || `git exited ${configuredWorktree.status}`).trim()}`);
+  }
+  if (!isBare && configuredWorktree.status === 0 && configuredWorktree.stdout.trim()) {
+    fail(`refusing: owning repository declares core.worktree=${configuredWorktree.stdout.trim()}; separate Git-directory layout is unsupported`);
+  }
+  if (!isBare && path.basename(commonDir).toLowerCase() !== '.git') {
+    fail(`refusing: owning repository uses unsupported separate Git directory ${commonDir}; main-worktree identity cannot be proven safely`);
+  }
+  const mainWorktree = isBare ? null : path.dirname(commonDir);
+  if (!isBare && entries.filter((entry) => entry.path && samePath(entry.path, mainWorktree)).length !== 1) {
+    fail(`refusing: ${commonDir} does not identify one exact registered main worktree; separate Git-directory layout is unsupported`);
+  }
+  if (!isBare) {
+    const mainTop = requireGit(
+      repoRoot,
+      ['rev-parse', '--show-toplevel'],
+      'main worktree-root proof',
+      { cwd: mainWorktree },
+    ).trim();
+    const mainGitDir = requireGit(
+      repoRoot,
+      ['rev-parse', '--path-format=absolute', '--git-dir'],
+      'main Git-directory proof',
+      { cwd: mainWorktree },
+    ).trim();
+    if (!samePath(mainTop, mainWorktree) || !samePath(mainGitDir, commonDir)) {
+      fail(`refusing: ${commonDir} does not prove the standard registered main-worktree layout; separate Git-directory layout is unsupported`);
+    }
+  }
+  return { commonDir, isBare, mainWorktree };
+}
+
+function parseNulList(raw) {
+  return String(raw || '').split('\0').filter(Boolean);
+}
+
+function inspectGitAdmission({ repoRoot, target, allowIgnored }) {
+  const abs = path.resolve(target);
+  const entries = listRegisteredWorktrees(repoRoot);
+  const facts = repositoryFacts(repoRoot, entries);
+  if (facts.isBare) fail('refusing: the owning repository is bare and has no removable linked worktree');
+
+  const matches = entries.filter((candidate) => candidate.path && samePath(candidate.path, abs));
+  if (matches.length !== 1) {
+    fail(`refusing: ${abs} is not one exact registered worktree of ${facts.commonDir}`);
+  }
+  const entry = matches[0];
+  if (samePath(abs, facts.mainWorktree)) fail(`refusing: ${abs} is the repository's main worktree`);
+  if (samePath(abs, repoRoot)) fail(`refusing: ${abs} is the checkout that owns this running script`);
+  if (isWithin(process.cwd(), abs)) fail(`refusing: the current process directory is at or inside ${abs}`);
+  if (entry.bare) fail(`refusing: ${abs} is a bare worktree entry`);
+  if (entry.locked !== null) fail(`refusing: ${abs} is locked (${entry.locked})`);
+
+  const nested = entries.filter((candidate) => candidate.path && !samePath(candidate.path, abs) && isWithin(candidate.path, abs));
+  if (nested.length) {
+    fail(`refusing: ${abs} contains registered worktree(s): ${nested.map((candidate) => candidate.path).join(', ')}`);
+  }
+
+  if (!fs.existsSync(abs)) {
+    if (entry.prunable === null) fail(`refusing: registered target ${abs} is missing but Git has not classified it as prunable`);
+    return { abs, entry, entries, facts, exists: false, changes: [], ignored: [], blockers: [] };
+  }
+  const rootStat = fs.lstatSync(abs);
+  if (rootStat.isSymbolicLink()) fail(`refusing: ${abs} is a symlink or junction alias`);
+  if (!rootStat.isDirectory()) fail(`refusing: ${abs} is not a directory`);
+  const real = fs.realpathSync.native(abs);
+  if (!samePath(real, abs)) fail(`refusing: ${abs} resolves through an alias to ${real}`);
+
+  const targetGitDir = requireGit(
+    repoRoot,
+    ['rev-parse', '--path-format=absolute', '--git-dir'],
+    'target Git-directory query',
+    { cwd: abs },
+  ).trim();
+  if (samePath(targetGitDir, facts.commonDir)) {
+    fail(`refusing: ${abs} is the repository's main worktree`);
+  }
+  const targetTop = requireGit(repoRoot, ['rev-parse', '--show-toplevel'], 'target repository-root query', { cwd: abs }).trim();
+  if (!samePath(targetTop, abs)) fail(`refusing: target Git root ${targetTop} does not equal registered path ${abs}`);
+  const targetCommon = path.resolve(
+    abs,
+    requireGit(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir'], 'target common-directory query', { cwd: abs }).trim(),
+  );
+  if (!samePath(targetCommon, facts.commonDir)) {
+    fail(`refusing: ${abs} belongs to a different repository (${targetCommon})`);
+  }
+  const targetHead = requireGit(repoRoot, ['rev-parse', '--verify', 'HEAD'], 'target HEAD query', { cwd: abs }).trim();
+  if (!entry.head || targetHead !== entry.head) {
+    fail(`refusing: target HEAD ${targetHead || '(missing)'} does not match registered HEAD ${entry.head || '(missing)'}`);
+  }
+  const targetBranchResult = gitQuery(repoRoot, ['symbolic-ref', '--quiet', 'HEAD'], { cwd: abs });
+  if (targetBranchResult.status !== 0 && targetBranchResult.status !== 1) {
+    fail(`target branch query failed: ${String(targetBranchResult.stderr || targetBranchResult.stdout || `git exited ${targetBranchResult.status}`).trim()}`);
+  }
+  const targetBranchRef = targetBranchResult.status === 0 ? targetBranchResult.stdout.trim() : null;
+  if ((entry.detached && targetBranchRef !== null)
+      || (!entry.detached && (!entry.branchRef || targetBranchRef !== entry.branchRef))) {
+    fail(`refusing: target branch ${targetBranchRef || '(detached)'} does not match registered branch ${entry.branchRef || '(detached)'}`);
+  }
+
+  const changes = parseNulList(requireGit(
+    repoRoot,
+    ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=no'],
+    'target dirty-state query',
+    { cwd: abs },
+  ));
+  const ignored = parseNulList(requireGit(
+    repoRoot,
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+    'target ignored-file query',
+    { cwd: abs },
+  ));
+  const blockers = [];
+  if (changes.length) blockers.push(`tracked, staged, or untracked changes: ${changes.join(', ')}`);
+  if (ignored.length && !allowIgnored) blockers.push('ignored paths are present; pass --allow-ignored to remove them');
+  return { abs, entry, entries, facts, exists: true, changes, ignored, blockers };
+}
+
+function referenceRelation(raw, target) {
+  if (typeof raw !== 'string' || !raw.trim() || !path.isAbsolute(raw.trim())) return null;
+  try {
+    const resolved = realpathNearestSync(raw.trim());
+    return isWithin(resolved, target) || isWithin(target, resolved);
+  } catch {
+    return null;
+  }
+}
+
+async function readOptionalJsonStrict(file, { maxBytes = 200_000 } = {}) {
+  let stat;
+  try {
+    stat = await fs.promises.lstat(file);
+  } catch (err) {
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { state: 'absent' };
+    return { state: 'unknown', reason: `cannot inspect ${file}: ${String(err?.message || err)}` };
+  }
+  if (stat.isSymbolicLink()) return { state: 'unknown', reason: `${file} is a symlink` };
+  if (!stat.isFile()) return { state: 'unknown', reason: `${file} is not a regular file` };
+  if (stat.size > maxBytes) return { state: 'unknown', reason: `${file} exceeds ${maxBytes} bytes` };
+  try {
+    const value = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { state: 'unknown', reason: `${file} does not contain a JSON object` };
+    }
+    return { state: 'present', value };
+  } catch (err) {
+    return { state: 'unknown', reason: `cannot parse ${file}: ${String(err?.message || err)}` };
+  }
+}
+
+async function inspectPendingAtomicWrite(file) {
+  const pending = `${file}.tmp`;
+  try {
+    const stat = await fs.promises.lstat(pending);
+    const shape = stat.isSymbolicLink() ? 'symlink' : stat.isFile() ? 'file' : 'non-file entry';
+    return `pending atomic-write ${shape} ${pending} makes runtime state unknown`;
+  } catch (err) {
+    if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return null;
+    return `cannot inspect pending atomic write ${pending}: ${String(err?.message || err)}`;
+  }
+}
+
+function runtimePathRelations(claims, target) {
+  let related = false;
+  const unknown = [];
+  for (const claim of claims) {
+    if (claim.value === null || claim.value === undefined || claim.value === '') {
+      if (claim.required) unknown.push(`${claim.name} is missing`);
+      continue;
+    }
+    const relation = referenceRelation(claim.value, target);
+    if (relation === true) related = true;
+    else if (relation === null) unknown.push(`${claim.name} is not a resolvable absolute path`);
+  }
+  return { related, unknown };
+}
+
+function livePidsFromTable(pids, tableResult) {
+  if (!tableResult.ok) return { state: 'unknown', reason: tableResult.reason };
+  const present = new Set(tableResult.table.map((row) => Number(row?.ProcessId)));
+  return { state: pids.some((pid) => present.has(pid)) ? 'live' : 'stale' };
+}
+
+async function inspectRuntimeProvenance({ mainRepoRoot, target }) {
+  const stateRoot = resolveDevRunnerStateRoot(mainRepoRoot, process.env);
+  const blockers = [];
+  const notes = [];
+  let processTable = null;
+  const getTable = () => {
+    if (!processTable) processTable = readProcessTable();
+    return processTable;
+  };
+
+  const activeFile = path.join(stateRoot, 'active.json');
+  const activePending = await inspectPendingAtomicWrite(activeFile);
+  if (activePending) blockers.push(`shared runtime state is unknown: ${activePending}`);
+  const activeRead = await readOptionalJsonStrict(activeFile);
+  if (activeRead.state === 'unknown') {
+    blockers.push(`shared runtime state is unknown: ${activeRead.reason}`);
+  } else if (activeRead.state === 'present') {
+    const active = activeRead.value;
+    const runId = typeof active.runId === 'string'
+      && active.runId !== '.'
+      && active.runId !== '..'
+      && /^[A-Za-z0-9._-]+$/.test(active.runId)
+      ? active.runId
+      : null;
+    if (active.kind !== 'backend-shared-lease.v1' || active.schemaVersion !== 1 || !runId) {
+      blockers.push('shared runtime active.json has an unsupported or incomplete shape');
+    } else {
+      const runFile = path.join(stateRoot, 'runs', runId, 'run.json');
+      const runPending = await inspectPendingAtomicWrite(runFile);
+      if (runPending) blockers.push(`shared runtime run ${runId} is unknown: ${runPending}`);
+      const runRead = await readOptionalJsonStrict(runFile);
+      if (runRead.state !== 'present') {
+        blockers.push(`shared runtime run ${runId} is ${runRead.state}: ${runRead.reason || runFile}`);
+      } else {
+        const run = runRead.value;
+        if (run.schemaVersion !== 1 || run.runId !== runId) {
+          blockers.push(`shared runtime run ${runId} has an unsupported shape or mismatched runId`);
+        } else {
+          const claims = [
+            { name: 'active.provenance.repoRoot', value: active.provenance?.repoRoot, required: true },
+            { name: 'active.provenance.distFromRoot', value: active.provenance?.distFromRoot, required: false },
+            { name: 'run.repoRoot', value: run.repoRoot, required: true },
+            { name: 'run.dataDir', value: run.dataDir, required: true },
+            { name: 'run.spawn.backend.cwd', value: run.spawn?.backend?.cwd, required: false },
+            { name: 'run.spawn.frontend.cwd', value: run.spawn?.frontend?.cwd, required: false },
+            ...[
+              'dataDir', 'justsearchHome', 'settingsStorePath', 'runtimeDir',
+              'workerConfigSnapshotPath', 'runtimeManifestPath', 'expectedIndexBasePath',
+              'confirmedIndexBasePath',
+            ].map((name) => ({ name: `run.resourceClaims.${name}`, value: run.resourceClaims?.[name], required: false })),
+          ];
+          const relation = runtimePathRelations(claims, target);
+          if (!relation.related && relation.unknown.length === 0) {
+            notes.push(`shared runtime run ${runId} has proven unrelated provenance`);
+          } else {
+            const expectedPidFields = ['runnerPid', 'backendRootPid', 'frontendRootPid'];
+            const pidsValid = run.pids && typeof run.pids === 'object' && !Array.isArray(run.pids)
+              && expectedPidFields.every((name) => Number.isInteger(run.pids[name]) && run.pids[name] > 0);
+            if (!pidsValid) {
+              blockers.push(`shared runtime run ${runId} has incomplete process identity; all expected pid fields are required for stopped-state proof`);
+            } else {
+              const pids = expectedPidFields.map((name) => run.pids[name]);
+              const liveness = livePidsFromTable(pids, getTable());
+              const port = Number.isInteger(run.apiPortActual) && run.apiPortActual > 0 ? run.apiPortActual : null;
+              const relationText = relation.related
+                ? `references ${target}`
+                : `has unknown owned-path relation to ${target} (${relation.unknown.join(', ')})`;
+              if (liveness.state === 'unknown') {
+                blockers.push(`shared runtime run ${runId} ${relationText}, but process liveness is unknown: ${liveness.reason}`);
+              } else if (liveness.state === 'live') {
+                blockers.push(`shared runtime run ${runId} is active and ${relationText}`);
+              } else if (!port) {
+                blockers.push(`shared runtime run ${runId} ${relationText} but declares no usable API port for stale-state proof`);
+              } else {
+                const probe = await probeRuntimePort(`http://127.0.0.1:${port}/api/status`);
+                if (probe.state === 'REACHABLE') {
+                  blockers.push(`shared runtime run ${runId} has a reachable listener and ${relationText}`);
+                } else if (probe.state === 'REFUSED') {
+                  notes.push(`shared runtime run ${runId} is proven stale (all recorded pids absent; connection refused)`);
+                } else {
+                  blockers.push(`shared runtime run ${runId} ${relationText}, but its API probe is ${probe.state}`);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    notes.push('shared runtime register is absent');
+  }
+
+  const foreignDir = resolveForeignRegisterDir(mainRepoRoot, process.env);
+  let foreign;
+  try {
+    const foreignStat = await fs.promises.lstat(foreignDir).catch((err) => {
+      if (err?.code === 'ENOENT') return null;
+      throw err;
+    });
+    if (foreignStat?.isSymbolicLink()) throw new Error(`${foreignDir} is a symlink`);
+    if (foreignStat && !foreignStat.isDirectory()) throw new Error(`${foreignDir} is not a directory`);
+    if (foreignStat) {
+      const pending = (await fs.promises.readdir(foreignDir, { withFileTypes: true }))
+        .filter((entry) => entry.name.endsWith('.tmp'));
+      for (const entry of pending) {
+        blockers.push(`foreign runtime register has pending atomic-write entry ${entry.name}; state is unknown`);
+      }
+    }
+    foreign = await readForeignRegister({ dir: foreignDir });
+  } catch (err) {
+    blockers.push(`foreign runtime register is unreadable: ${String(err?.message || err)}`);
+    foreign = [];
+  }
+  for (const entry of foreign) {
+    if (!entry.ok) {
+      blockers.push(`foreign runtime record ${entry.recordId} is unreadable: ${entry.reason}`);
+      continue;
+    }
+    const record = entry.record;
+    const relation = runtimePathRelations([
+      { name: 'repoRoot', value: record.repoRoot, required: true },
+      { name: 'dataDir', value: record.dataDir, required: true },
+    ], target);
+    if (!relation.related && relation.unknown.length === 0) {
+      notes.push(`foreign runtime ${entry.recordId} has proven unrelated provenance`);
+      continue;
+    }
+    if (!Number.isInteger(record.pid) || record.pid <= 0) {
+      blockers.push(`foreign runtime ${entry.recordId} may reference ${target}, but declares no usable pid`);
+      continue;
+    }
+    const table = getTable();
+    if (!table.ok) {
+      blockers.push(`foreign runtime ${entry.recordId} may reference ${target}, but process liveness is unknown: ${table.reason}`);
+      continue;
+    }
+    const pidPresent = table.table.some((row) => Number(row?.ProcessId) === record.pid);
+    const probe = pidPresent ? null : await probeRuntimePort(`http://127.0.0.1:${record.ports.api}/api/status`);
+    if (!pidPresent && probe.state === 'REFUSED') {
+      notes.push(`foreign runtime ${entry.recordId} is proven stale (pid absent; connection refused)`);
+      continue;
+    }
+    if (!pidPresent && probe.state !== 'REACHABLE') {
+      blockers.push(`foreign runtime ${entry.recordId} may reference ${target}, but its API probe is ${probe.state}`);
+      continue;
+    }
+    if (!relation.related) {
+      blockers.push(`live or unreachable foreign runtime ${entry.recordId} has unknown owned-path relation to ${target}: ${relation.unknown.join(', ')}`);
+    } else {
+      blockers.push(`live or unreachable foreign runtime ${entry.recordId} owns a path under ${target}`);
+    }
+  }
+  return { blockers, notes };
 }
 
 /**
@@ -314,8 +770,7 @@ function mergeCommitFromPr(repoRoot, branch) {
   }
 }
 
-function recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg }) {
-  const branch = worktreeBranch(abs);
+function recordMergeLink({ repoRoot, branch, mergeCommitArg, sessionIdArg }) {
   const commit = mergeCommitArg || (branch ? mergeCommitFromPr(repoRoot, branch) : null);
 
   if (!commit) {
@@ -342,110 +797,184 @@ function recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg }) {
   }
 }
 
-async function main() {
-  const target = process.argv[2];
-  const deleteBranch = process.argv.includes('--delete-branch');
-  const mergeCommitArg = flagValue(process.argv, 'merge-commit');
-  const sessionIdArg = flagValue(process.argv, 'session-id');
+function parseArgs(argv) {
+  const target = argv[2];
   if (!target || target.startsWith('--')) {
     fail(
-      'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]' +
+      'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--dry-run] [--allow-ignored] [--delete-branch]' +
         ' [--merge-commit <sha>] [--session-id <id>]' +
         ' (--session-id overrides; otherwise resolved from CLAUDE_CODE_SESSION_ID /' +
         ' JUSTSEARCH_AGENT_SESSION_ID / tmp/agent-telemetry/current-session-id)',
     );
   }
-
-  const repoRoot = path.resolve(__dirname, '..', '..');
-  // [F-8] The register lives under the MAIN checkout (861 [A9]), not wherever THIS copy of the
-  // script happens to run from — a worktree-local copy of remove-worktree.cjs would otherwise
-  // consult its own worktree's (nonexistent, or stale) tmp/dev-runner/agent-spawns/ instead of
-  // the shared one.
-  const mainRepoRoot = resolveMainRepoRoot(repoRoot);
-  const abs = path.resolve(target);
-
-  // Safety gate: only operate on worktrees under .claude/worktrees/.
-  const wtMarker = path.join('.claude', 'worktrees') + path.sep;
-  if (!abs.includes(wtMarker)) {
-    fail(`refusing: ${abs} is not under ${wtMarker} (only worktrees may be removed by this script)`);
+  const knownBooleans = new Set(['--dry-run', '--allow-ignored', '--delete-branch']);
+  for (let i = 3; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (knownBooleans.has(arg)) continue;
+    if (arg === '--merge-commit' || arg === '--session-id') {
+      if (!argv[i + 1] || argv[i + 1].startsWith('--')) fail(`${arg} requires a value`);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--merge-commit=') || arg.startsWith('--session-id=')) continue;
+    fail(`unknown argument ${JSON.stringify(arg)}`);
   }
+  return {
+    target,
+    dryRun: argv.includes('--dry-run'),
+    allowIgnored: argv.includes('--allow-ignored'),
+    deleteBranch: argv.includes('--delete-branch'),
+    mergeCommitArg: flagValue(argv, 'merge-commit'),
+    sessionIdArg: flagValue(argv, 'session-id'),
+  };
+}
 
-  // Tempdoc 622 Layer B (§11 U2): record the session -> merge-commit link before
-  // teardown. Best-effort: never blocks teardown.
-  //
-  // This used to invoke record-merge.mjs with NO commit, so it defaulted to
-  // `HEAD` resolved in repoRoot, on the assumption "HEAD on main is the
-  // just-created merge commit". That assumption fails routinely, and silently:
-  // the main checkout is often parked on another branch (observed 4x — e.g.
-  // `session d1af1a27 -> 60f4e9d6`, an unrelated branch's tip), and even when
-  // it is on main, a GitHub squash-merge means local main is stale until pulled.
-  // The result was a WRONG row written into outcomes' fact tier — tagged
-  // kind:'fact', indistinguishable downstream from a correct one, outranking the
-  // LLM-judge inference it is designed to override, and unretractable (a
-  // backfill appends the right row but cannot remove the wrong one).
-  //
-  // So: establish the commit, never infer it. `--merge-commit` wins; else ask
-  // GitHub for the branch's merged PR (squash-proof: content, not ancestry);
-  // else SKIP and say so. A legible skip beats a confident wrong fact.
-  recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg });
-
-  if (fs.existsSync(abs)) {
-    // Tempdoc 861 §6.4 `worktree-teardown` occasion: consult the `agent-spawns/` register
-    // BEFORE unlinking junctions. Reaps what it is authorized to (this session's own spawns,
-    // or another session's lapsed-and-stale one); refuses to proceed while an unreapable
-    // holder remains, rather than proceeding into the half-deleted, `.git`-less worktree shell
-    // §2-bis (c) documents. The OBSERVED-tier fallback below (`reportHolders`, driven by
-    // `filterHolders`'s own command-line scan) is UNCHANGED — it still runs regardless, for
-    // whatever this registry does not cover (no-regression constraint, 861 §7.1 Phase 5).
-    //
-    // [F-2a] `callerSessionId` is resolved via the standard chain, not `--session-id` alone: the
-    // documented invocation never passes that flag, so without this a caller's OWN live spawn on
-    // this tree read as an unattributed CONTENTION instead of a same-session reap — the ONE case
-    // §6.3 says is unambiguous ("a session may always reap its own registered spawns").
-    const callerSessionId = resolveCallerSessionId({ explicit: sessionIdArg, env: process.env, repoRoot });
-    let consult;
-    try {
-      consult = await consultAgentSpawnsForTeardown({ mainRepoRoot, targetPath: abs, callerSessionId });
-    } catch (err) {
-      console.error(`[remove-worktree] WARN agent-spawns register consult failed (proceeding on the observed-tier fallback only): ${err && err.message ? err.message : err}`);
-      consult = null;
-    }
-    if (consult && consult.buckets.all.length > 0) {
-      console.error(`[remove-worktree] agent-spawns register: ${consult.buckets.all.length} record(s) hold a path under ${abs}:`);
-      for (const e of consult.buckets.all) {
-        console.error(`[remove-worktree]   ${describeEntry(e).replace(/\n/g, '\n[remove-worktree]   ')}`);
-      }
-    }
-    if (consult && consult.buckets.blocksProceed) {
-      fail(
-        `refusing to remove ${abs}: a registered agent-spawn holder could not be reaped (see the ` +
-          `agent-spawns register lines above) — clear it (or wait for it to become reapable), then retry. ` +
-          `This refusal is the fix for the half-deleted, .git-less worktree shell a proceed-anyway would leave.`,
-      );
-    }
-
-    removeJunctions(abs);
-    if (!deleteTree(abs)) fail(`failed to delete ${abs}`);
-    console.error(`[remove-worktree] deleted ${abs}`);
+function printAdmission(admission, { dryRun, allowIgnored }) {
+  const branch = admission.entry.detached || !admission.entry.branchRef
+    ? `detached HEAD at ${admission.entry.head}`
+    : `${admission.entry.branchRef.replace(/^refs\/heads\//, '')} at ${admission.entry.head}`;
+  console.error(`[remove-worktree] ${dryRun ? 'preview' : 'target'}: ${admission.abs}`);
+  console.error(`[remove-worktree] revision: ${branch}`);
+  if (admission.ignored.length) {
+    console.error(`[remove-worktree] ignored paths (${allowIgnored ? 'explicitly allowed' : 'BLOCKER'}):`);
+    for (const item of admission.ignored) console.error(`[remove-worktree]   ${item}`);
   } else {
-    console.error(`[remove-worktree] ${abs} already gone; pruning registry only.`);
+    console.error('[remove-worktree] ignored paths: none');
+  }
+  for (const blocker of admission.blockers) console.error(`[remove-worktree] BLOCKER: ${blocker}`);
+}
+
+function assertStableAdmission(before, after) {
+  if (!samePath(before.abs, after.abs)
+      || before.entry.head !== after.entry.head
+      || before.entry.branchRef !== after.entry.branchRef
+      || before.entry.detached !== after.entry.detached) {
+    fail('refusing: worktree membership, branch, or HEAD changed during safety checks');
+  }
+}
+
+function removeExactRegistration(repoRoot, abs) {
+  const result = spawnSync('git', ['worktree', 'remove', '--force', '--', abs], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: { ...process.env, ...QUERY_ENV },
+  });
+  if (result.status !== 0) {
+    fail(`target directory was deleted, but its Git registration could not be removed: ${String(result.stderr || result.stdout).trim()}`);
+  }
+  console.error(`[remove-worktree] removed Git registration for ${abs}`);
+}
+
+function deleteCapturedBranch(repoRoot, captured) {
+  if (captured.detached || !captured.branchRef) {
+    console.error('[remove-worktree] detached HEAD: no branch to delete.');
+    return;
+  }
+  if (!captured.branchRef.startsWith('refs/heads/')) fail(`refusing to delete non-local ref ${captured.branchRef}`);
+  const current = gitQuery(repoRoot, ['rev-parse', '--verify', `${captured.branchRef}^{commit}`]);
+  if (current.status !== 0 || current.stdout.trim() !== captured.head) {
+    fail(`refusing to delete ${captured.branchRef}: it moved from captured HEAD ${captured.head}`);
+  }
+  const users = listRegisteredWorktrees(repoRoot).filter((entry) => entry.branchRef === captured.branchRef);
+  if (users.length) fail(`refusing to delete ${captured.branchRef}: it is checked out at ${users.map((entry) => entry.path).join(', ')}`);
+  const short = captured.branchRef.slice('refs/heads/'.length);
+  const result = spawnSync('git', ['branch', '-D', '--', short], { cwd: repoRoot, encoding: 'utf8' });
+  if (result.status !== 0) fail(`failed to delete captured branch ${short}: ${String(result.stderr || result.stdout).trim()}`);
+  console.error(`[remove-worktree] deleted branch ${short}`);
+}
+
+async function main({ argv = process.argv, repoRoot = path.resolve(__dirname, '..', '..') } = {}) {
+  const options = parseArgs(argv);
+  const mainRepoRoot = resolveMainRepoRoot(repoRoot);
+  const admission = inspectGitAdmission({ repoRoot, target: options.target, allowIgnored: options.allowIgnored });
+  printAdmission(admission, options);
+
+  const runtime = await inspectRuntimeProvenance({ mainRepoRoot, target: admission.abs });
+  for (const note of runtime.notes) console.error(`[remove-worktree] runtime: ${note}`);
+  for (const blocker of runtime.blockers) console.error(`[remove-worktree] BLOCKER: ${blocker}`);
+
+  const callerSessionId = resolveCallerSessionId({ explicit: options.sessionIdArg, env: process.env, repoRoot });
+  let helperInspection;
+  try {
+    helperInspection = await inspectAgentSpawnsForTeardown({
+      mainRepoRoot,
+      targetPath: admission.abs,
+      callerSessionId,
+    });
+  } catch (err) {
+    fail(`agent-spawns safety inspection failed: ${String(err?.message || err)}`);
+  }
+  for (const entry of helperInspection.buckets.all) {
+    console.error(`[remove-worktree] helper: ${describeEntry(entry).replace(/\n/g, '\n[remove-worktree]   ')}`);
   }
 
-  // 3. Prune git's worktree registry (drops the stale admin entry for the deleted directory).
-  const prune = spawnSync('git', ['worktree', 'prune'], { cwd: repoRoot, encoding: 'utf8' });
-  if (prune.status !== 0) {
-    console.error(`[remove-worktree] WARN git worktree prune: ${prune.stderr || prune.stdout}`);
+  const previewBlockers = [
+    ...admission.blockers,
+    ...runtime.blockers,
+    ...(helperInspection.buckets.blocksProceed ? ['a registered helper cannot be safely cleared'] : []),
+  ];
+  if (options.dryRun) {
+    if (previewBlockers.length) fail(`dry-run found ${previewBlockers.length} blocker(s); no changes were made`);
+    console.error('[remove-worktree] dry-run: removal is admissible; no changes were made.');
+    return;
+  }
+  if (admission.blockers.length || runtime.blockers.length) {
+    fail(`refusing to remove ${admission.abs}: ${admission.blockers.length + runtime.blockers.length} safety blocker(s)`);
   }
 
-  if (deleteBranch) {
-    const branch = 'worktree-' + path.basename(abs);
-    const del = spawnSync('git', ['branch', '-D', branch], { cwd: repoRoot, encoding: 'utf8' });
-    console.error(
-      del.status === 0
-        ? `[remove-worktree] deleted branch ${branch}`
-        : `[remove-worktree] WARN branch ${branch}: ${(del.stderr || '').trim()}`,
-    );
+  // Re-probe runtime provenance before the final helper consult. The helper consult is the last
+  // asynchronous action before Git/filesystem admission is synchronously revalidated.
+  const finalRuntime = await inspectRuntimeProvenance({ mainRepoRoot, target: admission.abs });
+  if (finalRuntime.blockers.length) fail(`refusing after runtime revalidation: ${finalRuntime.blockers.join('; ')}`);
+
+  // Keep the established effectful helper-reaper path for actual teardown. It re-verifies process
+  // identity immediately before any authorized kill and blocks on every unreadable holder row.
+  let consult;
+  try {
+    consult = await consultAgentSpawnsForTeardown({ mainRepoRoot, targetPath: admission.abs, callerSessionId });
+  } catch (err) {
+    fail(`agent-spawns register consult failed: ${String(err?.message || err)}`);
   }
+  if (consult.buckets.all.length > 0) {
+    console.error(`[remove-worktree] agent-spawns register: ${consult.buckets.all.length} relevant record(s):`);
+    for (const entry of consult.buckets.all) {
+      console.error(`[remove-worktree]   ${describeEntry(entry).replace(/\n/g, '\n[remove-worktree]   ')}`);
+    }
+  }
+  if (consult.buckets.blocksProceed) {
+    fail(`refusing to remove ${admission.abs}: a registered agent-spawn holder could not be reaped`);
+  }
+
+  // No asynchronous work occurs between this final membership check and the first mutation.
+  const finalAdmission = inspectGitAdmission({
+    repoRoot,
+    target: admission.abs,
+    allowIgnored: options.allowIgnored,
+  });
+  assertStableAdmission(admission, finalAdmission);
+  if (finalAdmission.blockers.length) fail(`refusing after final admission: ${finalAdmission.blockers.join('; ')}`);
+
+  const capturedBranch = admission.entry.branchRef?.replace(/^refs\/heads\//, '') || null;
+  if (fs.existsSync(admission.abs)) {
+    removeJunctions(admission.abs);
+    if (!deleteTree(admission.abs)) fail(`failed to delete ${admission.abs}`);
+    console.error(`[remove-worktree] deleted ${admission.abs}`);
+  } else {
+    console.error(`[remove-worktree] ${admission.abs} already gone; removing only its registration.`);
+  }
+
+  removeExactRegistration(repoRoot, admission.abs);
+  if (options.deleteBranch) deleteCapturedBranch(repoRoot, admission.entry);
+
+  // Record the identity-attributed merge link only after removal. A GitHub query can block, so
+  // placing it between final admission and filesystem deletion would reopen the TOCTOU window.
+  // `--merge-commit` wins; otherwise a merged PR lookup may establish the squash commit.
+  recordMergeLink({
+    repoRoot,
+    branch: capturedBranch,
+    mergeCommitArg: options.mergeCommitArg,
+    sessionIdArg: options.sessionIdArg,
+  });
 
   console.error('[remove-worktree] done.');
 }

@@ -93,7 +93,11 @@ async function readRegister({
   let names;
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    names = entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name).sort();
+    // Include every *.json directory entry, then let the lstat/read loop below classify it.
+    // Filtering with isFile() here silently hid symlink records even though this reader's
+    // contract says a symlink is returned as ok:false. A safety caller cannot distinguish that
+    // omission from an empty register.
+    names = entries.filter((e) => e.name.endsWith('.json')).map((e) => e.name).sort();
   } catch (err) {
     // 844 §12.2 in this reader's own code: `[]` is the claim "I looked and nothing has ever
     // registered here", and only ENOENT/ENOTDIR (no such directory / the path is not one) support
@@ -111,6 +115,7 @@ async function readRegister({
     try {
       const st = await fsp.lstat(abs);
       if (st.isSymbolicLink()) { out.push({ ok: false, recordId, reason: 'record is a symlink' }); continue; }
+      if (!st.isFile()) { out.push({ ok: false, recordId, reason: 'record is not a regular file' }); continue; }
       if (st.size > maxBytes) { out.push({ ok: false, recordId, reason: `record too large (${st.size} > ${maxBytes} bytes)` }); continue; }
       const record = JSON.parse(await fsp.readFile(abs, 'utf8'));
       if (validateRecord) {

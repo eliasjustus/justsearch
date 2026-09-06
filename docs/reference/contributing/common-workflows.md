@@ -155,6 +155,28 @@ them at creation time — don't rely on it. `node scripts/dev/prepare-worktree.c
 missing one from its committed `.example` file (never overwriting an existing copy), so it is
 always safe to run. `--no-dist` skips the Java dists (FE-only prep). See `MAINTAINING.md`.
 
+**Removing a registered worktree.** Run the removal tool from the owning repository root, with
+the shell's current directory outside the target. Preview the exact registered target first:
+
+```powershell
+node scripts/dev/remove-worktree.cjs <registered-path> --dry-run
+node scripts/dev/remove-worktree.cjs <registered-path> --allow-ignored --delete-branch
+```
+
+Git registration is the authority, so linked worktrees may live under any parent directory and
+use arbitrary branch names; paths with spaces or Unicode and detached worktrees are supported.
+The tool refuses the main worktree, path aliases, nested registrations, locks, tracked/staged or
+untracked changes, and target-related runtime or helper state that is live or cannot be proven
+safe. Ignored paths are inventoried in the preview and require the explicit `--allow-ignored`
+option for removal. Preview performs no ref, telemetry, helper, register, or filesystem writes.
+
+Removal unlinks junctions link-only, deletes the validated tree, and then removes only that exact
+Git registration. `--delete-branch` deletes the captured local branch only when it still names the
+captured HEAD and no worktree uses it; detached HEAD skips branch deletion. The tool does not infer
+merge state or provide a general force bypass. Editor/task discovery is necessarily incomplete,
+and a process can start before its registration write becomes visible, so close target-scoped
+tools and tasks before removal; an observed in-progress registration write blocks teardown.
+
 **Shared models / runtime resolution.** The dev-runner resolves `JUSTSEARCH_MODELS_DIR` from the
 **main** checkout automatically (tempdoc 618 §2). Runtime resolution is **GPU-only by design as
 of tempdoc 656** (supersedes 618 §3's CPU-baseline auto-stage): the dev-runner resolves a
