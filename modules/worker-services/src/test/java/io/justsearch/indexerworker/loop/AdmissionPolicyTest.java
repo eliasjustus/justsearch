@@ -23,6 +23,9 @@ class AdmissionPolicyTest {
         IngestionReasonCodes.SIZE_CHANGED_AFTER_SNAPSHOT,
         AdmissionPolicy.staleReasonCode(SourceValidationResult.SIZE_CHANGED));
     assertEquals(
+        IngestionReasonCodes.STALE_AFTER_EXTRACTION,
+        AdmissionPolicy.staleReasonCode(SourceValidationResult.CONTENT_CHANGED));
+    assertEquals(
         IngestionReasonCodes.MODIFIED_TIME_CHANGED_AFTER_SNAPSHOT,
         AdmissionPolicy.staleReasonCode(SourceValidationResult.MODIFIED_TIME_CHANGED));
     assertEquals(

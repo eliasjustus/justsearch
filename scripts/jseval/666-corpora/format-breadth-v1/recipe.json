@@ -1,0 +1,87 @@
+{
+  "schema": "jseval.format-breadth-recipe.v1",
+  "dataset": "mixed/format-breadth-v1",
+  "purpose": "raw sibling corpus for production extraction breadth measurement",
+  "enron_selection_method": "sha256-ranked-one-per-sender-domain-then-fill-v1",
+  "enron_selection_seed": 897,
+  "output_counts": {
+    ".eml": 16,
+    ".rtf": 9,
+    ".zip": 8
+  },
+  "coverage_qualification": {
+    ".eml": {
+      "sample_count": 16,
+      "source_collection_count": 1,
+      "producer_count": 1,
+      "producer_count_basis": "conservative collection-level proxy; producer diversity not established",
+      "claim": "single-source deterministic real-input characterization"
+    },
+    ".rtf": {
+      "sample_count": 9,
+      "source_collection_count": 1,
+      "producer_count": 1,
+      "producer_count_basis": "conservative collection-level proxy; producer diversity not established",
+      "claim": "single-source deterministic real-input characterization"
+    },
+    ".zip": {
+      "sample_count": 8,
+      "source_collection_count": 1,
+      "producer_count": 1,
+      "producer_count_basis": "conservative collection-level proxy; producer diversity not established",
+      "claim": "single-source deterministic real-input characterization"
+    }
+  },
+  "sources": {
+    "enron": {
+      "cache_fetcher": "enron-raw",
+      "cache_params": {
+        "url": "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
+      },
+      "urls": [
+        "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
+      ],
+      "source_revision": "enron_mail_20150507",
+      "sha256": {
+        "enron_mail_20150507.tar.gz": "b3da1b3fe0369ec3140bb4fbce94702c33b7da810ec15d718b3fadf5cd748ca7"
+      }
+    },
+    "govdocs": {
+      "urls": [
+        "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/000.zip",
+        "https://downloads.digitalcorpora.org/corpora/files/govdocs1/zipfiles/001.zip"
+      ],
+      "source_revision": "govdocs1-000-001",
+      "sha256": {
+        "000.zip": "7fb4673ac1905a3ed16a9c5780a70c729c3abc575b06c155b7042b91fa5946aa",
+        "001.zip": "bb3d9c7a68c00b5da108a5614efd2922b53604a6824324f6ab392282d786e384"
+      }
+    },
+    "napier": {
+      "urls": [
+        "https://s3.eu-north-1.amazonaws.com/napierone.com/NapierOne/Data/ZIP/ZIP-DEFLATE-tiny.zip",
+        "https://s3.eu-north-1.amazonaws.com/napierone.com/NapierOne/Data/ZIP/ZIP-DEFLATE-tiny_zip_hashes.txt"
+      ],
+      "source_revision": "ZIP-DEFLATE-tiny",
+      "sha256": {
+        "ZIP-DEFLATE-tiny.zip": null,
+        "ZIP-DEFLATE-tiny_zip_hashes.txt": null
+      }
+    }
+  },
+  "licenses": {
+    "enron": {
+      "id": "LicenseRef-Enron-FERC-public-record-nonredistributable",
+      "distribution": "fetch-only; raw messages must not be committed"
+    },
+    "govdocs": {
+      "id": "LicenseRef-Govdocs1-freely-redistributable-research-corpus",
+      "source": "https://digitalcorpora.org/corpora/file-corpora/files/"
+    },
+    "napier": {
+      "id": "LicenseRef-Edinburgh-Napier-University-License-Agreement",
+      "attribution": "NapierOne Mixed File Dataset, Edinburgh Napier University",
+      "source": "https://registry.opendata.aws/napierone/"
+    }
+  }
+}

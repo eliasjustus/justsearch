@@ -145,8 +145,17 @@ final class SearchRpcOps {
      * @return response with doc IDs, total count, and timing
      */
     ListAllDocumentIdsResponse listAllDocumentIds(int offset, int limit) {
+        return listAllDocumentIds(offset, limit, "");
+    }
+
+    ListAllDocumentIdsResponse listAllDocumentIds(
+            int offset, int limit, String snapshotToken) {
         ListAllDocumentIdsRequest request =
-                ListAllDocumentIdsRequest.newBuilder().setOffset(offset).setLimit(limit).build();
+                ListAllDocumentIdsRequest.newBuilder()
+                        .setOffset(offset)
+                        .setLimit(limit)
+                        .setSnapshotToken(snapshotToken == null ? "" : snapshotToken)
+                        .build();
         return rpc.execute(
                 "listAllDocumentIds",
                 RemoteKnowledgeClient.RpcDeadlineCategory.STANDARD,

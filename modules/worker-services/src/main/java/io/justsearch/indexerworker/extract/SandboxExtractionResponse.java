@@ -24,6 +24,16 @@ public record SandboxExtractionResponse(
     String errorMessage,
     String reasonCode) {
   public static final int CURRENT_SCHEMA_VERSION = 1;
+  static final int MAX_IDENTIFIER_CHARS = 96;
+  static final int MAX_ERROR_MESSAGE_CHARS = 512;
+  static final int MAX_REASON_CODE_CHARS = 512;
+
+  public SandboxExtractionResponse {
+    requireBounded("policyId", policyId, MAX_IDENTIFIER_CHARS);
+    requireBounded("parserId", parserId, MAX_IDENTIFIER_CHARS);
+    errorMessage = sanitize(errorMessage, MAX_ERROR_MESSAGE_CHARS);
+    reasonCode = sanitize(reasonCode, MAX_REASON_CODE_CHARS);
+  }
 
   public static SandboxExtractionResponse fromArtifact(ExtractionArtifact artifact) {
     ExtractionResult result = artifact.result();
@@ -63,7 +73,7 @@ public record SandboxExtractionResponse(
         0,
         0,
         null,
-        sanitize(errorMessage),
+        errorMessage,
         reasonCode);
   }
 
@@ -82,11 +92,17 @@ public record SandboxExtractionResponse(
         visualExtractionEvidenceJson);
   }
 
-  private static String sanitize(String value) {
+  private static void requireBounded(String name, String value, int maxChars) {
+    if (value != null && value.length() > maxChars) {
+      throw new IllegalArgumentException(name + " exceeds " + maxChars + " UTF-16 code units");
+    }
+  }
+
+  private static String sanitize(String value, int maxChars) {
     if (value == null || value.isBlank()) {
       return null;
     }
     String oneLine = value.replaceAll("[\\r\\n\\t]+", " ").trim();
-    return oneLine.length() <= 512 ? oneLine : oneLine.substring(0, 512);
+    return oneLine.length() <= maxChars ? oneLine : oneLine.substring(0, maxChars);
   }
 }

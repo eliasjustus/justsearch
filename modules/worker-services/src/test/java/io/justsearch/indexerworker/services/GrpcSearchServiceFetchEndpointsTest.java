@@ -21,6 +21,8 @@ import io.justsearch.ipc.FetchDocumentsResponse;
 import io.justsearch.ipc.SuggestRequest;
 import io.justsearch.ipc.SuggestResponse;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,8 +43,64 @@ class GrpcSearchServiceFetchEndpointsTest {
   @BeforeEach
   void setUp() throws Exception {
     System.clearProperty("justsearch.config");
-    lifecycle = IndexSchema.fromCatalog(FieldCatalogDef.forChunkTesting(0)).atPath(tempDir).open();
+    lifecycle = IndexSchema.fromCatalog(catalogWithExtractionProvenance()).atPath(tempDir).open();
     service = new GrpcSearchService(lifecycle);
+  }
+
+  private static FieldCatalogDef catalogWithExtractionProvenance() {
+    FieldCatalogDef base = FieldCatalogDef.forChunkTesting(0);
+    List<FieldCatalogDef.FieldDef> fields = new ArrayList<>(base.fields());
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.EXTRACTION_STATUS,
+            "keyword",
+            true,
+            true,
+            List.of("filter", "facet"),
+            null,
+            null,
+            false));
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.CONTENT_TRUNCATED,
+            "boolean",
+            true,
+            true,
+            List.of("filter"),
+            null,
+            null,
+            false));
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.EXTRACTION_POLICY_ID,
+            "keyword",
+            true,
+            true,
+            List.of("filter"),
+            null,
+            null,
+            false));
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.EXTRACTION_PARSER_ID,
+            "keyword",
+            true,
+            true,
+            List.of("filter"),
+            null,
+            null,
+            false));
+    fields.add(
+        new FieldCatalogDef.FieldDef(
+            SchemaFields.SOURCE_SHA256,
+            "keyword",
+            true,
+            false,
+            List.of(),
+            null,
+            null,
+            false));
+    return new FieldCatalogDef(base.version() + "+extraction-provenance", fields);
   }
 
   @AfterEach
@@ -168,17 +226,23 @@ class GrpcSearchServiceFetchEndpointsTest {
       String content = "0123456789abcdefghij";
       lifecycle.indexingCoordinator().indexSingle(
           new IndexDocument(
-              Map.of(
-                  SchemaFields.DOC_ID, docId,
-                  SchemaFields.DOC_UID, docId + "#0",
-                  SchemaFields.PATH, "C:/docs/slice.txt",
-                  SchemaFields.TITLE, "Slice Test",
-                  SchemaFields.MIME, "text/plain",
-                  SchemaFields.CONTENT, content,
-                  SchemaFields.VDU_STATUS, "done",
-                  SchemaFields.VDU_PROCESSED, "true",
-                  SchemaFields.VDU_PAGE_COUNT, "3",
-                  SchemaFields.VDU_ENRICHMENT, "OCR enriched")));
+              Map.ofEntries(
+                  Map.entry(SchemaFields.DOC_ID, docId),
+                  Map.entry(SchemaFields.DOC_UID, docId + "#0"),
+                  Map.entry(SchemaFields.PATH, "C:/docs/slice.txt"),
+                  Map.entry(SchemaFields.TITLE, "Slice Test"),
+                  Map.entry(SchemaFields.MIME, "text/plain"),
+                  Map.entry(SchemaFields.CONTENT, content),
+                  Map.entry(SchemaFields.CONTENT_SHA256, "b".repeat(64)),
+                  Map.entry(SchemaFields.EXTRACTION_STATUS, "SUCCESS_PARTIAL"),
+                  Map.entry(SchemaFields.CONTENT_TRUNCATED, true),
+                  Map.entry(SchemaFields.EXTRACTION_POLICY_ID, "policy-v3"),
+                  Map.entry(SchemaFields.EXTRACTION_PARSER_ID, "tika-3.2"),
+                  Map.entry(SchemaFields.SOURCE_SHA256, "a".repeat(64)),
+                  Map.entry(SchemaFields.VDU_STATUS, "done"),
+                  Map.entry(SchemaFields.VDU_PROCESSED, "true"),
+                  Map.entry(SchemaFields.VDU_PAGE_COUNT, "3"),
+                  Map.entry(SchemaFields.VDU_ENRICHMENT, "OCR enriched"))));
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
 
@@ -201,6 +265,100 @@ class GrpcSearchServiceFetchEndpointsTest {
       assertEquals("text/plain", response.getMetadataOrDefault("mime", ""));
       assertEquals("done", response.getMetadataOrDefault("vdu_status", ""));
       assertEquals("3", response.getMetadataOrDefault("vdu_page_count", ""));
+      assertEquals("SUCCESS_PARTIAL", response.getExtractionStatus());
+      assertTrue(response.hasContentTruncated());
+      assertTrue(response.getContentTruncated());
+      assertEquals("policy-v3", response.getExtractionPolicyId());
+      assertEquals("tika-3.2", response.getExtractionParserId());
+      assertEquals("a".repeat(64), response.getSourceSha256());
+      assertEquals("b".repeat(64), response.getMetadataOrDefault("content_sha256", ""));
+    }
+
+    @Test
+    void emptyStoredContentRetainsFoundAndRevision() throws Exception {
+      String emptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "empty-slice", SchemaFields.DOC_UID, "empty-slice#0",
+          SchemaFields.CONTENT, "", SchemaFields.CONTENT_SHA256, emptyHash,
+          SchemaFields.EXTRACTION_STATUS, "SUCCESS_EMPTY")));
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+      FetchDocumentSliceResponse response = callFetchDocumentSlice(
+          FetchDocumentSliceRequest.newBuilder().setDocId("empty-slice").build());
+      assertTrue(response.getFound());
+      assertEquals("", response.getContent());
+      assertEquals(0, response.getTotalChars());
+      assertEquals("SUCCESS_EMPTY", response.getExtractionStatus());
+      assertEquals(emptyHash, response.getMetadataOrDefault("content_sha256", ""));
+    }
+
+    @Test
+    @DisplayName("pages UTF-16 content without splitting Unicode scalar values")
+    void pagesWithoutSplittingSurrogatePairs() throws Exception {
+      String docId = "doc-unicode-pages";
+      String content = "A\uD83D\uDE00B\uD834\uDD1EC";
+      lifecycle.indexingCoordinator().indexSingle(
+          new IndexDocument(
+              Map.of(
+                  SchemaFields.DOC_ID, docId,
+                  SchemaFields.DOC_UID, docId + "#0",
+                  SchemaFields.PATH, "C:/docs/unicode.txt",
+                  SchemaFields.CONTENT, content)));
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      StringBuilder reconstructed = new StringBuilder();
+      int offset = 0;
+      List<Integer> pageLengths = new ArrayList<>();
+      do {
+        FetchDocumentSliceResponse page =
+            callFetchDocumentSlice(
+                FetchDocumentSliceRequest.newBuilder()
+                    .setDocId(docId)
+                    .setOffsetChars(offset)
+                    .setMaxChars(1)
+                    .build());
+        assertTrue(page.getNextOffsetChars() > offset, "Every non-final page must make progress");
+        reconstructed.append(page.getContent());
+        pageLengths.add(page.getContent().length());
+        offset = page.getNextOffsetChars();
+        if (!page.getTruncated()) {
+          break;
+        }
+      } while (true);
+
+      assertEquals(content, reconstructed.toString());
+      assertEquals(List.of(1, 2, 1, 2, 1), pageLengths);
+      assertEquals(content.length(), offset);
+    }
+
+    @Test
+    @DisplayName("rejects an offset inside a Unicode surrogate pair")
+    void rejectsOffsetInsideSurrogatePair() throws Exception {
+      String docId = "doc-unicode-offset";
+      lifecycle.indexingCoordinator().indexSingle(
+          new IndexDocument(
+              Map.of(
+                  SchemaFields.DOC_ID, docId,
+                  SchemaFields.DOC_UID, docId + "#0",
+                  SchemaFields.PATH, "C:/docs/unicode-offset.txt",
+                  SchemaFields.CONTENT, "A\uD83D\uDE00B")));
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      AtomicReference<FetchDocumentSliceResponse> responseRef = new AtomicReference<>();
+      AtomicReference<Throwable> errorRef = new AtomicReference<>();
+      service.fetchDocumentSlice(
+          FetchDocumentSliceRequest.newBuilder()
+              .setDocId(docId)
+              .setOffsetChars(2)
+              .setMaxChars(1)
+              .build(),
+          observer(responseRef, errorRef));
+
+      Status status = Status.fromThrowable(errorRef.get());
+      assertEquals(Status.Code.INVALID_ARGUMENT, status.getCode());
+      assertEquals("offset_chars splits a Unicode surrogate pair", status.getDescription());
     }
 
     @Test

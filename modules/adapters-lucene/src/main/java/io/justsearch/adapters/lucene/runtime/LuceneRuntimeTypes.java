@@ -232,7 +232,7 @@ public final class LuceneRuntimeTypes {
 
   /** Result of paginated corpus iteration (all doc IDs in the index). */
   public record ListAllDocumentIdsResult(
-      List<String> docIds, long totalCount, long tookMs) {}
+      List<String> docIds, long totalCount, long tookMs, long readerVersion) {}
 
   /**
    * Low-level term statistics for a set of query terms, used to compute QPP signals.

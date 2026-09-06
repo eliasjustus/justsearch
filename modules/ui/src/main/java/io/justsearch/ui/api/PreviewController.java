@@ -11,13 +11,16 @@ import io.justsearch.app.services.observability.HttpStatusClass;
 import io.justsearch.telemetry.Telemetry;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -27,14 +30,20 @@ import tools.jackson.databind.ObjectMapper;
  * which is backed by the Worker process in production.
  *
  * <p>GET /api/preview?docId=...&offsetChars=...&maxChars=...
+ *
+ * <p>POST /api/debug/eval/document-ids — token-protected, bounded parent-ID enumeration for
+ * evaluation snapshots.
  */
 public final class PreviewController {
   private static final Logger log = LoggerFactory.getLogger(PreviewController.class);
 
   private static final int DEFAULT_MAX_CHARS = 20_000;
   private static final int MAX_MAX_CHARS = 200_000;
+  private static final int MAX_EVAL_DOCUMENTS = 50_000;
+  private static final Set<String> DOCUMENT_ID_REQUEST_FIELDS = Set.of("offset", "limit");
   private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(5);
   private static final ObjectMapper MAPPER = new ObjectMapper();
+  public static final String DOCUMENT_IDS_PATH = "/api/debug/eval/document-ids";
   // Tempdoc 526 F2: same root cause as F1 — the 502 refactor captured DocumentService
   // by value at controller-ctor time, so the sentinel from b.appFacade.documents() pinned
   // for the process lifetime when the worker came up async. Capture by Supplier instead;
@@ -91,6 +100,118 @@ public final class PreviewController {
     return documentServiceSupplier.get();
   }
 
+  /**
+   * Enumerates a bounded page of parent document IDs through the Worker-owned index.
+   *
+   * <p>The route is deliberately a POST: the production security filter therefore requires the
+   * per-boot session token even though enumeration itself is read-only. A request cannot page past
+   * the 50,000-document evaluation cohort ceiling.
+   */
+  public void handleListDocumentIds(Context ctx) {
+    try {
+      JsonNode body;
+      try {
+        body = MAPPER.readTree(ctx.body());
+      } catch (Exception malformedJson) {
+        rejectDocumentIdRequest(ctx, "Request body must be valid JSON");
+        return;
+      }
+      if (body == null || !body.isObject()) {
+        rejectDocumentIdRequest(ctx, "Request body must be a JSON object");
+        return;
+      }
+      var fieldNames = new java.util.HashSet<String>();
+      fieldNames.addAll(body.propertyNames());
+      if (!fieldNames.equals(DOCUMENT_ID_REQUEST_FIELDS)) {
+        rejectDocumentIdRequest(ctx, "Request body must contain only offset and limit");
+        return;
+      }
+
+      JsonNode offsetNode = body.get("offset");
+      JsonNode limitNode = body.get("limit");
+      if (!isIntNode(offsetNode) || !isIntNode(limitNode)) {
+        rejectDocumentIdRequest(ctx, "offset and limit must be integers");
+        return;
+      }
+
+      long offsetLong = offsetNode.longValue();
+      long limitLong = limitNode.longValue();
+      if (offsetLong != 0) {
+        rejectDocumentIdRequest(
+            ctx, "offset must be zero because the evaluation export is a one-shot snapshot");
+        return;
+      }
+      if (limitLong <= 0 || limitLong > MAX_EVAL_DOCUMENTS) {
+        rejectDocumentIdRequest(
+            ctx, "limit must be between 1 and the 50000-document evaluation ceiling");
+        return;
+      }
+
+      DocumentService.DocumentIdPage page =
+          documentService()
+              .listAllDocumentIds((int) offsetLong, (int) limitLong)
+              .toCompletableFuture()
+              .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      if (page == null) {
+        throw new DocumentService.UnavailableException("Worker returned no document ID page");
+      }
+      if (page.docIds().size() > limitLong) {
+        throw new IllegalStateException("Worker returned more document IDs than requested");
+      }
+
+      Map<String, Object> response = new LinkedHashMap<>();
+      response.put("docIds", page.docIds());
+      response.put("totalCount", page.totalCount());
+      response.put("tookMs", page.tookMs());
+      ctx.json(response);
+    } catch (TimeoutException e) {
+      ctx.status(504)
+          .json(
+              ApiErrorHandler.toResponse(
+                  ApiErrorCode.TIMEOUT,
+                  "Document ID enumeration timed out",
+                  telemetry,
+                  ApiErrorHandler.routeOf(ctx)));
+    } catch (ExecutionException e) {
+      handleDocumentIdFailure(ctx, e.getCause() == null ? e : e.getCause());
+    } catch (DocumentService.UnavailableException e) {
+      handleDocumentIdFailure(ctx, e);
+    } catch (Exception e) {
+      handleDocumentIdFailure(ctx, e);
+    }
+  }
+
+  private static boolean isIntNode(JsonNode node) {
+    return node != null && node.isIntegralNumber() && node.canConvertToInt();
+  }
+
+  private void rejectDocumentIdRequest(Context ctx, String message) {
+    ctx.status(400)
+        .json(
+            ApiErrorHandler.toResponse(
+                ApiErrorCode.INVALID_REQUEST,
+                message,
+                telemetry,
+                ApiErrorHandler.routeOf(ctx)));
+  }
+
+  private void handleDocumentIdFailure(Context ctx, Throwable failure) {
+    Throwable cause = failure == null ? new IllegalStateException("unknown failure") : failure;
+    boolean unavailable =
+        cause instanceof DocumentService.UnavailableException
+            || cause instanceof UnsupportedOperationException;
+    ApiErrorCode code = unavailable ? ApiErrorCode.INDEX_UNAVAILABLE : ApiErrorCode.INTERNAL_ERROR;
+    int status = unavailable ? 503 : 500;
+    String detail =
+        cause.getMessage() == null || cause.getMessage().isBlank()
+            ? "Document ID enumeration failed"
+            : "Document ID enumeration failed: "
+                + ApiErrorHandler.sanitizeMessage(cause.getMessage());
+    log.error("Document ID enumeration failed", cause);
+    ctx.status(status)
+        .json(ApiErrorHandler.toResponse(code, detail, telemetry, ApiErrorHandler.routeOf(ctx)));
+  }
+
   public void handlePreview(Context ctx) {
     try {
       long startNs = System.nanoTime();
@@ -137,7 +258,7 @@ public final class PreviewController {
 
       if (slice == null || !slice.found()) {
         String errorMsg = slice == null ? "not_found" : (slice.error() == null ? "not_found" : slice.error());
-        Map<String, Object> resp = new java.util.LinkedHashMap<>(ApiErrorHandler.toResponse(ApiErrorCode.NOT_FOUND, errorMsg, telemetry, ApiErrorHandler.routeOf(ctx)));
+        Map<String, Object> resp = new LinkedHashMap<>(ApiErrorHandler.toResponse(ApiErrorCode.NOT_FOUND, errorMsg, telemetry, ApiErrorHandler.routeOf(ctx)));
         resp.put("docId", docId);
         resp.put("requestedDocId", rawDocId);
         resp.put("normalizedFromChunk", normalizedFromChunk);
@@ -169,12 +290,19 @@ public final class PreviewController {
       response.put("offsetChars", offsetChars);
       response.put("maxChars", maxChars);
       response.put("nextOffsetChars", slice.nextOffsetChars());
+      response.put("totalChars", slice.totalChars());
       response.put("truncated", slice.truncated());
       response.put("content", slice.content());
       response.put("mime", mime instanceof String ? mime : null);
       response.put("title", title instanceof String ? title : null);
       response.put("path", path instanceof String ? path : null);
       response.put("source", source instanceof String ? source : null);
+      response.put("extractionStatus", slice.extractionStatus());
+      response.put("contentTruncated", slice.contentTruncated());
+      response.put("extractionPolicyId", slice.extractionPolicyId());
+      response.put("extractionParserId", slice.extractionParserId());
+      response.put("sourceSha256", slice.sourceSha256());
+      response.put("contentSha256", metadata.get("content_sha256"));
 
       // Add textProvenance and VDU status fields
       response.put("textProvenance", textProvenance);

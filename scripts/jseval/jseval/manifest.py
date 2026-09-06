@@ -233,6 +233,28 @@ def compute_manifest(
         state_snapshots.get("/api/debug/commit-metadata") or {},
     )
 
+    raw_corpus_identity = (corpus_identity or {}).get("kind") == "raw-files"
+    resolved_corpus_identity = {
+        "profile_id": os.environ.get("JUSTSEARCH_CORPUS_PROFILE_ID")
+        or (corpus_identity or {}).get("profile_id"),
+        # Raw callers have already checked the effective spawn override for exact
+        # equality. Do not re-read a lower-precedence host value here.
+        "signature": (
+            (corpus_identity or {}).get("signature")
+            if raw_corpus_identity
+            else os.environ.get("JUSTSEARCH_CORPUS_SIGNATURE")
+            or (corpus_identity or {}).get("signature")
+        ),
+    }
+    if raw_corpus_identity:
+        resolved_corpus_identity.update({
+            key: corpus_identity[key]
+            for key in (
+                "kind", "schema", "file_count", "total_bytes", "manifest_pointer",
+                "admission_policy",
+            )
+        })
+
     manifest: dict = {
         # Volatile — identifies this specific run.
         "run_id": str(uuid.uuid4()),
@@ -266,12 +288,7 @@ def compute_manifest(
         # evidence boundary (which binds manifest.corpus_identity.signature to
         # the certified corpus) correctly rejected all backend-gate evidence
         # (2026-07-16, 707 certification run).
-        "corpus_identity": {
-            "profile_id": os.environ.get("JUSTSEARCH_CORPUS_PROFILE_ID")
-            or (corpus_identity or {}).get("profile_id"),
-            "signature": os.environ.get("JUSTSEARCH_CORPUS_SIGNATURE")
-            or (corpus_identity or {}).get("signature"),
-        },
+        "corpus_identity": resolved_corpus_identity,
 
         # Model fingerprints — already captured from /api/status by
         # run._snapshot_models() and passed in here. Identity-stable.

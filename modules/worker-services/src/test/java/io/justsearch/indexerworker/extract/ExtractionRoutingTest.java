@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.indexerworker.fixtures.FormatCapabilityFixtureFactory;
+import io.justsearch.indexerworker.fixtures.FormatCapabilityFixtureFactory.FormatId;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,12 +41,26 @@ final class ExtractionRoutingTest {
 
     router.extract(copyFixture("/fixtures/pdf/pdf-text-layer.pdf", "doc.pdf"));
     router.extract(copyFixture("/fixtures/office/office-marker.docx", "doc.docx"));
-    router.extract(copyFixture("/fixtures/office/office-marker.xlsx", "sheet.xlsx"));
     router.extract(copyFixture("/fixtures/office/office-marker.pptx", "deck.pptx"));
-    router.extract(zip("bundle.zip"));
+    for (FormatId id : FormatId.values()) {
+      router.extract(FormatCapabilityFixtureFactory.write(tempDir, id));
+    }
 
     assertEquals(
-        List.of("doc.pdf", "doc.docx", "sheet.xlsx", "deck.pptx", "bundle.zip"),
+        List.of(
+            "doc.pdf",
+            "doc.docx",
+            "deck.pptx",
+            "format-capability.eml",
+            "format-capability.mbox",
+            "format-capability.rtf",
+            "format-capability.epub",
+            "format-capability.odt",
+            "format-capability.xlsx",
+            "format-capability-merged.xlsx",
+            "format-capability-typed.xlsx",
+            "format-capability-notes.pptx",
+            "format-capability.zip"),
         outOfProcess.seen,
         "wedge-prone families must be parsed out of process");
 
@@ -58,7 +74,7 @@ final class ExtractionRoutingTest {
         List.of("notes.txt", "readme.md", "App.java", "rows.csv", "data.json"),
         inProcess.seen,
         "decoder-only families must stay in process");
-    assertEquals(5, outOfProcess.seen.size(), "no text file may have crossed the process boundary");
+    assertEquals(13, outOfProcess.seen.size(), "no text file may have crossed the process boundary");
   }
 
   @Test
@@ -143,17 +159,6 @@ final class ExtractionRoutingTest {
   private Path write(String name, String content) throws IOException {
     Path target = tempDir.resolve(name);
     Files.writeString(target, content, StandardCharsets.UTF_8);
-    return target;
-  }
-
-  private Path zip(String name) throws IOException {
-    Path target = tempDir.resolve(name);
-    try (java.util.zip.ZipOutputStream out =
-        new java.util.zip.ZipOutputStream(Files.newOutputStream(target))) {
-      out.putNextEntry(new java.util.zip.ZipEntry("inner.txt"));
-      out.write("inner".getBytes(StandardCharsets.UTF_8));
-      out.closeEntry();
-    }
     return target;
   }
 

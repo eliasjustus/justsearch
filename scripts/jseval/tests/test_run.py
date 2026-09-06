@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from jseval.run import (
     execute_run,
 )
 from jseval.types import AnnProofResult, ComparabilityResult, QueryRecord, ReadinessResult
+from jseval import raw_corpus_manifest as rcm
 
 
 @pytest.fixture(autouse=True)
@@ -95,6 +97,31 @@ _MOCK_STACK = [
     "jseval.run.readiness",
     "jseval.run.corpora",
 ]
+
+
+def test_raw_ingest_only_summary_and_manifest_share_strict_identity(tmp_path, monkeypatch):
+    base = tmp_path / "datasets"
+    root = base / "mixed" / "raw"
+    corpus = root / "corpus-dir"
+    corpus.mkdir(parents=True)
+    (corpus / "one.pdf").write_bytes(b"one")
+    (root / "metadata.json").write_text(json.dumps({"raw_files": True}), encoding="utf-8")
+    context = rcm.resolve_raw_corpus_context("mixed/raw", base_dir=base)
+    monkeypatch.setenv("JUSTSEARCH_CORPUS_SIGNATURE", "lower-precedence-host-value")
+
+    with patch("jseval.run._snapshot_models", return_value={}), \
+            patch("jseval.run._capture_env_fingerprint", return_value={}), \
+            patch("jseval.manifest.capture_state_snapshots", return_value={}):
+        summary = execute_run(
+            "mixed/raw", "http://localhost:33221", [], base_dir=base,
+            env_overrides={"JUSTSEARCH_CORPUS_SIGNATURE": context.identity.digest},
+        )
+
+    expected = context.to_corpus_identity()
+    assert summary["doc_count"] == context.identity.file_count
+    assert summary["corpus_identity"] == expected
+    assert summary["manifest"]["doc_count"] == context.identity.file_count
+    assert summary["manifest"]["corpus_identity"] == expected
 
 
 @patch(*_MOCK_STACK[:1])

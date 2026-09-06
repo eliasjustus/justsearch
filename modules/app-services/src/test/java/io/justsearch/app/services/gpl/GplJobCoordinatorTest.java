@@ -155,6 +155,34 @@ class GplJobCoordinatorTest {
   // ========== Triple store integration ==========
 
   @Test
+  @DisplayName("multi-page corpus carries the first page snapshot token")
+  void multiPageCorpusCarriesSnapshotToken() throws Exception {
+    var firstPage = ListAllDocumentIdsResponse.newBuilder()
+        .addAllDocIds(
+            java.util.stream.IntStream.range(0, 50)
+                .mapToObj(i -> "doc-" + i)
+                .toList())
+        .setTotalCount(51)
+        .setSnapshotToken("snapshot-1")
+        .build();
+    var secondPage = ListAllDocumentIdsResponse.newBuilder()
+        .addDocIds("doc-50")
+        .setTotalCount(51)
+        .setSnapshotToken("snapshot-1")
+        .build();
+
+    when(knowledgeClient.listAllDocumentIds(0, 50)).thenReturn(firstPage);
+    when(knowledgeClient.listAllDocumentIds(50, 50, "snapshot-1")).thenReturn(secondPage);
+    when(knowledgeClient.fetchDocuments(any())).thenReturn(FetchDocumentsResponse.getDefaultInstance());
+
+    assertTrue(coordinator.runAsync());
+    assertTrue(coordinator.awaitCompletion(10, TimeUnit.SECONDS));
+
+    assertEquals(GplJobStatus.Status.COMPLETED, coordinator.getStatus().status());
+    verify(knowledgeClient).listAllDocumentIds(50, 50, "snapshot-1");
+  }
+
+  @Test
   @DisplayName("run() writes one triple per query per document")
   void runWritesTriplesForEachQueryPerDocument() throws Exception {
     // Three documents, two queries each → 6 triples

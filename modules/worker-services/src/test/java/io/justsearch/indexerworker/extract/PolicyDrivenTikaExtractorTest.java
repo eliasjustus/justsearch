@@ -51,6 +51,90 @@ final class PolicyDrivenTikaExtractorTest {
   }
 
   @Test
+  @Timeout(10)
+  void tableAnnotationExpansionIsClampedEvenWhenSaxInputStayedBelowThePolicyLimit()
+      throws Exception {
+    Path file = tempDir.resolve("expanding-table.html");
+    Files.writeString(
+        file,
+        "<html><body><table><tr><th>A</th><th>B</th></tr>"
+            + "<tr><td>R1</td><td>V</td></tr>"
+            + "<tr><td>R2</td><td>V</td></tr>"
+            + "<tr><td>R3</td><td>V</td></tr>"
+            + "<tr><td>R4</td><td>V</td></tr>"
+            + "<tr><td>R5</td><td>V</td></tr>"
+            + "<tr><td>R6</td><td>V</td></tr>"
+            + "<tr><td>R7</td><td>V</td></tr>"
+            + "<tr><td>R8</td><td>V</td></tr>"
+            + "</table></body></html>");
+    int maxChars = 64;
+    StructuredContentExtractor.StructuredExtractionResult expanded =
+        new StructuredContentExtractor(maxChars).extractWithStatus(file);
+    assertFalse(expanded.truncated(), "source SAX characters stay below the policy cap");
+    assertTrue(
+        expanded.result().content().length() > maxChars,
+        "triplet annotation must expand the source cells past the cap");
+    TikaExtractionPolicy policy =
+        new TikaExtractionPolicy(
+            "table-expansion-policy",
+            maxChars,
+            4096,
+            4096,
+            128,
+            128,
+            4096,
+            0,
+            0,
+            100.0d,
+            true,
+            Set.of(),
+            Set.of());
+
+    ExtractionArtifact artifact = new PolicyDrivenTikaExtractor(policy).extractArtifact(file);
+
+    assertEquals(maxChars, artifact.result().content().length());
+    assertTrue(artifact.truncated());
+    assertEquals(ExtractionStatus.SUCCESS_PARTIAL, artifact.status());
+    assertEquals(artifact, artifact.validateContentBoundsOnly(maxChars));
+    assertTrue(
+        artifact.visualExtractionEvidenceJson().contains("\"textCharCount\":" + maxChars),
+        artifact.visualExtractionEvidenceJson());
+    assertTrue(
+        artifact.visualExtractionEvidenceJson().contains("\"contentTruncated\":true"),
+        artifact.visualExtractionEvidenceJson());
+  }
+
+  @Test
+  void finalPolicyClampDoesNotSplitUtf16SurrogatePairs() {
+    TikaExtractionPolicy policy =
+        new TikaExtractionPolicy(
+            "surrogate-policy",
+            5,
+            1024,
+            1024,
+            128,
+            128,
+            4096,
+            0,
+            0,
+            100.0d,
+            true,
+            Set.of(),
+            Set.of());
+
+    ExtractionArtifact artifact =
+        ExtractionArtifact.full(
+            new ContentExtractor.ExtractionResult("aaaa😀tail", null, "text/plain"),
+            policy,
+            "surrogate-test",
+            false);
+
+    assertEquals("aaaa", artifact.result().content());
+    assertTrue(artifact.truncated());
+    assertEquals(ExtractionStatus.SUCCESS_PARTIAL, artifact.status());
+  }
+
+  @Test
   void policyRejectsDisabledXmlHardening() {
     assertThrows(
         IllegalArgumentException.class,

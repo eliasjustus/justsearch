@@ -8,7 +8,16 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ce_coverage, provenance
+from . import ce_coverage, duplicate_prevalence, provenance
+from .result_identity import (
+    ContentExactResultIdentityInputs,
+    ResultIdentityError,
+    SIDECAR_FILENAME,
+    build_content_exact_result_identity_sidecar,
+    build_result_identity_anchor,
+    build_result_identity_sidecar,
+    verify_result_identity_anchor,
+)
 from .retriever import resolve_doc_id
 from .trec import format_trec_line
 
@@ -24,6 +33,8 @@ _TELEMETRY_FILES_TO_MIRROR = (
     "metrics-worker.ndjson",
 )
 
+_DUPLICATE_PREVALENCE_FILENAME = "duplicate_prevalence.v1.json"
+
 
 def write_run(
     summary: dict,
@@ -32,6 +43,7 @@ def write_run(
     output_dir: Path,
     query_records=None,
     data_dir: Path | None = None,
+    content_exact_identity: ContentExactResultIdentityInputs | None = None,
 ) -> Path:
     """Write all artifacts for a run. Returns the run directory path.
 
@@ -43,6 +55,65 @@ def write_run(
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     dataset_slug = summary["dataset"].replace("/", "_")
     run_dir = output_dir / f"{ts}_{dataset_slug}"
+
+    # Validate the raw-to-scored identity join before creating any run
+    # artifacts. A malformed raw response must not leave behind a directory
+    # that looks like a usable but merely older-format run.
+    corpus_signature = (summary.get("corpus_identity") or {}).get("signature")
+    if not (
+        isinstance(corpus_signature, str)
+        and len(corpus_signature) == 64
+        and all(char in "0123456789abcdef" for char in corpus_signature)
+    ):
+        # Historical/custom runs can lack a strict SHA-256 signature. Identity
+        # capture remains useful, but cluster decoration is prohibited until a
+        # strict corpus binding exists.
+        corpus_signature = None
+    analysis_artifact = None
+    if content_exact_identity is None:
+        result_identity_sidecar = build_result_identity_sidecar(
+            mode_results,
+            corpus_signature=corpus_signature,
+        )
+    else:
+        if not isinstance(content_exact_identity, ContentExactResultIdentityInputs):
+            raise ResultIdentityError(
+                "content_exact_identity must be ContentExactResultIdentityInputs"
+            )
+        if data_dir is not None:
+            raise ResultIdentityError(
+                "content-exact runs forbid telemetry mirroring because Worker spans may contain source paths"
+            )
+        analysis_artifact = content_exact_identity.analysis_artifact
+        duplicate_prevalence.validate_artifact_hash(analysis_artifact)
+        expected_signature = content_exact_identity.corpus_identity.get("signature")
+        _require_content_exact_signature_chain(summary, expected_signature)
+        result_identity_sidecar = build_content_exact_result_identity_sidecar(
+            mode_results,
+            observations=content_exact_identity.observations,
+            aliases_by_opaque_id=content_exact_identity.aliases_by_opaque_id,
+            result_alias_commitment_key=(
+                content_exact_identity.result_alias_commitment_key
+            ),
+            result_mapping_signing_key=(
+                content_exact_identity.result_mapping_signing_key
+            ),
+            corpus_identity=content_exact_identity.corpus_identity,
+            extraction_identity=content_exact_identity.extraction_identity,
+            analysis_artifact=analysis_artifact,
+            config=content_exact_identity.config,
+        )
+    summary = dict(summary)
+    summary["result_identity_anchor"] = build_result_identity_anchor(
+        result_identity_sidecar,
+        analysis_artifact,
+    )
+    verify_result_identity_anchor(
+        result_identity_sidecar,
+        analysis_artifact,
+        summary["result_identity_anchor"],
+    )
+
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # summary.json
@@ -74,13 +145,52 @@ def write_run(
             run_name=f"jseval_{mode}",
         )
 
+    # Tempdoc 897 P5: preserve collision-safe delivered-hit identity before the
+    # legacy BEIR resolver's leaf/stem normalization aliases same-name paths or
+    # cross-format copies. The sidecar contains only random run-local ids and
+    # the already-public BEIR ids; raw paths/ids never leave this call.
+    _write_json(
+        run_dir / SIDECAR_FILENAME,
+        result_identity_sidecar,
+    )
+    if analysis_artifact is not None:
+        _write_json(run_dir / _DUPLICATE_PREVALENCE_FILENAME, analysis_artifact)
+
     # Mirror telemetry NDJSON into run_dir (Phase 3 LR4-*).
     copied = _mirror_telemetry(data_dir, run_dir) if data_dir is not None else []
     log.info(
         "Wrote %d artifacts to %s (telemetry mirrored: %s)",
-        1 + 2 * len(mode_results), run_dir, copied or "none",
+        2 + 2 * len(mode_results), run_dir, copied or "none",
     )
     return run_dir
+
+
+def _require_content_exact_signature_chain(summary: dict, expected: object) -> None:
+    """Fail before mkdir unless every persisted corpus binding is keyed alike."""
+
+    if not (
+        isinstance(expected, str)
+        and len(expected) == 64
+        and all(char in "0123456789abcdef" for char in expected)
+    ):
+        raise ResultIdentityError(
+            "content-exact inputs require a lowercase hex corpus signature"
+        )
+    bindings = {
+        "summary": (summary.get("corpus_identity") or {}).get("signature"),
+        "manifest": ((summary.get("manifest") or {}).get("corpus_identity") or {}).get(
+            "signature"
+        ),
+    }
+    ingest = summary.get("ingest")
+    if isinstance(ingest, dict) and "corpus_identity" in ingest:
+        bindings["ingest"] = (ingest.get("corpus_identity") or {}).get("signature")
+    mismatches = sorted(name for name, value in bindings.items() if value != expected)
+    if mismatches:
+        raise ResultIdentityError(
+            "content-exact corpus signature mismatch in persisted bindings: "
+            + ", ".join(mismatches)
+        )
 
 
 def _mirror_telemetry(data_dir: Path, run_dir: Path) -> list[str]:

@@ -237,6 +237,18 @@ class FolderBrowseEngineTest {
       runtime.commitOps().maybeRefreshBlocking();
     }
 
+    private void assertReaderStillContainsDeletedDocuments() throws IOException {
+      var manager = runtime.session().snapshot.searcherManager();
+      var searcher = manager.acquire();
+      try {
+        assertTrue(
+            searcher.getIndexReader().maxDoc() > searcher.getIndexReader().numDocs(),
+            "regression setup must retain a deleted Lucene document");
+      } finally {
+        manager.release(searcher);
+      }
+    }
+
     private String sep() {
       return String.valueOf(File.separatorChar);
     }
@@ -349,6 +361,90 @@ class FolderBrowseEngineTest {
 
       assertEquals(2, result.files().size());
       assertEquals(3, result.totalCount());
+    }
+
+    @Test
+    @DisplayName("folder browsing and ID enumeration exclude deleted-but-unmerged parents")
+    void browseAndIdEnumerationExcludeDeletedParents() throws IOException {
+      String root = "d:" + sep() + "docs" + sep();
+      String deletedFolder = root + "deleted" + sep();
+      String deletedPath = deletedFolder + "gone.txt";
+      runtime
+          .session()
+          .snapshot
+          .writer()
+          .getConfig()
+          .setMergePolicy(org.apache.lucene.index.NoMergePolicy.INSTANCE);
+      String survivorPath = "d:" + sep() + "outside" + sep() + "survivor.txt";
+      indexAndRefresh(
+          doc(deletedPath, deletedPath, 100L, 1L),
+          doc(survivorPath, survivorPath, 100L, 1L));
+
+      runtime.indexingCoordinator().deleteById(deletedPath);
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+      assertReaderStillContainsDeletedDocuments();
+
+      FolderBrowseResult folders = runtime.folderBrowseEngine().enumerateFolders(root, 0);
+      FolderFilesResult files =
+          runtime.folderBrowseEngine().listFolderFiles(deletedFolder, 0, Set.of());
+      var ids = runtime.folderBrowseEngine().listAllDocumentIds(0, 10);
+
+      assertEquals(0, folders.folders().size());
+      assertEquals(0, files.totalCount());
+      assertEquals(0, files.files().size());
+      assertEquals(1, ids.totalCount());
+      assertEquals(List.of(survivorPath), ids.docIds());
+    }
+
+    @Test
+    @DisplayName("document ID enumeration has no hidden 50000-document scan cap")
+    void documentIdEnumerationExceedsFormerScanCap() {
+      int total = FolderBrowseEngine.DEFAULT_MAX_DOCS_SCANNED + 1;
+      int batchSize = 1_000;
+      for (int start = 0; start < total; start += batchSize) {
+        List<IndexDocument> batch = new java.util.ArrayList<>(batchSize);
+        for (int i = start; i < Math.min(start + batchSize, total); i++) {
+          String path = "d:" + sep() + "bulk" + sep() + "doc-" + i + ".txt";
+          batch.add(doc(path, path, 1L, i));
+        }
+        runtime.indexingCoordinator().indexBatch(batch);
+      }
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      var result =
+          runtime
+              .folderBrowseEngine()
+              .listAllDocumentIds(FolderBrowseEngine.DEFAULT_MAX_DOCS_SCANNED, 10);
+
+      assertEquals(total, result.totalCount());
+      assertEquals(1, result.docIds().size());
+    }
+
+    @Test
+    @DisplayName("document ID enumeration fails closed when a live parent lacks doc_id")
+    void documentIdEnumerationRejectsMissingDocumentId() throws IOException {
+      runtime
+          .session()
+          .snapshot
+          .writer()
+          .addDocument(
+              runtime
+                  .session()
+                  .fieldMapper
+                  .toDocument(
+                      Map.of(
+                          SchemaFields.DOC_UID, "missing-id#0",
+                          SchemaFields.PATH, "d:" + sep() + "broken.txt",
+                          SchemaFields.CONTENT, "broken"),
+                      null));
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      assertThrows(
+          IllegalStateException.class,
+          () -> runtime.folderBrowseEngine().listAllDocumentIds(0, 10));
     }
 
     @Test

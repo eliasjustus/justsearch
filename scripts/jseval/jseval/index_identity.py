@@ -575,10 +575,14 @@ class CorpusAxis:
     watched_dir: Path | None
     signature_root: Path | None
     reason: str | None = None
+    raw_context: object | None = None
 
 
 def resolve_corpus_axis(
-    dataset_name: str | None, explicit_dir: Path | None
+    dataset_name: str | None,
+    explicit_dir: Path | None,
+    raw_context=None,
+    env_overrides: Mapping[str, str] | None = None,
 ) -> CorpusAxis:
     """Resolve the corpus axis exactly as ``ingest.prepare_corpus`` derives its
     watched root (ingest.py:181-209), so a cached entry's ``corpus_dir_path``
@@ -602,6 +606,17 @@ def resolve_corpus_axis(
       MUST already hold corpus.jsonl, else nothing to sign -> unresolvable).
     * anything else (BEIR / unknown / ``None`` name) -> unresolvable.
     """
+    if raw_context is not None:
+        from .raw_corpus_manifest import validate_raw_corpus_context
+
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset_name,
+            explicit_dir=explicit_dir,
+        )
+        return CorpusAxis(raw_context.root, None, None, raw_context)
+
     if explicit_dir is not None:
         explicit_dir = Path(explicit_dir)
         if (explicit_dir / "corpus.jsonl").is_file():
@@ -661,6 +676,7 @@ def compute_selector(
     corpus_dir: Path | None,
     spawn_env: Mapping[str, str],
     dataset_name: str | None = None,
+    raw_context=None,
 ) -> SelectorKey:
     """Static candidate selector (751 sec M.2 -- heuristic, never authoritative).
 
@@ -711,17 +727,29 @@ def compute_selector(
         components["runtime_config"] = _runtime_config(spawn_env)
 
         if dataset_name is not None or corpus_dir is not None:
-            axis = resolve_corpus_axis(dataset_name, corpus_dir)
+            axis = resolve_corpus_axis(
+                dataset_name, corpus_dir, raw_context, spawn_env,
+            )
             if axis.reason is not None:
                 return SelectorKey(None, components, axis.reason)
-            sig = corpus_signature(axis.signature_root)
-            if sig is None:
-                return SelectorKey(
-                    None, components,
-                    "corpus_signature: no corpus files under "
-                    + str(axis.signature_root),
+            if axis.raw_context is not None:
+                raw_identity = axis.raw_context.identity
+                components["corpus_signature"] = raw_identity.digest
+                components["corpus_kind"] = "raw-files"
+                components["corpus_manifest_schema"] = raw_identity.manifest["schema"]
+                components["corpus_file_count"] = raw_identity.file_count
+                components["corpus_admission_policy"] = dict(
+                    axis.raw_context.admission_policy
                 )
-            components["corpus_signature"] = sig
+            else:
+                sig = corpus_signature(axis.signature_root)
+                if sig is None:
+                    return SelectorKey(
+                        None, components,
+                        "corpus_signature: no corpus files under "
+                        + str(axis.signature_root),
+                    )
+                components["corpus_signature"] = sig
             # Review fix F-A (refute-first audit claim 10): the engine's doc
             # identity is the absolute file path (IndexingDocumentOps.java:137),
             # so a byte-identical corpus at a DIFFERENT absolute path (another

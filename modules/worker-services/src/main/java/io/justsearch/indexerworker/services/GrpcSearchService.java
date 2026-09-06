@@ -53,6 +53,9 @@ import io.justsearch.ort.OrtCudaStatus;
 import io.justsearch.reranker.RerankerConfig;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,6 +93,7 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
   private final SuggestOps suggestOps;
   private final DocumentFieldOps documentFieldOps;
   private final FolderBrowseEngine folderBrowseEngine;
+  private final String documentIdSnapshotEpoch = UUID.randomUUID().toString();
   private volatile EmbeddingCompatibilityController embeddingCompatController;
   private final OperationalMetrics metrics = OperationalMetrics.getInstance();
 
@@ -680,7 +684,19 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       FetchDocumentSliceResponse.Builder response =
           FetchDocumentSliceResponse.newBuilder().setDocId(docId);
 
-      String content = documentFieldOps.getDocumentContent(normalizedDocId);
+      // Content and provenance must describe one revision, including during VDU replacement.
+      Map<String, String> sliceFields = documentFieldOps.getDocumentFieldsBatch(
+          List.of(normalizedDocId),
+          Set.of(
+              SchemaFields.CONTENT, SchemaFields.CONTENT_SHA256, SchemaFields.TITLE,
+              SchemaFields.PATH, SchemaFields.MIME, SchemaFields.EXTRACTION_METHOD,
+              SchemaFields.EXTRACTION_REASON_CODE, SchemaFields.EXTRACTION_STATUS,
+              SchemaFields.CONTENT_TRUNCATED, SchemaFields.EXTRACTION_POLICY_ID,
+              SchemaFields.EXTRACTION_PARSER_ID, SchemaFields.SOURCE_SHA256,
+              SchemaFields.VDU_STATUS, SchemaFields.VDU_PROCESSED, SchemaFields.VDU_PAGE_COUNT,
+              SchemaFields.VDU_ENRICHMENT, SchemaFields.VISUAL_EXTRACTION_EVIDENCE))
+          .getOrDefault(normalizedDocId, Map.of());
+      String content = sliceFields.get(SchemaFields.CONTENT);
       if (content == null) {
         response.setFound(false).setError("Document not found in index");
         responseObserver.onNext(response.build());
@@ -690,7 +706,23 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
 
       int totalLen = content.length();
       int start = Math.min(offsetChars, totalLen);
-      int end = Math.min(start + maxChars, totalLen);
+      if (start > 0
+          && start < totalLen
+          && Character.isHighSurrogate(content.charAt(start - 1))
+          && Character.isLowSurrogate(content.charAt(start))) {
+        responseObserver.onError(
+            io.grpc.Status.INVALID_ARGUMENT
+                .withDescription("offset_chars splits a Unicode surrogate pair")
+                .asException());
+        return;
+      }
+      int end = (int) Math.min((long) start + maxChars, totalLen);
+      if (end > start
+          && end < totalLen
+          && Character.isHighSurrogate(content.charAt(end - 1))
+          && Character.isLowSurrogate(content.charAt(end))) {
+        end++;
+      }
 
       String slice = start >= end ? "" : content.substring(start, end);
       boolean truncated = end < totalLen;
@@ -702,22 +734,26 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       // Tempdoc 878: the caller cannot choose between paging and sampling without a denominator,
       // and the Worker is the only place that knows one. It was already computed above.
       response.setTotalChars(totalLen);
+      String contentSha256 = sliceFields.get(SchemaFields.CONTENT_SHA256);
+      if (contentSha256 != null && !contentSha256.isBlank()) {
+        response.putMetadata(SchemaFields.CONTENT_SHA256, contentSha256);
+      }
 
       // Add common metadata fields if available
-      String title = documentFieldOps.getDocumentField(normalizedDocId, "title");
+      String title = sliceFields.get("title");
       if (title != null && !title.isBlank()) {
         response.putMetadata("title", title);
       }
-      String path = documentFieldOps.getDocumentField(normalizedDocId, "path");
+      String path = sliceFields.get("path");
       if (path != null && !path.isBlank()) {
         response.putMetadata("path", path);
       }
-      String mime = documentFieldOps.getDocumentField(normalizedDocId, "mime");
+      String mime = sliceFields.get("mime");
       if (mime != null && !mime.isBlank()) {
         response.putMetadata("mime", mime);
       }
       String extractionMethod =
-          documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.EXTRACTION_METHOD);
+          sliceFields.get(SchemaFields.EXTRACTION_METHOD);
       if (extractionMethod != null && !extractionMethod.isBlank()) {
         response.putMetadata("extraction_method", extractionMethod);
       }
@@ -725,30 +761,66 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       // is what distinguishes "this document has no text because there is none" from "no tier could
       // read this document" — surface it next to the method that produced (or failed to produce) it.
       String extractionReasonCode =
-          documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.EXTRACTION_REASON_CODE);
+          sliceFields.get(SchemaFields.EXTRACTION_REASON_CODE);
       if (extractionReasonCode != null && !extractionReasonCode.isBlank()) {
         response.putMetadata("extraction_reason_code", extractionReasonCode);
       }
+      String extractionStatus =
+          sliceFields.get(SchemaFields.EXTRACTION_STATUS);
+      if (extractionStatus != null && !extractionStatus.isBlank()) {
+        response.setExtractionStatus(extractionStatus);
+        response.putMetadata("extraction_status", extractionStatus);
+      }
+      String contentTruncated =
+          sliceFields.get(SchemaFields.CONTENT_TRUNCATED);
+      if (contentTruncated != null && !contentTruncated.isBlank()) {
+        // Boolean fields project from Lucene numeric doc values as 1/0; accept the textual form too
+        // so the response remains correct if a stored-field fallback supplies true/false.
+        if ("1".equals(contentTruncated) || "true".equalsIgnoreCase(contentTruncated)) {
+          response.setContentTruncated(true);
+        } else if ("0".equals(contentTruncated) || "false".equalsIgnoreCase(contentTruncated)) {
+          response.setContentTruncated(false);
+        }
+        response.putMetadata("content_truncated", contentTruncated);
+      }
+      String extractionPolicyId =
+          sliceFields.get(SchemaFields.EXTRACTION_POLICY_ID);
+      if (extractionPolicyId != null && !extractionPolicyId.isBlank()) {
+        response.setExtractionPolicyId(extractionPolicyId);
+        response.putMetadata("extraction_policy_id", extractionPolicyId);
+      }
+      String extractionParserId =
+          sliceFields.get(SchemaFields.EXTRACTION_PARSER_ID);
+      if (extractionParserId != null && !extractionParserId.isBlank()) {
+        response.setExtractionParserId(extractionParserId);
+        response.putMetadata("extraction_parser_id", extractionParserId);
+      }
+      String sourceSha256 =
+          sliceFields.get(SchemaFields.SOURCE_SHA256);
+      if (sourceSha256 != null && !sourceSha256.isBlank()) {
+        response.setSourceSha256(sourceSha256);
+        response.putMetadata("source_sha256", sourceSha256);
+      }
 
       // Add VDU-related metadata for provenance tracking
-      String vduStatus = documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VDU_STATUS);
+      String vduStatus = sliceFields.get(SchemaFields.VDU_STATUS);
       if (vduStatus != null && !vduStatus.isBlank()) {
         response.putMetadata("vdu_status", vduStatus);
       }
-      String vduProcessed = documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VDU_PROCESSED);
+      String vduProcessed = sliceFields.get(SchemaFields.VDU_PROCESSED);
       if (vduProcessed != null && !vduProcessed.isBlank()) {
         response.putMetadata("vdu_processed", vduProcessed);
       }
-      String vduPageCount = documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VDU_PAGE_COUNT);
+      String vduPageCount = sliceFields.get(SchemaFields.VDU_PAGE_COUNT);
       if (vduPageCount != null && !vduPageCount.isBlank()) {
         response.putMetadata("vdu_page_count", vduPageCount);
       }
-      String vduEnrichment = documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VDU_ENRICHMENT);
+      String vduEnrichment = sliceFields.get(SchemaFields.VDU_ENRICHMENT);
       if (vduEnrichment != null && !vduEnrichment.isBlank()) {
         response.putMetadata("vdu_enrichment", vduEnrichment);
       }
       String visualEvidence =
-          documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VISUAL_EXTRACTION_EVIDENCE);
+          sliceFields.get(SchemaFields.VISUAL_EXTRACTION_EVIDENCE);
       if (visualEvidence != null && !visualEvidence.isBlank()) {
         response.putMetadata("visual_extraction_evidence", visualEvidence);
       }
@@ -970,19 +1042,30 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       StreamObserver<ListAllDocumentIdsResponse> responseObserver) {
     try (var ignored = openRequestMdc()) {
     try {
+      Long expectedReaderVersion = parseDocumentIdSnapshot(request);
       commitOps.maybeRefresh();
       ListAllDocumentIdsResult result =
-          folderBrowseEngine.listAllDocumentIds(request.getOffset(), request.getLimit());
+          folderBrowseEngine.listAllDocumentIds(
+              request.getOffset(), request.getLimit(), expectedReaderVersion);
 
       ListAllDocumentIdsResponse response =
           ListAllDocumentIdsResponse.newBuilder()
               .addAllDocIds(result.docIds())
               .setTotalCount(result.totalCount())
               .setTookMs(result.tookMs())
+              .setSnapshotToken(documentIdSnapshotEpoch + ":" + result.readerVersion())
               .build();
 
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (io.grpc.StatusRuntimeException e) {
+      responseObserver.onError(e);
+    } catch (FolderBrowseEngine.StaleDocumentIdSnapshotException e) {
+      responseObserver.onError(
+          io.grpc.Status.ABORTED.withDescription(e.getMessage()).asRuntimeException());
+    } catch (IllegalArgumentException e) {
+      responseObserver.onError(
+          io.grpc.Status.INVALID_ARGUMENT.withDescription(e.getMessage()).asRuntimeException());
     } catch (RuntimeException e) {
       log.error("ListAllDocumentIds failed", e);
       responseObserver.onError(
@@ -991,6 +1074,49 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
               .asException());
     }
     }
+  }
+
+  private Long parseDocumentIdSnapshot(ListAllDocumentIdsRequest request) {
+    String token = request.getSnapshotToken();
+    if (request.getOffset() == 0) {
+      if (!token.isEmpty()) {
+        throw io.grpc.Status.INVALID_ARGUMENT
+            .withDescription("snapshot_token must be empty for the first page")
+            .asRuntimeException();
+      }
+      return null;
+    }
+    if (request.getOffset() < 0) {
+      throw io.grpc.Status.INVALID_ARGUMENT
+          .withDescription("offset must be non-negative")
+          .asRuntimeException();
+    }
+    if (token.isEmpty()) {
+      throw io.grpc.Status.INVALID_ARGUMENT
+          .withDescription("snapshot_token is required when offset is non-zero")
+          .asRuntimeException();
+    }
+
+    int separator = token.lastIndexOf(':');
+    if (separator <= 0 || separator == token.length() - 1) {
+      throw io.grpc.Status.INVALID_ARGUMENT
+          .withDescription("snapshot_token is malformed")
+          .asRuntimeException();
+    }
+    long readerVersion;
+    try {
+      readerVersion = Long.parseLong(token.substring(separator + 1));
+    } catch (NumberFormatException e) {
+      throw io.grpc.Status.INVALID_ARGUMENT
+          .withDescription("snapshot_token is malformed")
+          .asRuntimeException();
+    }
+    if (!documentIdSnapshotEpoch.equals(token.substring(0, separator))) {
+      throw io.grpc.Status.ABORTED
+          .withDescription("Document ID snapshot belongs to a different Worker instance")
+          .asRuntimeException();
+    }
+    return readerVersion;
   }
 
   /**

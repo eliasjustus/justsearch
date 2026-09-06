@@ -19,6 +19,7 @@ from jseval import corpora as corpora_mod
 from jseval import ingest as ingest_mod
 from jseval import _paths as paths_mod
 from jseval.corpus_identity import corpus_signature
+from jseval import raw_corpus_manifest as rcm
 from jseval.index_identity import (
     CorpusAxis,
     _norm_path,
@@ -148,6 +149,44 @@ def test_axis_raw_files_dataset(tmp_path: Path, monkeypatch):
     assert axis.watched_dir == ds_root / "corpus-dir"
     assert axis.signature_root == ds_root
     assert axis.reason is None
+
+
+def test_raw_selector_uses_strict_manifest_components(git_repo: Path, tmp_path: Path):
+    base = tmp_path / "datasets"
+    root = base / "mixed" / "raw"
+    corpus = root / "corpus-dir"
+    corpus.mkdir(parents=True)
+    (corpus / "document.pdf").write_bytes(b"raw bytes")
+    (root / "metadata.json").write_text(json.dumps({"raw_files": True}), encoding="utf-8")
+    context = rcm.resolve_raw_corpus_context("mixed/raw", base_dir=base)
+    env = {"JUSTSEARCH_MODELS_DIR": str(_models_dir(tmp_path))}
+
+    selector = compute_selector(
+        git_repo, None, env, dataset_name="mixed/raw", raw_context=context,
+    )
+
+    assert selector.key is not None
+    assert selector.components["corpus_signature"] == context.identity.digest
+    assert selector.components["corpus_kind"] == "raw-files"
+    assert selector.components["corpus_manifest_schema"] == rcm.RAW_CORPUS_MANIFEST_SCHEMA
+    assert selector.components["corpus_file_count"] == 1
+    assert selector.components["corpus_admission_policy"] == dict(context.admission_policy)
+    assert selector.components["corpus_dir_path"] == _norm_path(corpus)
+
+    changed_context = rcm.resolve_raw_corpus_context(
+        "mixed/raw", base_dir=base,
+        env_overrides={"JUSTSEARCH_INGESTION_SKIP_EXTENSIONS": "pdf"},
+    )
+    changed_env = {
+        **env,
+        "JUSTSEARCH_INGESTION_SKIP_EXTENSIONS": "pdf",
+    }
+    changed_selector = compute_selector(
+        git_repo, None, changed_env, dataset_name="mixed/raw",
+        raw_context=changed_context,
+    )
+    assert changed_selector.key != selector.key
+    assert changed_selector.components["corpus_signature"] == context.identity.digest
 
 
 def test_axis_beir_name_unresolvable(tmp_path: Path):

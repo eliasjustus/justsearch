@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
@@ -37,6 +38,7 @@ import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.Bits;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,6 +59,9 @@ public final class FolderBrowseEngine {
 
   /** Default safety cap for documents scanned. */
   public static final int DEFAULT_MAX_DOCS_SCANNED = 50_000;
+
+  /** Maximum number of document IDs retained for one corpus-iteration page. */
+  public static final int MAX_DOCUMENT_ID_PAGE_SIZE = 50_000;
 
   private final SearcherBridge bridge;
   private final Function<String, FieldMapper.FieldDef> fieldDefLookup;
@@ -104,6 +109,7 @@ public final class FolderBrowseEngine {
         Scorer scorer = weight.scorer(leaf);
         if (scorer == null) continue;
 
+        Bits liveDocs = leaf.reader().getLiveDocs();
         SortedDocValues pathDv = getSortedDocValues(leaf, SchemaFields.PATH);
         NumericDocValues sizeDv = getNumericDocValues(leaf, SchemaFields.SIZE_BYTES);
         NumericDocValues indexedDv = getNumericDocValues(leaf, SchemaFields.INDEXED_AT);
@@ -112,6 +118,7 @@ public final class FolderBrowseEngine {
         DocIdSetIterator it = (twoPhase == null) ? scorer.iterator() : twoPhase.approximation();
         int doc;
         while ((doc = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+          if (liveDocs != null && !liveDocs.get(doc)) continue;
           if (twoPhase != null && !twoPhase.matches()) {
             continue;
           }
@@ -224,12 +231,14 @@ public final class FolderBrowseEngine {
         Scorer scorer = weight.scorer(leaf);
         if (scorer == null) continue;
 
+        Bits liveDocs = leaf.reader().getLiveDocs();
         SortedDocValues pathDv = getSortedDocValues(leaf, SchemaFields.PATH);
 
         TwoPhaseIterator twoPhase = scorer.twoPhaseIterator();
         DocIdSetIterator it = (twoPhase == null) ? scorer.iterator() : twoPhase.approximation();
         int doc;
         while ((doc = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+          if (liveDocs != null && !liveDocs.get(doc)) continue;
           if (twoPhase != null && !twoPhase.matches()) {
             continue;
           }
@@ -288,11 +297,36 @@ public final class FolderBrowseEngine {
    * @return paginated list of doc IDs and total count
    */
   public ListAllDocumentIdsResult listAllDocumentIds(int offset, int limit) {
+    return listAllDocumentIds(offset, limit, null);
+  }
+
+  /**
+   * Returns a page from an expected immutable reader generation.
+   *
+   * @param expectedReaderVersion required reader version, or {@code null} for the first page
+   * @throws StaleDocumentIdSnapshotException when the acquired reader no longer matches
+   */
+  public ListAllDocumentIdsResult listAllDocumentIds(
+      int offset, int limit, Long expectedReaderVersion) {
+    if (offset < 0) {
+      throw new IllegalArgumentException("offset must be non-negative");
+    }
+    if (limit < 0 || limit > MAX_DOCUMENT_ID_PAGE_SIZE) {
+      throw new IllegalArgumentException(
+          "limit must be between 0 and " + MAX_DOCUMENT_ID_PAGE_SIZE);
+    }
     int effectiveLimit = limit <= 0 ? 1000 : limit;
     long startNs = System.nanoTime();
     IndexSearcher searcher = null;
     try {
       searcher = bridge.acquire();
+      if (!(searcher.getIndexReader() instanceof DirectoryReader reader)) {
+        throw new IllegalStateException("Document ID pagination requires a DirectoryReader");
+      }
+      long readerVersion = reader.getVersion();
+      if (expectedReaderVersion != null && expectedReaderVersion.longValue() != readerVersion) {
+        throw new StaleDocumentIdSnapshotException(expectedReaderVersion, readerVersion);
+      }
 
       // Exclude chunk documents — GPL only processes parent documents.
       BooleanQuery.Builder qb = new BooleanQuery.Builder();
@@ -302,46 +336,58 @@ public final class FolderBrowseEngine {
       Query rewritten = searcher.rewrite(query);
       Weight weight = searcher.createWeight(rewritten, ScoreMode.COMPLETE_NO_SCORES, 1.0f);
 
-      List<String> allDocIds = new ArrayList<>();
-      long scanned = 0;
+      List<String> page = new ArrayList<>(effectiveLimit);
+      long matched = 0;
 
       for (LeafReaderContext leaf : searcher.getIndexReader().leaves()) {
-        if (scanned >= DEFAULT_MAX_DOCS_SCANNED) break;
-
         Scorer scorer = weight.scorer(leaf);
         if (scorer == null) continue;
 
-        SortedDocValues docIdDv = getSortedDocValues(leaf, SchemaFields.DOC_ID);
+        Bits liveDocs = leaf.reader().getLiveDocs();
+        SortedDocValues docIdDv = DocValues.getSorted(leaf.reader(), SchemaFields.DOC_ID);
 
         TwoPhaseIterator twoPhase = scorer.twoPhaseIterator();
         DocIdSetIterator it = (twoPhase == null) ? scorer.iterator() : twoPhase.approximation();
         int doc;
         while ((doc = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+          // Raw scorer iteration does not pass through IndexSearcher.searchLeaf, so deleted but
+          // unmerged document versions must be filtered explicitly. Otherwise corpus iteration
+          // returns stale parent IDs after ordinary updates and hard deletes.
+          if (liveDocs != null && !liveDocs.get(doc)) continue;
           if (twoPhase != null && !twoPhase.matches()) continue;
-          scanned++;
-          if (scanned > DEFAULT_MAX_DOCS_SCANNED) break;
-
-          if (docIdDv == null || !docIdDv.advanceExact(doc)) continue;
-          allDocIds.add(docIdDv.lookupOrd(docIdDv.ordValue()).utf8ToString());
+          if (!docIdDv.advanceExact(doc)) {
+            throw new IllegalStateException(
+                "Live parent document is missing required doc_id DocValues");
+          }
+          if (matched >= offset && page.size() < effectiveLimit) {
+            page.add(docIdDv.lookupOrd(docIdDv.ordValue()).utf8ToString());
+          }
+          matched++;
         }
       }
 
-      long totalCount = allDocIds.size();
-      int fromIdx = Math.min(offset, allDocIds.size());
-      int toIdx = Math.min(fromIdx + effectiveLimit, allDocIds.size());
-      List<String> page = Collections.unmodifiableList(allDocIds.subList(fromIdx, toIdx));
-
       long tookMs = (System.nanoTime() - startNs) / 1_000_000;
-      return new ListAllDocumentIdsResult(page, totalCount, tookMs);
+      return new ListAllDocumentIdsResult(
+          Collections.unmodifiableList(page), matched, tookMs, readerVersion);
 
     } catch (IOException e) {
-      log.warn("Failed to list all document IDs", e);
-      long tookMs = (System.nanoTime() - startNs) / 1_000_000;
-      return new ListAllDocumentIdsResult(List.of(), 0, tookMs);
+      throw new IllegalStateException("Failed to list all document IDs", e);
     } finally {
       if (searcher != null) {
         bridge.release(searcher);
       }
+    }
+  }
+
+  /** Signals that an offset continuation no longer addresses the reader used for its first page. */
+  public static final class StaleDocumentIdSnapshotException extends RuntimeException {
+    public StaleDocumentIdSnapshotException(long expectedVersion, long actualVersion) {
+      super(
+          "Document ID snapshot changed (expected reader version "
+              + expectedVersion
+              + ", found "
+              + actualVersion
+              + ")");
     }
   }
 

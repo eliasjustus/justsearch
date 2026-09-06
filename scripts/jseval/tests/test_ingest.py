@@ -25,6 +25,7 @@ from jseval.ingest import (
     prepare_corpus,
 )
 from jseval.types import IngestConfig, ReadinessResult
+from jseval.raw_corpus_manifest import RawCorpusManifestError
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +636,9 @@ class TestPrepareCorpusRawBranch:
         assert args[1] == corpus_dir
         assert kwargs["corpus_doc_count"] == 3
         assert result["readiness_passed"] is True
+        assert result["corpus_doc_count"] == 3
+        assert result["corpus_identity"]["kind"] == "raw-files"
+        assert result["corpus_identity"]["file_count"] == 3
 
     def test_raw_dataset_empty_corpus_dir_raises(self, tmp_path, monkeypatch):
         """corpus-dir exists but has zero files → FileNotFoundError, never reaches ingest."""
@@ -644,7 +648,7 @@ class TestPrepareCorpusRawBranch:
         monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
 
         with patch("jseval.ingest.ingest_and_wait") as mock_ingest:
-            with pytest.raises(FileNotFoundError, match="empty corpus-dir"):
+            with pytest.raises(RawCorpusManifestError, match="at least one"):
                 prepare_corpus(
                     "mixed/raw-test-empty", IngestConfig(base_url="http://localhost:33221"),
                 )
@@ -662,16 +666,13 @@ class TestPrepareCorpusRawBranch:
         # corpus-dir intentionally NOT created.
         monkeypatch.setattr(corpora, "_default_base_dir", lambda: base)
 
-        with pytest.raises(FileNotFoundError, match="empty corpus-dir"):
+        with pytest.raises(RawCorpusManifestError, match="unavailable"):
             prepare_corpus(
                 "mixed/raw-test-missing", IngestConfig(base_url="http://localhost:33221"),
             )
 
-    def test_raw_dataset_explicit_corpus_dir_bypasses_raw_branch(self, tmp_path, monkeypatch):
-        """An explicit corpus_dir= argument bypasses the raw branch entirely, even for a
-        raw_files=true dataset — falls through to the existing explicit-dir behavior, which
-        counts only .txt/.png files (not the raw .pdf/.docx in the dataset's own corpus-dir,
-        which is never consulted)."""
+    def test_raw_dataset_explicit_corpus_dir_must_be_declared_root(self, tmp_path, monkeypatch):
+        """A raw dataset cannot substitute a different explicit source directory."""
         from jseval import corpora
         base = tmp_path / "datasets"
         corpus_dir = _seed_raw_dataset(base, "mixed/raw-test-x", raw_files=True)
@@ -683,15 +684,11 @@ class TestPrepareCorpusRawBranch:
         (explicit_dir / "doc1.txt").write_text("content")
         (explicit_dir / "doc2.txt").write_text("content")
 
-        with patch("jseval.ingest.ingest_and_wait") as mock_ingest:
-            mock_ingest.return_value = {"readiness_passed": True, "docs_indexed": 0}
-
+        with patch("jseval.ingest.ingest_and_wait") as mock_ingest, \
+                pytest.raises(RawCorpusManifestError, match="declared corpus-dir"):
             prepare_corpus(
                 "mixed/raw-test-x", IngestConfig(base_url="http://localhost:33221"),
                 corpus_dir=explicit_dir,
             )
 
-        mock_ingest.assert_called_once()
-        args, kwargs = mock_ingest.call_args
-        assert args[1] == explicit_dir  # NOT the dataset's raw corpus-dir
-        assert kwargs["corpus_doc_count"] == 2  # .txt count, not the raw branch's file count
+        mock_ingest.assert_not_called()

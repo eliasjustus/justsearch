@@ -59,6 +59,11 @@ public final class LazyDocumentService implements DocumentService {
   }
 
   @Override
+  public CompletionStage<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+    return resolve(d -> d.listAllDocumentIds(offset, limit));
+  }
+
+  @Override
   public CompletionStage<ContextResult> retrieveContextWithMeta(
       String question, Set<String> docIds, int topK) {
     return resolve(d -> d.retrieveContextWithMeta(question, docIds, topK));

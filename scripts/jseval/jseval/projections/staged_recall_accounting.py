@@ -66,11 +66,20 @@ Output shape v1::
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from collections import Counter
 from pathlib import Path
 
 from ..trec import load_trec_run
+from .. import duplicate_prevalence
+from ..result_identity import (
+    SIDECAR_FILENAME,
+    cluster_assignments_by_opaque_id,
+    reconcile_delivered_hits,
+    verify_result_identity_anchor,
+)
 from .base import Projection
 
 log = logging.getLogger(__name__)
@@ -93,6 +102,8 @@ BUCKETS = ("LEG_MISS", "CASCADE_LEAK", "JUDGE_RANK_LOW", "OK_RANK1")
 # gold doc surfaced only at rank 11+ counts as "in final" here but not in the harness's R@10,
 # manufacturing spurious mismatches (one per rank_11_plus query).
 RECONCILIATION_DEPTH = 10
+RESULT_REDUNDANCY_SCHEMA = "jseval.result-redundancy.v1"
+RESULT_REDUNDANCY_DEPTH = 10
 
 # Conform the *failure* buckets to the field's canonical retrieval failure-point vocabulary
 # (Seven Failure Points, arXiv 2401.05856) so the output is legible to anyone who knows it — an
@@ -172,6 +183,147 @@ def _mean_ndcg(run_dir: Path, mode: str) -> float | None:
     vals = [e["ndcgAtK"] for e in entries
             if isinstance(e, dict) and isinstance(e.get("ndcgAtK"), (int, float))]
     return sum(vals) / len(vals) if vals else None
+
+
+def _result_redundancy(run_dir: Path, mode: str) -> dict | None:
+    """Optionally measure duplicate clusters in the delivered top ten.
+
+    Recall/rank accounting continues to use ``run.trec``. This independent
+    section intentionally uses ``predictedDocIds`` because the product question
+    is what the API delivered, and the identity sidecar records that same order
+    before lossy BEIR normalization.
+    """
+    sidecar_path = run_dir / SIDECAR_FILENAME
+    if not sidecar_path.is_file():
+        return None
+    sidecar = _load_json(sidecar_path)
+    if sidecar is None:
+        raise ValueError(f"unreadable result identity sidecar: {sidecar_path}")
+    clusters = cluster_assignments_by_opaque_id(sidecar)
+    if clusters is None:
+        return None
+    cluster_source = sidecar["cluster_assignments"]["cluster_source"]
+    analysis_path = run_dir / cluster_source["analysis_artifact_filename"]
+    analysis = _load_json(analysis_path)
+    if analysis is None:
+        raise ValueError(f"missing or unreadable result cluster analysis artifact: {analysis_path}")
+    try:
+        duplicate_prevalence.validate_artifact_hash(analysis)
+    except duplicate_prevalence.DuplicatePrevalenceError as exc:
+        raise ValueError(f"invalid result cluster analysis artifact: {exc}") from exc
+    if analysis["artifact_hash"] != cluster_source["analysis_artifact_sha256"]:
+        raise ValueError("result cluster analysis hash does not match the identity sidecar")
+    analysis_input = analysis.get("input") or {}
+    if (
+        analysis_input.get("source_kind") != duplicate_prevalence.PRODUCTION_EXTRACTED
+        or analysis_input.get("content_interpretation") != "production-extracted-content"
+        or not isinstance(analysis_input.get("extraction_identity"), dict)
+    ):
+        raise ValueError("result clusters require a production-extracted analysis artifact")
+    analysis_corpus_signature = (analysis_input.get("corpus_identity") or {}).get("signature")
+    if analysis_corpus_signature != sidecar["corpus_signature"]:
+        raise ValueError("result cluster analysis corpus does not match the identity sidecar")
+    if analysis.get("privacy") != {
+        "mode": "aggregate-only",
+        "document_ids_emitted": False,
+        "paths_emitted": False,
+        "text_emitted": False,
+    }:
+        raise ValueError("result cluster analysis privacy contract is invalid")
+    assignment_records = sidecar["cluster_assignments"]["assignments"]
+    observed_fingerprint_counts = Counter(
+        record["content_fingerprint_sha256"] for record in assignment_records
+    )
+    analyzed_duplicate_sizes = {
+        record["digest"]: record["size"]
+        for record in (analysis.get("content_exact") or {}).get("duplicate_groups", [])
+        if isinstance(record, dict)
+    }
+    for fingerprint, observed_count in observed_fingerprint_counts.items():
+        if observed_count >= 2 and analyzed_duplicate_sizes.get(fingerprint, 0) < observed_count:
+            raise ValueError(
+                "result sidecar exact-content cluster is not supported by the analysis artifact"
+            )
+    summary = _load_json(run_dir / "summary.json")
+    try:
+        verify_result_identity_anchor(
+            sidecar,
+            analysis,
+            summary.get("result_identity_anchor") if isinstance(summary, dict) else None,
+        )
+    except Exception as exc:
+        raise ValueError(f"invalid result identity anchor: {exc}") from exc
+    run_corpus_signature = (
+        (summary.get("corpus_identity") or {}).get("signature")
+        if isinstance(summary, dict)
+        else None
+    )
+    if run_corpus_signature is None or run_corpus_signature != sidecar["corpus_signature"]:
+        raise ValueError(
+            "result identity sidecar corpus_signature does not match the run summary"
+        )
+    entries = _load_json(run_dir / f"{mode}_per_query.json")
+    if not isinstance(entries, list):
+        raise ValueError(f"missing per-query artifact for result redundancy mode {mode!r}")
+    opaque_by_qid = reconcile_delivered_hits(sidecar, mode, entries)
+
+    per_query: list[dict] = []
+    delivered_total = 0
+    unique_total = 0
+    redundant_total = 0
+    affected = 0
+    for qid in sorted(opaque_by_qid):
+        top = opaque_by_qid[qid][:RESULT_REDUNDANCY_DEPTH]
+        try:
+            cluster_ids = [clusters[opaque] for opaque in top]
+        except KeyError as exc:  # sidecar validation normally proves complete coverage
+            raise ValueError(f"missing result cluster assignment for {exc.args[0]!r}") from exc
+        delivered = len(cluster_ids)
+        unique = len(set(cluster_ids))
+        redundant = delivered - unique
+        delivered_total += delivered
+        unique_total += unique
+        redundant_total += redundant
+        affected += int(redundant > 0)
+        per_query.append({
+            "qid": qid,
+            "delivered_hits_at_10": delivered,
+            "unique_clusters_at_10": unique,
+            "redundant_hits_at_10": redundant,
+        })
+
+    measured = len(per_query)
+    denominator = measured or 1
+    predicted_hit_count = sum(len(entry["predictedDocIds"]) for entry in entries)
+    sidecar_mode = next(record for record in sidecar["modes"] if record["mode"] == mode)
+    sidecar_hit_count = sum(len(query["hits"]) for query in sidecar_mode["queries"])
+    return {
+        "schema": RESULT_REDUNDANCY_SCHEMA,
+        "identity_sidecar_schema": sidecar["schema"],
+        "cluster_assignment_schema": sidecar["cluster_assignments"]["schema"],
+        "sidecar_sha256": hashlib.sha256(sidecar_path.read_bytes()).hexdigest(),
+        "corpus_signature": sidecar["corpus_signature"],
+        "cluster_source": cluster_source,
+        "mode": mode,
+        "rank_authority": "delivered-predictedDocIds",
+        "top_k": RESULT_REDUNDANCY_DEPTH,
+        "queries_measured": measured,
+        "queries_affected": affected,
+        "queries_affected_rate": affected / denominator,
+        "aggregate": {
+            "delivered_hits_at_10": delivered_total,
+            "unique_clusters_at_10": unique_total,
+            "redundant_hits_at_10": redundant_total,
+            "mean_unique_clusters_at_10": unique_total / denominator,
+            "mean_redundant_hits_at_10": redundant_total / denominator,
+        },
+        "per_query": per_query,
+        "reconciliation": {
+            "predicted_hits": predicted_hit_count,
+            "sidecar_hits": sidecar_hit_count,
+            "mismatches": 0,
+        },
+    }
 
 
 def _present_modes(run_dir: Path) -> list[str]:
@@ -337,7 +489,7 @@ def produce(run_dir: Path) -> dict:
         max(0.0, leg_union_recall - final_ndcg) if isinstance(final_ndcg, (int, float)) else None
     )
     judge_low_cost_weight = _judge_low_cost_weight(judge_rank_histogram)
-    return {
+    result = {
         "status": "ok",
         "leg_modes": legs,
         "final_mode": final,
@@ -377,6 +529,10 @@ def produce(run_dir: Path) -> dict:
             }),
         },
     }
+    redundancy = _result_redundancy(run_dir, final)
+    if redundancy is not None:
+        result["result_redundancy"] = redundancy
+    return result
 
 
 PROJECTION = Projection(

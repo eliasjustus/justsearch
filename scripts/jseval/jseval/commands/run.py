@@ -63,6 +63,17 @@ log = logging.getLogger(__name__)
                    "The 763 forensic-replay path needs this when HEAD has advanced past the "
                    "campaign commit. Requires --index-cache --start-backend --clean.")
 @click.option("--config", "config_path", type=click.Path(exists=True), default=None, help="YAML run config file.")
+@click.option(
+    "--duplicate-prevalence-input-spec",
+    "duplicate_prevalence_input_spec",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Privately capture production-extracted content after fresh ingest and "
+        "decorate this run's result identity sidecar. CLI-only; the spec path is "
+        "never persisted."
+    ),
+)
 @click.option("--warmup", "warmup_count", type=int, default=0, show_default=True,
               help=(
                   "Run N warmup iterations of the full pipeline before the timed run (E-J-N10). "
@@ -109,7 +120,7 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, search_load_qpm, search_load_mode, first_search_probe, first_search_probe_files, settle_index, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, query_syntax, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, duplicate_prevalence_input_spec, warmup_count, search_load_qpm, search_load_mode, first_search_probe, first_search_probe_files, settle_index, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
@@ -223,6 +234,57 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
     else:
         index_cache_enabled = os.environ.get("JUSTSEARCH_INDEX_CACHE_ADOPT") == "1"
 
+    from ..raw_corpus_manifest import resolve_raw_corpus_context
+
+    raw_context = resolve_raw_corpus_context(
+        dataset,
+        Path(corpus_dir) if corpus_dir else None,
+        env_overrides=env_overrides,
+    )
+    duplicate_prevalence_request = None
+    if duplicate_prevalence_input_spec is not None:
+        from ..duplicate_prevalence_production import (
+            ProductionDuplicatePrevalenceError,
+            load_input_spec,
+        )
+
+        try:
+            duplicate_prevalence_request = load_input_spec(
+                duplicate_prevalence_input_spec
+            )
+            request_root = duplicate_prevalence_request.source.raw_root.resolve(
+                strict=True
+            )
+        except (ProductionDuplicatePrevalenceError, OSError) as exc:
+            raise click.UsageError(str(exc)) from exc
+        if env_overrides.get("JUSTSEARCH_CORPUS_SIGNATURE") or os.environ.get(
+            "JUSTSEARCH_CORPUS_SIGNATURE"
+        ):
+            raise click.UsageError(
+                "--duplicate-prevalence-input-spec forbids JUSTSEARCH_CORPUS_SIGNATURE"
+            )
+        if raw_context is None:
+            raise click.UsageError(
+                "--duplicate-prevalence-input-spec requires a resolved raw corpus"
+            )
+        if not modes or not any(part.strip() for part in modes.split(",")):
+            raise click.UsageError(
+                "--duplicate-prevalence-input-spec requires nonempty --modes"
+            )
+        if request_root != raw_context.root:
+            raise click.UsageError(
+                "duplicate-prevalence source.raw_root must exactly match the resolved raw corpus"
+            )
+        if index_cache_enabled:
+            raise click.UsageError(
+                "--duplicate-prevalence-input-spec requires --fresh-index"
+            )
+        if not start_backend or not clean or skip_ingest:
+            raise click.UsageError(
+                "--duplicate-prevalence-input-spec requires --start-backend --clean "
+                "with ingestion enabled"
+            )
+
     # Run warmup iterations (if any), then the timed run.
     # Each iteration gets its own backend lifecycle when --start-backend is set,
     # so warmup runs genuinely exercise cold-start paths (OS cache, CUDA kernel
@@ -279,6 +341,8 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             settle_index=settle_index,
             json_flag=json_flag,
             is_warmup=is_warmup,
+            duplicate_prevalence_request=duplicate_prevalence_request,
+            **({"raw_context": raw_context} if raw_context is not None else {}),
         )
 
 
@@ -362,6 +426,8 @@ def _run_iteration(
     settle_index=False,
     json_flag,
     is_warmup,
+    raw_context=None,
+    duplicate_prevalence_request=None,
 ):
     """Run a single pipeline iteration (start backend → ingest → eval → stop backend).
 
@@ -370,6 +436,25 @@ def _run_iteration(
     """
     backend_proc = None
     effective_base_url = base_url
+
+    from ..raw_corpus_manifest import (
+        resolve_raw_corpus_context,
+        validate_raw_corpus_context,
+    )
+
+    if raw_context is None:
+        raw_context = resolve_raw_corpus_context(
+            dataset,
+            Path(corpus_dir) if corpus_dir else None,
+            env_overrides=env_overrides,
+        )
+    if raw_context is not None:
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset,
+            explicit_dir=Path(corpus_dir) if corpus_dir else None,
+        )
 
     if start_backend:
         from .. import backend as backend_mod
@@ -394,6 +479,7 @@ def _run_iteration(
             corpus_dir=cache_corpus_dir,
             dataset_name=dataset,
             pin_selector_key=pin_index_selector_key,
+            **({"raw_context": raw_context} if raw_context is not None else {}),
         )
         effective_base_url = f"http://127.0.0.1:{port}"
 
@@ -445,6 +531,8 @@ def _run_iteration(
             query_syntax=query_syntax, search_load_spec=search_load_spec,
             first_search_probe_spec=first_search_probe_spec,
             settle_index=settle_index,
+            duplicate_prevalence_request=duplicate_prevalence_request,
+            **({"raw_context": raw_context} if raw_context is not None else {}),
         )
         # Publish only a fresh build (outcome != adopted) done under --clean, and
         # only when the selector key is available. Capture happens while up.
@@ -455,6 +543,13 @@ def _run_iteration(
             _oc = backend_proc.cache_outcome or {}
             publish_selector_key = _oc.get("selector_key")
             if _oc.get("mode") != "adopted" and publish_selector_key:
+                if raw_context is not None:
+                    validate_raw_corpus_context(
+                        raw_context,
+                        env_overrides,
+                        expected_dataset=dataset,
+                        explicit_dir=Path(corpus_dir) if corpus_dir else None,
+                    )
                 publish_inputs = _capture_publish_inputs(
                     effective_base_url, backend_proc.spawn_env or {}, dataset,
                     backend_proc.data_dir,
@@ -466,6 +561,8 @@ def _run_iteration(
             if publish_inputs is not None and publish_selector_key:
                 published_entry = _publish_after_stop(
                     backend_proc.data_dir, publish_selector_key, publish_inputs,
+                    raw_context=raw_context,
+                    env_overrides=backend_proc.spawn_env or env_overrides,
                 )
 
     # 751 P.5 WP-2: the warm helper reuses this exact lifecycle and needs the
@@ -583,7 +680,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             skip_ingest, ingest_config, env_overrides=None,
             suppress_stdout=False, index_cache=None, query_syntax=None,
             search_load_spec=None, first_search_probe_spec=None,
-            settle_index=False):
+            settle_index=False, raw_context=None, duplicate_prevalence_request=None):
     """Inner run logic (extracted for backend lifecycle try/finally).
 
     When suppress_stdout is True (used by warmup iterations of --warmup N), the
@@ -593,6 +690,16 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
     """
     from .. import ingest as ingest_mod
     from .. import run as run_module
+
+    if raw_context is not None:
+        from ..raw_corpus_manifest import validate_raw_corpus_context
+
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset,
+            explicit_dir=Path(corpus_dir) if corpus_dir else None,
+        )
 
     ingest_summary = None
     pipeline_summary = None
@@ -616,6 +723,10 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
                 dataset_name=dataset,
                 config=ingest_config,
                 corpus_dir=Path(corpus_dir) if corpus_dir else None,
+                **(
+                    {"raw_context": raw_context, "env_overrides": env_overrides}
+                    if raw_context is not None else {}
+                ),
             )
         finally:
             if load_runner is not None:
@@ -661,6 +772,8 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
         search_load=search_load_block,
         first_search_probe=first_search_block,
         settle_index=settle_index,
+        duplicate_prevalence_request=duplicate_prevalence_request,
+        **({"raw_context": raw_context} if raw_context is not None else {}),
     )
     if suppress_stdout:
         return
@@ -805,13 +918,20 @@ def _get_json_or_none(client, path):
         return None
 
 
-def _publish_after_stop(data_dir, selector_key, publish_inputs):
+def _publish_after_stop(
+    data_dir, selector_key, publish_inputs, *, raw_context=None, env_overrides=None,
+):
     """Publish the fresh-built data dir AFTER stop_backend (751 WP3; fail-quiet).
 
     Returns the published entry dir name (751 P.5 WP-2 -- the warm helper reports
     it), or ``None`` when publish was skipped/failed.
     """
     from .. import index_cache
+
+    if raw_context is not None:
+        from ..raw_corpus_manifest import validate_raw_corpus_context
+
+        validate_raw_corpus_context(raw_context, env_overrides)
 
     identity_doc, attestation = publish_inputs
     try:

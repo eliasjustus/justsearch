@@ -1,9 +1,11 @@
 package io.justsearch.indexerworker.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.justsearch.adapters.lucene.runtime.RunningRuntime;
 import io.justsearch.adapters.lucene.runtime.IndexSchema;
@@ -55,10 +57,19 @@ class GrpcSearchServiceListAllDocumentIdsTest {
   }
 
   private ListAllDocumentIdsResponse callListAll(int offset, int limit) {
+    return callListAll(offset, limit, null);
+  }
+
+  private ListAllDocumentIdsResponse callListAll(int offset, int limit, String snapshotToken) {
     AtomicReference<ListAllDocumentIdsResponse> result = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
+    ListAllDocumentIdsRequest.Builder request =
+        ListAllDocumentIdsRequest.newBuilder().setOffset(offset).setLimit(limit);
+    if (snapshotToken != null) {
+      request.setSnapshotToken(snapshotToken);
+    }
     service.listAllDocumentIds(
-        ListAllDocumentIdsRequest.newBuilder().setOffset(offset).setLimit(limit).build(),
+        request.build(),
         new StreamObserver<ListAllDocumentIdsResponse>() {
           @Override
           public void onNext(ListAllDocumentIdsResponse value) {
@@ -77,6 +88,29 @@ class GrpcSearchServiceListAllDocumentIdsTest {
       fail("listAllDocumentIds returned error: " + error.get().getMessage());
     }
     return result.get();
+  }
+
+  private Throwable callListAllError(int offset, int limit, String snapshotToken) {
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.listAllDocumentIds(
+        ListAllDocumentIdsRequest.newBuilder()
+            .setOffset(offset)
+            .setLimit(limit)
+            .setSnapshotToken(snapshotToken)
+            .build(),
+        new StreamObserver<ListAllDocumentIdsResponse>() {
+          @Override
+          public void onNext(ListAllDocumentIdsResponse value) {}
+
+          @Override
+          public void onError(Throwable t) {
+            error.set(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return error.get();
   }
 
   @Nested
@@ -144,14 +178,15 @@ class GrpcSearchServiceListAllDocumentIdsTest {
       ListAllDocumentIdsResponse page1 = callListAll(0, 2);
       assertEquals(5, page1.getTotalCount());
       assertEquals(2, page1.getDocIdsCount());
+      assertFalse(page1.getSnapshotToken().isEmpty());
 
       // Page 2: offset=2, limit=2
-      ListAllDocumentIdsResponse page2 = callListAll(2, 2);
+      ListAllDocumentIdsResponse page2 = callListAll(2, 2, page1.getSnapshotToken());
       assertEquals(5, page2.getTotalCount());
       assertEquals(2, page2.getDocIdsCount());
 
       // Page 3: offset=4, limit=2 — only 1 doc left
-      ListAllDocumentIdsResponse page3 = callListAll(4, 2);
+      ListAllDocumentIdsResponse page3 = callListAll(4, 2, page2.getSnapshotToken());
       assertEquals(5, page3.getTotalCount());
       assertEquals(1, page3.getDocIdsCount());
 
@@ -170,9 +205,55 @@ class GrpcSearchServiceListAllDocumentIdsTest {
       lifecycle.commitOps().commitAndTrack();
       lifecycle.commitOps().maybeRefreshBlocking();
 
-      ListAllDocumentIdsResponse resp = callListAll(100, 10);
+      ListAllDocumentIdsResponse firstPage = callListAll(0, 1);
+      ListAllDocumentIdsResponse resp =
+          callListAll(100, 10, firstPage.getSnapshotToken());
       assertEquals(1, resp.getTotalCount());
       assertEquals(0, resp.getDocIdsCount());
+    }
+
+    @Test
+    @DisplayName("continuation without a snapshot token is rejected")
+    void continuationWithoutToken_isRejected() {
+      Throwable error = callListAllError(1, 10, "");
+      assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error).getCode());
+    }
+
+    @Test
+    @DisplayName("malformed snapshot token is rejected")
+    void malformedToken_isRejected() {
+      Throwable error = callListAllError(1, 10, "wrong-worker:not-a-version");
+      assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error).getCode());
+    }
+
+    @Test
+    @DisplayName("well-formed token from another Worker is aborted")
+    void differentWorkerToken_isAborted() {
+      Throwable error = callListAllError(1, 10, "wrong-worker:1");
+      assertEquals(Status.Code.ABORTED, Status.fromThrowable(error).getCode());
+    }
+
+    @Test
+    @DisplayName("oversized page limit is rejected before allocation")
+    void oversizedLimit_isRejected() {
+      Throwable error = callListAllError(0, 50_001, "");
+      assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error).getCode());
+    }
+
+    @Test
+    @DisplayName("continuation aborts after the reader generation changes")
+    void changedReader_abortsContinuation() throws Exception {
+      indexDoc("doc-1", "C:/docs/file1.txt");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+      ListAllDocumentIdsResponse firstPage = callListAll(0, 1);
+
+      indexDoc("doc-2", "C:/docs/file2.txt");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      Throwable error = callListAllError(1, 1, firstPage.getSnapshotToken());
+      assertEquals(Status.Code.ABORTED, Status.fromThrowable(error).getCode());
     }
 
     @Test
@@ -223,6 +304,45 @@ class GrpcSearchServiceListAllDocumentIdsTest {
       assertEquals(1, resp.getTotalCount(), "Only parent doc should be counted");
       assertEquals(1, resp.getDocIdsCount());
       assertEquals("parent-1", resp.getDocIds(0));
+    }
+  }
+
+  @Nested
+  @DisplayName("live document filtering")
+  class LiveDocumentFiltering {
+
+    @Test
+    @DisplayName("an updated parent is enumerated exactly once before deleted segments merge")
+    void updatedParent_isEnumeratedOnce() throws Exception {
+      indexDoc("doc-1", "C:/docs/original.txt");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      indexDoc("doc-1", "C:/docs/updated.txt");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      ListAllDocumentIdsResponse resp = callListAll(0, 100);
+
+      assertEquals(1, resp.getTotalCount());
+      assertEquals(List.of("doc-1"), resp.getDocIdsList());
+    }
+
+    @Test
+    @DisplayName("a hard-deleted parent is absent before deleted segments merge")
+    void deletedParent_isNotEnumerated() throws Exception {
+      indexDoc("doc-1", "C:/docs/deleted.txt");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      lifecycle.indexingCoordinator().deleteById("doc-1");
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      ListAllDocumentIdsResponse resp = callListAll(0, 100);
+
+      assertEquals(0, resp.getTotalCount());
+      assertEquals(0, resp.getDocIdsCount());
     }
   }
 }

@@ -49,6 +49,7 @@ tree — it changes nothing about the licensing posture above.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 import gzip
 import hashlib
 import io
@@ -57,6 +58,7 @@ import random
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Iterable, Iterator, Literal
 from urllib.request import Request, urlopen
 
 from . import dataset_cache
@@ -372,6 +374,31 @@ _ENRON_URL = "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
 _ENRON_TARBALL_FILE = "enron_mail_20150507.tar.gz"
 _ENRON_LICENSE = "LicenseRef-Enron-FERC-public-record"
 
+EnronStage = Literal["raw_member", "parsed_body", "eligible_body", "retained_body"]
+_ENRON_STAGE_ORDER: tuple[EnronStage, ...] = (
+    "raw_member", "parsed_body", "eligible_body", "retained_body",
+)
+
+
+@dataclass(frozen=True)
+class EnronStageEvent:
+    """One observable stage of the deterministic Enron source-body pipeline.
+
+    The event stream is deliberately upstream of reservoir sampling: future
+    prevalence analysis can inspect every raw/parsed/eligible body, including
+    the exact-body duplicates that the established fetch command removes.
+    ``duplicate_of`` names the first eligible member with the same decoded body.
+    """
+
+    stage: EnronStage
+    member_name: str
+    raw_bytes: bytes | None
+    subject: str | None = None
+    body: str | None = None
+    word_count: int | None = None
+    body_sha256: str | None = None
+    duplicate_of: str | None = None
+
 
 def _populate_enron_raw(dest: Path, *, url: str) -> None:
     """Stream the (~1.7 GB) CMU Enron raw maildir tarball to disk without ever holding the whole
@@ -398,6 +425,47 @@ def _split_email_headers(raw_bytes: bytes) -> tuple[str, str]:
     return subject, body.strip()
 
 
+def iter_enron_source_stages(
+    messages: Iterable[tuple[str, bytes | None]], *, min_words: int,
+) -> Iterator[EnronStageEvent]:
+    """Yield the pure raw -> parsed -> eligible -> retained Enron pipeline.
+
+    ``messages`` supplies the caller's canonical member order. A ``None`` body
+    represents a tar member that could not be extracted: it is observable as a
+    raw member but cannot advance to the parsed stage. Decoding, line-ending
+    normalization, body trimming, the word floor, and first-body-SHA retention
+    exactly match the pre-existing sampler semantics.
+    """
+    first_member_by_body_sha256: dict[str, str] = {}
+    for member_name, raw_bytes in messages:
+        yield EnronStageEvent("raw_member", member_name, raw_bytes)
+        if raw_bytes is None:
+            continue
+
+        subject, body = _split_email_headers(raw_bytes)
+        words = body.split()
+        body_sha256 = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        parsed = EnronStageEvent(
+            "parsed_body", member_name, raw_bytes, subject, body, len(words), body_sha256,
+        )
+        yield parsed
+        if len(words) < min_words:
+            continue
+
+        duplicate_of = first_member_by_body_sha256.get(body_sha256)
+        yield EnronStageEvent(
+            "eligible_body", member_name, raw_bytes, subject, body, len(words),
+            body_sha256, duplicate_of,
+        )
+        if duplicate_of is not None:
+            continue
+
+        first_member_by_body_sha256[body_sha256] = member_name
+        yield EnronStageEvent(
+            "retained_body", member_name, raw_bytes, subject, body, len(words), body_sha256,
+        )
+
+
 def _sample_enron_from_raw(
     out_dir: Path | str, *, tarball_path: Path, seed: int, n_docs: int, min_words: int,
     raw_source_signature: str | None,
@@ -420,8 +488,8 @@ def _sample_enron_from_raw(
 
     rng = random.Random(seed)
     reservoir: list[dict] = []
-    seen_hashes: set[str] = set()
     seen_candidates = 0
+    stage_counts = {stage: 0 for stage in _ENRON_STAGE_ORDER}
 
     with tempfile.TemporaryDirectory() as scratch:
         plain_tar_path = Path(scratch) / "enron_mail_20150507.tar"
@@ -430,21 +498,19 @@ def _sample_enron_from_raw(
 
         with tarfile.open(plain_tar_path, "r:") as tar:
             members = sorted((m for m in tar.getmembers() if m.isfile()), key=lambda m: m.name)
-            for member in members:
-                extracted = tar.extractfile(member)
-                if extracted is None:
+            messages = (
+                (member.name, extracted.read() if (extracted := tar.extractfile(member)) else None)
+                for member in members
+            )
+            for event in iter_enron_source_stages(messages, min_words=min_words):
+                stage_counts[event.stage] += 1
+                if event.stage != "retained_body":
                     continue
-                subject, body = _split_email_headers(extracted.read())
-                words = body.split()
-                if len(words) < min_words:
-                    continue
-                digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-                if digest in seen_hashes:
-                    continue
-                seen_hashes.add(digest)
-                doc_id = member.name.replace("/", "__")
-                title = subject or " ".join(words[:8])
-                entry = {"_id": doc_id, "title": title, "text": body}
+                assert event.body is not None
+                assert event.subject is not None
+                doc_id = event.member_name.replace("/", "__")
+                title = event.subject or " ".join(event.body.split()[:8])
+                entry = {"_id": doc_id, "title": title, "text": event.body}
                 seen_candidates += 1
                 if len(reservoir) < n_docs:
                     reservoir.append(entry)
@@ -465,6 +531,7 @@ def _sample_enron_from_raw(
             "min_words": min_words,
             "raw_source_signature": raw_source_signature,
             "license": _ENRON_LICENSE,
+            "stage_counts": stage_counts,
         },
     })
 

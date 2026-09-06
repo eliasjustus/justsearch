@@ -284,18 +284,30 @@ public final class GplJobCoordinator implements GplStatusProvider {
     // per-document AtomicReference churn while still providing progress visibility.
     int localProcessed = 0;
     long localTotal = 0L;
+    String snapshotToken = "";
     Instant startedAt = runSnapshot.get().lastRunAt();
 
     try {
       boolean aiTimedOut = false;
       while (!aiTimedOut) {
         ListAllDocumentIdsResponse page =
-            knowledgeClientSupplier.get().listAllDocumentIds(offset, BATCH_SIZE);
+            offset == 0
+                ? knowledgeClientSupplier.get().listAllDocumentIds(0, BATCH_SIZE)
+                : knowledgeClientSupplier
+                    .get()
+                    .listAllDocumentIds(offset, BATCH_SIZE, snapshotToken);
         List<String> docIds = page.getDocIdsList();
 
         if (localTotal == 0L) {
           localTotal = page.getTotalCount();
           log.info("GPL job: corpus size = {} docs", localTotal);
+        }
+
+        if (!page.getSnapshotToken().isEmpty()) {
+          snapshotToken = page.getSnapshotToken();
+        } else if ((long) offset + docIds.size() < page.getTotalCount()) {
+          throw new IllegalStateException(
+              "Worker omitted the document ID snapshot token for a paginated corpus");
         }
 
         if (docIds.isEmpty()) {

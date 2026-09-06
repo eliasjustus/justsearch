@@ -618,11 +618,16 @@ public final class BackfillScheduler {
    */
   private boolean paceAndCheckStopBackfillWork(long cycleDeadlineNanos) {
     indexingPacing.pace();
+    return hardStopBackfillWork()
+        || System.nanoTime() >= cycleDeadlineNanos;
+  }
+
+  /** Stop reasons that must not be hidden by a first-unit scheduling floor. */
+  private boolean hardStopBackfillWork() {
     return !running.get()
         || Thread.currentThread().isInterrupted()
         || signalBus.shouldYieldGpuBackfill()
-        || signalBus.hasPendingIngest()
-        || System.nanoTime() >= cycleDeadlineNanos;
+        || signalBus.hasPendingIngest();
   }
 
   private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
@@ -666,6 +671,7 @@ public final class BackfillScheduler {
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0},
             () -> paceAndCheckStopBackfillWork(cycleDeadlineNanos),
+            this::hardStopBackfillWork,
             () -> System.nanoTime() >= embedShareDeadlineNanos,
             windowedEmbedProgress));
   }

@@ -118,17 +118,6 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
       summary = PdfVisualAnalyzer.enrich(file, summary);
     }
     boolean truncated = structured.truncated();
-    if (truncated && result.content().length() > policy.maxExtractedChars()) {
-      // Defensive trim — the SAX handler caps to maxExtractedChars, but a chunk that overflows
-      // by N characters could leave the buffer slightly above the cap.
-      result =
-          new ExtractionResult(
-              result.content().substring(0, policy.maxExtractedChars()),
-              result.title(),
-              result.mimeType(),
-              result.author(),
-              result.frontmatterMetadata());
-    }
 
     OcrEvidenceBuilder ocrEvidence = new OcrEvidenceBuilder();
     OcrAttemptDecision ocrAttempt =
@@ -150,17 +139,38 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
         return ocrArtifact;
       }
     }
-    return ExtractionArtifact.full(result, policy, "tika-policy-structured", truncated)
-        .withVisualExtractionEvidence(
-            VisualExtractionEvidence.from(
-                result.content(),
-                summary,
-                "structured",
-                ocrConfig,
-                false,
-                OcrConfidenceExtractor.Summary.empty(),
-                false,
-                ocrEvidence.facts(truncated)));
+    return withVisualEvidence(
+        ExtractionArtifact.full(result, policy, "tika-policy-structured", truncated),
+        summary,
+        "structured",
+        false,
+        OcrConfidenceExtractor.Summary.empty(),
+        false,
+        ocrEvidence);
+  }
+
+  private ExtractionArtifact withVisualEvidence(
+      ExtractionArtifact artifact,
+      StructuredDocumentSummary summary,
+      String route,
+      boolean ocrRoute,
+      OcrConfidenceExtractor.Summary ocrConfidence,
+      boolean mixedPdfOverride,
+      OcrEvidenceBuilder ocrEvidence) {
+    // ExtractionArtifact.full is the final representation boundary and may clamp annotated or
+    // OCR-merged text. Persist routing evidence from that effective representation, not from the
+    // discarded pre-clamp value.
+    ExtractionResult effectiveResult = artifact.result();
+    return artifact.withVisualExtractionEvidence(
+        VisualExtractionEvidence.from(
+            effectiveResult == null ? null : effectiveResult.content(),
+            summary,
+            route,
+            ocrConfig,
+            ocrRoute,
+            ocrConfidence,
+            mixedPdfOverride,
+            ocrEvidence.facts(artifact.truncated())));
   }
 
   private OcrAttemptDecision evaluateOcrAttempt(
@@ -336,17 +346,14 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
                 baselineSummary == null ? 0 : baselineSummary.listCount(),
                 baselineSummary == null ? 0 : baselineSummary.imagePageCount());
         summary = ocrCoveredPdfSummary(file, summary, merged);
-        return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
-            .withVisualExtractionEvidence(
-                VisualExtractionEvidence.from(
-                    merged,
-                    summary,
-                    "ocr_full",
-                    ocrConfig,
-                    true,
-                    ocr.confidence(),
-                    false,
-                    ocrEvidence.facts(ocr.truncated())));
+        return withVisualEvidence(
+            ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated()),
+            summary,
+            "ocr_full",
+            true,
+            ocr.confidence(),
+            false,
+            ocrEvidence);
       }
     }
     // Single terminal classifier for the PDF OCR path (tempdoc 671 discipline; skip() is
@@ -380,17 +387,14 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
         StructuredDocumentSummary summary =
             new StructuredDocumentSummary(
                 1, directText.length(), 1, 0, 0, Math.max(1, directText.split("\\R+").length), 0, 0, 0);
-        return ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
-            .withVisualExtractionEvidence(
-                VisualExtractionEvidence.from(
-                    directText,
-                    summary,
-                    "ocr_full",
-                    ocrConfig,
-                    true,
-                    ocr.confidence(),
-                    false,
-                    ocrEvidence.facts(ocr.truncated())));
+        return withVisualEvidence(
+            ExtractionArtifact.full(result, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated()),
+            summary,
+            "ocr_full",
+            true,
+            ocr.confidence(),
+            false,
+            ocrEvidence);
       }
     }
     // Single terminal classifier for the raster-image OCR path.
@@ -457,17 +461,15 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
                 baselineSummary.tableCount(),
                 baselineSummary.listCount(),
                 baselineSummary.imagePageCount());
-        return ExtractionArtifact.full(mergedResult, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated())
-            .withVisualExtractionEvidence(
-                VisualExtractionEvidence.from(
-                    merged,
-                    mergedSummary,
-                    "ocr_selective",
-                    ocrConfig,
-                    true,
-                    ocr.confidence(),
-                    true,
-                    ocrEvidence.facts(ocr.truncated())));
+        return withVisualEvidence(
+            ExtractionArtifact.full(
+                mergedResult, policy, OcrRoutingConfig.PARSER_ID, ocr.truncated()),
+            mergedSummary,
+            "ocr_selective",
+            true,
+            ocr.confidence(),
+            true,
+            ocrEvidence);
       }
     }
     // Single terminal classifier for the selective PDF OCR path (a mixed PDF always has real

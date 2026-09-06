@@ -44,10 +44,15 @@ served-model guard is the backstop, not the primary control).
 `python -m jseval` is the canonical **agent-only** tool for dataset
 evaluation, pipeline profiling, and throughput benchmarking. It is not
 designed for human developers — all output and progress reporting is
-optimized for machine consumption. Agents should use jseval for ALL
+optimized for machine consumption. The `duplicate-review-label` command is the narrow exception: it opens
+a private native review window for a human or model-assisted labeling campaign. Agents should use jseval for ALL
 eval/profiling work instead of ad-hoc bash/node scripts. When jseval
 lacks a feature, improve it (`scripts/jseval/`) rather than building
 workarounds.
+
+Unless a command says otherwise, run the examples below from `scripts/jseval/`. Paths beginning with
+`tmp/` therefore resolve to the repository's gitignored `scripts/jseval/tmp/` data root, including the
+mandatory private destination for text-bearing duplicate review packets.
 
 ## Quick Reference
 
@@ -64,10 +69,9 @@ python -m jseval run --dataset scifact --modes hybrid --max-queries 10 --skip-in
 python -m jseval run --dataset scifact --modes lexical --pipeline \
   --start-backend --clean --timeline tmp/timeline.tsv
 
-# Full lifecycle with LLM (Brain/llama-server) enabled
-# -Pllm=true auto-detects llama-server from the dev layout
-python -m jseval run --dataset multihop --modes hybrid --pipeline \
-  --start-backend --llm --clean
+# Full inference/VDU: first start and activate an owned dev stack with justsearch-dev MCP.
+# The eval backend's read-only settings cannot activate inference; --start-backend --llm rejects.
+python -m jseval run --dataset multihop --modes hybrid --pipeline --base-url <owned-api-url>
 
 # From YAML config file
 python -m jseval run --config eval-run.yaml --start-backend
@@ -95,6 +99,234 @@ python -m jseval engine-bench --corpus <path>
 # kNN latency
 python -m jseval knn-bench
 ```
+
+### Duplicate prevalence (descriptive)
+
+The raw `mixed/format-breadth-v1` sibling corpus is a frozen 33-file, single-source-per-format real-input
+cohort for deterministic production-path characterization: 16 untouched CMU Enron RFC822 messages, all
+nine RTF members in the pinned Govdocs1 000/001 archives, and eight sorted nested ZIP members from
+NapierOne `ZIP-DEFLATE-tiny`. Its recipe reports one conservative collection-level producer/source count
+for each covered format; it is not evidence of producer-diverse or representative robustness. It is
+separate from immutable `mixed/realdocs-v1`; raw bytes remain gitignored and cache-backed. Ordinary
+materialization requires the committed observed source/member manifest and validates the materialized
+realdocs tree against its own immutable 620-file manifest before comparing hashes. Source drift, member
+drift, unsafe archive paths, count/extension mismatch, Napier sidecar mismatch, or any SHA-256 overlap
+fails closed:
+
+```bash
+python -m jseval corpus-fetch-format-breadth
+```
+
+`--write-manifest` is only for a deliberate first-source observation or reviewed recipe revision. It writes
+the exact source/member hashes that must be reviewed before commit; it is not a drift-acceptance switch for
+an already observed manifest. The sibling intentionally leaves MBOX, EPUB, ODF, and optional MSG as
+deterministic-only coverage until separately provenance-cleared real sources exist.
+
+`duplicate-prevalence` measures either the immutable, pre-dedup Enron **source-body proxy** or a
+strictly reconciled **production-extracted** snapshot. The Enron v2 path does not claim Worker/Tika
+behavior: it streams the complete archive, commits raw → parsed → eligible → retained stage counts, and
+computes exact raw-body and normalized-content censuses over every eligible occurrence before first-SHA
+retention. The memory-heavy analyzer runs only on a deterministic uniform reservoir. The production
+adapter obtains parent ids and stored content through Head-to-Worker RPC bridges, never through
+Head/Python Lucene access. Both modes emit no source paths, archive member names, document ids, or text.
+
+```bash
+python -m jseval duplicate-prevalence \
+  --input-spec tmp/enron-duplicate-prevalence-input.json \
+  --out tmp/enron-duplicate-prevalence.json
+
+# In the same analysis pass, optionally emit the text-bearing packet needed for
+# human calibration and holdout labels. This file is sensitive and local-only.
+python -m jseval duplicate-prevalence \
+  --input-spec tmp/enron-duplicate-prevalence-input.json \
+  --out tmp/enron-duplicate-prevalence.json \
+  --review-packet-out tmp/enron-duplicate-review.local.json \
+  --review-per-stratum-quota 2 \
+  --review-calibration-fraction 0.5 \
+  --review-seed 897
+
+# Open the blinded human-labeling window. The state file contains pair ids and
+# decisions only; it never contains the packet's text or experimental strata.
+python -m jseval duplicate-review-label \
+  --packet tmp/enron-duplicate-review.local.json \
+  --labels-out tmp/enron-duplicate-review-labels.local.json \
+  --triage tmp/enron-duplicate-review-model-triage.local.json
+
+# After every pair is labeled, select the threshold on calibration only and
+# evaluate that one frozen threshold once on the disjoint holdout.
+python -m jseval duplicate-review-decide \
+  --packet tmp/enron-duplicate-review.local.json \
+  --labels tmp/enron-duplicate-review-labels.local.json \
+  --triage tmp/enron-duplicate-review-model-triage.local.json \
+  --out tmp/enron-duplicate-review-decision.local.json
+
+# Apply the saved decision to its original analyzer output without scoring again.
+python -m jseval duplicate-prevalence-apply-decision \
+  --prevalence tmp/enron-duplicate-prevalence.json \
+  --decision tmp/enron-duplicate-review-decision.local.json \
+  --expected-decision-hash <recorded-canonical-decision-sha256> \
+  --out tmp/enron-calibrated-prevalence.json
+
+# Bind a production snapshot to one query run and decorate its result sidecar.
+# The raw corpus resolved by the run must exactly match source.raw_root in the spec.
+python -m jseval run --dataset mixed/realdocs-v1 \
+  --modes lexical,vector,splade,hybrid \
+  --start-backend --clean --fresh-index \
+  --duplicate-prevalence-input-spec tmp/realdocs-duplicate-prevalence-input.json
+
+# On a fresh owned full-inference dev stack, ingest and await VDU plus re-enrichment.
+python -m jseval duplicate-prevalence \
+  --input-spec tmp/realdocs-duplicate-prevalence-input.json \
+  --ingest --wait-timeout-seconds 7200 --timeline tmp/realdocs-readiness.tsv \
+  --out tmp/realdocs-duplicate-prevalence.json
+```
+
+The input is strict `jseval.duplicate-prevalence-input.v1` or `.v2` JSON with exactly `schema`, `source`,
+and `analysis`. New full-scale Enron runs use v2: `source.kind=enron-eligible-body-proxy` supplies a
+dedicated one-file `raw_root`, canonical relative `tarball`, nonnegative `min_words`, and required
+`eligible_sample` using `algorithm-r-reservoir-without-replacement-v1`, a size from 1 through 5,000, and a
+nonnegative sampling seed. Legacy v1 Enron execution remains readable and testable but is superseded for
+full-archive runs because it retains every eligible body. `source.kind=production-extracted` remains v1 and
+instead supplies `raw_root` plus an explicit-port HTTP loopback `base_url`; production mode reads the
+optional per-boot token only from `JUSTSEARCH_SESSION_TOKEN`, never from the input or output artifact.
+`analysis` supplies every pinned analyzer field: shingle width, fixed 64-bit SimHash configuration,
+increasing Jaccard threshold sweep, exhaustive-slice size, bootstrap draws, seed, and candidate-pair limit.
+Unknown or missing fields, archive traversal/ambiguity, candidate truncation, and corpus drift fail closed.
+
+`duplicate-review-decide` requires the packet, completed text-free labels, and their bound model-triage
+sidecar. A predicted near duplicate must come from the SimHash candidate frame and meet the full-shingle
+Jaccard threshold. The command selects the maximum weighted calibration F1, breaking ties by higher weighted
+precision and then higher threshold, and evaluates only that threshold on holdout. It reports raw and
+Horvitz–Thompson-weighted confusion, precision, recall, F1, and a deterministic within-stratum bootstrap.
+Bootstrap output includes requested, valid, and invalid draw counts; if any planned draw has an undefined
+metric, that metric receives no percentile interval instead of silently dropping the draw. `UNCERTAIN` and
+`ABSTAIN` remain counted but excluded from binary metrics. The aggregate contains no text, paths, pair ids, or
+format ids, but it remains under `scripts/jseval/tmp/` pending publication review. Output may not resolve to
+any input. An existing output is reusable only when its self-hash is valid and its canonical JSON bytes,
+including numeric and Boolean types, are identical to the newly computed artifact. Model-assisted
+metrics are conditional on those labels; they do not quantify label error or archive-population prevalence.
+
+`--review-packet-out` reuses the private observations from that same analysis or production snapshot; it
+does not extract or scan the corpus twice. The command binds the packet to the aggregate artifact hash,
+observation commitment, measurement identity, and exact analyzer configuration. Candidate-connected
+families are partitioned before pair formation so calibration and holdout remain disjoint. The packet
+contains document text and null label fields, is marked `local-review-text` / `uncommitted-local-only`, and
+must never be committed or published. The destination is mechanically restricted to a file under the
+repository's gitignored `scripts/jseval/tmp/` root (with symlinks resolved); repository-visible and external
+paths are rejected before analysis. The aggregate `--out` remains text-free, and the two destinations must
+differ. Review options default to quota 2, fraction 0.5, and seed 897; set them explicitly when preregistering
+a labeling campaign.
+
+`duplicate-review-label` is a native Tk window and starts no HTTP server. It verifies the packet hash and
+analyzer binding before displaying text, hides split, candidate/control frame, similarity, stratum, format,
+token counts, and opaque ids, and uses packet-bound deterministic hashes for both pair order and left/right
+orientation. Closing and reopening the command resumes at the first unlabeled pair in the same blinded order.
+Every decision is atomically autosaved under the same private root to a strict
+`jseval.duplicate-review-labels.v1` artifact. That artifact contains only packet/analyzer hashes, presentation
+method identifiers, pair ids, and labels; it contains no text, paths, notes, labeler identity, timestamps, or
+experimental metadata. An existing state file with an altered hash, vocabulary, binding, population, or order
+is rejected before any packet text is shown. The global `--json` mode is rejected for this interactive command.
+
+For a model-assisted campaign, the optional `--triage` file is a strict, text-free
+`jseval.duplicate-review-model-triage.v1` sidecar. It binds the pre-triage and post-triage label-state hashes,
+packet/analyzer hashes, exact reviewed pair ids, and the blinded high-confidence-binary triage method. Model
+triage may auto-assign only `NEAR_DUPLICATE` or `NOT_NEAR_DUPLICATE`; every ambiguous pair remains unlabeled
+with disposition `HUMAN_REVIEW`. Passing the bound sidecar to the GUI displays only that human-review queue.
+Previously saved human judgments are preserved. The sidecar must accompany downstream scoring so results are
+described as model-assisted rather than wholly human-labeled.
+
+Use exactly four judgments. `NEAR_DUPLICATE` means the same substantive content despite wrappers, quoting, or
+formatting; `NOT_NEAR_DUPLICATE` means substantively distinct content. `UNCERTAIN` means both texts are
+reviewable but the semantic judgment is ambiguous. `ABSTAIN` means no judgment is possible because a text is
+unreadable, truncated, or otherwise not reviewable. Downstream threshold selection must exclude the two
+nonbinary labels and report their counts. It must select a threshold from calibration labels only, then evaluate
+that frozen threshold on the disjoint holdout; the label command intentionally performs neither operation.
+
+`duplicate-prevalence-apply-decision` requires the externally recorded decision hash, verifies both input
+hashes and the complete decision's evidence accounting, and requires the decision's analyzer hash
+to match the complete original prevalence artifact. It selects one existing threshold-sweep row and retains
+the original denominators, candidate-recall evidence, and descriptive intervals. It neither selects a new
+threshold nor evaluates holdout labels again. The selected report binds both input artifact hashes and
+rejects changed output or overwriting either input. Enron sample calibration does not validate another
+corpus, extractor, or sample, and does not estimate archive-wide near-duplicate prevalence. Query-result
+redundancy currently measures normalized-content-exact clusters only; it does not consume this near-duplicate
+decision. Uncalibrated production cohorts retain an explicit near-duplicate non-decision.
+
+Production capture is capped at 50,000 source documents. A strict raw manifest is the source-population
+authority; indexed extraction successes and explicitly declared terminal parser failures must partition it
+exactly. A terminal exclusion declaration binds the relative path, source SHA-256, expected failed-job state,
+exact expected error message, and the closed reason `corrupt-or-unsupported-parser-input`. The adapter
+revalidates each declaration against the raw bytes and `/api/indexing-jobs/failed`, rejects undeclared or
+stale failures, and persists only aggregate exclusion counts and reasons. It never treats a missing source as
+an analyzable document or emits the declaration's path, digest, or error text.
+
+Immediate production capture remains read-only. A positive `--wait-timeout-seconds` waits through the
+existing readiness engine before strict capture; `--ingest` explicitly registers the source root on that
+already-owned backend and requires a positive wait. This path awaits VDU and subsequent enabled enrichment
+stages, including the declared terminal-failure disposition that ordinary pipeline readiness cannot accept.
+`--timeline` records aggregate counters, including `vdu_pending` and `vdu_processing`; missing VDU values
+remain blank rather than being reported as zero. The caller owns stack startup, inference activation,
+clean data-directory selection, and shutdown through the dev-stack workflow.
+
+`/api/status`, `/api/debug/state`, and the Worker's complete id set must agree with that disposition
+accounting. The evaluation-only document-id export is one immutable request: callers must send offset zero and
+a limit no greater than 50,000, and the endpoint rejects continuation offsets rather than pretending that
+separate Worker reader generations form one snapshot. The production debug envelope's nested `worker`
+projection is authoritative, with the legacy flat shape accepted only for compatibility. Head and Worker must
+both be ready before and after capture; queues and writers must be quiescent, search and ingest generations
+identical, and build/generation/commit/count identity unchanged after capture. The aggregate lifecycle may be
+`DEGRADED` only for the exact `inference.offline`
+component disposition while Head and Worker remain ready and no VDU work is pending or processing. On the
+owned live-HTTP path, a bounded parent-id settle waits only for the final expected cohort after pipeline
+readiness; all subsequent before/after lifecycle, generation, manifest, failed-job, and complete-id checks
+remain strict.
+
+Every preview page must make exact UTF-16 offset progress without splitting a Unicode scalar and retain stable
+`totalChars`, parser/policy/status metadata, and the Worker-stored source SHA-256. The Worker reads content
+and provenance through one Lucene searcher and exposes its canonical `content_sha256` revision as
+`contentSha256`. Every page must retain that revision, and the assembled UTF-8 text must hash to it; missing
+revisions, malformed Unicode, and same-source VDU changes fail closed. The source digest must equal
+the strict raw-manifest row, so a same-path/same-count stale index is rejected. `SUCCESS_PARTIAL` is accepted
+only when the Worker reports `contentTruncated=true`, and the extraction snapshot v2 discloses partial-success
+and terminal-exclusion counts in both reconciliation and top-level denominators. Any inconsistent status,
+truncation flag, or disposition fails closed. Run-local opaque ids, path aliases, extracted text, the strict
+path-bearing manifest digest, terminal-exclusion declarations, HMAC key, and Ed25519 private key remain in
+memory. The persisted corpus signature is a keyed commitment to the strict manifest, not a dictionary-testable
+path hash; only the aggregate artifact, committed provenance digest, alias HMAC, verification key, and
+aggregate disposition accounting may persist.
+
+Production result decoration is a CLI-only `run` option; it is intentionally not accepted from YAML. It
+requires a nonempty query-mode set, an owned `--start-backend --clean --fresh-index` lifecycle, normal
+ingestion, and an exactly matching raw root and base URL. Index-cache adoption and
+`JUSTSEARCH_CORPUS_SIGNATURE` are forbidden. Capture happens after readiness and before queries; after
+queries the raw manifest, lifecycle/generation identity, and complete Worker id set are revalidated against
+that in-memory snapshot, then `write_run` preflights and emits the aggregate
+analysis, signed result-identity mapping, and summary/manifest corpus bindings. The required
+`staged_recall_accounting` projection must succeed before history publication. Worker telemetry is not
+mirrored into a private run directory because indexing spans contain source paths; it remains only in the
+local backend scratch directory. The ordinary run path remains
+identity-only and unchanged. A standalone production aggregate can still be written with
+`duplicate-prevalence`, but later decoration from that artifact is deliberately unsupported.
+
+The source SHA-256 is a stored Worker field added by this contract, so existing indexes cannot satisfy it:
+use a complete clean reindex. For each newly admitted or reindexed source the Worker performs two additional
+sequential full-file reads—immediately before and after extraction—to bind the stored digest to stable source
+bytes. Unchanged documents are rejected before these reads. The reads currently sit outside the parser
+timeout; real-corpus runs must record their throughput impact before this mechanism is considered a standing
+default rather than a measurement-only provenance guard.
+
+The versioned output validates against `scripts/jseval/duplicate-prevalence.v1.schema.json`. Byte-exact,
+normalized-content-exact, and near-duplicate results remain separate. Enron v2 labels the exact census
+`all-eligible-body-occurrences-before-sha-retention` and every analyzer block
+`frozen-uniform-eligible-body-sample`. Only the exact census supports archive-level prevalence; sampled
+exact and near-duplicate blocks are descriptive, and archive-level near-duplicate prevalence is explicitly
+unmeasured because unsampled mates would bias a document-reservoir estimate. SimHash banding guarantees
+candidate coverage only within the configured Hamming radius; the artifact reports measured Jaccard
+candidate recall on its deterministic exhaustive slice. Component bootstrap intervals are stability
+descriptions, not population confidence intervals. Production content-exact statistics are descriptive
+only. The base analyzer artifact keeps the near-duplicate decision `UNDECIDED`; a separate bound
+`duplicate-review-decide` artifact can resolve the threshold after disjoint calibration and holdout labels
+exist without rewriting the census artifact.
 
 ### Standing ratchets (engine-quality gates)
 
@@ -337,6 +569,18 @@ mode. The structural check is satisfied by two legs, so an omitted
 `splade` produces a green-looking projection with a silently lowered
 `leg_union_recall` — every `union_recall` gate then fails after the run.
 
+The same projection can add a `jseval.result-redundancy.v1` section when a run has a fully
+reconciled `result_identity.v1.json` sidecar with confirmed duplicate-cluster assignments. In v1,
+only normalized-content-exact clusters are accepted. A calibration/holdout decision artifact chooses a
+near-duplicate threshold but does not itself decorate result identities with confirmed clusters, so reviewed
+near-duplicate labels remain outside this contract. This
+section is intentionally separate from recall: recall and failure buckets continue to use qrels and
+the score-ranked TREC artifact, while redundancy uses the API's delivered `predictedDocIds` order
+truncated to ten. It reports delivered hits, unique clusters, redundant hits, and affected queries.
+An absent sidecar—or an identity-only sidecar not yet decorated by confirmed analysis—omits the
+section. Once cluster assignments are present, wrong schema, corpus mismatch, missing/extra hits,
+ambiguous assignments, or order mismatches fail the projection instead of producing a partial rate.
+
 ## What jseval Handles
 
 - **Corpus materialization**: Downloads and converts datasets to .txt
@@ -445,6 +689,7 @@ scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
     summary.json            # Metrics, config, git SHA, pipeline timing
     <mode>_per_query.json   # Per-query scores and ranks
     <mode>_run.trec         # TREC-format run file
+    result_identity.v1.json # Path-free run-local IDs for raw delivered hits
 ```
 
 **Additive schema key, always present (885 item 19).** Every `run` emits a `cadence` block in
@@ -477,6 +722,24 @@ from the `encoder.ort_run` spans in the Worker's `traces.ndjson` (rotated siblin
 no threshold: this replaced the `encoder_drift` PSI projection, whose per-cohort baseline never
 existed. Read it alongside `cpu_fallback_counts` to tell "the encoder got slower" from "the
 encoder moved to CPU".
+
+`result_identity.v1.json` is a local-run sidecar, not a replacement document namespace. It captures
+the full raw hit path/id in memory before legacy BEIR filename/stem normalization, assigns a random
+run-namespaced opaque ID, reconciles every delivered position to the unchanged
+`predictedDocIds`, and persists no raw path or plain path hash. Same-leaf files in different folders
+and cross-format copies therefore remain distinct even when their BEIR IDs collide. Duplicate
+clusters are minted only while raw aliases and the production observations are both in memory. The
+complete observation-to-alias catalog is committed by keyed HMAC into the extraction snapshot, so even a
+bijective alias swap fails before the join while the private-scratch key keeps paths from becoming
+dictionary-testable hashes. The key is never persisted. A separate private-scratch Ed25519 key signs the
+complete decorated sidecar, while its verification key is committed into the extraction artifact; the
+projection therefore rejects any later query, opaque-id, fingerprint, or cluster reassignment. The builder
+re-runs the duplicate analyzer over those observations and requires an exact artifact match;
+the projection then revalidates the content-addressed aggregate analysis beside the run. The sidecar
+nonce, complete semantic hash, analyzer hash, and verification key are independently pinned in the run
+summary, preventing a signed sidecar/analyzer pair from being replaced or replayed across runs. The
+sidecar must also be bound to a strict corpus SHA-256. Private alias/catalog material remains outside the run
+directory.
 
 **Local prerequisite for the full pytest suite.** `python -m pytest scripts/jseval/tests` needs the
 optional extras: `pip install -e "scripts/jseval[dev,agent]"`. Without them four test modules fail
@@ -554,6 +817,7 @@ jseval lives at `scripts/jseval/`. Key files:
 - `jseval/compare_runs.py` — Statistical comparison with pipeline timing
 - `jseval/provenance.py` — Per-hit and per-run evidence extraction
 - `jseval/artifacts.py` — Output file writing (JSON, TREC)
+- `jseval/result_identity.py` — Collision-safe raw-hit capture, sidecar validation, and reconciliation
 
 When improving jseval, follow existing patterns in these files.
 

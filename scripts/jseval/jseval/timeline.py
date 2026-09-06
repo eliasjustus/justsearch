@@ -44,6 +44,8 @@ TIMELINE_FIELDS = [
     "writer_pending_docs",
     "commit_count",
     "refresh_lag_ms",
+    "vdu_pending",
+    "vdu_processing",
 ]
 
 # 391/E-J-N9: tolerance for SPLADE coverage decreases between snapshots.
@@ -111,6 +113,9 @@ def snapshot_to_row(elapsed_s: float, snapshot: dict) -> dict:
     row["writer_pending_docs"] = snapshot.get("writerPendingDocs", 0)
     row["commit_count"] = snapshot.get("commitCount", 0)
     row["refresh_lag_ms"] = snapshot.get("refreshLagMs", 0)
+    row["vdu_pending"] = snapshot.get("pendingVduCount", "")
+    vdu_processing = snapshot.get("vduProcessing")
+    row["vdu_processing"] = int(vdu_processing) if isinstance(vdu_processing, bool) else ""
     # 357: encoder profiles (carried in row dict, not written to TSV).
     # Underscore prefix signals "not a TSV column" — excluded from
     # TIMELINE_FIELDS by extrasaction="ignore" on DictWriter.

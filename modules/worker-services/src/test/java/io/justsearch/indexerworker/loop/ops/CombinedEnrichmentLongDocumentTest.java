@@ -8,6 +8,8 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import io.justsearch.adapters.lucene.runtime.CommitOps;
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
@@ -104,6 +106,7 @@ class CombinedEnrichmentLongDocumentTest {
 
   /** Encoder units spent since the last {@link #newCycle()} — the simulated cycle budget. */
   private final AtomicInteger unitsThisCycle = new AtomicInteger();
+  private final AtomicInteger singlePassRequests = new AtomicInteger();
 
   /** Every {@code (docId, fromWindow)} the encoder was asked for, in order. */
   private final List<String> windowRequests = new ArrayList<>();
@@ -213,6 +216,15 @@ class CombinedEnrichmentLongDocumentTest {
             });
 
     lenient()
+        .when(embeddingProvider.embedWithSpans(anyString(), org.mockito.ArgumentMatchers.any(int[][].class)))
+        .thenAnswer(
+            inv -> {
+              singlePassRequests.incrementAndGet();
+              unitsThisCycle.incrementAndGet();
+              return null;
+            });
+
+    lenient()
         .when(spladeEncoder.encodeBatch(anyList()))
         .thenAnswer(
             inv -> {
@@ -241,6 +253,13 @@ class CombinedEnrichmentLongDocumentTest {
     fakeIndex
         .computeIfAbsent(docId, k -> new HashMap<>())
         .put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
+  }
+
+  private void seedLateChunkedLongParent(String docId) {
+    seedLongEmbedDoc(docId);
+    fakeIndex
+        .computeIfAbsent(docId + "-chunk", k -> new HashMap<>())
+        .put(SchemaFields.PARENT_DOC_ID, docId);
   }
 
   private void seedSpladeAndNerPending(String docId) {
@@ -274,6 +293,24 @@ class CombinedEnrichmentLongDocumentTest {
       boolean nerEnabled,
       int stopAfterUnits,
       int embedShareUnits) {
+    return context(
+        progress,
+        spladeEnabled,
+        nerEnabled,
+        stopAfterUnits,
+        embedShareUnits,
+        false,
+        () -> false);
+  }
+
+  private CombinedEnrichmentBackfillOps.BackfillContext context(
+      WindowedEmbedProgress progress,
+      boolean spladeEnabled,
+      boolean nerEnabled,
+      int stopAfterUnits,
+      int embedShareUnits,
+      boolean lateChunkingEnabled,
+      BooleanSupplier hardStop) {
     BooleanSupplier stop = () -> unitsThisCycle.get() >= stopAfterUnits;
     BooleanSupplier embedShare = () -> unitsThisCycle.get() >= embedShareUnits;
     return new CombinedEnrichmentBackfillOps.BackfillContext(
@@ -290,14 +327,64 @@ class CombinedEnrichmentLongDocumentTest {
         LoggerFactory.getLogger(CombinedEnrichmentLongDocumentTest.class),
         false,
         false,
-        false,
+        lateChunkingEnabled,
         0,
         new ArrayDeque<>(),
         new ArrayDeque<>(),
         new int[] {0},
         stop,
+        hardStop,
         embedShare,
         progress);
+  }
+
+  @Test
+  @DisplayName("late-chunk null fallback records one real window, then resumes without another probe")
+  void lateChunkNullFallbackRecordsAndResumesAWindowAfterTheProbeSpentTheDeadline() {
+    seedLateChunkedLongParent("long-fallback");
+    WindowedEmbedProgress progress = new WindowedEmbedProgress();
+
+    newCycle();
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+        context(progress, false, false, 1, Integer.MAX_VALUE, true, () -> false));
+
+    assertEquals(1, singlePassRequests.get(), "the first cycle classifies through single-pass once");
+    assertEquals(List.of("long-fallback@0"), windowRequests);
+    assertEquals(
+        WINDOW_SLICE,
+        progress.nextWindow("long-fallback", "LONG:long-fallback"),
+        "the deadline spent by the probe must not prevent the first resumable window");
+
+    newCycle();
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+        context(progress, false, false, 1, Integer.MAX_VALUE, true, () -> false));
+
+    assertEquals(1, singlePassRequests.get(), "a matching partial must bypass single-pass later");
+    assertEquals(List.of("long-fallback@0", "long-fallback@32"), windowRequests);
+    verify(embeddingProvider, never()).documentWindowCount("LONG:long-fallback");
+  }
+
+  @Test
+  @DisplayName("hard preemption after a late-chunk probe still prevents the fallback window")
+  void hardPreemptionAfterProbeIsNotHiddenByTheWindowFloor() {
+    seedLateChunkedLongParent("long-hard-stop");
+    WindowedEmbedProgress progress = new WindowedEmbedProgress();
+
+    newCycle();
+    CombinedEnrichmentBackfillOps.CombinedOutcome outcome =
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(
+            context(
+                progress,
+                false,
+                false,
+                1,
+                Integer.MAX_VALUE,
+                true,
+                () -> unitsThisCycle.get() >= 1));
+
+    assertTrue(outcome.aborted(), "a hard stop must still abort after the classification probe");
+    assertTrue(windowRequests.isEmpty(), "shutdown/yield/ingest preemption must prevent new GPU work");
+    assertEquals(0, progress.trackedDocuments());
   }
 
   // ------------------------------------------------------------------------------------------

@@ -64,6 +64,17 @@ public interface DocumentService {
   CompletionStage<DocumentRecord> fetch(String docId);
 
   /**
+   * List parent document identifiers from the Worker-owned index.
+   *
+   * <p>This optional seam exists for bounded evaluation snapshots. The default preserves this
+   * interface's single abstract method, so simple {@code DocumentService} lambdas remain valid.
+   */
+  default CompletionStage<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+    return CompletableFuture.failedFuture(
+        new UnsupportedOperationException("Document ID enumeration is not configured"));
+  }
+
+  /**
    * Fetch multiple documents by their identifiers in a single batch operation.
    *
    * @param docIds list of canonical document identifiers
@@ -738,6 +749,11 @@ public interface DocumentService {
       boolean truncated,
       int nextOffsetChars,
       int totalChars,
+      String extractionStatus,
+      Boolean contentTruncated,
+      String extractionPolicyId,
+      String extractionParserId,
+      String sourceSha256,
       String error) {
     public DocumentSlice {
       Objects.requireNonNull(docId, "docId");
@@ -745,7 +761,54 @@ public interface DocumentService {
       metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
       nextOffsetChars = Math.max(0, nextOffsetChars);
       totalChars = Math.max(0, totalChars);
+      extractionStatus = blankToNull(extractionStatus);
+      extractionPolicyId = blankToNull(extractionPolicyId);
+      extractionParserId = blankToNull(extractionParserId);
+      sourceSha256 = blankToNull(sourceSha256);
       error = error == null || error.isBlank() ? null : error;
+    }
+
+    /** Backward-compatible constructor for implementations without extraction provenance. */
+    public DocumentSlice(
+        String docId,
+        String content,
+        Map<String, Object> metadata,
+        boolean found,
+        boolean truncated,
+        int nextOffsetChars,
+        int totalChars,
+        String error) {
+      this(
+          docId,
+          content,
+          metadata,
+          found,
+          truncated,
+          nextOffsetChars,
+          totalChars,
+          null,
+          null,
+          null,
+          null,
+          null,
+          error);
+    }
+
+    private static String blankToNull(String value) {
+      return value == null || value.isBlank() ? null : value;
+    }
+  }
+
+  /** Immutable page of parent document IDs returned by the Worker-owned index. */
+  record DocumentIdPage(List<String> docIds, long totalCount, long tookMs) {
+    public DocumentIdPage {
+      docIds = List.copyOf(Objects.requireNonNull(docIds, "docIds"));
+      if (totalCount < docIds.size()) {
+        throw new IllegalArgumentException("totalCount must cover every returned document ID");
+      }
+      if (tookMs < 0) {
+        throw new IllegalArgumentException("tookMs must be non-negative");
+      }
     }
   }
 }

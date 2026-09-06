@@ -16,16 +16,16 @@ public record ExtractionArtifact(
     int embeddedResourceCount,
     int maxEmbeddedDepth,
     String visualExtractionEvidenceJson) {
-  private static final int MAX_METADATA_ENTRIES = 128;
-  private static final int MAX_METADATA_KEY_CHARS = 128;
-  private static final int MAX_METADATA_VALUE_CHARS = 4096;
+  static final int MAX_METADATA_ENTRIES = 128;
+  static final int MAX_METADATA_KEY_CHARS = 128;
+  static final int MAX_METADATA_VALUE_CHARS = 4096;
   // The scalar-metadata validation backstop. ExtractionResult bounds the title to its own, much
   // smaller MAX_INDEXED_TITLE_CHARS at the source (observation #379), so this stays the defensive
   // last-resort limit for title/mimeType/author (validateScalar below).
-  private static final int MAX_SCALAR_METADATA_CHARS = 4096;
-  private static final int MAX_WARNING_COUNT = 32;
-  private static final int MAX_WARNING_CHARS = 512;
-  private static final int MAX_VISUAL_EXTRACTION_EVIDENCE_CHARS = VisualExtractionEvidence.MAX_JSON_CHARS;
+  static final int MAX_SCALAR_METADATA_CHARS = 4096;
+  static final int MAX_WARNING_COUNT = 32;
+  static final int MAX_WARNING_CHARS = 512;
+  static final int MAX_VISUAL_EXTRACTION_EVIDENCE_CHARS = VisualExtractionEvidence.MAX_JSON_CHARS;
 
   public ExtractionArtifact {
     status = status == null ? ExtractionStatus.SUCCESS_FULL : status;
@@ -61,31 +61,48 @@ public record ExtractionArtifact(
   }
 
   public static ExtractionArtifact full(ExtractionResult result, String parserId) {
+    return full(result, TikaExtractionPolicy.defaults(), parserId, false);
+  }
+
+  public static ExtractionArtifact full(
+      ExtractionResult result, TikaExtractionPolicy policy, String parserId, boolean truncated) {
+    TikaExtractionPolicy effectivePolicy = policy == null ? TikaExtractionPolicy.defaults() : policy;
+    ExtractionResult effectiveResult = result;
+    boolean effectiveTruncated = truncated;
+    if (result != null && result.content().length() > effectivePolicy.maxExtractedChars()) {
+      String boundedContent =
+          surrogateSafePrefix(result.content(), effectivePolicy.maxExtractedChars());
+      effectiveResult =
+          new ExtractionResult(
+              boundedContent,
+              result.title(),
+              result.mimeType(),
+              result.author(),
+              result.frontmatterMetadata());
+      effectiveTruncated = true;
+    }
     return new ExtractionArtifact(
-        ExtractionOutcomeClassifier.classify(result == null ? null : result.content(), false),
-        result,
-        TikaExtractionPolicy.defaults().policyId(),
+        ExtractionOutcomeClassifier.classify(
+            effectiveResult == null ? null : effectiveResult.content(), effectiveTruncated),
+        effectiveResult,
+        effectivePolicy.policyId(),
         parserId,
-        false,
+        effectiveTruncated,
         List.of(),
         0,
         0,
         null);
   }
 
-  public static ExtractionArtifact full(
-      ExtractionResult result, TikaExtractionPolicy policy, String parserId, boolean truncated) {
-    TikaExtractionPolicy effectivePolicy = policy == null ? TikaExtractionPolicy.defaults() : policy;
-    return new ExtractionArtifact(
-        ExtractionOutcomeClassifier.classify(result == null ? null : result.content(), truncated),
-        result,
-        effectivePolicy.policyId(),
-        parserId,
-        truncated,
-        List.of(),
-        0,
-        0,
-        null);
+  private static String surrogateSafePrefix(String value, int maxChars) {
+    int cut = Math.min(value.length(), Math.max(0, maxChars));
+    if (cut > 0
+        && cut < value.length()
+        && Character.isHighSurrogate(value.charAt(cut - 1))
+        && Character.isLowSurrogate(value.charAt(cut))) {
+      cut--;
+    }
+    return value.substring(0, cut);
   }
 
   public ExtractionArtifact withVisualExtractionEvidence(VisualExtractionEvidence evidence) {
@@ -147,6 +164,12 @@ public record ExtractionArtifact(
     }
     if (parserId == null || parserId.isBlank()) {
       throw new ContentExtractor.ExtractionException("Extraction artifact is missing parser id");
+    }
+    if (policyId.length() > SandboxExtractionResponse.MAX_IDENTIFIER_CHARS) {
+      throw new ContentExtractor.ExtractionException("Extraction artifact policy id exceeds max length");
+    }
+    if (parserId.length() > SandboxExtractionResponse.MAX_IDENTIFIER_CHARS) {
+      throw new ContentExtractor.ExtractionException("Extraction artifact parser id exceeds max length");
     }
     if (expectedPolicy != null && !policyId.equals(expectedPolicy.policyId())) {
       throw new ContentExtractor.ExtractionException("Extraction artifact policy id does not match expected policy");

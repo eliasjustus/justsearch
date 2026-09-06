@@ -6,12 +6,15 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from jseval.artifacts import (
     _build_per_query_entries,
     _mirror_telemetry,
     _write_trec_run,
     write_run,
 )
+from jseval.result_identity import ResultIdentityError
 
 
 def _mock_mode_result():
@@ -29,9 +32,16 @@ def _mock_mode_result():
         "raw_responses": [
             # Tempdoc 549 Phase E4: effectiveMode/decisionKind come from the unified searchTrace.
             {"query_id": "q1", "tookMs": 15, "totalHits": 10,
-             "searchTrace": {"effectiveMode": "HYBRID"}},
+             "searchTrace": {"effectiveMode": "HYBRID"},
+             "results": [
+                 {"id": "/corpus/d1.txt", "fields": {"filename": "d1.txt", "path": "/corpus/d1.txt"}},
+                 {"id": "/corpus/d2.txt", "fields": {"filename": "d2.txt", "path": "/corpus/d2.txt"}},
+             ]},
             {"query_id": "q2", "tookMs": 20, "totalHits": 5,
-             "searchTrace": {"effectiveMode": "HYBRID"}},
+             "searchTrace": {"effectiveMode": "HYBRID"},
+             "results": [
+                 {"id": "/corpus/d3.txt", "fields": {"filename": "d3.txt", "path": "/corpus/d3.txt"}},
+             ]},
         ],
         "run_evidence": {"error_count": 0},
         "ann_proof": MagicMock(status="PASS", reasons=[], rates={}),
@@ -47,6 +57,7 @@ def _mock_summary():
         "modes": ["hybrid"],
         "doc_count": 100,
         "query_count": 2,
+        "corpus_identity": {"profile_id": "test", "signature": "b" * 64},
         "per_mode": {
             "hybrid": {
                 "aggregate_metrics": {"nDCG@10": 0.731},
@@ -109,6 +120,38 @@ class TestWriteRun:
         assert parts[3] == "1"   # rank
         assert parts[5] == "jseval_hybrid"  # run name
 
+    def test_writes_path_free_collision_safe_result_identity_sidecar(self, tmp_path):
+        summary = _mock_summary()
+        mode_results = {"hybrid": _mock_mode_result()}
+        qrels = {"q1": {"d1": 1}, "q2": {"d3": 1}}
+
+        run_dir = write_run(summary, mode_results, qrels, tmp_path)
+        sidecar = json.loads((run_dir / "result_identity.v1.json").read_text())
+        written_summary = json.loads((run_dir / "summary.json").read_text())
+
+        assert sidecar["schema"] == "jseval.result-identity-sidecar.v1"
+        assert sidecar["document_count"] == 3
+        assert sidecar["corpus_signature"] == "b" * 64
+        serialized = json.dumps(sidecar)
+        assert "/corpus/" not in serialized
+        assert "contains_source_paths\": false" in serialized
+        assert written_summary["result_identity_anchor"]["run_instance"] == sidecar["run_instance"]
+        assert written_summary["result_identity_anchor"]["schema"] == "jseval.result-identity-anchor.v1"
+
+    def test_identity_failure_leaves_no_partial_run_directory(self, tmp_path):
+        summary = _mock_summary()
+        mode_results = {"hybrid": _mock_mode_result()}
+        # Filename still lets the legacy resolver emit d1, but there is no
+        # collision-safe path, provenance path, or unmodified hit id.
+        mode_results["hybrid"]["raw_responses"][0]["results"][0] = {
+            "fields": {"filename": "d1.txt"},
+        }
+
+        with pytest.raises(ResultIdentityError, match="filename alone is unsafe"):
+            write_run(summary, mode_results, {}, tmp_path)
+
+        assert list(tmp_path.iterdir()) == []
+
 
 class TestBuildPerQueryEntries:
     def test_merges_metrics_and_response(self):
@@ -159,8 +202,10 @@ class TestBuildPerQueryEntries:
         assert sig["dense_rank"] == 2
         assert sig["ce_score"] == 4.2
 
-        # q2 has no "results" key in the mock raw_response → empty, not an error.
-        assert entries[1]["judgeSignals"] == []
+        # q2's ordinary hit has no trace entries, so its signal shape is present
+        # with null stage values.
+        assert len(entries[1]["judgeSignals"]) == 1
+        assert entries[1]["judgeSignals"][0]["docId"] == "d3"
 
     def test_judge_signals_skips_unresolvable_hit(self):
         # A hit whose doc-id can't be resolved is skipped (logged), not a crash.

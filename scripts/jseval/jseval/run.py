@@ -278,6 +278,8 @@ def execute_run(
     search_load: dict | None = None,
     first_search_probe: dict | None = None,
     settle_index: bool = False,
+    raw_context=None,
+    duplicate_prevalence_request=None,
 ) -> dict:
     """Execute a full evaluation run.
 
@@ -298,6 +300,53 @@ def execute_run(
     query indexes with equal merge state. Off by default: it holds the writer for the duration of a
     force-merge, which a routine run should not pay for.
     """
+    from .raw_corpus_manifest import (
+        resolve_raw_corpus_context,
+        validate_raw_corpus_context,
+    )
+
+    if raw_context is None:
+        raw_context = resolve_raw_corpus_context(
+            dataset_name, base_dir=base_dir, env_overrides=env_overrides,
+        )
+    if raw_context is not None:
+        validate_raw_corpus_context(
+            raw_context, env_overrides, expected_dataset=dataset_name,
+        )
+    raw_identity = raw_context.to_corpus_identity() if raw_context else None
+    if duplicate_prevalence_request is not None:
+        if raw_context is None:
+            raise ValueError(
+                "duplicate-prevalence decoration requires a resolved raw corpus"
+            )
+        if not modes:
+            raise ValueError(
+                "duplicate-prevalence decoration requires at least one query mode"
+            )
+        if output_dir is None:
+            raise ValueError(
+                "duplicate-prevalence decoration requires persisted run artifacts"
+            )
+        if index_cache:
+            raise ValueError(
+                "duplicate-prevalence decoration requires a fresh, uncached index"
+            )
+        if (env_overrides or {}).get("JUSTSEARCH_CORPUS_SIGNATURE") or os.environ.get(
+            "JUSTSEARCH_CORPUS_SIGNATURE"
+        ):
+            raise ValueError(
+                "duplicate-prevalence decoration forbids JUSTSEARCH_CORPUS_SIGNATURE"
+            )
+        requested_skips = {
+            name.strip()
+            for name in os.environ.get("JUSTSEARCH_SKIP_PROJECTIONS", "").split(",")
+            if name.strip()
+        }
+        if "staged_recall_accounting" in requested_skips:
+            raise ValueError(
+                "duplicate-prevalence decoration requires staged_recall_accounting"
+            )
+
     # E-J-N11: capture environment fingerprint once per run. Informational only
     # (never used as a comparability gate). Safe to run early — best-effort with
     # graceful degradation.
@@ -305,6 +354,7 @@ def execute_run(
 
     # [335 item 20] Skip dataset loading for ingest-only runs (no modes = no queries).
     if not modes:
+        models_snapshot = _snapshot_models(base_url)
         summary: dict = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "git_sha": _get_git_sha(),
@@ -313,11 +363,25 @@ def execute_run(
             "per_mode": {},
             "query_count": 0,
         }
+        if raw_context is not None:
+            from types import SimpleNamespace
+
+            summary["doc_count"] = raw_context.identity.file_count
+            summary["corpus_identity"] = raw_identity
+            state_snapshots = manifest_mod.capture_state_snapshots(base_url)
+            summary["manifest"] = manifest_mod.compute_manifest(
+                dataset_name=dataset_name,
+                meta=SimpleNamespace(doc_count=raw_context.identity.file_count, query_count=0),
+                env_fingerprint=env_fingerprint,
+                models_snapshot=models_snapshot,
+                eval_protocol=METRIC_CONTRACT,
+                state_snapshots=state_snapshots,
+                corpus_identity=raw_identity,
+            )
         if ingest_summary:
             summary["ingest"] = ingest_summary
         if pipeline_summary:
             summary["pipeline_timing"] = pipeline_summary
-        models_snapshot = _snapshot_models(base_url)
         if models_snapshot:
             summary["models"] = models_snapshot
         search_config = _snapshot_search_config(base_url)
@@ -338,6 +402,8 @@ def execute_run(
 
     # 1. Load dataset
     query_records, qrels, meta = corpora.load(dataset_name, base_dir)
+    if raw_context is not None:
+        meta.doc_count = raw_context.identity.file_count
 
     # Filter to qrels-only queries (don't waste API calls on unjudged queries)
     query_records = {qid: qr for qid, qr in query_records.items() if qid in qrels}
@@ -387,6 +453,70 @@ def execute_run(
     index_state_at_query = _build_index_state_at_query(
         readiness_result.snapshot, datetime.now(timezone.utc).isoformat(), settle_block,
     )
+    content_exact_snapshot = None
+    content_exact_identity = None
+    persisted_corpus_identity = raw_identity
+    persisted_ingest_summary = ingest_summary
+    if duplicate_prevalence_request is not None:
+        from . import duplicate_prevalence as duplicate_prevalence_mod
+        from . import duplicate_prevalence_production as production_mod
+        from .result_identity import ContentExactResultIdentityInputs
+
+        try:
+            request_root = duplicate_prevalence_request.source.raw_root.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(
+                "duplicate-prevalence raw root is unavailable"
+            ) from exc
+        if request_root != raw_context.root:
+            raise ValueError(
+                "duplicate-prevalence raw root does not match the resolved run corpus"
+            )
+        if duplicate_prevalence_request.source.base_url != base_url.rstrip("/"):
+            raise ValueError(
+                "duplicate-prevalence base URL does not match the effective run backend"
+            )
+        effective_env = {**os.environ, **(env_overrides or {})}
+        content_exact_snapshot = production_mod.capture_snapshot(
+            duplicate_prevalence_request,
+            env=effective_env,
+        )
+        if content_exact_snapshot.raw_manifest_digest != raw_context.identity.digest:
+            raise ValueError(
+                "duplicate-prevalence snapshot does not match the resolved raw manifest"
+            )
+        if dict(content_exact_snapshot.corpus_identity.get("admission_policy") or {}) != dict(
+            raw_context.admission_policy
+        ):
+            raise ValueError(
+                "duplicate-prevalence snapshot admission policy does not match the run corpus"
+            )
+        analysis_artifact = duplicate_prevalence_mod.analyze(
+            content_exact_snapshot.observations,
+            corpus_identity=content_exact_snapshot.corpus_identity,
+            extraction_identity=content_exact_snapshot.extraction_identity,
+            config=duplicate_prevalence_request.config,
+        )
+        content_exact_identity = ContentExactResultIdentityInputs(
+            observations=content_exact_snapshot.observations,
+            aliases_by_opaque_id=content_exact_snapshot.aliases_by_opaque_id,
+            result_alias_commitment_key=(
+                content_exact_snapshot.result_alias_commitment_key
+            ),
+            result_mapping_signing_key=(
+                content_exact_snapshot.result_mapping_signing_key
+            ),
+            corpus_identity=content_exact_snapshot.corpus_identity,
+            extraction_identity=content_exact_snapshot.extraction_identity,
+            analysis_artifact=analysis_artifact,
+            config=duplicate_prevalence_request.config,
+        )
+        persisted_corpus_identity = dict(content_exact_snapshot.corpus_identity)
+        if ingest_summary is not None:
+            persisted_ingest_summary = dict(ingest_summary)
+            persisted_ingest_summary["corpus_identity"] = dict(
+                content_exact_snapshot.corpus_identity
+            )
 
     # 3. For each mode: retrieve → score → provenance → ANN proof → comparability
     mode_results: dict[str, dict] = {}
@@ -493,6 +623,20 @@ def execute_run(
             comp.comparable,
         )
 
+    if content_exact_snapshot is not None:
+        from . import duplicate_prevalence_production as production_mod
+
+        production_mod.revalidate_snapshot(
+            content_exact_snapshot,
+            duplicate_prevalence_request,
+            env={**os.environ, **(env_overrides or {})},
+        )
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset_name,
+        )
+
     # 4. Build summary + run manifest (tempdoc 400 LR1-a)
     search_config = _snapshot_search_config(base_url)
     state_snapshots = manifest_mod.capture_state_snapshots(base_url)
@@ -534,15 +678,19 @@ def execute_run(
             eval_protocol=METRIC_CONTRACT,
             state_snapshots=state_snapshots,
             workflow_run_id=os.environ.get("JUSTSEARCH_WORKFLOW_RUN_ID"),
-            corpus_identity=_get_corpus_identity(dataset_name, meta, qrels, base_dir),
+            corpus_identity=persisted_corpus_identity or _get_corpus_identity(
+                dataset_name, meta, qrels, base_dir
+            ),
         )
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
-                             ingest_summary, pipeline_summary, models_snapshot,
+                             persisted_ingest_summary, pipeline_summary, models_snapshot,
                              search_config, env_overrides, env_fingerprint,
                              run_manifest=run_manifest, base_dir=base_dir,
                              status_snapshot=state_snapshots.get("/api/status"),
                              index_cache=index_cache, query_syntax=query_syntax,
-                             index_state_at_query=index_state_at_query)
+                             index_state_at_query=index_state_at_query,
+                             raw_context=raw_context,
+                             corpus_identity_override=persisted_corpus_identity)
     # Tempdoc 885: additive block from the background search-load thread (absent by default).
     if search_load:
         summary["search_load"] = search_load
@@ -557,9 +705,35 @@ def execute_run(
     if output_dir:
         run_dir = artifacts_mod.write_run(
             summary, mode_results, qrels, Path(output_dir), query_records,
-            data_dir=worker_data_dir,
+            # Worker telemetry includes path-bearing indexing span attributes.
+            # A private content-exact run may retain those only in its local
+            # backend scratch directory, never in the published run artifact.
+            data_dir=(None if content_exact_identity is not None else worker_data_dir),
+            content_exact_identity=content_exact_identity,
         )
         log.info("Artifacts written to %s", run_dir)
+
+        projection_summary = None
+        if content_exact_identity is not None:
+            # The normal projection runner intentionally quarantines exceptions.
+            # An explicitly requested private join is different: validate the
+            # exact persisted artifact chain before history/cohort publication.
+            from jseval.projections.staged_recall_accounting import produce as produce_staged
+            from jseval.projections import run_all_discovered
+
+            produce_staged(run_dir)
+            skip_csv = os.environ.get("JUSTSEARCH_SKIP_PROJECTIONS", "")
+            skip_set = frozenset(
+                name.strip() for name in skip_csv.split(",") if name.strip()
+            )
+            projection_summary = run_all_discovered(run_dir, skip=skip_set)
+            staged = (projection_summary or {}).get("staged_recall_accounting")
+            if not isinstance(staged, dict) or staged.get("status") != "ok":
+                detail = staged.get("error") if isinstance(staged, dict) else "not registered"
+                raise RuntimeError(
+                    "staged_recall_accounting must succeed for a duplicate-prevalence run: "
+                    f"{detail}"
+                )
 
         history_dir = history_db or Path(output_dir)
         run_manifest_hash = run_manifest.get("manifest_hash") if isinstance(run_manifest, dict) else None
@@ -601,12 +775,14 @@ def execute_run(
         # Phase 6 / 6.1: per-projection exceptions now also emit a
         # synthetic contract.violation event (aggregated by LR6-c) so
         # silent failures surface in the nightly gate.
-        from jseval.projections import run_all_discovered
-        skip_csv = os.environ.get("JUSTSEARCH_SKIP_PROJECTIONS", "")
-        skip_set = frozenset(
-            name.strip() for name in skip_csv.split(",") if name.strip()
-        )
-        projection_summary = run_all_discovered(run_dir, skip=skip_set)
+        if projection_summary is None:
+            from jseval.projections import run_all_discovered
+
+            skip_csv = os.environ.get("JUSTSEARCH_SKIP_PROJECTIONS", "")
+            skip_set = frozenset(
+                name.strip() for name in skip_csv.split(",") if name.strip()
+            )
+            projection_summary = run_all_discovered(run_dir, skip=skip_set)
         if projection_summary:
             log.info("Projections ran: %s", {
                 name: info["status"] for name, info in projection_summary.items()
@@ -651,6 +827,8 @@ def _build_summary(
     index_cache: dict | None = None,
     query_syntax: str | None = None,
     index_state_at_query: dict | None = None,
+    raw_context=None,
+    corpus_identity_override=None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -669,7 +847,15 @@ def _build_summary(
         # every field inside is null (skip_readiness / older backend).
         "index_state_at_query": index_state_at_query or _build_index_state_at_query({}, None),
         "qrels_summary": _compute_qrels_summary(qrels),
-        "corpus_identity": _get_corpus_identity(dataset_name, meta, qrels, base_dir),
+        "corpus_identity": (
+            corpus_identity_override
+            if corpus_identity_override is not None
+            else (
+                raw_context.to_corpus_identity()
+                if raw_context is not None
+                else _get_corpus_identity(dataset_name, meta, qrels, base_dir)
+            )
+        ),
         "per_mode": {
             mode: {
                 "aggregate_metrics": mr["aggregate_metrics"],

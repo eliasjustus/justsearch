@@ -181,6 +181,12 @@ public final class CombinedEnrichmentBackfillOps {
       // the sub-batch boundaries below, never mid-encode. A context that supplies `() -> false`
       // behaves exactly as this pass did before the checkpoints existed.
       BooleanSupplier stopRequestedSupplier,
+      // Tempdoc 897: the composite stop supplier above includes the cycle deadline. A
+      // single-pass late-chunking probe may spend that deadline before a null/OOM fallback can
+      // record its first resumable window, but shutdown, interruption, GPU yield, pending ingest,
+      // and bulk deletion must still pre-empt immediately. This supplier carries those hard stops
+      // without the deadline so the fallback can distinguish them.
+      BooleanSupplier hardStopRequestedSupplier,
       // Round-15 post-round finding: "the embed stage has used its reserved share of the cycle" —
       // see embedShareSpent. A context supplying `() -> false` gives embed the whole budget, i.e.
       // the pre-fix behaviour.
@@ -440,6 +446,10 @@ public final class CombinedEnrichmentBackfillOps {
       List<String> embedContents = new ArrayList<>();
       List<String> lateChunkingDocIds = new ArrayList<>();
       List<String> lateChunkingContents = new ArrayList<>();
+      // Parents in this set already belong in resumable windowing: either a prior cycle recorded
+      // partial windows, or this cycle's single-pass attempt proved null/arena-OOM. They must not
+      // pay documentWindowCount's second tokenization before reaching the window seam.
+      Set<String> directWindowedDocIds = new HashSet<>();
       List<String> spladeDocIds = new ArrayList<>();
       List<String> spladeContents = new ArrayList<>();
 
@@ -605,8 +615,14 @@ public final class CombinedEnrichmentBackfillOps {
                 && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)
                 && hasChunkDocs(context, docId);
         if (isLateChunkingParent) {
-          lateChunkingDocIds.add(docId);
-          lateChunkingContents.add(content);
+          if (context.windowedEmbedProgress().nextWindow(docId, content) > 0) {
+            embedDocIds.add(docId);
+            embedContents.add(content);
+            directWindowedDocIds.add(docId);
+          } else {
+            lateChunkingDocIds.add(docId);
+            lateChunkingContents.add(content);
+          }
         } else if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
           embedDocIds.add(docId);
           embedContents.add(content);
@@ -698,6 +714,7 @@ public final class CombinedEnrichmentBackfillOps {
               // Content exceeds the raised single-pass limit — fold into the windowed batch.
               embedDocIds.add(lcDocId);
               embedContents.add(lcContent);
+              directWindowedDocIds.add(lcDocId);
               longDocWindowed++;
             }
           } catch (Exception e) {
@@ -714,6 +731,7 @@ public final class CombinedEnrichmentBackfillOps {
                       e.getMessage());
               embedDocIds.add(lcDocId);
               embedContents.add(lcContent);
+              directWindowedDocIds.add(lcDocId);
               arenaOomWindowed++;
             } else {
               context
@@ -754,7 +772,8 @@ public final class CombinedEnrichmentBackfillOps {
         List<String> singleWindowDocIds = new ArrayList<>(embedDocIds.size());
         List<String> singleWindowContents = new ArrayList<>(embedContents.size());
         for (int i = 0; i < embedDocIds.size(); i++) {
-          if (windowProbe.documentWindowCount(embedContents.get(i)) > 1) {
+          if (directWindowedDocIds.contains(embedDocIds.get(i))
+              || windowProbe.documentWindowCount(embedContents.get(i)) > 1) {
             windowedDocIds.add(embedDocIds.get(i));
             windowedContents.add(embedContents.get(i));
           } else {
@@ -772,16 +791,28 @@ public final class CombinedEnrichmentBackfillOps {
         EmbeddingProvider provider = context.embeddingProviderSupplier().get();
         WindowedEmbedProgress progress = context.windowedEmbedProgress();
         for (int i = 0; i < windowedDocIds.size(); i++) {
-          if (stopRequested(context, unitsDone, epochAtSelection)) {
+          String docId = windowedDocIds.get(i);
+          boolean directFallback = directWindowedDocIds.contains(docId);
+          // A null/OOM classification is not resumable progress. Ignore only the deadline it may
+          // have spent until one real window is recorded; hard preemption and deletion still win.
+          if (directFallback
+              && windowUnitsDone == 0
+              && (context.hardStopRequestedSupplier().getAsBoolean()
+                  || context.indexingCoordinator().bulkDeleteEpoch() != epochAtSelection)) {
             aborted = true;
             docsSkipped += windowedDocIds.size() - i;
             break;
           }
-          if (embedShareSpent(context, unitsDone, otherStagesHaveWork)) {
+          int schedulingUnitsDone = directFallback ? windowUnitsDone : unitsDone;
+          if (stopRequested(context, schedulingUnitsDone, epochAtSelection)) {
+            aborted = true;
+            docsSkipped += windowedDocIds.size() - i;
+            break;
+          }
+          if (embedShareSpent(context, schedulingUnitsDone, otherStagesHaveWork)) {
             embedDeferredForOtherStages += windowedDocIds.size() - i;
             break;
           }
-          String docId = windowedDocIds.get(i);
           String content = windowedContents.get(i);
           boolean isChunk = chunkIdsInBatch.contains(docId);
           // Scoped to THIS document, deliberately: `aborted` is sticky across phases (Phase 3a-i

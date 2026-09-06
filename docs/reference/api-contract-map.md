@@ -798,6 +798,14 @@ Start with:
 
 ### gRPC TCK coverage gaps
 
+`GET /api/preview` delegates paged stored-text reads to `SearchService.FetchDocumentSlice`.
+The Worker reads content and extraction provenance through one searcher. Its metadata map carries
+the canonical `content_sha256`, projected by Head as nullable `contentSha256`; this identifies the
+complete stored UTF-8 text, including VDU replacements. `sourceSha256` identifies the extracted source
+bytes and has a separate meaning. Pages use UTF-16 character offsets, preserve Unicode scalar boundaries,
+and include `totalChars`. Strict measurement clients require an unchanged content revision across pages
+and verify the assembled text against it. `SUCCESS_EMPTY` remains a found document with empty content.
+
 The following RPCs are covered by integration tests but lack isolated TCK-style contract tests in `app-api-tck`. Highest-value additions are marked.
 
 | Service | RPC | Priority |

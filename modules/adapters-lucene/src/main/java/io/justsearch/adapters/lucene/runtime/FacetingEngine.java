@@ -24,6 +24,7 @@ import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.Bits;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -137,6 +138,7 @@ public final class FacetingEngine {
         Scorer scorer = weight.scorer(leaf);
         if (scorer == null) continue;
 
+        Bits liveDocs = leaf.reader().getLiveDocs();
         // Cache per-leaf DocValues for the facetable fields resolved above.
         Map<String, SortedDocValues> dvs = new HashMap<>();
         Map<String, SortedSetDocValues> setDvs = new HashMap<>();
@@ -166,6 +168,7 @@ public final class FacetingEngine {
         DocIdSetIterator it = (twoPhase == null) ? scorer.iterator() : twoPhase.approximation();
         int doc;
         while ((doc = it.nextDoc()) != DocIdSetIterator.NO_MORE_DOCS) {
+          if (liveDocs != null && !liveDocs.get(doc)) continue;
           if (twoPhase != null && !twoPhase.matches()) {
             continue;
           }

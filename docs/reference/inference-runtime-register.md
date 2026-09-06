@@ -265,6 +265,28 @@ Design choices in the current inference runtime, with rationale.
 - **Verification:** `NativeSessionHandleConcurrentStressTest` for concurrency baseline (10 threads covering #3 CPU recreation + #5 lifecycle-callback + post-close acquire; invariants #1/#2/#4 require CUDA, parked as tempdoc 398; metadata-read thread retired in §14.25 FD-ProbeDeletion); `OrtSessionOptionsTest` for applier parity + causality invariants; `RuntimePolicyResolverTest` for profiling round-trip + CPU-variant zero-arena invariant (§14.28 U2); `ClosurePropertyTest` for §7.5 pure-encoder contract (denylist-by-default, §14.28 U8); `InferenceSurfaceTest` + `InferenceCompositionRootComposeTest` for compose orchestration shape (§14.28 U6/U7); `GrpcSearchServiceModelReadyLatchTest` for the query-handler gate (§14.28 U3); `SessionPoliciesControllerTest` for the gRPC-bridged diagnostic (§14.28 U4); jseval pipeline anchor (§14.7.3): 191.1 s baseline. Post-§14.28 reference run: 208 s total / 24.9 docs/sec / nDCG@10 = 0.750 on 300 scifact queries (commit `0ed0321ce`, 2026-04-21).
 - **Revisit when:** 395 A1/A4/A7 adaptive policy work starts (resolver now has a real read-path; §14.28 U2 further made the record self-describing); 394 P3 scheduler lands new `RunOptions` fields (`SessionOptionsApplier.buildGpuRunOptions` is the single setter site); tempdoc 400 observability work identifies a structural gap that motivates additional runtime assertions on the closure property.
 
+### D-011: Late-chunk fallback must make resumable progress — SHIPPED
+
+- **Choice:** A long parent that returns null or a BFC-arena OOM from the late-chunking
+  whole-document probe enters `WindowedEmbedProgress` directly. Once a matching partial exists,
+  later cycles bypass the whole-document probe and resume at the next window. A probe that spends
+  the embed share or cycle deadline cannot prevent the first real window slice, while shutdown,
+  interruption, GPU yield, pending ingest, and bulk deletion still pre-empt immediately.
+- **Rationale:** The whole-document probe is classification work, not progress that survives a
+  cycle boundary. Counting it toward the existing first-unit floor allowed every cycle to end
+  before window zero, leaving the progress map empty and re-tokenizing/re-probing the same queue
+  head indefinitely. Only a recorded window advances the resumable unit.
+- **Boundaries:** Chunk-SPLADE retry-only writes remain scheduler activity but not tight-loop
+  progress. The existing SPLADE/NER reservation and mean-pooling algorithm are unchanged; the
+  repair changes routing and scheduling only, not vectors or ranking formulas.
+- **Evidence:** `CombinedEnrichmentBackfillOps` owns direct fallback/resume routing and the window
+  floor; `BackfillScheduler` supplies the separate hard-stop signal.
+  `CombinedEnrichmentLongDocumentTest` pins deadline-spent fallback, cross-cycle resume, no repeated
+  probe/token-count pass, and hard-preemption behavior. `CombinedEnrichmentBackfillOpsTest` pins the
+  null and arena-OOM routes plus retry-only activity/progress semantics.
+- **Revisit when:** late chunking gains a streaming single-pass encoder whose partial state is itself
+  resumable, or the scheduler replaces cycle/share suppliers with an explicit typed stop reason.
+
 ### D-010: llama-server context window is a derived resource - SHIPPED (tempdoc 883, PR 1)
 
 - **Choice:** `-c` is no longer a user preference. `ContextWindowPolicy`

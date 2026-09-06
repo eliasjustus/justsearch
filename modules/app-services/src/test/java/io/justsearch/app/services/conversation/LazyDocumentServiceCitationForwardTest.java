@@ -101,6 +101,33 @@ final class LazyDocumentServiceCitationForwardTest {
     assertTrue(future.isCompletedExceptionally(), "an absent Worker must not read as 'no matches'");
   }
 
+  @Test
+  @DisplayName("the bounded document-ID page reaches the late-bound delegate")
+  void forwardsDocumentIdEnumeration() {
+    DocumentService delegate =
+        new DocumentService() {
+          @Override
+          public CompletionStage<DocumentRecord> fetch(String docId) {
+            return CompletableFuture.completedFuture(null);
+          }
+
+          @Override
+          public CompletionStage<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+            return CompletableFuture.completedFuture(
+                new DocumentIdPage(List.of("C:/root/nested/a.txt"), 1, 4));
+          }
+        };
+
+    var page =
+        new LazyDocumentService(() -> delegate)
+            .listAllDocumentIds(0, 50_000)
+            .toCompletableFuture()
+            .join();
+
+    assertEquals(List.of("C:/root/nested/a.txt"), page.docIds());
+    assertEquals(1, page.totalCount());
+  }
+
   private record RecordingDocs(
       AtomicReference<List<VerificationSource>> seen, CitationMatchResult result)
       implements DocumentService {

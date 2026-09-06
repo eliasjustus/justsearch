@@ -53,7 +53,8 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
   private static final Logger log = LoggerFactory.getLogger(PersistentExtractionSandbox.class);
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
-  static final int DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+  private static final long JSON_BYTES_PER_UTF16_CODE_UNIT = 6L;
+  private static final long JSON_STRUCTURAL_ALLOWANCE_BYTES = 64L * 1024L;
   static final int DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
   /** Requests one child handles before it is recycled — the leak guard (design decision 1). */
   static final int DEFAULT_MAX_REQUESTS_PER_CHILD = 500;
@@ -100,7 +101,7 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
         poolSize,
         maxRequestsPerChild,
         catalog,
-        DEFAULT_MAX_RESPONSE_BYTES,
+        responseByteCeiling(policy),
         DEFAULT_MAX_STDERR_BYTES);
   }
 
@@ -150,6 +151,72 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
   @Override
   public TikaExtractionPolicy policy() {
     return policy;
+  }
+
+  /**
+   * Maximum encoded response admitted for a policy under the one-frame protocol.
+   *
+   * <p>JSON can require six ASCII bytes for one UTF-16 code unit ({@code \\uXXXX}). Content and
+   * policy-controlled metadata are therefore charged at that worst case, as are every other
+   * bounded string in the response schema. The structural allowance covers field names,
+   * punctuation, booleans, integers, arrays, and maps.
+   */
+  static int responseByteCeiling(TikaExtractionPolicy configuredPolicy) {
+    TikaExtractionPolicy effectivePolicy =
+        configuredPolicy == null ? TikaExtractionPolicy.defaults() : configuredPolicy;
+    if (effectivePolicy.policyId().length() > SandboxExtractionResponse.MAX_IDENTIFIER_CHARS) {
+      throw new IllegalArgumentException(
+          "Extraction policy id exceeds sandbox response-schema limit of "
+              + SandboxExtractionResponse.MAX_IDENTIFIER_CHARS
+              + " UTF-16 code units");
+    }
+    try {
+      long metadataChars =
+          Math.multiplyExact(
+              (long) effectivePolicy.maxMetadataEntries(),
+              Math.addExact(
+                  (long) effectivePolicy.maxMetadataKeyChars(),
+                  (long) effectivePolicy.maxMetadataValueChars()));
+      long boundedChars = effectivePolicy.maxExtractedChars();
+      boundedChars =
+          Math.addExact(
+              boundedChars,
+              Math.multiplyExact(3L, ExtractionArtifact.MAX_SCALAR_METADATA_CHARS));
+      boundedChars = Math.addExact(boundedChars, metadataChars);
+      boundedChars =
+          Math.addExact(
+              boundedChars,
+              Math.multiplyExact(2L, SandboxExtractionResponse.MAX_IDENTIFIER_CHARS));
+      boundedChars =
+          Math.addExact(
+              boundedChars,
+              Math.multiplyExact(
+                  (long) ExtractionArtifact.MAX_WARNING_COUNT,
+                  ExtractionArtifact.MAX_WARNING_CHARS));
+      boundedChars =
+          Math.addExact(boundedChars, ExtractionArtifact.MAX_VISUAL_EXTRACTION_EVIDENCE_CHARS);
+      boundedChars =
+          Math.addExact(
+              boundedChars,
+              Math.addExact(
+                  SandboxExtractionResponse.MAX_ERROR_MESSAGE_CHARS,
+                  SandboxExtractionResponse.MAX_REASON_CODE_CHARS));
+      long bytes =
+          Math.addExact(
+              Math.multiplyExact(boundedChars, JSON_BYTES_PER_UTF16_CODE_UNIT),
+              JSON_STRUCTURAL_ALLOWANCE_BYTES);
+      if (bytes > SandboxFrames.MAX_FRAME_BYTES) {
+        throw new IllegalArgumentException(
+            "Extraction policy requires a sandbox response ceiling of "
+                + bytes
+                + " bytes, above the protocol maximum of "
+                + SandboxFrames.MAX_FRAME_BYTES);
+      }
+      return Math.toIntExact(bytes);
+    } catch (ArithmeticException e) {
+      throw new IllegalArgumentException(
+          "Extraction policy is too large for the sandbox response protocol", e);
+    }
   }
 
   @Override
@@ -242,8 +309,7 @@ public final class PersistentExtractionSandbox implements ExtractionSandbox {
       throws ContentExtractor.ExtractionException {
     try {
       SandboxExtractionResponse response =
-          MAPPER.readValue(
-              new String(responseBytes, StandardCharsets.UTF_8), SandboxExtractionResponse.class);
+          MAPPER.readValue(responseBytes, SandboxExtractionResponse.class);
       if (response == null
           || response.schemaVersion() != SandboxExtractionResponse.CURRENT_SCHEMA_VERSION) {
         throw new IllegalArgumentException("Unsupported sandbox response schema");

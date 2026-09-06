@@ -1,0 +1,215 @@
+{
+  "oracleVersion": "format-capability-v1",
+  "authority": "checked-projection-of-typed-java-oracle",
+  "formats": [
+    {
+      "formatId": "EML",
+      "recipeId": "eml-multipart-v1",
+      "sha256": "c6592df794f22f39b7222cecd4383348227df0c9ce28fd5cce0d49dd9b77626f",
+      "mimeType": "message/rfc822",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_EML_SUBJECT_MARKER",
+        "JUSTSEARCH_EML_BODY_MARKER",
+        "JUSTSEARCH_EML_ATTACHMENT_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 0, "headings": 0, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "CONTENT_ONLY",
+      "classification": "KNOWN_GAP",
+      "failureClasses": ["EMBEDDED_CONTENT_OR_IDENTITY_LOSS"],
+      "exactAnnotatedText": "JUSTSEARCH_EML_SUBJECT_MARKER\n\nJUSTSEARCH_EML_BODY_MARKER\r\nOwned message body.\n\nJUSTSEARCH_EML_ATTACHMENT_MARKER\nOwned attachment content from the deterministic EML recipe."
+    },
+    {
+      "formatId": "MBOX",
+      "recipeId": "mbox-two-messages-v1",
+      "sha256": "43c0e5733584d8bc720cfcb2014a30b9acfaf5b52d5fb39fa7d4aa2bb81857ab",
+      "mimeType": "application/mbox",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_MBOX_FIRST_BODY",
+        "JUSTSEARCH_MBOX_SECOND_BODY",
+        "JUSTSEARCH_MBOX_ATTACHMENT_MARKER"
+      ],
+      "expectedAbsentMarkers": [
+        "JUSTSEARCH_MBOX_FIRST_SUBJECT",
+        "JUSTSEARCH_MBOX_SECOND_SUBJECT"
+      ],
+      "structuredCounts": { "tables": 0, "headings": 0, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "CONTENT_ONLY",
+      "classification": "KNOWN_GAP",
+      "failureClasses": [
+        "MIME_OR_PARSER_UNSUPPORTED",
+        "EMBEDDED_CONTENT_OR_IDENTITY_LOSS"
+      ],
+      "exactAnnotatedText": "JUSTSEARCH_MBOX_FIRST_BODY\nOwned first message.\n\nJUSTSEARCH_MBOX_SECOND_BODY\nOwned second message.\n\nJUSTSEARCH_MBOX_ATTACHMENT_MARKER\nOwned MBOX attachment."
+    },
+    {
+      "formatId": "RTF",
+      "recipeId": "rtf-ascii-v1",
+      "sha256": "4958481edeaf11bc831c03eaa6e93615047d39f1de66c0a1ac015da64a22613c",
+      "mimeType": "application/rtf",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_RTF_SMOKE_MARKER",
+        "Deterministic rich text fixture."
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 0, "headings": 0, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "PASS",
+      "failureClasses": ["NONE"],
+      "exactAnnotatedText": "JUSTSEARCH_RTF_SMOKE_MARKER\n\nDeterministic rich text fixture."
+    },
+    {
+      "formatId": "EPUB",
+      "recipeId": "epub3-chapter-v1",
+      "sha256": "f7dca209b6c75abcf7a0413192201d2fc4c87d2a8f15cc4766079d4a1214069a",
+      "mimeType": "application/epub+zip",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_EPUB_HEADING_MARKER",
+        "JUSTSEARCH_EPUB_LIST_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 0, "headings": 2, "lists": 2 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "PASS",
+      "failureClasses": ["NONE"],
+      "exactAnnotatedText": "Owned EPUB capability\n\n# JUSTSEARCH_EPUB_HEADING_MARKER\n\nOwned deterministic EPUB chapter.\n\n- JUSTSEARCH_EPUB_LIST_MARKER\n- Second owned item\n\n# OEBPS/nav.xhtml\n\n1. Capability chapter"
+    },
+    {
+      "formatId": "ODT",
+      "recipeId": "odt-structure-v1",
+      "sha256": "ce3413652b4aa9f98b133743fbb5ba34e3a5d6f98593e5b4d6292705eeea00ca",
+      "mimeType": "application/vnd.oasis.opendocument.text",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_ODT_HEADING_MARKER",
+        "JUSTSEARCH_ODT_LIST_MARKER",
+        "JUSTSEARCH_ODT_TABLE_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 1, "headings": 1, "lists": 1 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "PASS",
+      "failureClasses": ["NONE"],
+      "exactAnnotatedText": "# JUSTSEARCH_ODT_HEADING_MARKER\n\nOwned deterministic OpenDocument text.\n\n- JUSTSEARCH_ODT_LIST_MARKER\n- Second owned list item\n\nKey = Owned row\nOwned row, Value = JUSTSEARCH_ODT_TABLE_MARKER"
+    },
+    {
+      "formatId": "XLSX",
+      "recipeId": "xlsx-inline-strings-v1",
+      "sha256": "fbd6124bd3975708b6706f9b54eb8e1ca37d5a327ef0ab842a2c406a51ce939d",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": ["Format breadth", "JUSTSEARCH_XLSX_SMOKE_MARKER"],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 1, "headings": 1, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "PASS",
+      "failureClasses": ["NONE"],
+      "exactAnnotatedText": "# Capability\n\nFixture = Format breadth\nFormat breadth, Evidence = JUSTSEARCH_XLSX_SMOKE_MARKER"
+    },
+    {
+      "formatId": "XLSX_MERGED_HEADERS",
+      "recipeId": "xlsx-merged-multirow-v1",
+      "sha256": "c04610b48347bdded0cd65baf1c9ccfe8e3751bb1633f21887fad40656003f1f",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "Quarterly revenue",
+        "Q1",
+        "JUSTSEARCH_XLSX_MERGED_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 1, "headings": 1, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "KNOWN_GAP",
+      "failureClasses": ["STRUCTURE_FLATTENED"],
+      "exactAnnotatedText": "# Merged headers\n\nQuarterly revenue = Q1\nRegion = North\nNorth, Quarterly revenue = JUSTSEARCH_XLSX_MERGED_MARKER"
+    },
+    {
+      "formatId": "XLSX_TYPED_CELLS",
+      "recipeId": "xlsx-numeric-date-formula-v1",
+      "sha256": "ec45039685a0489eb340099752a398e802363c7192967954e4e986153e821ed0",
+      "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "42",
+        "2024-01-01",
+        "JUSTSEARCH_XLSX_FORMULA_MARKER",
+        "84"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 1, "headings": 1, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "KNOWN_GAP",
+      "failureClasses": ["STRUCTURE_FLATTENED"],
+      "exactAnnotatedText": "# Typed cells\n\nField = Typed number\nTyped number, Value = 42\nField = Typed date\nTyped date, Value = 2024-01-01\nField = JUSTSEARCH_XLSX_FORMULA_MARKER\nJUSTSEARCH_XLSX_FORMULA_MARKER, Value = 84"
+    },
+    {
+      "formatId": "PPTX_WITH_NOTES",
+      "recipeId": "pptx-speaker-notes-poi-v1",
+      "sha256": "36b0eb0b1768e684b8b0128bf35c6441c71106307852740330548c7c4710985e",
+      "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_PPTX_SLIDE_MARKER",
+        "JUSTSEARCH_PPTX_SPEAKER_NOTES_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 0, "headings": 0, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "NOT_APPLICABLE",
+      "classification": "PASS",
+      "failureClasses": ["NONE"],
+      "exactAnnotatedText": "JUSTSEARCH_PPTX_SLIDE_MARKER\n\n1.7.2013\n\nClick to edit Master text styles\n\nSecond level\n\nThird level\n\nFourth level\n\nFifth level\n\n‹#›\n\nJUSTSEARCH_PPTX_SPEAKER_NOTES_MARKER"
+    },
+    {
+      "formatId": "ZIP_WITH_XLSX",
+      "recipeId": "zip-text-plus-xlsx-v1",
+      "sha256": "b5f01a3310da14c437588af3cba42b4da68ff057816b2e83a6e326b64e51807a",
+      "mimeType": "application/zip",
+      "policyId": "tika-default-v1",
+      "parserAdapterId": "tika-policy-structured",
+      "requiredMarkers": [
+        "JUSTSEARCH_ZIP_TEXT_MARKER",
+        "JUSTSEARCH_XLSX_SMOKE_MARKER"
+      ],
+      "expectedAbsentMarkers": [],
+      "structuredCounts": { "tables": 1, "headings": 3, "lists": 0 },
+      "embeddedResourceCount": 0,
+      "maxEmbeddedDepth": 0,
+      "embeddedIdentity": "RENDERED_LABELS_ONLY",
+      "classification": "KNOWN_GAP",
+      "failureClasses": ["EMBEDDED_CONTENT_OR_IDENTITY_LOSS"],
+      "exactAnnotatedText": "# documents/format-capability.xlsx\n\n# Capability\n\nFixture = Format breadth\nFormat breadth, Evidence = JUSTSEARCH_XLSX_SMOKE_MARKER\n\n# readme.txt\n\nJUSTSEARCH_ZIP_TEXT_MARKER\nThe sibling workbook marker must also be extracted."
+    }
+  ]
+}

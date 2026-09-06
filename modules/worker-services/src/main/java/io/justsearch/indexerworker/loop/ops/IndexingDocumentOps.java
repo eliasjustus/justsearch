@@ -65,6 +65,7 @@ public final class IndexingDocumentOps {
       long sizeBytes,
       long modifiedAtMs,
       String sourcePathHash,
+      String sourceSha256,
       String artifactStatus,
       String policyId,
       String parserId,
@@ -76,7 +77,25 @@ public final class IndexingDocumentOps {
       String reasonCode,
       String visualExtractionEvidenceJson) {
     public SourceFileMetadata(long sizeBytes, long modifiedAtMs) {
-      this(sizeBytes, modifiedAtMs, null, null, null, null, false, 0, 0, 0L, 0, null, null);
+      this(sizeBytes, modifiedAtMs, null, null, null, null, null, false, 0, 0, 0L, 0, null, null);
+    }
+
+    public SourceFileMetadata(long sizeBytes, long modifiedAtMs, String sourceSha256) {
+      this(
+          sizeBytes,
+          modifiedAtMs,
+          null,
+          sourceSha256,
+          null,
+          null,
+          null,
+          false,
+          0,
+          0,
+          0L,
+          0,
+          null,
+          null);
     }
   }
 
@@ -213,6 +232,9 @@ public final class IndexingDocumentOps {
     if (sourceMetadata != null) {
       fields.put(SchemaFields.SIZE_BYTES, sourceMetadata.sizeBytes());
       fields.put(SchemaFields.MODIFIED_AT, sourceMetadata.modifiedAtMs());
+      if (sourceMetadata.sourceSha256() != null && !sourceMetadata.sourceSha256().isBlank()) {
+        fields.put(SchemaFields.SOURCE_SHA256, sourceMetadata.sourceSha256());
+      }
     } else {
       try {
         fields.put(SchemaFields.SIZE_BYTES, Files.size(filePath));
@@ -353,6 +375,7 @@ public final class IndexingDocumentOps {
         base.sizeBytes(),
         base.modifiedAtMs(),
         artifact.sourcePathHash() != null ? artifact.sourcePathHash() : base.sourcePathHash(),
+        base.sourceSha256(),
         artifact.status().name(),
         artifact.policyId(),
         artifact.parserId(),

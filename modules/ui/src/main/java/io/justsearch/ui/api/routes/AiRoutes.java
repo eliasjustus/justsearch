@@ -102,6 +102,7 @@ public final class AiRoutes {
     app.post("/api/chat/conversations/{sessionId}/title", chatController::handleSetTitle);
     app.delete("/api/chat/conversations/{sessionId}/title", chatController::handleClearTitle);
     app.get("/api/preview", previewController::handlePreview);
+    app.post(PreviewController.DOCUMENT_IDS_PATH, previewController::handleListDocumentIds);
 
     app.get("/api/ai/install/manifest", aiInstallController::handleGetManifest);
     app.get("/api/ai/install/status", aiInstallController::handleGetStatus);

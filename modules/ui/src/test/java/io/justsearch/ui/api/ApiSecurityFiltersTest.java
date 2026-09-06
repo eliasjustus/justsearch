@@ -7,13 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.javalin.Javalin;
+import io.justsearch.app.api.DocumentService;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
@@ -122,11 +125,30 @@ class ApiSecurityFiltersTest {
     assertEquals(200, allowed.statusCode(), "the legitimate UI must still be able to mutate");
   }
 
+  @Test
+  @DisplayName("the eval document-ID POST inherits production session-token enforcement")
+  void evalDocumentIdRouteRequiresSessionToken() throws Exception {
+    startWithRealFilters();
+    String body = "{\"offset\":0,\"limit\":50000}";
+
+    HttpResponse<String> denied = post(PreviewController.DOCUMENT_IDS_PATH, null, body);
+    assertEquals(401, denied.statusCode(), "private document IDs must not be anonymously readable");
+    assertTrue(denied.body().contains("UI_TOKEN_REQUIRED"), denied.body());
+
+    HttpResponse<String> allowed = post(PreviewController.DOCUMENT_IDS_PATH, TEST_TOKEN, body);
+    assertEquals(200, allowed.statusCode(), allowed.body());
+    assertTrue(allowed.body().contains("nested/b.txt"), allowed.body());
+  }
+
   private HttpResponse<String> post(String path, String token) throws Exception {
+    return post(path, token, "{\"ui\":{}}");
+  }
+
+  private HttpResponse<String> post(String path, String token, String body) throws Exception {
     HttpRequest.Builder req =
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
             .timeout(Duration.ofSeconds(3))
-            .POST(HttpRequest.BodyPublishers.ofString("{\"ui\":{}}"))
+            .POST(HttpRequest.BodyPublishers.ofString(body))
             .header("Content-Type", "application/json")
             .header("Origin", "tauri://localhost");
     if (token != null) {
@@ -152,6 +174,23 @@ class ApiSecurityFiltersTest {
     new ApiSecurityFilters(true, TEST_TOKEN, new EventBuffer(), executor, null).install(app);
 
     app.post("/api/settings/v2", ctx -> ctx.json(Map.of("success", true)));
+    DocumentService documentService =
+        new DocumentService() {
+          @Override
+          public CompletableFuture<DocumentRecord> fetch(String docId) {
+            return CompletableFuture.completedFuture(null);
+          }
+
+          @Override
+          public CompletableFuture<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+            return CompletableFuture.completedFuture(
+                new DocumentIdPage(
+                    List.of("C:/root/a.txt", "C:/root/nested/b.txt"), 2, 1));
+          }
+        };
+    PreviewController previewController = new PreviewController(documentService);
+    app.post(
+        PreviewController.DOCUMENT_IDS_PATH, previewController::handleListDocumentIds);
 
     app.start("127.0.0.1", 0);
     port = app.port();

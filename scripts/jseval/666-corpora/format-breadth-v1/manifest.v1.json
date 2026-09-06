@@ -1,0 +1,477 @@
+{
+  "schema": "jseval.format-breadth-manifest.v1",
+  "status": "observed",
+  "dataset": "mixed/format-breadth-v1",
+  "recipe_sha256": "260fc6862a270ea4d3cde8ed459612e47d497025578e1f7ef302a3b00c777b10",
+  "source_sha256": {
+    "enron": {
+      "enron_mail_20150507.tar.gz": "b3da1b3fe0369ec3140bb4fbce94702c33b7da810ec15d718b3fadf5cd748ca7"
+    },
+    "govdocs": {
+      "000.zip": "7fb4673ac1905a3ed16a9c5780a70c729c3abc575b06c155b7042b91fa5946aa",
+      "001.zip": "bb3d9c7a68c00b5da108a5614efd2922b53604a6824324f6ab392282d786e384"
+    },
+    "napier": {
+      "ZIP-DEFLATE-tiny.zip": "7702aa20914462aa39798c5c4659a2fa53e9ea90cf2cd9274cd433d03dbde8a2",
+      "ZIP-DEFLATE-tiny_zip_hashes.txt": "eee65b6d6613967130f79209df093f6e8924f704b4ce3cf4685f3dbcc05350a5"
+    }
+  },
+  "napier_sidecar_declared_archive_sha256": "7702aa20914462aa39798c5c4659a2fa53e9ea90cf2cd9274cd433d03dbde8a2",
+  "sources": {
+    "enron": {
+      "members": [
+        {
+          "source_member": "maildir/hain-m/discussion_threads/28.",
+          "output": "enron-01.eml",
+          "sender_domain": "aol.com",
+          "sha256": "4d076aa0c621769e92bf37dcc314d5e068c2871d4136160770970717737e6739"
+        },
+        {
+          "source_member": "maildir/schwieger-j/discussion_threads/46.",
+          "output": "enron-02.eml",
+          "sender_domain": "email.msn.com",
+          "sha256": "b6ef1658246cc5a1e17359d6f9c4954cdce6c9b1c27db2a6838409afdf52f521"
+        },
+        {
+          "source_member": "maildir/hernandez-j/daily_blessings/1.",
+          "output": "enron-03.eml",
+          "sender_domain": "emazing.com",
+          "sha256": "0a5f81d5799c7f78c5d40a028cf50601fc4a250c71aeb2703bc339e697953680"
+        },
+        {
+          "source_member": "maildir/kaminski-v/discussion_threads/4489.",
+          "output": "enron-04.eml",
+          "sender_domain": "enron.com",
+          "sha256": "6bfdc4a8fb9b6cc5ae79a8e4da36935950c0ef825f82c978b5cbbb3dceb459c6"
+        },
+        {
+          "source_member": "maildir/skilling-j/deleted_items/496.",
+          "output": "enron-05.eml",
+          "sender_domain": "kerr-solutions.com",
+          "sha256": "00a3d0446d39410888440c40c0c9c68bda83a59674ded5bb3dbc47b5652c23de"
+        },
+        {
+          "source_member": "maildir/wolfe-j/saved_03/12.",
+          "output": "enron-06.eml",
+          "sender_domain": "mailman.enron.com",
+          "sha256": "51e1e898de7bb622fcbb83df8aed0c788a8fccd1e78430f9380b68749a91f177"
+        },
+        {
+          "source_member": "maildir/kean-s/archiving/untitled/5679.",
+          "output": "enron-07.eml",
+          "sender_domain": "mckinsey.com",
+          "sha256": "0e609a2971967cb0db058a5cf2fe3d4f19cae7d95f1c0d595d7c2b1fe6bf27f0"
+        },
+        {
+          "source_member": "maildir/kean-s/deleted_items/49.",
+          "output": "enron-08.eml",
+          "sender_domain": "nytimes.com",
+          "sha256": "281c59ba0f2cd39c23592706e918cd6fd8579b596402982f5491e2cd62cdf5b7"
+        },
+        {
+          "source_member": "maildir/causholli-m/deleted_items/494.",
+          "output": "enron-09.eml",
+          "sender_domain": "paperloop.com",
+          "sha256": "3537befb13e976984f3c0d0d1e380eda33c5c350face06a3a112b07e7790ac16"
+        },
+        {
+          "source_member": "maildir/rogers-b/discussion_threads/1370.",
+          "output": "enron-10.eml",
+          "sender_domain": "peco-energy.com",
+          "sha256": "28be85f038286bb3005ad1424c6cb050c4cfcaaca7d72fc207d9f4b1ed636232"
+        },
+        {
+          "source_member": "maildir/corman-s/deleted_items/85.",
+          "output": "enron-11.eml",
+          "sender_domain": "pgsenergy.com",
+          "sha256": "dccd77ca410341e4f8b9c8f6aca7b165c884b3449254c32213c3c368a79ac8c9"
+        },
+        {
+          "source_member": "maildir/may-l/all_documents/96.",
+          "output": "enron-12.eml",
+          "sender_domain": "pira.com",
+          "sha256": "e97d8505fd6037d4e1a5278447ffd4773e81532f1062f23033c92b2c77a01ea4"
+        },
+        {
+          "source_member": "maildir/kean-s/discussion_threads/2020.",
+          "output": "enron-13.eml",
+          "sender_domain": "reliantenergy.com",
+          "sha256": "5f9a36fe4ae8f3b9da88ebc4bc70628be1fd2315a0f4a1fadc9517092d64ac97"
+        },
+        {
+          "source_member": "maildir/tholt-j/deleted_items/92.",
+          "output": "enron-14.eml",
+          "sender_domain": "sportsline.com",
+          "sha256": "aa2251f9b36cc5253681558c51e1cb66d729aeb6abfd8645978a61967ed633a1"
+        },
+        {
+          "source_member": "maildir/farmer-d/discussion_threads/1268.",
+          "output": "enron-15.eml",
+          "sender_domain": "txu.com",
+          "sha256": "bf767e2ccec391ad3a50e789cafda9023d47ea9ac69d132190ae2c51a0e7d61d"
+        },
+        {
+          "source_member": "maildir/lay-k/deleted_items/1038.",
+          "output": "enron-16.eml",
+          "sender_domain": "yahoo.com",
+          "sha256": "42619304028502d664473d8251c4e79e09544184f3b0403306177b53c4f4f8bc"
+        }
+      ]
+    },
+    "govdocs": {
+      "members": [
+        {
+          "source_archive": "000.zip",
+          "source_member": "000/000117.rtf",
+          "output": "govdocs-01.rtf",
+          "sha256": "8e8be6586bedba58f431474b61810c653e31a17ae31dfd63932546a2106617f3"
+        },
+        {
+          "source_archive": "000.zip",
+          "source_member": "000/000257.rtf",
+          "output": "govdocs-02.rtf",
+          "sha256": "6dc35bbd95cd9e3e044f0f5e0a684c8494d01f1b06b1e3a3d9e7cf05624a7d3f"
+        },
+        {
+          "source_archive": "000.zip",
+          "source_member": "000/000258.rtf",
+          "output": "govdocs-03.rtf",
+          "sha256": "88b0d639099d29c0f870cb4b794064f49ad255420644a9214434d82ae9b0a0ce"
+        },
+        {
+          "source_archive": "000.zip",
+          "source_member": "000/000803.rtf",
+          "output": "govdocs-04.rtf",
+          "sha256": "a17e9d43ef603962115a9737ce6b1799b37a507385596d7ae4ab184ecff8f1a1"
+        },
+        {
+          "source_archive": "001.zip",
+          "source_member": "001/001468.rtf",
+          "output": "govdocs-05.rtf",
+          "sha256": "c08f599472438ab83ed5e0f63daa4c486f9bc34349e84d3f12a529bd778edce9"
+        },
+        {
+          "source_archive": "001.zip",
+          "source_member": "001/001550.rtf",
+          "output": "govdocs-06.rtf",
+          "sha256": "ca863be879fdf2a621db0679f1553bdada42806ccbf40dffd3ede10ccf494b46"
+        },
+        {
+          "source_archive": "001.zip",
+          "source_member": "001/001857.rtf",
+          "output": "govdocs-07.rtf",
+          "sha256": "829d59419c82dc87888c15d8e626c6f1c8059b3aa3641fb0afb68d726a05cc36"
+        },
+        {
+          "source_archive": "001.zip",
+          "source_member": "001/001858.rtf",
+          "output": "govdocs-08.rtf",
+          "sha256": "fb56002fbc80cfa332713405e17b3440c4e6677989b63617262907ca00672ec8"
+        },
+        {
+          "source_archive": "001.zip",
+          "source_member": "001/001963.rtf",
+          "output": "govdocs-09.rtf",
+          "sha256": "a1b106863797af9fd0eefc49219b6ca62fd5796a990d6e3ed816abc20a053294"
+        }
+      ]
+    },
+    "napier": {
+      "members": [
+        {
+          "source_member": "0001-zip-deflate.zip",
+          "output": "napier-01.zip",
+          "sha256": "b4b2ac452a92638ca70737cf4fdf21d37fc9f7849c6790bc59021c344a791394",
+          "embedded_members": [
+            {
+              "path": "0001/0259-pdf.pdf",
+              "sha256": "c1b0bccec08f4de943b1326317db520a9b7848d5f9c8b2828cd6026ce04f2713"
+            },
+            {
+              "path": "0001/0483-xlsx.xlsx",
+              "sha256": "0b62f01dc5eb609ffd2e3b7a1bd785f07fdf7d2714c5a40986a62a1bdd910814"
+            },
+            {
+              "path": "0001/1120-jpg-fromweb.jpg",
+              "sha256": "a68be5cb210280c4da9124d74467d4be5d872b8bf78cb2cfba4c4444f9091d4b"
+            },
+            {
+              "path": "0001/4118-docx.docx",
+              "sha256": "3917ceffbc38170d6174f1b23d7027f1112165ab3381c71d351594004208a17c"
+            }
+          ]
+        },
+        {
+          "source_member": "0002-zip-deflate.zip",
+          "output": "napier-02.zip",
+          "sha256": "74ce56d216344bbd9a31867ad7b5d48b9dc52888e2454d5495254ae1b4548125",
+          "embedded_members": [
+            {
+              "path": "0002/0009-pptx.pptx",
+              "sha256": "5e6b6516022081296d02191c27748b53aefbbd38d80d5a2a2a4ba5cf77aacc25"
+            },
+            {
+              "path": "0002/0117-doc.doc",
+              "sha256": "983d5b58389177e66827be2ee2ab5a267a0da2b70e2880f79b1b193a71bf8dae"
+            },
+            {
+              "path": "0002/0385-pdf.pdf",
+              "sha256": "f3789c082bd351c67592a804bd69470230b5460dd2ecd15be5b8cdf4f097174b"
+            },
+            {
+              "path": "0002/0860-xlsx.xlsx",
+              "sha256": "e4d5391c18abc5643e153143bfac024e5f3f49c6f0839c6473fc3f501625ffd2"
+            },
+            {
+              "path": "0002/2480-pdf.pdf",
+              "sha256": "fbda7fc4eb5745792c7e71c5578e6130e441690606e1f8edac2ff800708e15dc"
+            },
+            {
+              "path": "0002/2592-docx.docx",
+              "sha256": "97afb5c1e25a97b15bb1d9a26c68927baaa86d17fbe3f169367f5be94c3e3bb7"
+            },
+            {
+              "path": "0002/3091-docx.docx",
+              "sha256": "32cce71b7176a35010df6dcdb2d42fa1fc4ad9b59dfb1b136594e28abc16aced"
+            },
+            {
+              "path": "0002/3738-docx.docx",
+              "sha256": "caff98e6173c241b714bd0ecd3990143198514ca154a9c81e224e26b29ce9d7b"
+            },
+            {
+              "path": "0002/3994-docx.docx",
+              "sha256": "2e7872ec3532a846f04d9e5a83cb6b443db272d767b2900ada66002bc8251666"
+            }
+          ]
+        },
+        {
+          "source_member": "0003-zip-deflate.zip",
+          "output": "napier-03.zip",
+          "sha256": "7df76f0fb024ee50e9bc100f8dcb4cbccad2f14aee56f83c0687911ffd2bb313",
+          "embedded_members": [
+            {
+              "path": "0003/0038-pptx.pptx",
+              "sha256": "76135063e60ab135f8df1eb32615c3198860e2e183408f3068fa0b85dce2fc19"
+            },
+            {
+              "path": "0003/0092-pdf.pdf",
+              "sha256": "051c6efbf4a33f41948460f3fdc0b30f3ae987b248c07166fe7ffcd5fe989f70"
+            },
+            {
+              "path": "0003/0105-docx.docx",
+              "sha256": "e1d9200a2867cc074fe746ff605e2d83b2760832fa9c95e4622eb072cfab6c75"
+            },
+            {
+              "path": "0003/0126-jpg-fromweb.jpg",
+              "sha256": "89e7ba5f278bfec023dda236fd4ba83476895e345689a3c06b71b225022a6aa4"
+            },
+            {
+              "path": "0003/0419-pptx.pptx",
+              "sha256": "a454e6d8a8a22426baa75e5efad74dfc7924e5c4bc0bfa38ba9d4de126eaeb8a"
+            },
+            {
+              "path": "0003/0938-doc.doc",
+              "sha256": "57c6b07f46dc6d3338f87116aeb2790d353b8cb82bd2439a7e78a1edb43604e3"
+            },
+            {
+              "path": "0003/1243-jpg-fromweb.jpg",
+              "sha256": "ad33fc0a2e5942b877fa116451379587b820123dcca9d8d6f6851fc49d56782c"
+            },
+            {
+              "path": "0003/1801-jpg-fromweb.jpg",
+              "sha256": "fd6ca39500bf98ca1b5ff0c1697ca1238ab0ef54ba889fc73e7246f5592f9f86"
+            },
+            {
+              "path": "0003/4871-jpg-fromweb.jpg",
+              "sha256": "5573a34b3af9ec0950f2b6594ab06942916167246e7cf84693f1ead164744473"
+            }
+          ]
+        },
+        {
+          "source_member": "0004-zip-deflate.zip",
+          "output": "napier-04.zip",
+          "sha256": "95000fd288caf134a8902c4958c2ba9bf4e985edb6c5d24686a41f9b3da9ef31",
+          "embedded_members": [
+            {
+              "path": "0004/0119-xlsx.xlsx",
+              "sha256": "f52573daff101a0fb6ee68b791fb78dd6f7d57600bff05ac524ed66ba966f59b"
+            },
+            {
+              "path": "0004/0888-docx.docx",
+              "sha256": "21130af012f0f1a491d0b57c9d5c7d70f03fb0b0b18910ddf239ff91ec475b6a"
+            },
+            {
+              "path": "0004/0909-doc.doc",
+              "sha256": "1b9d64660ce953372cf19ecb600270bfd60d40fbec670c0975c1555c39d36671"
+            },
+            {
+              "path": "0004/0955-pptx.pptx",
+              "sha256": "3e6edb4a1a494a2ab21a4560d0e05dbc71e8c9e9f0d3cb9f7b7e53c011a70c4c"
+            },
+            {
+              "path": "0004/2944-pdf.pdf",
+              "sha256": "f528cf7ec1728f88f302c81ea5237123870199e96fff54b842aff995ddef6f52"
+            },
+            {
+              "path": "0004/3175-docx.docx",
+              "sha256": "db362f325282ef70238da0d871472b09e2ddd8565d9f6176418339086c90f788"
+            },
+            {
+              "path": "0004/4124-docx.docx",
+              "sha256": "c9fc60dcf9ea1436e4d838c4528b7881235ae7b1434cb1eed5470092dabc56d8"
+            },
+            {
+              "path": "0004/4645-jpg-fromweb.jpg",
+              "sha256": "6a5d8bc170dd2a91e1c6d9b8b41fb3670a43de449562379508f1ada174fb1362"
+            }
+          ]
+        },
+        {
+          "source_member": "0005-zip-deflate.zip",
+          "output": "napier-05.zip",
+          "sha256": "10ab893a22e9c6f5ba86acb25cc7a637cb6005c262c9a7ffdd743df1217875ea",
+          "embedded_members": [
+            {
+              "path": "0005/0089-doc.doc",
+              "sha256": "429de8f9fc4fc8bb2957973747e132a3a342e94bf71e87eb37a11a948675cd24"
+            },
+            {
+              "path": "0005/0410-ppt.ppt",
+              "sha256": "a978f9982c2c72274de66935f1be8441b0b04ca922da6200775b1f2919cdb874"
+            },
+            {
+              "path": "0005/0897-docx.docx",
+              "sha256": "ecc330a15baf38adc1b2e0f2e70a7cd54fff8b4e2e34fdd546ea6747a7e555ec"
+            },
+            {
+              "path": "0005/0946-pptx.pptx",
+              "sha256": "c25e96c824b07fa5cfe0c31ba6b6b83f8bd7cc0ba8d209978d5cf35566ff8fc3"
+            },
+            {
+              "path": "0005/1499-jpg-fromweb.jpg",
+              "sha256": "cb80351b5b8764efb2e6e53665da4a61ed4204b339a9ffc283e56c725199a785"
+            },
+            {
+              "path": "0005/2880-docx.docx",
+              "sha256": "7053823fdd956aebef94ad930e352eeede3aac084ea6073cb36f10b61327b410"
+            },
+            {
+              "path": "0005/3531-docx.docx",
+              "sha256": "fd8f044860e7430fa772ed4123ea7318650a1b7f4225784b6897ff43205b2214"
+            }
+          ]
+        },
+        {
+          "source_member": "0006-zip-deflate.zip",
+          "output": "napier-06.zip",
+          "sha256": "08fe14d7ba4838c3d7a80e0aeb32efe7b6cda77f33782ee41fe84a86251caf64",
+          "embedded_members": [
+            {
+              "path": "0006/0496-docx.docx",
+              "sha256": "48b07584578ff21753ab6a4cbcd650b4a76b628c3afcfc72b40cac1a78130ac8"
+            },
+            {
+              "path": "0006/1571-pdf.pdf",
+              "sha256": "ff3b2ada5e5b7e49c211bc70e2c56d6372ad1abbd5f30478a9fe6ec5586e8953"
+            },
+            {
+              "path": "0006/1968-docx.docx",
+              "sha256": "bf0c136c99c4186b93d09e396f922c41804352177bc920c4b47d768e79ea5360"
+            },
+            {
+              "path": "0006/4206-docx.docx",
+              "sha256": "97a0a18350b9c06d798c6d490ca5efaaa32ffe8032ee7691011650d5c7ca2102"
+            }
+          ]
+        },
+        {
+          "source_member": "0007-zip-deflate.zip",
+          "output": "napier-07.zip",
+          "sha256": "f953de8e05b9930744a75fbb9e197e7c7de45020d3272a99d6cf402ef9511929",
+          "embedded_members": [
+            {
+              "path": "0007/0142-pdf.pdf",
+              "sha256": "9316fc9b309e7fa3605e3086aa19747eb1c7bbf2810e5d2f3b346d85b6bf8056"
+            },
+            {
+              "path": "0007/0778-ppt.ppt",
+              "sha256": "2848beb3bc9da1039318389cc107823000b792dd6018060c8a4810077d55b97f"
+            },
+            {
+              "path": "0007/1438-docx.docx",
+              "sha256": "a17ffd90a5a9ee1a9bce94e43b852fb1d62ee13ae3abbe07bb4afe179b3cd17f"
+            },
+            {
+              "path": "0007/1647-pdf.pdf",
+              "sha256": "0a32f1a131a3a50a1cc9cb057a05abd47bcc2cd9df828a3c13e1ba1be8e73dd8"
+            },
+            {
+              "path": "0007/2630-pdf.pdf",
+              "sha256": "aafea134d307177a3604c025ccb07d655ce2429740430f1e2fcf1faf46768985"
+            },
+            {
+              "path": "0007/4182-jpg-fromweb.jpg",
+              "sha256": "764f66ad11ebc5550178b4a3a7f350ce0fbfacfca511e3fb4efebcb63f67a9d2"
+            },
+            {
+              "path": "0007/4279-jpg-fromweb.jpg",
+              "sha256": "42f70056b34bb3c7a5702685fbf03c77b988fd1808e5732f492865c38a65b416"
+            },
+            {
+              "path": "0007/4319-docx.docx",
+              "sha256": "7b5313c7fc735f376ed74a1f6e2382d3712b07ce1b616673f361b1107b618be7"
+            }
+          ]
+        },
+        {
+          "source_member": "0008-zip-deflate.zip",
+          "output": "napier-08.zip",
+          "sha256": "adc3bbe91b3946a92a7ee7ffd78d940e58242f0054ef1d3cda4446669627bd5e",
+          "embedded_members": [
+            {
+              "path": "0008/0355-docx.docx",
+              "sha256": "9d50c068dc207f479008b06ab495275578b15757cd287e1173ccab9240f0d0a9"
+            },
+            {
+              "path": "0008/0709-pptx.pptx",
+              "sha256": "a34aca17a0a27333d768924e16d4ca172ec0a6122d37930d3e732b6aeac90b55"
+            },
+            {
+              "path": "0008/0995-jpg-fromweb.jpg",
+              "sha256": "3fd0f0fee82cee9989184d3dbc546c3ba83f749d387c116f7223e8c3bb72a86f"
+            },
+            {
+              "path": "0008/2344-docx.docx",
+              "sha256": "ccce1cef2bda88a629f029cb6f001bc8726e0564a45623e1e2373060001f63e4"
+            },
+            {
+              "path": "0008/2427-docx.docx",
+              "sha256": "67ca6642222f21d065be677cd6aa4a3998983cebecaff8b72d06fd9e6cb375c6"
+            },
+            {
+              "path": "0008/2750-docx.docx",
+              "sha256": "95c005f2d63a0dec42deb8e79383cea2f8a3c6ba0263935c8d40641143f9867f"
+            },
+            {
+              "path": "0008/2859-pdf.pdf",
+              "sha256": "3c3ebcea43217e60e921a61749fe0c667c686cd90fe43ace4ecba803af1c1e11"
+            },
+            {
+              "path": "0008/3192-jpg-fromweb.jpg",
+              "sha256": "e5d6aa15c7b77d0bf2bceffaec9ae2ed646af2a6d77a1cd28bc40272b34d2a76"
+            },
+            {
+              "path": "0008/4992-jpg-fromweb.jpg",
+              "sha256": "36b5679b80cb0c2855ec547828c53304f79b64b9a4820e3639fee4da41b08d6c"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "output_counts": {
+    ".eml": 16,
+    ".rtf": 9,
+    ".zip": 8
+  }
+}
