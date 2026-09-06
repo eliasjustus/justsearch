@@ -53,8 +53,33 @@ tracing* below). You install everything yourself:
 
 - **Git for Windows** — from `tools\Git-Setup.exe /VERYSILENT /NORESTART
   /NOCANCEL /SP-` (or download it).
-- **Claude Code** — `irm https://claude.ai/install.ps1 | iex`, then add
-  `$env:USERPROFILE\.local\bin` to your User PATH (the CLAUDE.md has a one-liner).
+- **Agent harness — operator step, pick ONE** (this is the authority for the
+  install; the charter only tells the agent what differs once it is running):
+  - **Claude Code**:
+    ```powershell
+    irm https://claude.ai/install.ps1 | iex; $bin = "$env:USERPROFILE\.local\bin"; $u = [System.Environment]::GetEnvironmentVariable("Path","User"); if ($u -notlike "*$bin*") { [System.Environment]::SetEnvironmentVariable("Path","$u;$bin","User") }; $env:Path += ";$bin"
+    ```
+    then `claude` from the mapped folder. The staged `.claude/settings.json`
+    starts it in bypass-permissions mode (fallback:
+    `claude --dangerously-skip-permissions`). Reads `CLAUDE.md` + `.claude/`.
+    Kick off with `/start`.
+  - **Codex** (CLI, or the ChatGPT/Codex desktop app when you want Computer Use):
+    ```powershell
+    powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+    ```
+    Sign in (re-done every boot — the sandbox is wiped), open the mapped folder
+    as the project and **accept the trust prompt**: the staged
+    `.codex/config.toml` only loads for a trusted folder. It pins `gpt-5.6-sol`,
+    sets `approval_policy = "never"` + `sandbox_mode = "danger-full-access"`
+    (Windows Sandbox is the isolation boundary), and raises
+    `project_doc_max_bytes` so the ~66 KB `AGENTS.md` is not silently cut at
+    Codex's 32 KiB default. If you cannot trust the folder, launch with
+    `codex --dangerously-bypass-approvals-and-sandbox` and put
+    `project_doc_max_bytes = 262144` in `%USERPROFILE%\.codex\config.toml`.
+    For GUI driving, install and enable the Computer Use plugin BEFORE
+    kicking off, so the start skill's capability probe sees it. Reads
+    `AGENTS.md` (same bytes as `CLAUDE.md`) + `.codex/` + `.agents/skills/`.
+    Kick off with `$start` (CLI) or `@start` (desktop app).
 - **JustSearch** — run the `*-setup.exe`. Per ADR-0024 the per-user NSIS installer
   lands at `%LOCALAPPDATA%\JustSearch\`, NOT `C:\JustSearch\`. User data goes to
   `%APPDATA%\io.justsearch.shell\`.

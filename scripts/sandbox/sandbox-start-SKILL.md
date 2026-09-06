@@ -17,12 +17,15 @@ durable method; what *this* candidate must cover is in the staged
 
 ## What IS here
 
-- The JustSearch installer + `CLAUDE.md` (the mission) in the mapped folder
+- The JustSearch installer + `CLAUDE.md` (the mission; `AGENTS.md` is the
+  same file under Codex's entry-point name) in the mapped folder
 - `coverage-brief.md` + `coverage-manifest.json` — the per-candidate must-touch
   surfaces, derived from what this build ships
 - `validation-mode.md` — model mode (`fresh-install` vs `pre-staged-models`)
 - `collect-evidence.ps1` — the capture harness
 - `sandbox-environment.md`, `docs/`, the SciFact corpus, sanitized `.claude/`
+  (Claude Code) and `.codex/` + `.agents/skills/` (Codex) — this skill is
+  staged for both harnesses
 
 ## What to do at session start
 
@@ -30,10 +33,11 @@ durable method; what *this* candidate must cover is in the staged
    **capability**, not merely a tool — a false negative here previously wrote
    off all 14 surface-tier items in a round while a fully working GUI tier
    sat unused (tempdoc 727-followup). Run BOTH checks:
-   - **Tool check**: is a computer-use/screenshot/browser tool available
-     (e.g. `ToolSearch` for screenshot/computer/browser terms)?
+   - **Tool check**: does THIS session have a computer-use / screenshot
+     capability? (Claude Code: search the tool list for screenshot/computer/
+     browser terms. Codex: the Computer Use skill, if the operator enabled it.)
    - **Native-capture check**: run the staged `gui\snap.ps1` (see
-     `gui/README.md`) and confirm it wrote a non-blank PNG you can `Read`
+     `gui/README.md`) and confirm it wrote a non-blank PNG you can read
      back. Windows provides screen capture and input (`CopyFromScreen`,
      `SendKeys`, `mouse_event`) natively — no tool is required for this to
      work, and it drives the real Tauri WebView2 shell.
@@ -42,13 +46,22 @@ durable method; what *this* candidate must cover is in the staged
    as a standing round-level gap (`staging-gaps.md` or your findings notes),
    and do not plan or ask the user anything that presupposes GUI access
    (screenshots, driving the Tauri shell). Doing this probe late costs a
-   wasted round-trip to the user. If the native-capture check succeeds, GUI
-   access exists even with zero computer-use tools in the session — proceed
-   with the native PowerShell GUI tier (`gui/README.md`) as the default.
+   wasted round-trip to the user.
+
+   If you have a computer-use capability, use it — it exercises the app the
+   way a user does, which is what a release-validation round is for. The one
+   thing the round needs from the GUI regardless of how you drive it is a PNG
+   **on disk** with the coverage filename (see *Coverage & evidence*); if your
+   tool cannot save a screenshot to a path you choose, `gui\snap.ps1` writes
+   that file. With no computer-use capability, the native tier
+   (`gui/README.md`) is the whole GUI path.
 1. Read `coverage-brief.md`, `validation-mode.md`, `sandbox-environment.md`,
    and `staging-gaps.md` (assets the host failed to stage — each entry is a
    round-level coverage gap, not something to silently absorb).
-2. Install Git, Claude Code, and JustSearch (see `CLAUDE.md` → Setup).
+2. Install Git and JustSearch (see `CLAUDE.md` → Setup). Your harness is
+   already running — the operator installed it; the charter's Setup step 2
+   says what differs per harness (Codex: confirm the charter was not
+   truncated).
 3. Launch JustSearch (the launcher enables request tracing via
    `JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`; if you launch it another way, set that
    env var first so `telemetry/traces.ndjson` records what you exercise).
@@ -145,7 +158,7 @@ past miss; apply them regardless of candidate.
   via the native PowerShell tool, never by shelling `powershell.exe -Command`
   from a bash tool.** Bash expands `$env` first and mangles the path — this
   happened 3 times in a prior round.
-- **After installing anything that changes PATH** (Node, Git, Claude Code),
+- **After installing anything that changes PATH** (Node, Git),
   resolve and reuse the absolute exe path for the rest of the session — shell
   state does not persist between tool calls, so a PATH update in one call is
   invisible to the next.
