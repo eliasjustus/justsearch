@@ -8,7 +8,7 @@
  * (requested vs actual model, agentType, brief) to its cost — this
  * productionises `tmp/tokeff/deep3.mjs` (886 §1), which first measured it.
  *
- * Every Claude Code `spawn`/`fork` lineage `Call` already carries its own
+ * Every Claude Code and current Codex `spawn`/`fork` lineage `Call` carries
  * `lineage.{parentSessionId, agentType, requestedModel, description}`
  * (`lib/ledger/claude-adapter.mjs`, sourced from `subagents/*.meta.json`) —
  * this reader groups those Calls by `sessionId` (one spawn transcript) and
@@ -24,13 +24,11 @@
  * Agent-tool brief, so this axis is a mixed proxy across both call shapes —
  * a real measurement of the first turn, not a clean "brief" concept.
  *
- * CODEX HAS NO PER-SPAWN LINEAGE YET (codex-adapter.mjs: every Call is
- * `lineage.kind: 'main'` — `inter_agent_communication_metadata` is a
- * SESSION-level fact, not a per-call parent edge, 886 §12 PR 1 independent
- * review). So Codex sessions with `session.multiAgent === true` are
- * reported in a SEPARATE "multi-agent sessions" table, one row per whole
- * session rather than per spawn — the honest degrade, not a fabricated
- * per-spawn join.
+ * Current Codex child rollouts expose their parent thread and semantic role in
+ * `session_meta.payload.source.subagent.thread_spawn`; the adapter also reads
+ * actual model and effort from `turn_context`. Older Codex parent sessions
+ * that expose only the session-level `multiAgent` fact remain visible in a
+ * separate parent-session table without fabricated child attribution.
  *
  * `--since <ISO>` (default trailing 30 days), `--until <ISO>`,
  * `--harness claude-code|codex-cli|all` (default all), `--json`,
@@ -158,8 +156,8 @@ export function mapSpawnSessionIdsToFiles({ projectsRoot = DEFAULT_PROJECTS_ROOT
 // --- spawn rows -------------------------------------------------------------
 
 /**
- * Group `calls` (already filtered to non-synthetic, non-main-lineage Claude
- * Calls) by `sessionId` into one row per spawn. `firstUserMessageCharsMap` is
+ * Group `calls` (already filtered to non-synthetic, non-main lineage Calls)
+ * by `sessionId` into one row per spawn. `firstUserMessageCharsMap` is
  * `sessionId -> chars|null`, resolved asynchronously up front (see
  * `main()`) since it needs file IO this pure function does not perform.
  */
@@ -181,9 +179,11 @@ export function buildSpawnRows(calls, firstUserMessageCharsMap = new Map()) {
     let unpricedTokens = 0;
     let peakContextTokens = 0;
     let actualModel = null;
+    let actualEffort = null;
     for (const c of arr) {
       if (c.contextTokens > peakContextTokens) peakContextTokens = c.contextTokens;
       if (c.model) actualModel = c.model; // last-seen model wins (tmp/tokeff/deep3.mjs method)
+      if (c.reasoningEffort) actualEffort = c.reasoningEffort;
       const { usd: callUsd, priced } = costOfCall(c);
       if (priced) costUsd += callUsd;
       else unpricedTokens += c.contextTokens;
@@ -195,6 +195,7 @@ export function buildSpawnRows(calls, firstUserMessageCharsMap = new Map()) {
       agentType: first.lineage.agentType ?? '(unset)',
       requestedModel: first.lineage.requestedModel ?? '(unset)',
       actualModel: actualModel ?? '(missing-model)',
+      actualEffort: actualEffort ?? '(missing-effort)',
       calls: arr.length,
       peakContextTokens,
       costUsd: round(costUsd, 2),
@@ -214,6 +215,7 @@ export function buildMultiAgentSessionRows(calls, sessions) {
   const bySession = new Map();
   for (const c of calls) {
     if (!multiAgentIds.has(c.sessionId)) continue;
+    if (c.lineage.kind !== 'main') continue;
     if (!bySession.has(c.sessionId)) bySession.set(c.sessionId, []);
     bySession.get(c.sessionId).push(c);
   }
@@ -264,6 +266,32 @@ export function groupByAgentType(rows) {
     g.calls += r.calls;
   }
   return [...groups.values()].map((g) => ({ ...g, costUsd: round(g.costUsd, 2) })).sort((a, b) => b.costUsd - a.costUsd);
+}
+
+export function groupByRoleModelEffort(rows) {
+  const groups = new Map();
+  for (const r of rows) {
+    const key = `${r.agentType} | ${r.actualModel} | ${r.actualEffort}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        key,
+        agentType: r.agentType,
+        actualModel: r.actualModel,
+        actualEffort: r.actualEffort,
+        spawns: 0,
+        costUsd: 0,
+        calls: 0,
+      };
+      groups.set(key, g);
+    }
+    g.spawns += 1;
+    g.costUsd += r.costUsd;
+    g.calls += r.calls;
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, costUsd: round(g.costUsd, 2) }))
+    .sort((a, b) => b.calls - a.calls || b.costUsd - a.costUsd);
 }
 
 export function runLengthBuckets(rows) {
@@ -318,7 +346,7 @@ async function main() {
   const { calls, sessions } = listCalls({ harnesses, sinceMs, untilMs });
   const nonSynthetic = calls.filter((c) => !c.synthetic);
 
-  const spawnCalls = nonSynthetic.filter((c) => c.harness === 'claude-code' && c.lineage.kind !== 'main');
+  const spawnCalls = nonSynthetic.filter((c) => c.lineage.kind !== 'main');
 
   let firstUserMessageCharsMap = new Map();
   if (spawnCalls.length && harnesses.includes('claude-code')) {
@@ -338,6 +366,7 @@ async function main() {
 
   const requestedToActual = groupRequestedToActual(spawnRows);
   const byAgentType = groupByAgentType(spawnRows);
+  const byRoleModelEffort = groupByRoleModelEffort(spawnRows);
   const buckets = runLengthBuckets(spawnRows);
   const top = topByCost(spawnRows, opts.top);
   const firstUserMessageCharsP50 = firstUserMessageCharsPercentile(spawnRows, 0.5);
@@ -347,7 +376,7 @@ async function main() {
     console.log(JSON.stringify({
       window: { sinceMs, untilMs }, harnesses, top: opts.top,
       spawnCount: spawnRows.length,
-      requestedToActual, byAgentType, buckets, top20: top,
+      requestedToActual, byAgentType, byRoleModelEffort, buckets, top20: top,
       firstUserMessageChars: { p50: firstUserMessageCharsP50, p90: firstUserMessageCharsP90 },
       multiAgentSessions: multiAgentRows,
     }, null, 2));
@@ -355,7 +384,7 @@ async function main() {
   }
 
   console.log(`spawn-economics [${harnesses.join(',')}] — since ${new Date(sinceMs).toISOString()}${untilMs ? ` until ${new Date(untilMs).toISOString()}` : ''}`);
-  console.log(`${spawnRows.length} spawns (Claude spawn/fork lineage)`);
+  console.log(`${spawnRows.length} spawns (Claude and Codex spawn/fork lineage)`);
 
   console.log('\n=== requested -> actual model ===');
   for (const g of requestedToActual) {
@@ -367,6 +396,11 @@ async function main() {
     console.log(`  ${g.agentType.padEnd(20)} spawns=${String(g.spawns).padStart(5)}  cost=${usd(g.costUsd).padStart(7)}  calls=${String(g.calls).padStart(7)}`);
   }
 
+  console.log('\n=== by role | actual model | effort ===');
+  for (const g of byRoleModelEffort) {
+    console.log(`  ${g.key.padEnd(60)} spawns=${String(g.spawns).padStart(5)}  cost=${usd(g.costUsd).padStart(7)}  calls=${String(g.calls).padStart(7)}`);
+  }
+
   console.log('\n=== run-length buckets ===');
   for (const b of buckets) {
     console.log(`  ${b.bucket.padEnd(10)} spawns=${String(b.spawns).padStart(5)}  cost=${usd(b.costUsd).padStart(7)}  share=${pctFmt(b.costUsd, buckets.reduce((a, x) => a + x.costUsd, 0))}`);
@@ -375,7 +409,7 @@ async function main() {
   console.log(`\n=== top ${opts.top} spawns by cost ===`);
   for (const r of top) {
     console.log(`  ${r.sessionId.slice(0, 8)} ${r.agentType.padEnd(16)} ${r.requestedModel.padEnd(8)} `
-      + `calls=${String(r.calls).padStart(5)} peakCtx=${String(r.peakContextTokens).padStart(7)} `
+      + `${r.actualModel.padEnd(18)} effort=${r.actualEffort.padEnd(14)} calls=${String(r.calls).padStart(5)} peakCtx=${String(r.peakContextTokens).padStart(7)} `
       + `cost=${usd(r.costUsd).padStart(6)} firstUserMessageChars=${String(r.firstUserMessageChars ?? 'n/a').padStart(6)} ${r.description ?? ''}`);
   }
 
@@ -387,7 +421,7 @@ async function main() {
     + `${firstUserMessageCharsP50 ?? 'n/a'} / ${firstUserMessageCharsP90 ?? 'n/a'}`);
 
   if (multiAgentRows.length) {
-    console.log(`\n=== Codex multi-agent sessions (${multiAgentRows.length}) ===`);
+    console.log(`\n=== Codex multi-agent parent sessions (${multiAgentRows.length}) ===`);
     for (const r of multiAgentRows) {
       console.log(`  ${r.sessionId.slice(0, 8)} calls=${String(r.calls).padStart(5)} peakCtx=${String(r.peakContextTokens).padStart(7)} cost=${usd(r.costUsd).padStart(6)} model=${r.actualModel}`);
     }
