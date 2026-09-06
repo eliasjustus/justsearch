@@ -13,13 +13,42 @@ function usage() {
   return 'Usage: node scripts/ci/run-publish-preflight.mjs [--check|--list|--run]';
 }
 
-export function executeLocalSubsets(manifest, { cwd = ROOT, run = spawnSync } = {}) {
+export function commandForPlatform(command, platform = process.platform) {
+  if (platform !== 'win32') return command;
+  return command.replace(/^\.\/gradlew\.bat(?=\s|$)/, '.\\gradlew.bat');
+}
+
+export function assertCleanCandidate({ cwd = ROOT, run = spawnSync } = {}) {
+  const result = run(
+    'git',
+    ['status', '--porcelain=v1', '--untracked-files=all'],
+    { cwd, encoding: 'utf8', windowsHide: true },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`git status failed while checking the publication candidate (exit ${result.status ?? 'unknown'})`);
+  }
+  if (String(result.stdout || '').trim()) {
+    throw new Error(
+      'publication preflight requires a clean candidate; commit all staged, unstaged, and non-ignored untracked files before --run',
+    );
+  }
+}
+
+export function executeLocalSubsets(manifest, {
+  checkCandidate = assertCleanCandidate,
+  cwd = ROOT,
+  platform = process.platform,
+  run = spawnSync,
+} = {}) {
+  checkCandidate({ cwd });
   for (const context of manifest.contexts) {
     if (context.mode !== 'local-subset') continue;
     process.stdout.write(`\n[${context.check}]\n`);
     for (const command of context.commands) {
-      process.stdout.write(`> ${command}\n`);
-      const result = run(command, { cwd, shell: true, stdio: 'inherit' });
+      const executableCommand = commandForPlatform(command, platform);
+      process.stdout.write(`> ${executableCommand}\n`);
+      const result = run(executableCommand, { cwd, shell: true, stdio: 'inherit' });
       if (result.error) throw result.error;
       if (result.status !== 0) return result.status ?? 1;
     }
