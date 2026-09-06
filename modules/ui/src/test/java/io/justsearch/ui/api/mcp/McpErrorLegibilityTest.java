@@ -247,6 +247,30 @@ final class McpErrorLegibilityTest {
     assertFalse(textOf(result).contains("may be transient"));
   }
 
+  @ParameterizedTest
+  @MethodSource("classifiedFailures")
+  @DisplayName("answer: failed futures preserve the underlying API policy and explanation")
+  void classifiedAnswerFutureFailure(Exception failure, ApiErrorCode expectedCode) {
+    for (Exception asyncFailure : List.of(failure,
+        new java.util.concurrent.CompletionException(
+            new java.util.concurrent.ExecutionException(failure)))) {
+      DocumentService documents = mock(DocumentService.class);
+      when(documents.retrieveContext(any()))
+          .thenReturn(java.util.concurrent.CompletableFuture.failedFuture(asyncFailure));
+      HeadAssembly facade = mock(HeadAssembly.class);
+      when(facade.workers()).thenReturn(new WorkerServices(null, documents, null, null, null));
+      McpToolSurface surface = new McpToolSurface(
+          List.of(OperationCatalog.of("core", List.of())), mock(OperationDispatcher.class),
+          () -> null, () -> facade, FIXED_CLOCK);
+
+      var result = surface.callTool("justsearch_answer", Map.of("query", "q"), "s1");
+      assertFailureFacts(result, expectedCode);
+      assertTrue(textOf(result).startsWith("Answer failed: " + failure.getClass().getSimpleName() + ":"));
+      assertFalse(textOf(result).contains("ExecutionException"));
+      assertFalse(textOf(result).contains("CompletionException"));
+    }
+  }
+
   @Test
   void exceptionDetailsAreSanitizedInBothTiers() {
     KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);

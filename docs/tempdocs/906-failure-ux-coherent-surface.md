@@ -1,7 +1,7 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "IMPLEMENTED — REVIEW FOLLOW-UP OPEN (2026-09-06): §W async MCP classification; local, unpushed"
+status: "IMPLEMENTED — §W fixed (2026-09-06); publication candidate verification pending"
 created: 2026-09-02
 updated: 2026-09-06
 lite-class: false
@@ -625,7 +625,7 @@ separate terminal-disposition semantics and the event's severity/title.
   Replace Shell operation/undo exception prose using existing OperationError
   information. Regression tests must exercise actual consumers, including a 502
   typed body and a permanent/policy operation failure; no automatic mutation retry.
-- [ ] U2 — MCP failure facts: remove unconditional transience claims, reuse
+- [x] U2 — MCP failure facts: remove unconditional transience claims, reuse
   existing exception classification/sanitization, preserve text-client legibility,
   add structured code/class/retryability only when justified by source information,
   and test permanent/transient/validation/unknown paths and serialization.
@@ -833,3 +833,26 @@ an exceptionally completed future through the real `justsearch_answer` consumer,
 covering transient, validation and permanent causes plus an unknown fallback.
 Run affected Java tests and the required build, then independently review the
 fix and update U2/U6. Publication remains unrequested.
+
+### W1 resolution and publication preparation
+
+The owner subsequently said to proceed. The MCP helper now removes only
+ExecutionException/CompletionException wrappers before handing the underlying
+exception to the existing API classifier and sanitizer. Message and structured
+facts use that same cause. An identity-based guard bounds cyclic wrapper chains;
+absent or non-Exception causes retain the existing unknown fallback.
+
+`classifiedAnswerFutureFailure` exercises the real `justsearch_answer` consumer
+with exceptionally completed futures for unsupported, invalid-argument,
+unavailable, timeout and unknown causes, both directly and through nested
+wrappers. All five cases failed before the fix
+(`tmp/906-async-regression-before.log`); the full affected UI Java module passed
+after it (`tmp/906-async-module-tests.log`, 2m21s), including all 23
+McpErrorLegibilityTest cases with zero failures/errors. This closes the review
+finding rather than weakening its regression. Independent Sol review found no
+substantive issue in the fix or regression. Canonical MCP wording was updated
+and documentation regeneration/link checks passed.
+
+U6 remains pending final verification on the candidate caught up with origin/main.
+The publication branch must contain only this tempdoc's changes; the original
+implementation branch's unrelated local ancestry is not a publication candidate.

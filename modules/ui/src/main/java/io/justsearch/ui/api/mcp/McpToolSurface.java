@@ -22,12 +22,15 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -2065,6 +2068,14 @@ public final class McpToolSurface {
 
   /** Project the existing API classification and sanitizer, without a parallel retry policy. */
   private static Map<String, Object> toolFailureContent(String tool, Exception e) {
+    // Future.get/join transport the cause in wrappers with no failure policy of their own.
+    // Use the same cause for wording and classification, retaining the fallback for absent
+    // or non-Exception causes. Identity tracking also bounds malformed cyclic cause chains.
+    Set<Exception> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    while ((e instanceof ExecutionException || e instanceof CompletionException)
+        && e.getCause() instanceof Exception cause && seen.add(e)) {
+      e = cause;
+    }
     String detail = e.getMessage() != null ? e.getMessage() : "no additional detail";
     String message = tool
         + " failed: "

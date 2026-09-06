@@ -395,7 +395,9 @@ for subscription support.
 Execution failures retain `isError: true` and a readable `content[].text` message.
 The same known facts are available in `structuredContent`: `error` contains the
 sanitized explanation, with optional `errorCode`, `errorClass` and `retryable`.
-Exception paths use the existing API classification. An unclassified failure
+Exception paths use the existing API classification after removing asynchronous
+completion wrappers; the underlying cause supplies both wording and failure facts.
+An unclassified failure
 omits classification fields; an operation result preserves its supplied code and
 retry hint without inferring an absent class. Missing retryability is unknown,
 not permission to retry. The text channel states any supplied classification and
