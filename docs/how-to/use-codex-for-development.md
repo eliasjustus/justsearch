@@ -77,7 +77,7 @@ when continuing the same outcome.
 | `.claude/skills/*` and slash skills | `.agents/skills/*`; invoke with `$skill-name` | Each harness-specific skill tree owns its own instructions |
 | `.mcp.json` local dev tools | `.codex/config.toml` → `justsearch-dev` | shared MCP server implementation |
 | `.claude/settings*.json` hooks | `.codex/hooks.json` | `governance/agent-hooks.v1.json` |
-| Claude agent types | `.codex/agents/{explorer,worker,reviewer}.toml` | Codex-native role files |
+| Claude agent types | `.codex/agents/{explorer,worker,complex_worker,reviewer}.toml` | Codex-native role files |
 | Claude transcript telemetry | Codex rollout and OTel adapters | neutral agent-analytics ledger |
 
 The mapping is behavioral rather than byte-for-byte. Unsupported Codex lifecycle
@@ -85,6 +85,27 @@ events are omitted explicitly, and Claude-only model/task hooks are excluded
 with tested reasons. The shared safety guards, documentation hints, MCP session
 injection, context warning, compaction context, and telemetry sink startup run
 through the Codex hook adapter.
+
+## Route Codex subagents by role
+
+The parent orchestrator chooses a semantic role; the role file pins the model
+and reasoning effort. Do not select an ad hoc model for routine delegation.
+
+| Role | Model and effort | Use when |
+| --- | --- | --- |
+| `explorer` | `gpt-5.6-luna`, `high` | Bounded read-only discovery, ownership tracing, and primary-source evidence |
+| `worker` | `gpt-5.6-luna`, `high` | Intended behavior, owning code, and acceptance checks are already settled |
+| `complex_worker` | `gpt-5.6-sol`, `medium` | Root cause is ambiguous; work crosses module contracts; concurrency, lifecycle, security, or migration reasoning is material; or a bounded worker fails verification |
+| `reviewer` | `gpt-5.6-sol`, `high` | Independent refute-first review of correctness, security, regressions, and test sufficiency |
+
+Project defaults route an unqualified or nested subagent to
+`gpt-5.6-luna` at `high` effort. Explicit role pins take precedence. A bounded
+worker that discovers an escalation condition stops, returns the evidence, and
+lets the parent choose `complex_worker`; children do not silently upgrade their
+own model. Set `fork_turns` to `"none"` for a self-contained brief or to a
+positive integer when a small amount of recent conversation is necessary.
+Full-history forks that omit `fork_turns` or set it to `"all"` inherit the
+parent model and effort, so they do not exercise the role's model pin.
 
 ## Verify the integration
 

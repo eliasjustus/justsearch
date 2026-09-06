@@ -92,8 +92,20 @@ are suitable. Shared-state changes, migrations, destructive git, merge/release
 work, and unsupervised dev-stack ownership are not.
 
 Use the active harness's native agent roles and model identifiers. Codex agents
-inherit project guidance and use `.codex/agents/*.toml`; do not copy Claude
-model names or the Claude-only explicit-model guard into Codex configuration.
+inherit project guidance and use `.codex/agents/*.toml`. For Codex, choose from
+the project's semantic roles instead of selecting an ad hoc model at spawn:
+`explorer` for bounded read-only discovery, `worker` when design, ownership, and
+verification are settled, `complex_worker` for ambiguous root causes,
+cross-module contracts, concurrency or lifecycle behavior, security boundaries,
+migrations, or escalation after failed worker verification, and `reviewer` for
+refute-first correctness and security review. A worker reports escalation
+evidence to the parent rather than silently changing its model. The role files
+own Codex model and reasoning-effort pins; do not copy Claude model names or the
+Claude-only explicit-model guard into Codex configuration. When spawning a
+role-routed Codex agent, set `fork_turns` to `"none"` or a positive integer
+that supplies only the necessary recent context. Omitting `fork_turns` or using
+`"all"` creates a full-history fork that inherits the parent model and effort,
+bypassing the role's economic routing.
 System or session restrictions on delegation override repository preferences.
 
 ## Shared development stack

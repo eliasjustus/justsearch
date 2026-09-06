@@ -52,20 +52,37 @@ const checks = [
     assert.match(config, /required\s*=\s*true/);
     assert.match(config, /startup_timeout_sec\s*=\s*\d+/);
     assert.match(config, /tool_timeout_sec\s*=\s*\d+/);
+    assert.match(config, /^default_subagent_model\s*=\s*"gpt-5\.6-luna"/m);
+    assert.match(config, /^default_subagent_reasoning_effort\s*=\s*"high"/m);
     assert.doesNotMatch(config, /^cwd\s*=/m, 'project MCP must inherit Codex repository cwd; cwd=".." starts outside worktrees');
     assert.doesNotMatch(config, /(token|password|secret|pat)\s*=/i);
   }],
   ['native Codex agent roles are complete and explicitly sandboxed', () => {
     const dir = resolve(ROOT, '.codex', 'agents');
     const names = readdirSync(dir).filter((name) => name.endsWith('.toml')).sort();
-    assert.deepEqual(names, ['explorer.toml', 'reviewer.toml', 'worker.toml']);
+    assert.deepEqual(names, ['complex_worker.toml', 'explorer.toml', 'reviewer.toml', 'worker.toml']);
+    const expectedRouting = {
+      'complex_worker.toml': { model: 'gpt-5.6-sol', effort: 'medium', sandbox: 'workspace-write' },
+      'explorer.toml': { model: 'gpt-5.6-luna', effort: 'high', sandbox: 'read-only' },
+      'reviewer.toml': { model: 'gpt-5.6-sol', effort: 'high', sandbox: 'read-only' },
+      'worker.toml': { model: 'gpt-5.6-luna', effort: 'high', sandbox: 'workspace-write' },
+    };
     for (const name of names) {
       const role = read(`.codex/agents/${name}`);
       assert.match(role, /^name\s*=\s*"[^"]+"/m);
       assert.match(role, /^description\s*=\s*"[^"]+"/m);
-      assert.match(role, /^sandbox_mode\s*=\s*"(?:read-only|workspace-write)"/m);
+      assert.match(role, new RegExp(`^model\\s*=\\s*"${expectedRouting[name].model.replaceAll('.', '\\.')}"`, 'm'));
+      assert.match(role, new RegExp(`^model_reasoning_effort\\s*=\\s*"${expectedRouting[name].effort}"`, 'm'));
+      assert.match(role, new RegExp(`^sandbox_mode\\s*=\\s*"${expectedRouting[name].sandbox}"`, 'm'));
       assert.match(role, /^developer_instructions\s*=\s*"""/m);
     }
+    const complexWorker = read('.codex/agents/complex_worker.toml');
+    for (const escalationSignal of ['ambiguous', 'cross-module', 'concurrency', 'lifecycle', 'security', 'migration', 'fails verification']) {
+      assert.match(complexWorker, new RegExp(escalationSignal), `complex_worker must advertise the ${escalationSignal} escalation signal`);
+    }
+    const sharedInstructions = read('AGENTS.md');
+    assert.match(sharedInstructions, /set `fork_turns` to `"none"` or a positive integer/);
+    assert.match(sharedInstructions, /`"all"` creates a full-history fork that inherits the parent model and effort/);
   }],
   ['Codex hooks contain only events supported by the current hook API', () => {
     const hookConfig = JSON.parse(read('.codex/hooks.json'));

@@ -33,16 +33,13 @@
  * A `rate_limits`-only `token_count` event (`info: null`) carries no usage at
  * all and is skipped outright, not counted as a repeat.
  *
- * LINEAGE (independent review fix, 886 §12 PR 1): every Codex `Call` has
- * `lineage.kind = 'main'`. `inter_agent_communication_metadata` was
- * originally read as a per-call `'thread'` lineage kind; on real corpus
- * payloads (`{trigger_turn: false}`, no parent id) it names no PARENT, so no
- * per-call edge is derivable from it — asserting `'thread'` from it was
- * fabricating lineage evidence that was not there. What IS real is a
- * SESSION-level fact ("this session had multi-agent communication at some
- * point"), surfaced as `session.multiAgent`, not as a per-call kind. See
- * `record.mjs`'s `VALID_LINEAGE_KINDS` doc for what would need to be true
- * for a future adapter to legitimately produce `'thread'`.
+ * LINEAGE: current Codex child rollouts carry an explicit parent edge in
+ * `session_meta.payload.source.subagent.thread_spawn`, including
+ * `parent_thread_id`, `agent_role`, and `agent_path`. Those sessions produce
+ * `lineage.kind = 'spawn'`; sessions without that evidence remain `main`.
+ * `inter_agent_communication_metadata` still names no parent and remains only
+ * the session-level `multiAgent` fact. `turn_context.payload.effort` supplies
+ * the actual reasoning effort used for each call.
  *
  * TOOL EVENTS (independent review fix): `agent_message` payloads are plain
  * assistant reply text, not tool activity, so this adapter no longer creates
@@ -192,9 +189,27 @@ function inputStringOf(payload) {
  * swallowed (independent review, 886 §12 PR 1 fix-up — the previous version
  * caught everything here, which also hid real bugs).
  */
+function findSessionMetadata(entries) {
+  return entries.find((e) => e.type === 'session_meta')?.payload ?? null;
+}
+
 function findSessionId(entries) {
-  const metaEntry = entries.find((e) => e.type === 'session_meta');
-  return metaEntry?.payload?.id || null;
+  return findSessionMetadata(entries)?.id || null;
+}
+
+function lineageFromSessionMetadata(metadata) {
+  const spawn = metadata?.source?.subagent?.thread_spawn;
+  const parentSessionId = spawn?.parent_thread_id ?? metadata?.parent_thread_id ?? null;
+  if (!spawn || !parentSessionId) {
+    return { parentSessionId: null, kind: 'main' };
+  }
+  return {
+    parentSessionId,
+    kind: 'spawn',
+    agentType: spawn.agent_role ?? metadata.agent_role ?? null,
+    requestedModel: null,
+    description: spawn.agent_path ?? metadata.agent_path ?? null,
+  };
 }
 
 /**
@@ -271,7 +286,8 @@ export function processCodexToolExchanges(entries, { file } = {}) {
  * round-trip). `file` is carried through only for the skip-reason record.
  */
 export function processCodexEntries(entries, { file } = {}) {
-  const sessionId = findSessionId(entries);
+  const sessionMetadata = findSessionMetadata(entries);
+  const sessionId = sessionMetadata?.id || null;
   if (!sessionId) {
     return { calls: [], toolEvents: [], session: null, skip: { file, reason: 'no usable sessionId (missing or empty session_meta.payload.id)' } };
   }
@@ -289,6 +305,7 @@ export function processCodexEntries(entries, { file } = {}) {
   let project = null;
   let provider = 'openai';
   let currentModel = null;
+  let currentReasoningEffort = null;
   let compactionPending = false;
   let compactedTs = null;
   let prevCumulativeTotal = null;
@@ -301,7 +318,7 @@ export function processCodexEntries(entries, { file } = {}) {
   let resets = 0;
   let repeatsDropped = 0;
 
-  const lineage = { parentSessionId: null, kind: 'main' };
+  const lineage = lineageFromSessionMetadata(sessionMetadata);
 
   for (const entry of entries) {
     const ts = entry.timestamp ?? null;
@@ -318,6 +335,7 @@ export function processCodexEntries(entries, { file } = {}) {
 
     if (entry.type === 'turn_context') {
       currentModel = entry.payload?.model ?? currentModel;
+      currentReasoningEffort = entry.payload?.effort ?? currentReasoningEffort;
       continue;
     }
 
@@ -366,6 +384,7 @@ export function processCodexEntries(entries, { file } = {}) {
           lineage,
           ts,
           model: currentModel,
+          reasoningEffort: currentReasoningEffort,
           tokens: {
             fresh,
             cacheRead: L.cached_input_tokens ?? 0,
@@ -439,6 +458,7 @@ export function processCodexEntries(entries, { file } = {}) {
       lineage,
       ts: compactedTs,
       model: currentModel,
+      reasoningEffort: currentReasoningEffort,
       tokens: { fresh: 0, cacheRead: 0, cacheWrite5m: null, cacheWrite1h: null, output: 0, reasoning: 0 },
       contextTokens: 0,
       compactionBoundary: true,
@@ -458,6 +478,7 @@ export function processCodexEntries(entries, { file } = {}) {
       lastTs,
       calls: calls.length,
       multiAgent,
+      lineage,
       selfCheck: { deltaInputSum, maxCumulativeInput, resets, repeatsDropped },
     },
     skip: null,

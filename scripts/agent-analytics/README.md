@@ -210,19 +210,14 @@ trigger/preTokens/postTokens/durationMs before any `Call` ever saw them — 0 of
 compaction events in the local corpus carried `compactMetadata` before the fix. The original
 PR 1 fixture only exercised a single-line boundary, so its test never caught this.
 
-`spawn-economics.mjs` joins the lineage every Claude `spawn`/`fork` Call already carries
-(`agentType`, requested vs actual model, parent session — sourced from `subagents/*.meta.json`
-by the claude-adapter) to per-call COST (priced per token axis, not from `contextTokens` alone)
-and `firstUserMessageChars` (the opening turn's character count, read off the raw spawn
-transcript — same no-neutral-axis rationale as `context-residency.mjs`'s compounded-residency
-section). **Not a clean "brief length"** (independent review, 886 §12 PR 2): a skill-invoked
-subagent's opening turn is the skill body ("Base directory for this skill: …"), not an
-Agent-tool brief, so this axis is a mixed proxy across both call shapes, named accordingly.
-Tables: requested→actual model, by `agentType`, run-length buckets (`[0-10,10-30,30-60,60-120,
-120-250,250-500,500+]`, so the `120-250` bucket is `calls >= 120`) with cost share, top-N by
-cost. Codex has no per-spawn lineage yet (every Call is `lineage.kind:'main'`), so a Codex
-session with `session.multiAgent` is reported as one row in a separate "multi-agent sessions"
-table rather than a fabricated per-spawn split.
+`spawn-economics.mjs` joins the lineage every Claude and current Codex `spawn`/`fork` Call
+carries to per-call COST. Claude supplies requested-model metadata and opening-turn character
+counts from its raw spawn transcripts. Codex supplies parent thread, semantic role, and agent
+path from `session_meta.payload.source.subagent.thread_spawn`, plus actual model and effort
+from `turn_context`. Tables include requested→actual model, `agentType`, role/model/effort,
+run-length buckets (`[0-10,10-30,30-60,60-120,120-250,250-500,500+]`), and top-N by cost.
+Codex parent sessions that expose only `session.multiAgent` remain visible in a separate
+parent-session table, while attributed child calls are excluded from that residual.
 
 `cost-session.mjs --reconcile` compares the OTLP-costed set (`--source otlp`'s harness-computed
 dollars) against the transcript-priced set, per session shared by both — `otlp$`,

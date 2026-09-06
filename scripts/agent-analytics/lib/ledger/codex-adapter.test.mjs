@@ -137,6 +137,51 @@ run('a session with NO inter_agent_communication_metadata gets multiAgent = fals
   assert.deepEqual(result.calls.every((c) => c.lineage.kind === 'main'), true);
 });
 
+run('current thread_spawn metadata produces real Codex spawn lineage and effort', () => {
+  const entries = [
+    {
+      timestamp: '2026-09-06T00:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'codex-child-1',
+        cwd: 'F:\\FixtureProject',
+        model_provider: 'openai',
+        parent_thread_id: 'codex-parent-1',
+        source: { subagent: { thread_spawn: {
+          parent_thread_id: 'codex-parent-1', depth: 1,
+          agent_path: '/root/bounded_worker', agent_role: 'worker',
+        } } },
+      },
+    },
+    { timestamp: '2026-09-06T00:00:01.000Z', type: 'turn_context', payload: { model: 'gpt-5.6-luna', effort: 'high' } },
+    {
+      timestamp: '2026-09-06T00:00:02.000Z', type: 'event_msg',
+      payload: { type: 'token_count', info: {
+        last_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, reasoning_output_tokens: 4 },
+        total_token_usage: { input_tokens: 100, total_tokens: 110 },
+      } },
+    },
+  ];
+  const result = processCodexEntries(entries, { file: 'codex-child.jsonl' });
+  assert.equal(result.calls.length, 1);
+  assert.deepEqual(result.calls[0].lineage, {
+    parentSessionId: 'codex-parent-1', kind: 'spawn', agentType: 'worker',
+    requestedModel: null, description: '/root/bounded_worker',
+  });
+  assert.equal(result.calls[0].model, 'gpt-5.6-luna');
+  assert.equal(result.calls[0].reasoningEffort, 'high');
+  assert.deepEqual(result.session.lineage, result.calls[0].lineage);
+});
+
+run('a subagent label without a source parent edge does not fabricate lineage', () => {
+  const entries = [{
+    timestamp: '2026-09-06T00:00:00.000Z', type: 'session_meta',
+    payload: { id: 'unlinked-child', thread_source: 'subagent', agent_role: 'worker' },
+  }];
+  const result = processCodexEntries(entries, { file: 'unlinked-child.jsonl' });
+  assert.deepEqual(result.session.lineage, { parentSessionId: null, kind: 'main' });
+});
+
 // --- BLOCKER 2: tool events, real vocabulary, no agent_message ToolEvent ---
 
 run('function_call + function_call_output join into one shell ToolEvent (name: shell_command)', () => {
