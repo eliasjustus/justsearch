@@ -1,7 +1,7 @@
 ---
 title: "Release hardening, package projections, changelog-driven notes, and model promotion"
 type: tempdocs
-status: MERGED (2026-09-03) — release hardening is on main; protected installer signing proven; packaged-verifier cleanup fix pending; WinGet submission withdrawn; 617 updater evidence and real model promotion remain open
+status: MERGED (2026-09-06) — release hardening and packaged-verifier cleanup are on main; WinGet submission withdrawn; 617 updater evidence and real model promotion remain open
 created: 2026-09-02
 updated: 2026-09-06
 lane: 887 L16
@@ -751,9 +751,8 @@ updater lanes, and a future approved model candidate. Scoop remains deliberately
 
 ## Publication completion plan (2026-09-06)
 
-The implementation and operational follow-through above are complete. The remaining work is the
-publication of the packaged-verifier cleanup without reopening superseded distribution choices or
-spending another signing credit.
+The packaged-verifier cleanup was published without reopening superseded distribution choices or
+spending another signing credit. Detailed publication evidence is in the evidence sidecar.
 
 - [x] Incorporate current `origin/main` and prove the clean content diff is limited to the capture
   repair, regression, publication-preflight corrections, operator guidance, and this record.
@@ -784,12 +783,10 @@ spending another signing credit.
   static assertions cover both exit assignments; it does not dynamically force exit statuses 1 and 2
   or impose a child timeout. That broader harness hardening is not required to reproduce and prevent
   the observed Windows teardown failure.
-- [ ] Open a fresh pull request because closed PR #631 describes an older docs-only head. Use the
-  current public squash-body contract, create the separate review record, and pass both strict
-  publication checks before enqueueing.
-- [ ] After required checks pass, enqueue through the protected merge queue. Verify the landed content
-  by diff, confirm merge-group and post-merge `main` CI, then remove only this task's worktree and local
-  branch after the publication is proven.
+- [x] Open fresh PR `#692` because closed PR `#631` described an older docs-only head; use the current
+  public squash-body contract and separate review record, and pass both strict publication checks.
+- [x] Enqueue through the protected merge queue, verify the landed tree by diff, and confirm both
+  merge-group and post-merge `main` CI before task cleanup.
 
 No implementation teardown remains. The only superseded publication artifact is closed PR #631;
 it stays closed as history rather than being repurposed. The withdrawn WinGet submission, deferred
