@@ -1,9 +1,9 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "TAKEOVER COMPLETE (2026-09-05) — GO for evidenced UX defects; NO-GO for executing the original chunks unchanged; see §T"
+status: "IMPLEMENTING (2026-09-06) — owner accepted §T rescope; §U replaces original §I"
 created: 2026-09-02
-updated: 2026-09-05
+updated: 2026-09-06
 lite-class: false
 lane: 887 L18 coverage note (failure-UX pass)
 model: fable (design) → opus (implementation)
@@ -576,3 +576,78 @@ The closeout world-state command could not load `gray-matter` in the unprepared
 worktree; rerunning the same repository command from main's installed environment
 succeeded and reported this worktree clean (`DIRTY=0`), unpushed and `ACTIVE`.
 No dependency preparation is needed to continue reading this investigation.
+
+## §U. Accepted rescope and implementation contract — 2026-09-06
+
+The owner accepted the plain-language rescope and explicitly requested delegated
+implementation. This section supersedes original decisions/chunks where they
+conflict; §T's findings remain the evidence. No catalog namespace migration,
+universal severity union, fixed agent-code classification, merged reason enum,
+or new all-family governance gate is authorized by this implementation scope.
+
+### Design and ownership
+
+Use typed information at its existing producer/consumer boundary. Preserve backend
+classification and authorization rather than deriving retry policy in the UI.
+Human wording comes from the existing error catalog where a catalog code exists;
+local transport failures get bounded, understandable fallbacks. Remediation must
+be actionable and must never silently replay a mutating operation. Preserve the
+existing tone and readiness authorities.
+
+906 owns the minimal ingestion-summary FE consumer previously duplicated by
+889 item 4. 889 retains its filesystem admission behavior/new reason producers;
+896 retains disk policy. Route that ownership explicitly in 889. The panel words
+the current ledger reasons, distinguishes success/skips/failures/deferred work,
+handles loading/empty/error states honestly, and uses existing diagnostic summary
+transport. It does not resolve hashed paths, add automatic file retries, or claim
+the older how-to's scan-progress and filename-resolution plans are all delivered.
+
+MCP failures retain `content` and `isError`; typed information is additive and
+describes the existing classification. Text-only and structured clients must get
+consistent facts. Inspect all error call sites and existing protocol/public
+contract tests before changing signatures. Unknown classification must remain
+unknown, never an invented transient promise.
+
+Completion wording belongs at the Health event projection, preserving the
+separate terminal-disposition semantics and the event's severity/title.
+
+### Bounded implementation and acceptance
+
+- [ ] U1 — Search and operation consumers: parse typed search failure envelopes,
+  preserve supersession/abort behavior, localize supported codes, provide safe
+  malformed/non-JSON/network fallbacks, and render useful recovery guidance.
+  Replace Shell operation/undo exception prose using existing OperationError
+  information. Regression tests must exercise actual consumers, including a 502
+  typed body and a permanent/policy operation failure; no automatic mutation retry.
+- [ ] U2 — MCP failure facts: remove unconditional transience claims, reuse
+  existing exception classification/sanitization, preserve text-client legibility,
+  add structured code/class/retryability only when justified by source information,
+  and test permanent/transient/validation/unknown paths and serialization.
+- [ ] U3 — Library ingestion summary: use the current 24-code vocabulary with
+  complete readable labels, show bounded summary counts by outcome/reason, expose
+  refresh/recovery on fetch failure, and prove lifecycle cleanup/stale-response
+  behavior and success/skip/failure/unknown handling with regression tests.
+- [ ] U4 — Health completion details: replace raw terminal-disposition details
+  with readable explanations for all five known outcomes; preserve useful unknown
+  fallback and existing event title/severity. Add behavioral regression tests.
+- [ ] U5 — Integration/teardown/docs: remove superseded raw-string paths in the
+  touched consumers; update canonical behavior docs and 889 ownership, without
+  claiming deferred features shipped. Regenerate/check affected documentation.
+- [ ] U6 — Verification and independent review: frontend typecheck, full unit
+  suite, relevant UI gates; affected Java tests and required build/multi-module
+  tests with serialized Gradle use. Validate real Lit UI through browser/harness
+  with measured accessibility evidence, exercise MCP live and a real model query
+  for its AI-facing change. Independent refute-first review of code and evidence;
+  remedy substantive findings and record any external blockers honestly.
+
+U1, U2 and U3 are delegated in separate worktrees from the same accepted baseline.
+The parent owns U4, tempdoc/canonical-doc integration, shared-stack/Gradle access,
+final validation and review coordination. Delegates must not start a shared
+stack, run Gradle without coordination, publish, or edit another lane's files.
+
+The principle is to preserve known failure facts until presentation; it already
+applies to OperationError and agent events. Evidence of value is the previously
+discarded 502 envelope and regression checks that those facts reach rendered copy.
+Retire any new adapter that gains no real consumer or duplicates an existing
+usable adapter. Future filesystem/disk codes and empty-search adequacy remain
+with their existing owners; they do not block U1–U6.
