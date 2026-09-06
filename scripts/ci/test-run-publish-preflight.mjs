@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 
-import { executeLocalSubsets } from './run-publish-preflight.mjs';
+import { commandForPlatform, executeLocalSubsets } from './run-publish-preflight.mjs';
 import { validatePublicCiLocalRepro } from './lib/public-ci-local-repro.mjs';
 
 const signalPolicy = {
@@ -38,5 +38,9 @@ const status = executeLocalSubsets(validManifest, {
 assert.equal(status, 7);
 assert.deepEqual(calls.map((call) => call.command), ['one', 'two']);
 assert.ok(calls.every((call) => call.options.cwd === 'fixture' && call.options.shell === true));
+
+assert.equal(commandForPlatform('./gradlew.bat checkLicense', 'win32'), '.\\gradlew.bat checkLicense');
+assert.equal(commandForPlatform('./gradlew.bat checkLicense', 'linux'), './gradlew.bat checkLicense');
+assert.equal(commandForPlatform('node scripts/ci/check.mjs', 'win32'), 'node scripts/ci/check.mjs');
 
 console.log('test-run-publish-preflight: PASS');
