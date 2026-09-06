@@ -81,8 +81,8 @@ const checks = [
       assert.match(complexWorker, new RegExp(escalationSignal), `complex_worker must advertise the ${escalationSignal} escalation signal`);
     }
     const sharedInstructions = read('AGENTS.md');
-    assert.match(sharedInstructions, /set `fork_turns` to `"none"` or a positive integer/);
-    assert.match(sharedInstructions, /`"all"` creates a full-history fork that inherits the parent model and effort/);
+    assert.match(sharedInstructions, /set `fork_turns` to\s+`"none"` or a positive integer/i);
+    assert.match(sharedInstructions, /omitted\/`"all"` inherits the parent model and\s+effort and bypasses role pins/);
   }],
   ['Codex hooks contain only events supported by the current hook API', () => {
     const hookConfig = JSON.parse(read('.codex/hooks.json'));
