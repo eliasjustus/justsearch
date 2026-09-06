@@ -56,11 +56,13 @@ millions of files, deep nesting, or bidi/NFC filenames.
    long-path support; add a test creating a 300-char path. Classify network (`UNC`, mapped) and
    removable roots via `FileStore` and surface it in the root's status projection (no policy
    change — the founder decides later whether to gate them; this lane only makes them legible).
-4. **FE consumer for the ledger rows.** 419 shipped the backend; `docs/how-to/library-indexing-
-   activity-panel.md` (`status: planning`) proposes the `REASON_CODE_LABELS` map and grep confirms
-   `CLOUD_PLACEHOLDER` appears nowhere in `modules/ui-web/src`. Build the minimal surface: skipped
-   /deferred counts by reason in the existing indexing status area, with the labels from that doc.
-   Presentation-kernel rules apply (`27-frontend-presentation-kernel.md`); run the ui-web gates.
+4. **FE consumer for the ledger rows — owned by 906.** Owner-approved rescope
+   (2026-09-06): 906 builds the minimal Library summary with readable counts by
+   outcome/reason. This lane owns the filesystem producers and any additional
+   reason rows they require; consume/extend the 906 presentation rather than
+   building a second panel. The broader scan-progress and filename-resolution
+   plans in `docs/how-to/library-indexing-activity-panel.md` are not implied by
+   this handoff. See 906 §U for implementation and verification status.
 5. **Antivirus interaction.** (a) Ship user-facing guidance: a `docs/how-to/antivirus-exclusions.md`
    naming the data dir, model dir, and sidecar exes, linked from the troubleshooting help file
    (`SSOT/docs/help/troubleshooting.md`, which is auto-ingested). (b) Detection heuristic: a burst

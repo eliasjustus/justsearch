@@ -1,7 +1,7 @@
 ---
 title: "Failure UX as one coherent surface: one presentation authority for failure wording, remedy and severity, projected over the six per-question reason vocabularies that already exist — never merged into a super-enum"
 type: tempdocs
-status: "IMPLEMENTING (2026-09-06) — owner accepted §T rescope; §U replaces original §I"
+status: "IMPLEMENTED AND VERIFIED (2026-09-06) — accepted §U complete; local, unpushed"
 created: 2026-09-02
 updated: 2026-09-06
 lite-class: false
@@ -508,6 +508,12 @@ SIZE_CHANGED_AFTER_SNAPSHOT, FILE_KEY_CHANGED_AFTER_SNAPSHOT, UNREADABLE,
 IO_ERROR, SANDBOX_FAILED, WRITE_FAILED, WRITE_UNAVAILABLE_DRAINING
 ```
 
+Implementation correction (2026-09-06): this probe undercounted the baseline.
+There were already **26** constants; its line-oriented extraction missed multiline
+declarations `MODIFIED_TIME_CHANGED_AFTER_SNAPSHOT` and
+`SOURCE_KIND_CHANGED_AFTER_SNAPSHOT`. The raw probe output above is retained as
+history, not the current census. §U3 and its regression test cover all 26.
+
 **T-E3 — extractor suitability.** Import `extractEnumConstants` and
 `checkCorrespondence` from `scripts/ci/check-search-degradation-reason-codes.mjs`
 and pass the three current Java sources named in correction 5. Observed:
@@ -613,27 +619,27 @@ separate terminal-disposition semantics and the event's severity/title.
 
 ### Bounded implementation and acceptance
 
-- [ ] U1 — Search and operation consumers: parse typed search failure envelopes,
+- [x] U1 — Search and operation consumers: parse typed search failure envelopes,
   preserve supersession/abort behavior, localize supported codes, provide safe
   malformed/non-JSON/network fallbacks, and render useful recovery guidance.
   Replace Shell operation/undo exception prose using existing OperationError
   information. Regression tests must exercise actual consumers, including a 502
   typed body and a permanent/policy operation failure; no automatic mutation retry.
-- [ ] U2 — MCP failure facts: remove unconditional transience claims, reuse
+- [x] U2 — MCP failure facts: remove unconditional transience claims, reuse
   existing exception classification/sanitization, preserve text-client legibility,
   add structured code/class/retryability only when justified by source information,
   and test permanent/transient/validation/unknown paths and serialization.
-- [ ] U3 — Library ingestion summary: use the current 24-code vocabulary with
+- [x] U3 — Library ingestion summary: use the current 26-code vocabulary with
   complete readable labels, show bounded summary counts by outcome/reason, expose
   refresh/recovery on fetch failure, and prove lifecycle cleanup/stale-response
   behavior and success/skip/failure/unknown handling with regression tests.
-- [ ] U4 — Health completion details: replace raw terminal-disposition details
+- [x] U4 — Health completion details: replace raw terminal-disposition details
   with readable explanations for all five known outcomes; preserve useful unknown
   fallback and existing event title/severity. Add behavioral regression tests.
-- [ ] U5 — Integration/teardown/docs: remove superseded raw-string paths in the
+- [x] U5 — Integration/teardown/docs: remove superseded raw-string paths in the
   touched consumers; update canonical behavior docs and 889 ownership, without
   claiming deferred features shipped. Regenerate/check affected documentation.
-- [ ] U6 — Verification and independent review: frontend typecheck, full unit
+- [x] U6 — Verification and independent review: frontend typecheck, full unit
   suite, relevant UI gates; affected Java tests and required build/multi-module
   tests with serialized Gradle use. Validate real Lit UI through browser/harness
   with measured accessibility evidence, exercise MCP live and a real model query
@@ -651,3 +657,138 @@ discarded 502 envelope and regression checks that those facts reach rendered cop
 Retire any new adapter that gains no real consumer or duplicates an existing
 usable adapter. Future filesystem/disk codes and empty-search adequacy remain
 with their existing owners; they do not block U1–U6.
+
+## §V. Implementation and verification — 2026-09-06
+
+The three delegated lanes are integrated in `codex/906-takeover`; the parent
+implemented Health wording and integrated the documentation and verification.
+The work remains local and unpushed. Original §I mechanisms not retained by §U
+are superseded, not outstanding implementation requirements.
+
+### Delivered behavior and primary evidence
+
+- Search preserves typed HTTP failure facts through `searchState.ts`, including
+  non-2xx bodies, and uses the existing error catalog for readable explanations.
+  Shell invoke/undo failures retain existing OperationError metadata. Regression
+  authorities: `searchState.failure.test.ts`, `Shell.test.ts`, and
+  `SearchV3View.search.test.ts`. The cancellation tests prove transport/body-read
+  AbortErrors with an unchanged generation, separately from query supersession.
+- MCP error text and `structuredContent` share the same known facts. Exceptions
+  reuse `ApiErrorHandler`; plain errors remain unclassified. Tests cover
+  permanent, transient, validation, unknown, operation-result and confirmation
+  paths in `McpToolSurfaceTest` and `McpProtocolHandlerTest`. Tool surface version
+  is 0.7.0; MCP protocol and runtime umbrella versions remain unchanged.
+- Library Folders mounts `jf-ingestion-summary`, with all 26 current reason
+  labels, outcome grouping, bounded visible groups, retained-event counts,
+  loading/empty/failure/refresh states and stale-request/lifecycle protection.
+  It consumes the existing authorized summary endpoint and existing status tone.
+  `IngestionSummary.test.ts` and `LibrarySurface.ingestion.test.ts` prove these
+  behaviors. A review-found live-region issue was fixed: unchanged background
+  refreshes cause zero status-node mutations; manual refresh, changed totals and
+  fetch failures still announce. No file is automatically retried.
+- Health explains all five terminal dispositions at the existing event-row
+  projection. `healthEventActivityRow.test.ts` verifies rendered copy, unknown
+  values, explicit-message precedence, title/severity preservation and a source
+  census against the Java enum. No global severity/type migration was introduced.
+
+Canonical MCP/runtime, Library and Health behavior documentation now describes
+this scope. The older Library how-to clearly separates the implemented summary
+from planned progress, filenames and path resolution. 889 item 4 routes the
+consumer to 906. The generated component vocabulary includes the new component.
+
+### Verification record
+
+Local evidence paths below are relative to the implementation worktree. The
+runnable regression tests and harness steps are committed; scratch run outputs
+are local evidence, not required runtime assets.
+
+- Full `./gradlew.bat test` passed (5m15s), including affected UI Java tests:
+  `tmp/906-test.log`. The delegated affected-module run counted 973 UI tests,
+  zero failures/errors and one existing real-corpus skip; the MCP subset was
+  203 tests. Gradle invocations were serialized across agents.
+- Final integrated `./gradlew.bat build -x test` passed after the palette fix
+  and vocabulary regeneration (54s), `tmp/906-build-final.log`.
+- `npm run typecheck` and full `npm run test:unit:run` passed after the final
+  palette fix: 471 files, 6,320 tests, `tmp/906-ui-unit-final.log`. Forty UI gates
+  passed via `node scripts/ci/run-ui-web-gates.mjs`,
+  `tmp/906-ui-gates-final.log`. The first gate
+  run correctly caught the new component's stale generated vocabulary; it was
+  regenerated with the existing generator and the full gate set passed.
+- Full build plus Head/Worker installDist passed at product commit
+  `c6324725c7ae6a600cd4e38299ea1ae91c5598ca`, `tmp/906-runtime-build.log`.
+  Runtime verification uses the same committed product code in the dedicated
+  `906-runtime-verification` worktree under `.claude/worktrees`, because dev MCP
+  rejects external worktree roots. No ownership/path guard was bypassed.
+- Owned live run `da91e414-dde9-4e97-92e7-b3022a5c5fc9`: production `POST /mcp`
+  initialize reports 0.7.0; invalid argument and three malformed Lucene queries
+  report VALIDATION/nonretryable with text/structured parity; valid search
+  succeeds. `tmp/906-mcp-live.py` is the reproducible read-only probe and
+  `tmp/906-mcp-live.json` records results. These live cases did not produce a
+  permanent error; permanent/transient behavior is covered by Java tests.
+- Real local model smoke through `jseval tier2-eval`, one query containing the
+  exact live validation-error text: Qwen3.5-4B-Q4_K_M.gguf answered "No" to
+  whether the unchanged request should automatically retry. Zero errors,
+  `tmp/906-model-smoke/tier2-eval.json`. This is one interpretation smoke, not
+  retrieval quality evidence or an autonomous-agent retry benchmark. An initial
+  run used the harness's default llama port and failed; the successful run used
+  the owned process's verified port 8082.
+- New instrumented `health-completion` and `library-ingestion` fixture steps
+  assert actual transport-to-Lit rendering. Their captures in `tmp/906-ui/`
+  show the changed content in frame, no document overflow and zero axe
+  violations in each captured viewport. A live Library capture is also saved
+  in `tmp/906-ui-live/`. Fixture counts are not production ingestion evidence.
+- Independent refute-first review inspected code and measurements and reran
+  30 cancellation/announcement tests. Its cancellation false-pass concern,
+  background announcement issue and obsolete Health docs were remedied.
+- Native browser verification found an existing palette pointer bug on the
+  search entry path: a nonfocusable option's mousedown blurred the combobox,
+  causing host cleanup to dismiss the palette before click. The bounded fix
+  preserves combobox focus during primary mousedown, retaining existing keyboard
+  and external-focus behavior. `Sv3Palette.test.ts` models that focus sequence;
+  `search-failure` now asserts native pointer selection, one 502 response and the
+  rendered alert. Independent Chromium evidence in
+  `tmp/906-search-pointer-check.json` proves exactly one command/request and no
+  page errors. `tmp/906-ui/search-failure.measure.json` reports no axe violations
+  or document overflow; the full harness still records its existing two console
+  errors. These are separate instruments, not contradictory clean-console claims.
+- Final independent Sol review found no substantive issue in the pointer fix,
+  verified keyboard/external-focus preservation and ran the 28 palette tests.
+  The native pointer observation is accompanied by its runnable scratch script
+  `tmp/906-search-pointer-check.py`; the committed `search-failure` harness is
+  the maintained regression path.
+- The broader `jseval ui-a11y-gate --output-dir tmp/906-ui-a11y` passed with
+  no new violations against the baseline (exit 0), `tmp/906-ui-a11y.log`.
+  Documentation index/skill regeneration checks, canonical link verification,
+  UI step coverage, Python harness syntax and `git diff --check` passed.
+
+### Limits and follow-up boundaries
+
+The Health baseline capture has an existing contrast failure on an unrelated
+unknown-presence badge; scrolling to completion rows does not fix it. Existing
+transition-timeout console errors and fixture localization-key titles likewise
+prevent a claim that the entire screen is accessibility/console clean. The new
+completion detail text and Library panel were measured in their actual viewport.
+
+The ledger's existing SQL-error fallback returns an empty summary
+(`SqliteJobQueue.java:1492`, `ingestionOutcomeSummary`); no database failure was reproduced
+in this task. The new consumer detects transport/schema failures, but cannot
+distinguish an empty ledger from that server fallback. This remains a backend
+diagnostic limitation, not a claim of end-to-end database fault detection.
+
+889/896 retain future filesystem/disk reason producers, and 902 retains empty
+search adequacy. The original universal gate, catalog namespace migration and
+severity collapse are explicitly outside the accepted scope. Publication and
+merging have not been requested.
+
+### Closeout
+
+U1–U6 are complete. No implementation or verification step in the accepted
+scope is awaiting the owner. The work remains on `codex/906-takeover`, unpushed;
+publication requires a separate request. Delegated worktrees and the verification
+worktree are clean and retained for traceability. The main checkout was not
+edited by this implementation.
+
+The owned dev run was stopped through MCP with `portsClosed: true`. Repository
+own-session helper sweeps confirmed cleanup of the two screenshot Vite helpers
+and the final accessibility-sweep helper; unrelated records were retained.
+Closeout world state is recorded in `tmp/906-world-closeout.log`.

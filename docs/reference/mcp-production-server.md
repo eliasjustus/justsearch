@@ -185,7 +185,7 @@ Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (single-sourced from
 `McpContractVersions.TOOL_SURFACE_VERSION`, reported as
 `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` and as the runtime
-manifest's `mcpToolSurfaceVersion`): `0.6.0`. MCP `serverInfo.version` is the
+manifest's `mcpToolSurfaceVersion`): `0.7.0`. MCP `serverInfo.version` is the
 **build** version (bound to `EnvRegistry.APP_VERSION`) — a host that logs or
 gates on server version must see this build's number, not the tool surface's.
 
@@ -216,7 +216,7 @@ When a tool is deprecated, `tools/list` adds only namespaced top-level `_meta` k
 `io.justsearch/sunsetAt`, and `io.justsearch/replacement`. The standard `annotations` object is left
 unchanged. A short deprecation sentence is also prepended to the description for clients that ignore
 extensions. The production catalog is currently empty, so no shipped tool emits this metadata and
-the curated tool-surface version remains `0.6.0`.
+the curated tool-surface version is `0.7.0` after the additive failure metadata below.
 
 ## Response shape (tempdoc 725)
 
@@ -389,6 +389,22 @@ Four proposed URIs for agent orientation:
 
 Plus 9 catalog-driven resources (health events, indexing jobs, etc.)
 for subscription support.
+
+## Tool execution failures
+
+Execution failures retain `isError: true` and a readable `content[].text` message.
+The same known facts are available in `structuredContent`: `error` contains the
+sanitized explanation, with optional `errorCode`, `errorClass` and `retryable`.
+Exception paths use the existing API classification. An unclassified failure
+omits classification fields; an operation result preserves its supplied code and
+retry hint without inferring an absent class. Missing retryability is unknown,
+not permission to retry. The text channel states any supplied classification and
+retry hint, so clients consuming either delivery channel see consistent facts.
+
+The `0.7.0` tool-surface version identifies this additive metadata and the removal
+of blanket transience claims. It does not change tool names, arguments, the MCP
+protocol version, or authorization. A confirmation-pending response continues to
+use its existing approval guidance; it must not trigger automatic replay.
 
 ## Trust Model
 

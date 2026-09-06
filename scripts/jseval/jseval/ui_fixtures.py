@@ -319,6 +319,7 @@ def _surfaces_catalog_body() -> str:
 # `check-ui-step-coverage` fixture-coverage clause reads (615 §37.1), and this row is the body every
 # non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
+    ("/api/diagnostics/ingestion/summary", '{"rollups": [], "count": 0}'),
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
     ("/api/registry/surfaces", _surfaces_catalog_body()),
     ("/api/registry/operations", _help_operations_catalog_body()),
