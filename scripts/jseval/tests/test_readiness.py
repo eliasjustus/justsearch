@@ -542,3 +542,26 @@ class TestWaitEmbedCompatSettled:
 
         assert state is None
         assert any("None" in r.message for r in caplog.records)
+
+
+def test_readiness_poll_caps_request_and_sleep_to_remaining_deadline(monkeypatch):
+    from jseval import readiness
+    clock = [0.0]
+    sleeps = []
+    monkeypatch.setattr(readiness.time, "monotonic", lambda: clock[0])
+
+    def fetch(client):
+        assert 0 < client.timeout.read <= 0.5
+        clock[0] += 0.4
+        return _good_snapshot()
+
+    def sleep(seconds):
+        assert seconds <= 0.1 + 1e-9
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(readiness, "_fetch_status", fetch)
+    monkeypatch.setattr(readiness.time, "sleep", sleep)
+    result = readiness._poll_until_stable("http://127.0.0.1:33221", lambda s: ["pending"], 0.5, 2, 2)
+    assert not result.passed
+    assert len(sleeps) == 1 and clock[0] == 0.5

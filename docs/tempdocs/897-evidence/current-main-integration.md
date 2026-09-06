@@ -73,3 +73,25 @@ jseval ingestion and poll authorities. Waiting alone does not ingest. The predic
 enrichment checks and adds VDU/writer quiescence, declared failure counts and strict numeric fields;
 source/terminal identity reconciliation remains mandatory at capture. Focused production, CLI, timeline,
 readiness, ingestion, decision and schema tests: 206 passed in 16.38 s. Live evidence is still pending.
+
+
+Second full jseval pass: **3401 passed, 15 skipped**, 466.15 s (`897-pytest-final.log`).
+The independent production-wait review then found incomplete chunk telemetry checks, output placement
+inside the source root, missing production-token forwarding, and an ingestion timeout detached from the
+requested wait budget. Added explicit chunk pending/failed gates, source-root output containment checks,
+optional session-token support on the existing ingestion transport, a shared registration/wait budget,
+and per-request/sleep deadline caps in the canonical poller. The expanded focused suite passes **156 tests**
+in 12.78 s (`897-production-review-regressions.log`), including negative probes for each finding.
+
+Fresh realdocs runtime: owned dev run `4852e415-5181-46b5-aecb-813d25d11263`, Worker/Head distribution
+built from integration commit `eff095f14`, CUDA inference activation completed, canonical jseval preflight
+passed with embedding/SPLADE/NER/reranker wired. Runtime data uses the dev-runner-returned path under
+`.claude/worktrees/897-current-main/scripts/jseval/tmp/897-realdocs-runtime` relative to the integration
+checkout (the launcher rebased the requested absolute path). Ingestion began 2026-09-06 08:55 UTC.
+The initial Python wait predates the final review fixes; its result must be recaptured through the
+strengthened helper before it can become accepted evidence. No aggregate is yet claimed.
+
+Review recheck closed the auth, containment, dense-pending and deadline findings. A final 999/1000
+chunk-SPLADE probe exposed the ordinary 99.9% readiness tolerance hiding a failed chunk; production
+waiting now requires the published completed count to equal its full chunk denominator and exact 100%
+coverage for a nonempty enabled stage. Final focused pass: **157 passed**, 10.79 s, same regression log.

@@ -42,7 +42,7 @@ is warranted; retire any extra coordination once the existing owner guarantees t
 - [x] I1: reconcile textual and semantic integration conflicts; preserve all current-main behavior.
 - [ ] I2: validate focused/full jseval, affected Java and installed-Worker tests, build, PMD and projections;
   independently review the combined production changes before corpus execution.
-- [ ] I3: reconcile calibrated-decision consumption and supported result-redundancy scope with executable
+- [x] I3: reconcile calibrated-decision consumption and supported result-redundancy scope with executable
   tests; preserve completed adjudication and explicitly bound any still-unmeasured cohort.
 - [ ] I4: validate a fresh inference-capable production path, then complete realdocs extraction/VDU and
   subsequent enrichment; emit a reconciled aggregate with exact terminal exclusions.
@@ -684,33 +684,33 @@ Historical execution/verification: [E8 — Worker repair investigation record](8
 
 ## Revised acceptance contract
 
-- [ ] Deterministic fixture recipes and expected-state manifest cover every non-optional matrix row;
+- [x] Deterministic fixture recipes and expected-state manifest cover every non-optional matrix row;
   all committed binary assets have per-file provenance/license treatment and SHA-256.
-- [ ] Production-path tests assert admission → extraction policy/route → index → keyword search. No
+- [x] Production-path tests assert admission → extraction policy/route → index → keyword search. No
   `TestDocumentBuilder`, direct Lucene write, or console-only boolean is accepted as this proof.
-- [ ] Structure-sensitive cases assert summary counts and exact annotated fragments independently.
-- [ ] ZIP/email embedded-content behavior records both marker survival and whether resource identity is
+- [x] Structure-sensitive cases assert summary counts and exact annotated fragments independently.
+- [x] ZIP/email embedded-content behavior records both marker survival and whether resource identity is
   preserved; these are not collapsed into one pass/fail bit.
-- [ ] Representative sources are recipe/cache backed. Materialized bulk corpora remain uncommitted.
-- [ ] Every raw-file measurement is bound to a canonical `(relative path, size, SHA-256)` manifest digest
+- [x] Representative sources are recipe/cache backed. Materialized bulk corpora remain uncommitted.
+- [x] Every raw-file measurement is bound to a canonical `(relative path, size, SHA-256)` manifest digest
   and extraction-policy identity; a null or qrels-only corpus signature fails closed.
-- [ ] New jseval command has deterministic unit fixtures, schema validation, corpus identity, algorithm
+- [x] New jseval command has deterministic unit fixtures, schema validation, corpus identity, algorithm
   version/normalization/seed/threshold provenance, and fails closed on missing extraction inputs.
 - [x] Near-duplicate thresholds have a labeled calibration sample with precision/recall (or an explicit
   non-decision if labels are insufficient), a disjoint holdout, and an exhaustive candidate-recall check on
   a tractable slice; SimHash Hamming distance is not treated as truth.
-- [ ] Ranked-result joins use a collision-safe document key and fingerprint sidecar and fail closed on
+- [x] Ranked-result joins use a collision-safe document key and fingerprint sidecar and fail closed on
   ambiguous/missing identities; leaf filename stems are forbidden as the join authority.
-- [ ] Any production-content snapshot reconciles its exported count and opaque ids to the expected manifest
+- [x] Any production-content snapshot reconciles its exported count and opaque ids to the expected manifest
   and ingest state; folder-browse pagination/direct-child behavior cannot silently omit nested documents.
 - [ ] §M reports per-format capability and per-corpus prevalence with denominators/intervals; synthetic,
   pre-deduplicated, and private cohorts are visibly separated.
-- [ ] Real-format characterization reports per-format source diversity; unsupported source coverage is
+- [x] Real-format characterization reports per-format source diversity; unsupported source coverage is
   labeled rather than generalized from one generated producer.
 - [ ] 639 receives only the non-redundancy evidence and a recommendation allowed by the evidence gate;
   ANN recall remains in 639. The search-quality register gains a “format breadth / duplicate prevalence”
   row. No baseline changes.
-- [ ] Focused Worker and jseval tests pass; if a corpus test exceeds 60 seconds, tag/document it in
+- [x] Focused Worker and jseval tests pass; if a corpus test exceeds 60 seconds, tag/document it in
   `docs/explanation/09-testing-strategy.md` and run the repository’s docs-maintenance sequence.
 - [ ] Refute-first review verifies that every claimed production layer is actually exercised and that
   the measurement cannot pass on a filtered/deduplicated input by mistake.
@@ -738,12 +738,14 @@ explicitly model-assisted rather than described as independent human ground trut
 | PPTX speaker notes | 1 | 1 | 1 | slide and speaker-note markers survive | `NONE` | same deterministic oracle |
 | ZIP with TXT + XLSX | 1 | 1 | 1 | both markers survive; only rendered labels preserve child identity | `EMBEDDED_CONTENT_OR_IDENTITY_LOSS` | same deterministic oracle |
 
+The separate 33-file sibling has one source per format (16 EML, 9 RTF, 8 ZIP): characterization only, excluded from prevalence headlines.
+
 ### M.2 Duplicate prevalence and result-set redundancy
 
 | Cohort | n docs | byte exact | content exact | calibrated near-dup | version hint confirmed | queries / redundant@10 | artifact |
 |---|---:|---:|---:|---:|---:|---|---|
 | CMU Enron eligible-body proxy — full exact census | 352,208 | 77.009% | 77.626% | unmeasured | n/a | no query set | `scripts/jseval/897-run-2026-09-04/enron-duplicate-prevalence.v1.json`; SHA-256 `4ebf994d…e492c` |
-| CMU Enron — frozen uniform analyzer sample | 5,000 | 4.46% descriptive | 4.54% descriptive | threshold `0.90`; model-assisted holdout precision `1.0`, recall `0.985507`, F1 `0.992701`; archive prevalence unmeasured | n/a | no query set | census artifact plus ignored decision hash `66fcd1e8…10a907` |
+| CMU Enron — frozen uniform analyzer sample | 5,000 | 4.46% descriptive | 4.54% descriptive | 5.46% at threshold `0.90` (sample only); model-assisted holdout precision `1.0`, recall `0.985507`, F1 `0.992701`; archive prevalence unmeasured | n/a | no query set | selected aggregate `2807b0dd…83da6`; frozen decision `66fcd1e8…10a907` |
 | `mixed/realdocs-v1` production extraction | 620 source / 619 indexed / 1 exact terminal exclusion | unmeasured | unmeasured | unmeasured | n/a | ingest-only | extraction defects fixed; inference-disabled eval backend left 121 VDU pending, so no aggregate |
 | `mixed/legal-clerc-200` production extraction | 199 | 0.0% | 0.0% | `UNDECIDED`; sweep observed no confirmed edge | unmeasured | 200 / unmeasured | ignored aggregate SHA-256 `cd410c97…af8ac7`; canonical hash `7312e6cc…b19131` |
 

@@ -577,6 +577,10 @@ def _required_production_readiness_reasons(
         "visualTextNeededCount",
         "visualEnrichmentNeededCount",
         "chunkDocCount",
+        "chunkEmbeddingPendingCount",
+        "chunkEmbeddingFailedCount",
+        "chunkSpladePendingCount",
+        "chunkSpladeCompletedCount",
         "embeddingPendingCount",
         "embeddingFailedCount",
         "spladePendingCount",
@@ -591,6 +595,7 @@ def _required_production_readiness_reasons(
         "embeddingCoveragePercent",
         "spladeCoveragePercent",
         "chunkVectorCoveragePercent",
+        "chunkSpladeCoveragePercent",
     )
     for field in integer_fields:
         if field in status and (isinstance(status[field], bool) or not isinstance(status[field], int)
@@ -607,6 +612,10 @@ def _required_production_readiness_reasons(
     if "vduProcessing" in status and not isinstance(status["vduProcessing"], bool):
         raise ProductionDuplicatePrevalenceError(
             "production readiness field vduProcessing has an invalid schema type"
+        )
+    if "chunkSpladeEnabled" in status and not isinstance(status["chunkSpladeEnabled"], bool):
+        raise ProductionDuplicatePrevalenceError(
+            "production readiness field chunkSpladeEnabled has an invalid schema type"
         )
 
     reasons = list(
@@ -633,6 +642,12 @@ def _required_production_readiness_reasons(
         "spladeFailedCount",
         "chunkDocCount",
         "chunkVectorCoveragePercent",
+        "chunkEmbeddingPendingCount",
+        "chunkEmbeddingFailedCount",
+        "chunkSpladeEnabled",
+        "chunkSpladePendingCount",
+        "chunkSpladeCoveragePercent",
+        "chunkSpladeCompletedCount",
         "pendingNerCount",
         "completedNerCount",
         "failedNerCount",
@@ -676,6 +691,17 @@ def _required_production_readiness_reasons(
         value = status.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or value != 0:
             reasons.append(f"{field}_not_zero")
+    if status.get("embeddingEnabled", True):
+        for field in ("chunkEmbeddingPendingCount", "chunkEmbeddingFailedCount"):
+            if status.get(field) != 0:
+                reasons.append(f"{field}_not_zero")
+    if status.get("chunkSpladeEnabled") and status.get("chunkSpladePendingCount") != 0:
+        reasons.append("chunkSpladePendingCount_not_zero")
+    if status.get("chunkSpladeEnabled") and (
+        status.get("chunkSpladeCompletedCount") != status.get("chunkDocCount")
+        or (status.get("chunkDocCount", 0) > 0 and status.get("chunkSpladeCoveragePercent") != 100.0)
+    ):
+        reasons.append("chunk_splade_not_fully_complete")
     return reasons
 
 
@@ -739,11 +765,15 @@ def ingest_and_wait_for_snapshot(
     checked_request = ProductionAnalysisRequest(_checked_source_spec(request.source), request.config)
     _validate_timeout(timeout_seconds)
     _raw_identity, root, _expected, _declared = _manifest_capture_inputs(checked_request)
+    deadline = time.monotonic() + timeout_seconds
     try:
-        ingest_module.add_watched_root(checked_request.source.base_url, root)
+        ingest_module.add_watched_root(
+            checked_request.source.base_url, root, timeout_sec=timeout_seconds,
+            session_token=os.environ.get(SESSION_TOKEN_ENV),
+        )
         return wait_for_snapshot_ready(
             checked_request,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=_validate_timeout(deadline - time.monotonic()),
             on_snapshot=on_snapshot,
         )
     except httpx.HTTPError as exc:

@@ -965,6 +965,12 @@ def cmd_duplicate_prevalence(
                     "timeline destination must differ from input, aggregate, and review packet"
                 )
             prepared_request = production_adapter.load_input_spec(input_spec)
+            raw_root = prepared_request.source.raw_root.resolve()
+            for destination in (out_path, timeline_path, review_packet_out):
+                if destination is not None and destination.resolve().is_relative_to(raw_root):
+                    raise production_adapter.ProductionDuplicatePrevalenceError(
+                        "generated output must be outside the production raw corpus"
+                    )
             rows = []
             try:
                 production_adapter.prepare_request(

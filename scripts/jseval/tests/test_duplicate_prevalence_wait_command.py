@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from click.testing import CliRunner
 
@@ -13,7 +15,7 @@ from tests.test_duplicate_prevalence_schema import _artifact
 def test_wait_command_prepares_once_before_capture_and_records_only_aggregate_timeline(tmp_path, monkeypatch):
     spec, out, timeline = [tmp_path / name for name in ("input.json", "out.json", "timeline.tsv")]
     spec.write_text("{}", encoding="utf-8")
-    request = object()
+    request = SimpleNamespace(source=SimpleNamespace(raw_root=tmp_path / "raw"))
     events = []
     monkeypatch.setattr(enron, "input_source_kind", lambda _: production.SOURCE_KIND)
     monkeypatch.setattr(production, "load_input_spec", lambda _: request)
@@ -63,3 +65,25 @@ def test_vdu_timeline_missing_state_is_unknown_not_zero():
     complete = snapshot_to_row(1, {"pendingVduCount": 0, "vduProcessing": False})
     assert complete["vdu_pending"] == 0
     assert complete["vdu_processing"] == 0
+
+
+@pytest.mark.parametrize("destination", ["--out", "--timeline", "--review-packet-out"])
+def test_production_wait_refuses_outputs_inside_raw_root_before_ingest(tmp_path, monkeypatch, destination):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    spec = tmp_path / "input.json"
+    spec.write_text("{}", encoding="utf-8")
+    request = SimpleNamespace(source=SimpleNamespace(raw_root=raw))
+    monkeypatch.setattr(enron, "input_source_kind", lambda _: production.SOURCE_KIND)
+    monkeypatch.setattr(production, "load_input_spec", lambda _: request)
+    monkeypatch.setattr(production, "prepare_request", lambda *a, **kw: pytest.fail("must not ingest"))
+    monkeypatch.setattr(production, "analyze_request", lambda *a, **kw: pytest.fail("must not capture"))
+    args = ["--input-spec", str(spec), "--out", str(tmp_path / "out.json"), "--ingest", "--wait-timeout-seconds", "30"]
+    if destination == "--out":
+        args[3] = str(raw / "generated.json")
+    else:
+        args.extend([destination, str(raw / "generated.json")])
+    result = CliRunner().invoke(cmd_duplicate_prevalence, args, obj={})
+    assert result.exit_code != 0
+    assert "outside the production raw corpus" in result.output
+    assert list(raw.iterdir()) == []

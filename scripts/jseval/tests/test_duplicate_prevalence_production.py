@@ -278,6 +278,12 @@ def _production_ready_status(count: int, *, failed_jobs: int = 0) -> dict:
         "spladeFailedCount": 0,
         "chunkDocCount": count,
         "chunkVectorCoveragePercent": 100.0,
+        "chunkEmbeddingPendingCount": 0,
+        "chunkEmbeddingFailedCount": 0,
+        "chunkSpladeEnabled": True,
+        "chunkSpladePendingCount": 0,
+        "chunkSpladeCoveragePercent": 100.0,
+        "chunkSpladeCompletedCount": count,
         "pendingNerCount": 0,
         "completedNerCount": count,
         "failedNerCount": 0,
@@ -344,7 +350,7 @@ def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, m
     def add_root(path: Path) -> None:
         roots.append(path)
 
-    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, path: add_root(path))
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, path, **kwargs: add_root(path))
     monkeypatch.setattr(
         production.readiness,
         "_poll_until_stable",
@@ -378,7 +384,7 @@ def test_prepare_request_mutates_only_when_explicit_ingest_requested(tmp_path, m
 def test_ingest_and_wait_timeout_reports_blocking_reason(tmp_path, monkeypatch):
     root = tmp_path / "raw"
     _write_corpus(root)
-    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path: None)
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path, **kwargs: None)
 
     monkeypatch.setattr(
         production.readiness,
@@ -401,7 +407,7 @@ def test_ingest_and_wait_timeout_reports_blocking_reason(tmp_path, monkeypatch):
 def test_ingest_wait_keeps_polling_through_pending_vdu_and_reenrichment(tmp_path, monkeypatch):
     root = tmp_path / "raw"
     _write_corpus(root)
-    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path: None)
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", lambda _base, _path, **kwargs: None)
     pending = _production_ready_status(3)
     pending["pendingVduCount"] = 1
     pending["vduProcessing"] = True
@@ -1543,3 +1549,62 @@ def test_raw_corpus_change_after_capture_fails_closed(tmp_path, monkeypatch):
         production.capture_snapshot(_request(root), client=client, env={})
 
     assert "private-file-name" not in str(raised.value)
+
+
+@pytest.mark.parametrize("field", ["chunkEmbeddingPendingCount", "chunkEmbeddingFailedCount", "chunkSpladePendingCount"])
+def test_production_wait_rejects_pending_chunk_status_despite_present_vectors(field):
+    status = _production_ready_status(3)
+    status["chunkVectorCoveragePercent"] = 99.9
+    status["chunkSpladeCoveragePercent"] = 99.9
+    status[field] = 1
+    assert f"{field}_not_zero" in production._required_production_readiness_reasons(
+        status, expected_indexed_count=3, expected_failed_count=0,
+    )
+
+
+@pytest.mark.parametrize("field", ["chunkEmbeddingPendingCount", "chunkEmbeddingFailedCount", "chunkSpladePendingCount", "chunkSpladeEnabled", "chunkSpladeCoveragePercent"])
+def test_production_wait_requires_current_chunk_schema(field):
+    status = _production_ready_status(3)
+    del status[field]
+    assert f"missing_production_readiness_field:{field}" in production._required_production_readiness_reasons(
+        status, expected_indexed_count=3, expected_failed_count=0,
+    )
+
+
+@pytest.mark.parametrize("field,value", [("chunkSpladeEnabled", 1), ("chunkSpladePendingCount", -1), ("chunkVectorCoveragePercent", float("nan")), ("chunkSpladeCoveragePercent", float("inf"))])
+def test_production_wait_rejects_malformed_chunk_values(field, value):
+    status = _production_ready_status(3)
+    status[field] = value
+    with pytest.raises(production.ProductionDuplicatePrevalenceError, match="schema type"):
+        production._required_production_readiness_reasons(status, expected_indexed_count=3, expected_failed_count=0)
+
+
+def test_production_ingest_forwards_boot_token_and_remaining_wait_budget(tmp_path, monkeypatch):
+    root = tmp_path / "raw"
+    _write_corpus(root)
+    clock = [10.0]
+    monkeypatch.setattr(production.time, "monotonic", lambda: clock[0])
+    monkeypatch.setenv(production.SESSION_TOKEN_ENV, "test-boot-token")
+
+    def add_root(base, path, *, timeout_sec, session_token):
+        assert path == root.resolve() and timeout_sec == 5
+        assert session_token == "test-boot-token"
+        clock[0] += 2
+
+    def wait(request, *, timeout_seconds, on_snapshot):
+        assert timeout_seconds == 3
+        return production.readiness.ReadinessResult(passed=True)
+
+    monkeypatch.setattr(production.ingest_module, "add_watched_root", add_root)
+    monkeypatch.setattr(production, "wait_for_snapshot_ready", wait)
+    assert production.ingest_and_wait_for_snapshot(_request(root), timeout_seconds=5).passed
+
+
+def test_production_wait_rejects_chunk_splade_failure_below_rounded_readiness_threshold():
+    status = _production_ready_status(1000)
+    status["chunkSpladeCompletedCount"] = 999
+    status["chunkSpladeCoveragePercent"] = 99.9
+    assert status["chunkSpladePendingCount"] == 0
+    assert "chunk_splade_not_fully_complete" in production._required_production_readiness_reasons(
+        status, expected_indexed_count=1000, expected_failed_count=0,
+    )

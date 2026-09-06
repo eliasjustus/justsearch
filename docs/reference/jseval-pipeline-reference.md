@@ -230,6 +230,10 @@ Immediate production capture remains read-only. A positive `--wait-timeout-secon
 existing readiness engine before strict capture; `--ingest` explicitly registers the source root on that
 already-owned backend and requires a positive wait. This path awaits VDU and subsequent enabled enrichment
 stages, including the declared terminal-failure disposition that ordinary pipeline readiness cannot accept.
+Chunk completion requires zero pending/failed dense work and complete enabled chunk-SPLADE accounting;
+the search-readiness tolerance of 99.9% cannot hide an unfinished production chunk. Registration forwards
+`JUSTSEARCH_SESSION_TOKEN` and shares the requested time budget with readiness polling. Generated outputs
+for this wait/ingest path must reside outside the raw corpus so the watcher cannot ingest them.
 `--timeline` records aggregate counters, including `vdu_pending` and `vdu_processing`; missing VDU values
 remain blank rather than being reported as zero. The caller owns stack startup, inference activation,
 clean data-directory selection, and shutdown through the dev-stack workflow.

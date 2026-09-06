@@ -179,12 +179,15 @@ def add_watched_root(
     base_url: str,
     docs_dir: Path,
     timeout_sec: float = 1800.0,
+    *,
+    session_token: str | None = None,
 ) -> None:
     """Add a directory as a watched root for JustSearch indexing."""
     abs_path = str(docs_dir.resolve())
     log.info("Adding watched root: %s", abs_path)
 
-    with httpx.Client(base_url=base_url, timeout=timeout_sec) as client:
+    headers = {"X-JustSearch-Session": session_token} if session_token and session_token.strip() else {}
+    with httpx.Client(base_url=base_url, timeout=timeout_sec, headers=headers) as client:
         resp = client.post(
             "/api/indexing/roots",
             json={"path": abs_path},

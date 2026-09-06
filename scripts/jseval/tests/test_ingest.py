@@ -69,6 +69,15 @@ def test_add_watched_root(MockClient, tmp_path):
     assert "path" in kwargs["json"]
 
 
+@patch("jseval.ingest.httpx.Client")
+def test_add_watched_root_carries_production_session_token(MockClient, tmp_path):
+    add_watched_root("http://127.0.0.1:33221", tmp_path, timeout_sec=7, session_token="test-boot-token")
+    MockClient.assert_called_once_with(
+        base_url="http://127.0.0.1:33221", timeout=7,
+        headers={"X-JustSearch-Session": "test-boot-token"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # _get_indexed_doc_count
 # ---------------------------------------------------------------------------
