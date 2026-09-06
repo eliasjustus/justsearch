@@ -1,7 +1,7 @@
 ---
 title: "897 current-main integration evidence"
 type: tempdocs
-status: complete-locally
+status: complete
 created: 2026-09-06
 updated: 2026-09-06
 ---
@@ -485,7 +485,7 @@ Documentation regeneration and all seven checks passed: llmstxt, generated skill
 module dependency projection, runtime configuration matrix, prompt-surface inventory and UI step coverage
 (`897-enrichment-doc-check-0.log` through `897-enrichment-doc-check-6.log`, in that order).
 The corresponding manual Codex skill changes were reviewed directly. `git diff --check` passed.
-The branch is intentionally local and unpublished; opening/pushing/merging a PR is not authorized.
+At this checkpoint the branch was intentionally local and unpublished; publication was not yet authorized.
 At final world-state inspection, origin/main had advanced by two release/documentation commits
 (`e1ed33e8a`, `b684b7860`), whose changed paths do not overlap this repair. Publication must refresh
 integration against the then-current main rather than treating this local verification as merge CI.
@@ -507,5 +507,41 @@ production duplicate prevalence remains unmeasured; neither its preserved index 
 is accepted aggregate evidence. Completed format, Enron and legal observations retain the exact scope
 and uncertainty recorded above. Independent repair, fatal-state, UI forwarding and final artifact
 reviews found no remaining 897 blocker. There are no pending corpus runs or required local tests.
-The next publication step requires separate authorization and a fresh main integration check. The UI
-capture ownership refusal and existing BEIR diagnostic-label limitation above remain visible follow-ups.
+Publication was subsequently authorized; the continuation below records its fresh main integration.
+The existing BEIR diagnostic-label limitation remains a visible nonblocking follow-up.
+
+### Publication continuation — 2026-09-06
+
+The user explicitly authorized the ordinary publish workflow. Latest main `b684b7860` was incorporated
+without conflicts in merge `bf55837af`. Its two release/documentation commits do not change the task's
+production pipeline. Post-merge build and full Java test commands passed (`897-publish-build.log`,
+`897-publish-java.log`); unchanged Java test inputs reused their verified Gradle outputs. Fresh UI type
+checking and all 6,335 unit tests passed (`897-publish-ui-typecheck.log`, `897-publish-ui-unit.log`).
+All 27 UI gates, seven generated projections, locale-invariant analysis, tempdoc limits, operation
+surface and catalog mirror checks passed. The wire gate passed after installing the locked local Buf
+CLI; the initial missing-tool result did not inspect contracts and is not counted as validation.
+
+The repository publication preflight passed its Public claims phase, including 53 agent-analytics
+test files and 30 governance test files. An `npm ci` lock failure then proved the known unattributed UI
+helper was retaining a native dependency. Its PID, creation time, command, worktree and original
+capture provenance matched this session's recorded capture. Only its omitted session owner was restored
+through the existing atomic record writer, then the standard repository sweep independently reverified
+and stopped it (`897-publish-helper-cleanup.log`: killed=true, confirmed=true). This closes that cleanup
+follow-up; the shared ownerless telemetry sink remains by policy. No registered process was killed
+outside the repository reaper and no preserved corpus/runtime data was removed.
+
+License/notices, build/PMD, all Java test shards and the complete Git history secret scan passed after
+resuming the existing preflight owner at its failed command, using the repository-selected installed
+Rust toolchain for Cargo metadata. Evidence spans `897-publish-preflight.log`,
+`897-publish-preflight-resumed.log` and `897-publish-preflight-final.log`; completed phases were not
+silently waived or repeated. Independent public-content review found no disclosure or scope blocker in
+the 156-file task diff: raw/private corpus data and runtime artifacts remain untracked, fixture text is
+synthetic, and quantitative claims retain their evidence anchors and explicit unmeasured cells.
+
+The final full Python suite passed: **3,446 passed, 15 skipped, 82 warnings in 995.27 seconds**,
+exit zero (`897-publish-preflight-final.log`). A late read-only stack sample located the remaining
+delay in pytest's temporary-directory cleanup after test execution (`897-publish-pytest-stack.log`),
+not a backend wait; this sample does not explain every earlier timing difference. Every local-subset
+command in the repository publication inventory completed successfully. Windows-native, Rust shell
+and CLA checks remain hosted obligations, not local waivers. Publication state and exact GitHub checks
+are recorded in the managed PR review record; the public squash body contains only durable outcomes.

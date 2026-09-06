@@ -1,7 +1,7 @@
 ---
 title: "Format capability characterization and duplicate-prevalence measurement: production-path extraction fixtures, representative cached corpora, and calibrated non-redundancy evidence"
 type: tempdocs
-status: "COMPLETE LOCALLY (2026-09-06) — realdocs skipped under runtime cap; unpublished"
+status: "COMPLETE (2026-09-06) — realdocs skipped under runtime cap"
 created: 2026-09-02
 updated: 2026-09-06
 lane: 887 L13
@@ -49,7 +49,7 @@ is warranted; retire any extra coordination once the existing owner guarantees t
 - [x] I5: run all legal retrieval modes and capture final-hybrid redundancy with stable snapshot identity;
   run comparable SciFact regression gates against authoritative floors without baseline changes.
 - [x] I6: reconcile acceptance and §M, update 639/register/canonical docs, regenerate/check documentation,
-  finish independent review and commit the authorized work. No PR, push, merge or publication.
+  finish independent review and commit the work. Publication follows the separately authorized workflow.
 
 ## Reassessment — 2026-09-06 (basis for integration)
 
