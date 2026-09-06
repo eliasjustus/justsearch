@@ -114,9 +114,9 @@ Preserve identity-attributed merge recording without writing it during a refused
   and agent-analytics suite where this integration is discovered. Known wallclock
   failures require the documented isolated rerun before attribution.
 
-No JVM/frontend/model behavior changes are planned, so Gradle, UI browser verification,
-and model evaluations are not appropriate verification for this CLI-only change.
-All destructive verification occurs only in newly created disposable fixture roots.
+The implementation changes no JVM/frontend/model behavior. Its destructive regression
+tests use newly created disposable fixture roots. Publication additionally runs the full
+repository checks; authorized real-worktree cleanup uses separate preservation evidence.
 
 ## Execution evidence and remaining work
 
@@ -259,3 +259,36 @@ inventory all passed (130 surfaces, zero suspicious tokens). Manual search found
 `remove-worktree` guidance in a corresponding `.agents/skills` copy. `git diff --check`
 also passed. No Gradle, dev stack, shared cleanup, telemetry writer, PR, or push ran in
 this worker.
+
+### Publication candidate and authorized cleanup (2026-09-06)
+
+The candidate incorporated public main through `7df0bae06` without conflicts. The incoming
+changes included frontend and analytics work, so the caught-up candidate repeated full
+verification rather than relying on the earlier CLI-only results:
+
+- `./gradlew.bat build -x test` and `./gradlew.bat test` both reported BUILD SUCCESSFUL.
+  The prior candidate also passed `./gradlew.bat build`, including integration-test tasks.
+  Gradle's normal cache reuse remained enabled; these are not claims of uncached execution.
+- `npm run typecheck` and `npm run test:unit:run` in `modules/ui-web` passed; Vitest
+  reported 472 files and 6,333 tests passing.
+- `node scripts/agent-analytics/run-all-tests.mjs` passed all 53 files. The final CLI
+  file separately passed 21 cases after attribution integration.
+- `npm run lint:scripts` passed against an exact committed source snapshot with
+  lockfile-matched isolated dependencies. The checkout's existing shared dependency
+  junction was left intact. The PowerShell warning-comment, tempdoc-number, tempdoc-size,
+  and diff-whitespace checks passed; the pre-push gitleaks branch scan found no leaks.
+- Independent Sol review of the attribution follow-up found no unresolved finding;
+  parent review confirmed the original safety and regression evidence still applies.
+
+Ten stale checkouts were retired after clean-status and preservation checks. Seven had
+content verified against public main or their recorded squash merge. Three were exact
+ancestors of retained branches; the two detached histories gained recovery branch refs.
+All ten received verified recovery archives of ordinary files and ignored evidence,
+excluding Git administration and dependency directories and without following junctions.
+Original branch refs were retained. Fresh CLI previews and execution checks passed; active,
+dirty, locked, and unaccounted-for worktrees remain. The temporary attribution worker was
+also removed after exact integration comparison, with its evidence copied outside the repo.
+
+Publication uses the managed PR review record for the final head, check results, and merge
+outcome. Machine-local archive manifests and raw logs remain outside public source. The
+divergent main checkout and unrelated runtime ownership were not reconciled or taken over.
