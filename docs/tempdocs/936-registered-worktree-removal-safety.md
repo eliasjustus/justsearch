@@ -292,3 +292,22 @@ also removed after exact integration comparison, with its evidence copied outsid
 Publication uses the managed PR review record for the final head, check results, and merge
 outcome. Machine-local archive manifests and raw logs remain outside public source. The
 divergent main checkout and unrelated runtime ownership were not reconciled or taken over.
+
+### Hosted Linux fixture correction (2026-09-06)
+
+PR #691's first Public claims run (`34008811066`) found six failures in the new CLI
+fixture file. Four cases reached the production process reader's intentionally unknown
+non-Windows result before their intended runtime assertion; two encountered a Linux
+directory-symlink ignore mismatch. All other hosted CI lanes passed.
+
+The Sol follow-up changes only `936-remove-worktree-cli.test.mjs`: its disposable copied
+module supplies explicit deterministic PID rows for runtime decision fixtures, while the
+native path delegates to the unchanged production module. The fixture environment is
+cleared before each invocation. Separate direct-reader and whole-CLI tests retain native
+Windows live-process refusal and non-Windows unknown-liveness refusal. The fixture's
+`node_modules` ignore entry covers both junctions and symlinks. Existing runtime, timeout,
+zero-write, preservation, and mutant assertions were neither loosened nor skipped.
+
+The corrected file passed 23 cases locally and focused ESLint. No local Linux runtime was
+available, so hosted Public claims remains the Linux execution authority; the managed PR
+record carries its final result. Production removal code is unchanged by this correction.
