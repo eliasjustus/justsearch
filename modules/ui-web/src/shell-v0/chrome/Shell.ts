@@ -1208,8 +1208,14 @@ export class Shell extends JfElement {
     );
 
     // §32 U2 — jf-undo-operation listener: reverses a backend-undoable
-    // operation via OperationClient.undo → POST /api/undo/{operationId}.
+    // operation via OperationClient → POST /api/undo/{operationId}.
     // Dispatched by the audit-log "Undo" affordance for undoSupported ops.
+    // Tempdoc 875 §C.7: the reversal now meets the same trust lattice its
+    // forward form did, so this uses undoWithConsent — the SAME broker /
+    // `<jf-authorization-host>` ceremony the invoke listener above uses. The
+    // only op with undoSupported=true is HIGH risk, and both TRUSTED×HIGH and
+    // UNTRUSTED×HIGH resolve to TYPED_CONFIRM, so a plain undo() here would
+    // 428 on every real undo and surface as an unexplained failure.
     this.undoOperationListener = (e: Event) => {
       const detail = (
         e as CustomEvent<{ operationId?: string; executionId?: string }>
@@ -1219,12 +1225,16 @@ export class Shell extends JfElement {
       if (!operationId || !executionId) return;
       const client =
         this.operationClient ?? new OperationClient({ apiBase: this.apiBase });
-      void client.undo(operationId, executionId).catch((err) => {
-        emitEphemeralToast({
-          message: operationFailureMessage(err, true),
-          severity: 'error',
+      void client
+        .undoWithConsent(operationId, executionId, {
+          requestConsent: requestAuthorization,
+        })
+        .catch((err) => {
+          emitEphemeralToast({
+            message: operationFailureMessage(err, true),
+            severity: 'error',
+          });
         });
-      });
     };
     document.addEventListener('jf-undo-operation', this.undoOperationListener);
 
