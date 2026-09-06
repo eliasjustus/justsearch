@@ -92,6 +92,12 @@ class BackfillSchedulerModeRecordingTest {
         .withNrtSuspended(any());
 
     lenient()
+        .when(documentFieldOps.getDocumentContent(anyString()))
+        .thenAnswer(inv -> contentByDoc.get(inv.getArgument(0)));
+
+    // Combined stages still fetch a batch; individual parent embedding now fetches one document
+    // at a time to enforce its retained-content budget. Both read the same seeded source text.
+    lenient()
         .when(documentFieldOps.getDocumentContentBatch(anyList()))
         .thenAnswer(
             inv -> {

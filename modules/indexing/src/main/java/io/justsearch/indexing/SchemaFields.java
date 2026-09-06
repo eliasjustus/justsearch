@@ -44,6 +44,8 @@ public final class SchemaFields {
 
   // Metadata fields
   public static final String SIZE_BYTES = "size_bytes";
+  /** SHA-256 of the exact source bytes from which the stored extraction was produced. */
+  public static final String SOURCE_SHA256 = "source_sha256";
   public static final String MODIFIED_AT = "modified_at";
   public static final String INDEXED_AT = "indexed_at";
   public static final String CREATED_EPOCH_MS = "created_epoch_ms";
@@ -323,6 +325,7 @@ public final class SchemaFields {
       LANGUAGE,
       PARENT_TOKEN_COUNT,
       SIZE_BYTES,
+      SOURCE_SHA256,
       MODIFIED_AT,
       INDEXED_AT,
 

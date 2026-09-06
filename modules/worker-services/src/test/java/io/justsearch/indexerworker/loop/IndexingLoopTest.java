@@ -432,7 +432,7 @@ class IndexingLoopTest {
               (s, d, r) -> {},
               org.slf4j.LoggerFactory.getLogger(IndexingLoopTest.class),
               /* precomputedEmbedding */ null,
-              new IndexingDocumentOps.SourceFileMetadata(123L, 456L),
+              new IndexingDocumentOps.SourceFileMetadata(123L, 456L, "a".repeat(64)),
               "test-doc-uid");
 
       Map<String, Object> fields = doc.fields();
@@ -440,6 +440,7 @@ class IndexingLoopTest {
       assertEquals(Boolean.TRUE, fields.get(SchemaFields.CONTENT_TRUNCATED));
       assertEquals(policy.policyId(), fields.get(SchemaFields.EXTRACTION_POLICY_ID));
       assertEquals("tika-policy-structured", fields.get(SchemaFields.EXTRACTION_PARSER_ID));
+      assertEquals("a".repeat(64), fields.get(SchemaFields.SOURCE_SHA256));
     }
 
     @Test

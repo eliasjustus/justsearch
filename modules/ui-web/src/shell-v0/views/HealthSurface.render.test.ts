@@ -115,6 +115,21 @@ describe('HealthSurface — recommendedActions panel', () => {
     }
   });
 
+  it('shows a fatal indexing loop explicitly as Indexing failed', async () => {
+    feedReady({
+      worker: { core: { indexedDocuments: 5, indexState: 'FAILED', indexHealthy: false } },
+    });
+    const el = await mount();
+    try {
+      const value = [...(el.shadowRoot?.querySelectorAll('.data-row .val') ?? [])]
+        .find((node) => node.textContent?.trim() === 'Indexing failed');
+      expect(value).toBeDefined();
+      expect(value?.getAttribute('style')).toContain('var(--accent-danger)');
+    } finally {
+      teardown(el);
+    }
+  });
+
   it('595 §1.1: header and footer agree on the unknown boundary — both "Checking…", NEVER a split', async () => {
     // retrieval 'unknown' (settled) was the boundary where the header alarmed
     // ("Service degraded") while the footer greened ("✓ All systems operational").

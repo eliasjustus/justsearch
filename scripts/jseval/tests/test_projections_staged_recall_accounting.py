@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from jseval import duplicate_prevalence as dp
 from jseval.projections.staged_recall_accounting import (
     BUCKETS,
     PROJECTION,
     produce,
+)
+from jseval.result_identity import (
+    build_result_identity_anchor,
+    build_content_exact_result_identity_sidecar,
+    build_result_identity_sidecar,
+    raw_document_aliases,
+    result_alias_commitment,
+    result_mapping_public_key,
 )
 
 
@@ -26,6 +40,139 @@ def _write_trec(run_dir: Path, mode: str, ranked: dict[str, list[str]]) -> None:
         for i, d in enumerate(docs, start=1):
             lines.append(f"{qid} Q0 {d} {i} {1.0 / i:.4f} jseval_{mode}")
     (run_dir / f"{mode}_run.trec").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_identity_sidecar(
+    run_dir: Path,
+    paths_by_mode: dict[str, dict[str, list[str]]],
+    cluster_by_path: dict[str, str],
+) -> dict:
+    alias_commitment_key = b"test-only-private-alias-key-32b!"
+    mapping_signing_key = bytes(range(32))
+    mode_results = {}
+    for mode, paths_by_qid in paths_by_mode.items():
+        scored = []
+        raw = []
+        metrics = {}
+        for qid, paths in paths_by_qid.items():
+            metrics[qid] = {"R@10": 0.0}
+            hits = []
+            for path in paths:
+                leaf = path.rsplit("/", 1)[-1]
+                doc_id = leaf.rsplit(".", 1)[0].lower()
+                hits.append({"id": path, "fields": {"path": path, "filename": leaf}})
+                scored.append(SimpleNamespace(query_id=qid, doc_id=doc_id, score=1.0))
+            raw.append({"query_id": qid, "results": hits})
+        mode_results[mode] = {
+            "scored_docs": scored,
+            "raw_responses": raw,
+            "per_query_metrics": metrics,
+        }
+    corpus_signature = "b" * 64
+    unique_paths = sorted({
+        path
+        for paths_by_qid in paths_by_mode.values()
+        for paths in paths_by_qid.values()
+        for path in paths
+    })
+    observations = [
+        dp.DocumentObservation(
+            opaque_id=f"observation-{index}",
+            raw_sha256=hashlib.sha256(f"raw:{path}".encode()).hexdigest(),
+            extracted_text=cluster_by_path[path],
+            format_id=path.rsplit(".", 1)[-1],
+            source_kind=dp.PRODUCTION_EXTRACTED,
+            extraction_status="success",
+        )
+        for index, path in enumerate(unique_paths, start=1)
+    ]
+    corpus_identity = {
+        "profile_id": None,
+        "signature": corpus_signature,
+        "kind": "raw-files",
+        "schema": "jseval.raw-corpus-manifest.v1",
+        "file_count": len(observations),
+        "total_bytes": len(observations) * 10,
+        "manifest_pointer": "PRIVATE-CORPUS-PATH/strict.json",
+        "admission_policy": {
+            "JUSTSEARCH_INGESTION_SKIP_PATTERNS": "default",
+            "JUSTSEARCH_INGESTION_SKIP_EXTENSIONS": "default",
+            "JUSTSEARCH_INGESTION_SKIP_DIRECTORY_NAMES": "default",
+        },
+    }
+    aliases = {
+        observation.opaque_id: raw_document_aliases({
+            "id": path,
+            "fields": {"path": path, "filename": path.rsplit("/", 1)[-1]},
+        })
+        for observation, path in zip(observations, unique_paths, strict=True)
+    }
+    unsigned_extraction = {
+        "schema": dp.EXTRACTION_SNAPSHOT_SCHEMA,
+        "corpus_signature": corpus_signature,
+        "observations_digest": dp.observation_commitment(observations),
+        "source_kind": dp.PRODUCTION_EXTRACTED,
+        "extractor_build": "worker@test",
+        "extraction_policy_digest": "d" * 64,
+        "result_aliases_hmac_sha256": result_alias_commitment(
+            aliases,
+            key=alias_commitment_key,
+        ),
+        "result_mapping_public_key_ed25519": result_mapping_public_key(mapping_signing_key),
+        "document_count": len(observations),
+        "reconciliation": {
+            "status": "matched",
+            "expected_count": len(observations),
+            "exported_count": len(observations),
+            "unique_opaque_ids": len(observations),
+        },
+    }
+    extraction_identity = {
+        "digest": hashlib.sha256(json.dumps(
+            unsigned_extraction,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode()).hexdigest(),
+        **unsigned_extraction,
+    }
+    config = dp.AnalysisConfig(
+        shingle_width=1,
+        jaccard_thresholds=(0.8,),
+        exhaustive_slice_size=20,
+        bootstrap_draws=10,
+        seed=7,
+        max_candidate_pairs=1_000,
+    )
+    analysis = dp.analyze(
+        observations,
+        corpus_identity=corpus_identity,
+        extraction_identity=extraction_identity,
+        config=config,
+    )
+    sidecar = build_content_exact_result_identity_sidecar(
+        mode_results,
+        observations=observations,
+        aliases_by_opaque_id=aliases,
+        result_alias_commitment_key=alias_commitment_key,
+        result_mapping_signing_key=mapping_signing_key,
+        corpus_identity=corpus_identity,
+        extraction_identity=extraction_identity,
+        analysis_artifact=analysis,
+        config=config,
+    )
+    (run_dir / "result_identity.v1.json").write_text(
+        json.dumps(sidecar), encoding="utf-8",
+    )
+    (run_dir / "summary.json").write_text(json.dumps({
+        "corpus_identity": {"signature": corpus_signature},
+        "result_identity_anchor": build_result_identity_anchor(sidecar, analysis),
+    }), encoding="utf-8")
+    (run_dir / "duplicate_prevalence.v1.json").write_text(
+        json.dumps(analysis), encoding="utf-8",
+    )
+    return sidecar
 
 
 class TestProjectionContract:
@@ -240,6 +387,147 @@ class TestTrecRankAuthority:
         assert out["buckets"]["OK_RANK1"] == ["q1"]
         assert out["buckets"]["JUDGE_RANK_LOW"] == []
         assert out["reconciliation"]["mismatches"] == 0
+
+
+class TestResultRedundancy:
+    def _build(self, synthetic_run_dir):
+        rd = synthetic_run_dir.run_dir
+        delivered = [f"d{i}" for i in range(12)]
+        synthetic_run_dir.with_per_query("vector", [_pq("q1", ["d2"], 1.0)])
+        synthetic_run_dir.with_per_query("hybrid", [_pq("q1", delivered, 1.0)])
+        # Recall/rank stays TREC-authoritative. The duplicate pair d0/d1 is
+        # deliberately outside this score-ranked top ten but inside delivered
+        # predictedDocIds top ten.
+        _write_trec(rd, "hybrid", {"q1": delivered[2:] + delivered[:2]})
+        synthetic_run_dir.with_qrels({"q1": {"d2": 1}})
+
+        vector_paths = {"q1": ["/docs/d2.txt"]}
+        hybrid_paths = {"q1": [f"/docs/{doc}.txt" for doc in delivered]}
+        cluster_by_path = {f"/docs/{doc}.txt": f"rcluster-{doc}" for doc in delivered}
+        cluster_by_path["/docs/d1.txt"] = "rcluster-d0"
+        _write_identity_sidecar(
+            rd,
+            {"vector": vector_paths, "hybrid": hybrid_paths},
+            cluster_by_path,
+        )
+        return produce(rd)
+
+    def test_delivered_order_top_10_is_independent_of_trec_rank(self, synthetic_run_dir):
+        out = self._build(synthetic_run_dir)
+
+        assert out["buckets"]["OK_RANK1"] == ["q1"]  # TREC: d2 is rank 1
+        result = out["result_redundancy"]
+        assert result["schema"] == "jseval.result-redundancy.v1"
+        assert result["rank_authority"] == "delivered-predictedDocIds"
+        assert result["top_k"] == 10
+        assert result["queries_affected"] == 1
+        assert result["aggregate"] == {
+            "delivered_hits_at_10": 10,
+            "unique_clusters_at_10": 9,
+            "redundant_hits_at_10": 1,
+            "mean_unique_clusters_at_10": 9.0,
+            "mean_redundant_hits_at_10": 1.0,
+        }
+
+    def test_sidecar_without_clusters_leaves_projection_backward_compatible(self, synthetic_run_dir):
+        rd = synthetic_run_dir.run_dir
+        synthetic_run_dir.with_per_query("vector", [_pq("q1", ["g"], 1.0)])
+        synthetic_run_dir.with_per_query("hybrid", [_pq("q1", ["g"], 1.0)])
+        _write_trec(rd, "hybrid", {"q1": ["g"]})
+        synthetic_run_dir.with_qrels({"q1": {"g": 1}})
+        sidecar = build_result_identity_sidecar({
+            "vector": {
+                "scored_docs": [SimpleNamespace(query_id="q1", doc_id="g", score=1.0)],
+                "raw_responses": [{"query_id": "q1", "results": [
+                    {"id": "/g.txt", "fields": {"path": "/g.txt", "filename": "g.txt"}},
+                ]}],
+                "per_query_metrics": {"q1": {}},
+            },
+            "hybrid": {
+                "scored_docs": [SimpleNamespace(query_id="q1", doc_id="g", score=1.0)],
+                "raw_responses": [{"query_id": "q1", "results": [
+                    {"id": "/g.txt", "fields": {"path": "/g.txt", "filename": "g.txt"}},
+                ]}],
+                "per_query_metrics": {"q1": {}},
+            },
+        })
+        (rd / "result_identity.v1.json").write_text(json.dumps(sidecar), encoding="utf-8")
+
+        out = produce(rd)
+        assert "result_redundancy" not in out
+        assert out["buckets"]["OK_RANK1"] == ["q1"]
+
+    def test_absent_sidecar_hit_and_wrong_schema_are_rejected(self, synthetic_run_dir):
+        self._build(synthetic_run_dir)
+        path = synthetic_run_dir.run_dir / "result_identity.v1.json"
+        sidecar = json.loads(path.read_text(encoding="utf-8"))
+
+        sidecar["modes"][0]["queries"][0]["hits"] = []
+        path.write_text(json.dumps(sidecar), encoding="utf-8")
+        with pytest.raises(ValueError):
+            produce(synthetic_run_dir.run_dir)
+
+        self._build(synthetic_run_dir)
+        sidecar = json.loads(path.read_text(encoding="utf-8"))
+        sidecar["schema"] = "jseval.result-identity-sidecar.v2"
+        path.write_text(json.dumps(sidecar), encoding="utf-8")
+        with pytest.raises(ValueError, match="unsupported result identity schema"):
+            produce(synthetic_run_dir.run_dir)
+
+    def test_clustered_sidecar_must_match_run_corpus_signature(self, synthetic_run_dir):
+        self._build(synthetic_run_dir)
+        summary_path = synthetic_run_dir.run_dir / "summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["corpus_identity"]["signature"] = "d" * 64
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="does not match the run summary"):
+            produce(synthetic_run_dir.run_dir)
+
+    def test_clustered_sidecar_requires_untampered_analysis_artifact(self, synthetic_run_dir):
+        self._build(synthetic_run_dir)
+        analysis_path = synthetic_run_dir.run_dir / "duplicate_prevalence.v1.json"
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        analysis["content_exact"]["duplicate_documents"] = 0
+        analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="artifact hash does not match content"):
+            produce(synthetic_run_dir.run_dir)
+
+    def test_cluster_assignment_permutation_fails_mapping_attestation(self, synthetic_run_dir):
+        self._build(synthetic_run_dir)
+        path = synthetic_run_dir.run_dir / "result_identity.v1.json"
+        sidecar = json.loads(path.read_text(encoding="utf-8"))
+        assignments = sidecar["cluster_assignments"]["assignments"]
+        left = assignments[0]
+        right = next(
+            record for record in assignments
+            if record["content_fingerprint_sha256"] != left["content_fingerprint_sha256"]
+        )
+        left_values = (left["content_fingerprint_sha256"], left["cluster_id"])
+        left["content_fingerprint_sha256"], left["cluster_id"] = (
+            right["content_fingerprint_sha256"], right["cluster_id"]
+        )
+        right["content_fingerprint_sha256"], right["cluster_id"] = left_values
+        path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="result identity anchor"):
+            produce(synthetic_run_dir.run_dir)
+
+    def test_cross_run_sidecar_replay_fails_summary_anchor(self, synthetic_run_dir):
+        self._build(synthetic_run_dir)
+        rd = synthetic_run_dir.run_dir
+        replayed_sidecar = (rd / "result_identity.v1.json").read_text(encoding="utf-8")
+        replayed_analysis = (rd / "duplicate_prevalence.v1.json").read_text(encoding="utf-8")
+
+        # Rebuilding creates a new independently anchored run_instance while
+        # keeping corpus, qids, and lossy legacy ids identical.
+        self._build(synthetic_run_dir)
+        (rd / "result_identity.v1.json").write_text(replayed_sidecar, encoding="utf-8")
+        (rd / "duplicate_prevalence.v1.json").write_text(replayed_analysis, encoding="utf-8")
+
+        with pytest.raises(ValueError, match="run summary anchor"):
+            produce(rd)
 
 
 class TestReconciliation:

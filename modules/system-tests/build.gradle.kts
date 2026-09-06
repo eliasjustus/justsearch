@@ -174,6 +174,7 @@ dependencies {
   add("integrationTestImplementation", "org.junit.jupiter:junit-jupiter-params:5.14.3")
   add("systemTestImplementation", project(":modules:indexing"))
   add("systemTestImplementation", project(":modules:gpu-bridge"))
+  add("systemTestImplementation", testFixtures(project(":modules:worker-services")))
   add("systemTestImplementation", "org.junit.jupiter:junit-jupiter-params:5.14.3")
 }
 

@@ -91,7 +91,7 @@ The gRPC ingest surface enforces caps before the queue even sees data:
 
 On startup, `recoverStuckJobs()` resets all `PROCESSING` jobs back to `PENDING`. This heals incomplete work from a prior crash without burning retry budget (since `attempts` = failures, not claims).
 
-The indexing loop is also resilient *in-process* (tempdoc 588): a per-document `Error` — not just an `Exception` (e.g. a plugin `LinkageError`, an `AssertionError`, an `IOError`) — is logged and the loop continues to the next batch, so one pathological document cannot permanently halt indexing. A genuinely fatal `VirtualMachineError` (OOM, stack overflow) stops the loop *observably*: its liveness flag is cleared so the Worker reports the loop as stopped rather than silently advertising `RUNNING`. This matters because `recoverStuckJobs()` runs only at boot — a silent in-process loop death (with the process still alive) would otherwise strand jobs in `PROCESSING` with no recovery path.
+The indexing loop is also resilient *in-process*: a per-document `Error` (for example a plugin `LinkageError`, `AssertionError`, or `IOError`) is logged and the loop continues to the next batch. A fatal `VirtualMachineError` or uncaught loop-thread failure publishes `LoopState.FAILED` and clears liveness before logging. Core status reports `indexState=FAILED` and `indexHealthy=false`; Worker gRPC health exposes the failed loop state while its serving flag stays independently probed. Ordinary document `ERROR`, deferred startup, and intentional quiescence remain distinct. A new loop start clears the fatal state. Because `recoverStuckJobs()` runs only at boot, a fatal in-process loop death requires restart to recover stranded jobs.
 
 ### Schema versioning & migrations
 

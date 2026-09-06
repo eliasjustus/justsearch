@@ -97,7 +97,158 @@ class PreviewControllerTest {
     assertEquals("hello", json.path("content").asText());
     assertTrue(json.path("truncated").asBoolean(), "Should be truncated when maxChars < content length");
     assertEquals(5, json.path("nextOffsetChars").asInt());
+    assertEquals(content.length(), json.path("totalChars").asInt());
     assertEquals("text/plain", json.path("mime").asText());
+  }
+
+  @Test
+  @DisplayName("Found doc exposes persisted extraction provenance")
+  void foundDocExposesExtractionProvenance() throws Exception {
+    String docId = "D:\\tests\\report.pdf";
+    DocumentService docService =
+        new DocumentService() {
+          @Override
+          public CompletableFuture<DocumentRecord> fetch(String ignored) {
+            return CompletableFuture.completedFuture(null);
+          }
+
+          @Override
+          public CompletableFuture<DocumentSlice> fetchSlice(
+              String ignored, int offsetChars, int maxChars) {
+            return CompletableFuture.completedFuture(
+                new DocumentSlice(
+                    docId,
+                    "complete text",
+                    Map.of("mime", "application/pdf", "content_sha256", "b".repeat(64)),
+                    true,
+                    false,
+                    13,
+                    13,
+                    "SUCCESS_FULL",
+                    false,
+                    "policy-v3",
+                    "tika-3.2",
+                    "a".repeat(64),
+                    null));
+          }
+        };
+    PreviewController controller = new PreviewController(docService, Duration.ofSeconds(2));
+
+    app =
+        Javalin.create(
+                cfg -> {
+                  cfg.showJavalinBanner = false;
+                  cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
+                })
+            .get("/api/preview", controller::handlePreview)
+            .start(0);
+    port = app.port();
+
+    HttpResponse<String> resp =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://localhost:" + port + "/api/preview?docId=" + enc(docId)))
+                .timeout(Duration.ofSeconds(3))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, resp.statusCode());
+    JsonNode json = MAPPER.readTree(resp.body());
+    assertEquals(13, json.path("totalChars").asInt());
+    assertEquals("SUCCESS_FULL", json.path("extractionStatus").asText());
+    assertFalse(json.path("contentTruncated").asBoolean());
+    assertEquals("policy-v3", json.path("extractionPolicyId").asText());
+    assertEquals("tika-3.2", json.path("extractionParserId").asText());
+    assertEquals("a".repeat(64), json.path("sourceSha256").asText());
+    assertEquals("b".repeat(64), json.path("contentSha256").asText());
+  }
+
+  @Test
+  @DisplayName("Eval document-ID route returns the Worker-backed parent-ID page")
+  void evalDocumentIdsReturnsWorkerPage() throws Exception {
+    DocumentService docService = documentIdService();
+    PreviewController controller = new PreviewController(docService, Duration.ofSeconds(2));
+
+    app =
+        Javalin.create(
+                cfg -> {
+                  cfg.showJavalinBanner = false;
+                  cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
+                })
+            .post(PreviewController.DOCUMENT_IDS_PATH, controller::handleListDocumentIds)
+            .start(0);
+    port = app.port();
+
+    HttpResponse<String> resp = postDocumentIds("{\"offset\":0,\"limit\":50000}");
+
+    assertEquals(200, resp.statusCode());
+    JsonNode json = MAPPER.readTree(resp.body());
+    assertEquals(2, json.path("docIds").size());
+    assertEquals("C:/root/nested/b.txt", json.path("docIds").get(1).asText());
+    assertEquals(2, json.path("totalCount").asLong());
+    assertEquals(7, json.path("tookMs").asLong());
+  }
+
+  @Test
+  @DisplayName("Eval document-ID route fails closed on malformed or over-ceiling pagination")
+  void evalDocumentIdsRejectsInvalidPagination() throws Exception {
+    PreviewController controller =
+        new PreviewController(documentIdService(), Duration.ofSeconds(2));
+
+    app =
+        Javalin.create(
+                cfg -> {
+                  cfg.showJavalinBanner = false;
+                  cfg.jsonMapper(new io.justsearch.ui.json.Jackson3JsonMapper());
+                })
+            .post(PreviewController.DOCUMENT_IDS_PATH, controller::handleListDocumentIds)
+            .start(0);
+    port = app.port();
+
+    for (String body :
+        new String[] {
+          "{not-json",
+          "{}",
+          "{\"offset\":0,\"limit\":1,\"extra\":true}",
+          "{\"offset\":-1,\"limit\":1}",
+          "{\"offset\":1,\"limit\":1}",
+          "{\"offset\":0,\"limit\":0}",
+          "{\"offset\":0,\"limit\":50001}",
+          "{\"offset\":49999,\"limit\":2}",
+          "{\"offset\":0.5,\"limit\":1}"
+        }) {
+      HttpResponse<String> resp = postDocumentIds(body);
+      assertEquals(400, resp.statusCode(), body + " -> " + resp.body());
+      assertEquals("INVALID_REQUEST", MAPPER.readTree(resp.body()).path("errorCode").asText());
+    }
+  }
+
+  private HttpResponse<String> postDocumentIds(String body) throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(
+                URI.create("http://localhost:" + port + PreviewController.DOCUMENT_IDS_PATH))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static DocumentService documentIdService() {
+    return new DocumentService() {
+      @Override
+      public CompletableFuture<DocumentRecord> fetch(String docId) {
+        return CompletableFuture.completedFuture(null);
+      }
+
+      @Override
+      public CompletableFuture<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+        return CompletableFuture.completedFuture(
+            new DocumentIdPage(
+                java.util.List.of("C:/root/a.txt", "C:/root/nested/b.txt"), 2, 7));
+      }
+    };
   }
 
   @Test

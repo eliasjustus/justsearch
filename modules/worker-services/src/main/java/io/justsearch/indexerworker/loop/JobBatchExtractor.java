@@ -251,6 +251,7 @@ public final class JobBatchExtractor {
       extractSpan.setAttribute("doc.path", filePath.toString());
       long extractStart = System.currentTimeMillis();
       ValidatedExtractionArtifact artifact;
+      String sourceSha256 = SourceContentHash.sha256(filePath);
       try {
         // W1.5 — inlined what used to be extractContent + validateArtifact wrappers.
         ExtractionArtifact rawArtifact = contentExtractor.extractArtifact(filePath);
@@ -261,12 +262,41 @@ public final class JobBatchExtractor {
       }
       stageRecorder.record("extract", System.currentTimeMillis() - extractStart, null);
 
+      String sourceSha256AfterExtraction;
+      try {
+        sourceSha256AfterExtraction = SourceContentHash.sha256(filePath);
+      } catch (IOException changedDuringExtraction) {
+        if (staleResolver.tryHandleStale(
+            filePath, envelope, collection, artifact, "after extraction")) {
+          batchStats.recordSkipped();
+          return null;
+        }
+        throw changedDuringExtraction;
+      }
+      if (!sourceSha256.equals(sourceSha256AfterExtraction)) {
+        if (staleResolver.tryHandleStale(
+            filePath, envelope, collection, artifact, "after extraction")) {
+          batchStats.recordSkipped();
+          return null;
+        }
+        staleResolver.handleKnownStale(
+            filePath,
+            envelope,
+            collection,
+            artifact,
+            "during extraction",
+            FileFreshnessSnapshot.SourceValidationResult.CONTENT_CHANGED);
+        batchStats.recordSkipped();
+        return null;
+      }
+
       if (staleResolver.tryHandleStale(filePath, envelope, collection, artifact, "after extraction")) {
         batchStats.recordSkipped();
         return null;
       }
 
-      return new ExtractedJob(filePath, collection, artifact, startTime, envelope, docUid);
+      return new ExtractedJob(
+          filePath, collection, artifact, startTime, envelope, sourceSha256, docUid);
 
     } catch (BudgetExceededException e) {
       log.warn("Extraction budget exceeded for: {} - {}", filePath, e.getMessage());

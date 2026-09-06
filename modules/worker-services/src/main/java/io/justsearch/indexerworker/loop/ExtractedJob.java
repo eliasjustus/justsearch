@@ -17,6 +17,7 @@ public record ExtractedJob(
     ValidatedExtractionArtifact artifact,
     long startTime,
     FileEnvelope envelope,
+    String sourceSha256,
     String docUid) {
 
   /** Back-compatible test fixture shape; production extraction always supplies {@code docUid}. */
@@ -26,6 +27,17 @@ public record ExtractedJob(
       ValidatedExtractionArtifact artifact,
       long startTime,
       FileEnvelope envelope) {
-    this(filePath, collection, artifact, startTime, envelope, null);
+    this(filePath, collection, artifact, startTime, envelope, null, null);
+  }
+
+  /** Back-compatible fixture shape from before source-byte provenance was captured. */
+  public ExtractedJob(
+      Path filePath,
+      String collection,
+      ValidatedExtractionArtifact artifact,
+      long startTime,
+      FileEnvelope envelope,
+      String docUid) {
+    this(filePath, collection, artifact, startTime, envelope, null, docUid);
   }
 }

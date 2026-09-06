@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.justsearch.adapters.lucene.runtime.CommitOps;
@@ -21,11 +22,14 @@ import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.loop.IndexingLoopOptions;
 import io.justsearch.indexerworker.loop.pacing.IndexingPacing;
 import io.justsearch.indexerworker.queue.JobQueue;
+import io.justsearch.indexing.SchemaFields;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Tempdoc 410 §14 — adversarial corpus driven through the real {@link IndexingLoop} extract path.
@@ -266,6 +271,74 @@ final class AdversarialCorpusIngestionTest {
         IngestionReasonCodes.SIZE_CHANGED_AFTER_SNAPSHOT,
         queue.lastOutcome.reasonCode(),
         "Reason code must surface the size-change diagnosis to operators");
+  }
+
+  @Test
+  @DisplayName("same-size source rewrite with restored mtime is rejected by content hash")
+  void sameMetadataMutationProducesStaleSourceOutcome() throws Exception {
+    Path file = tempDir.resolve("same-metadata-mutation.txt");
+    Files.writeString(file, "AAAA", StandardCharsets.UTF_8);
+    FileTime admittedModifiedTime = Files.getLastModifiedTime(file);
+
+    ContentExtractorProvider mutatingExtractor =
+        new ContentExtractorProvider() {
+          @Override
+          public ContentExtractor.ExtractionResult extract(Path target) throws IOException {
+            Files.writeString(target, "BBBB", StandardCharsets.UTF_8);
+            Files.setLastModifiedTime(target, admittedModifiedTime);
+            return new ContentExtractor.ExtractionResult("content from A", null, "text/plain");
+          }
+
+          @Override
+          public String detectMimeType(Path target) {
+            return "text/plain";
+          }
+        };
+    IndexingLoop mutatingLoop =
+        new IndexingLoop(
+            queue,
+            queue.indexingCoordinator,
+            mock(CommitOps.class),
+            mock(DocumentFieldOps.class),
+            mock(IndexCountOps.class),
+            () -> null,
+            mock(WorkerSignalBus.class),
+            IndexingPacing.unthrottled(),
+            null,
+            null,
+            null,
+            null,
+            new TimeboxedContentExtractor(
+                mutatingExtractor,
+                Duration.ofSeconds(10),
+                (ExtractionMetricCatalog) null),
+            null,
+            identityOptions());
+
+    Object extracted = invokeExtractJobOn(mutatingLoop, file);
+
+    assertEquals(null, extracted, "Changed bytes must never reach the index writer");
+    assertNotNull(queue.lastOutcome);
+    assertEquals(IngestionOutcomeClass.STALE_SOURCE, queue.lastOutcome.outcomeClass());
+    assertEquals(IngestionReasonCodes.STALE_AFTER_EXTRACTION, queue.lastOutcome.reasonCode());
+    assertTrue(queue.deferred, "A changed source must use the existing defer-without-attempt path");
+  }
+
+  @Test
+  @DisplayName("successful extraction stores the SHA-256 of its source bytes")
+  void successfulExtractionStoresSourceHash() throws Exception {
+    Path file = tempDir.resolve("source-hash.txt");
+    Files.writeString(file, "source bytes", StandardCharsets.UTF_8);
+
+    Object extracted = invokeExtractJob(file);
+    assertNotNull(extracted);
+    invokeWriterWrite(loop, extracted);
+
+    ArgumentCaptor<IndexDocument> document = ArgumentCaptor.forClass(IndexDocument.class);
+    verify(queue.indexingCoordinator).indexSingle(document.capture());
+    assertEquals(
+        "4d4823794cbed3c4ee0bbc684c8f66e1dfd5afa6f078d494ce254ec5a4671753",
+        document.getValue().fields().get(SchemaFields.SOURCE_SHA256));
   }
 
   /**

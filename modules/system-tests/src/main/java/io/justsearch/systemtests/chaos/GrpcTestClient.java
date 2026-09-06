@@ -33,6 +33,8 @@ import io.justsearch.ipc.MigrationStartRequest;
 import io.justsearch.ipc.MigrationStartResponse;
 import io.justsearch.ipc.QueryPendingVduRequest;
 import io.justsearch.ipc.QueryPendingVduResponse;
+import io.justsearch.ipc.RecentIngestionEventsRequest;
+import io.justsearch.ipc.RecentIngestionEventsResponse;
 import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.PruneRequest;
@@ -373,6 +375,15 @@ public final class GrpcTestClient implements Closeable {
    */
   public int submitBatch(List<String> filePaths) {
     return submitBatch(filePaths, 10_000).getAcceptedCount();
+  }
+
+  /** Returns the Worker's most recent privacy-safe ingestion ledger events. */
+  public RecentIngestionEventsResponse recentIngestionEvents(int limit, long timeoutMs) {
+    RecentIngestionEventsRequest request =
+        RecentIngestionEventsRequest.newBuilder().setLimit(limit).build();
+    return ingestStub
+        .withDeadlineAfter(timeoutMs, TimeUnit.MILLISECONDS)
+        .recentIngestionEvents(request);
   }
 
   /**

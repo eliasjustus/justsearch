@@ -110,6 +110,7 @@ def cmd_ui_shot(ctx, step_name, list_steps, affected_path, ui_url, output_dir,
             affected_path,
             ui_url=ui_url, output_dir=output_dir,
             demo=not no_demo, cooldown_ms=cooldown_ms, timeout_ms=timeout_ms,
+            measure=not no_measure, fixtures=fixtures, trace=trace, record=record,
         )
         if ctx.obj.get("json"):
             click.echo(json.dumps(results, indent=2, default=str))

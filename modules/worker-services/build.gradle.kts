@@ -61,6 +61,16 @@ dependencies {
   // testFixtures: TestDocumentBuilder uses indexing types
   testFixturesApi(project(":modules:indexing"))
   testFixturesApi(project(":modules:worker-core"))
+  // Construct a valid owned PPTX-with-speaker-notes package, then rewrite it through the fixture
+  // factory's deterministic ZIP serializer before capability assertions.
+  testFixturesImplementation("org.apache.poi:poi-ooxml:5.4.1") {
+    // The complete POI graph is already the Tika parser runtime. Keep this compile-time handle
+    // non-transitive so adding the fixture recipe does not create a second dependency authority.
+    isTransitive = false
+  }
+  testFixturesImplementation("org.apache.poi:poi:5.4.1") {
+    isTransitive = false
+  }
 
   testImplementation("io.opentelemetry:opentelemetry-sdk-common:1.60.1")
   testRuntimeOnly(libs.opentelemetry.sdk.testing)
@@ -70,6 +80,7 @@ dependencies {
   // app-services already uses for its log-assertion tests.
   testImplementation(libs.logback.classic)
   testImplementation(libs.logback.core)
+  testImplementation(libs.grpc.netty.shaded)
 }
 
 configurations.configureEach {

@@ -19,6 +19,10 @@ import org.slf4j.Logger;
 public final class EmbeddingBackfillOps {
   private EmbeddingBackfillOps() {}
 
+  // About 1 MiB of UTF-16 text per parent batch. An oversized individual document is
+  // admitted whole, then the batch stops: extraction policy remains the per-file limit.
+  static final long MAX_PARENT_BATCH_CHARS = 512_000;
+
   public record BackfillContext(
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
@@ -66,14 +70,14 @@ public final class EmbeddingBackfillOps {
         return StageOutcome.elapsedSince(methodStart);
       }
 
-      // Phase 1: Batch-fetch content for all pending docs (single searcher acquisition)
+      // Phase 1: Bound retained parent content as well as document count. Fetch incrementally
+      // so a batch of large files cannot exhaust heap before the encoder sees its first window.
       long t0 = System.nanoTime();
-      Map<String, String> contentByDocId =
-          context.documentFieldOps().getDocumentContentBatch(pendingIds);
       List<String> batchDocIds = new ArrayList<>(pendingIds.size());
       List<String> batchContents = new ArrayList<>(pendingIds.size());
+      long retainedChars = 0;
       for (String docId : pendingIds) {
-        String content = contentByDocId.get(docId);
+        String content = context.documentFieldOps().getDocumentContent(docId);
         if (content == null || content.isBlank()) {
           context.log().warn("Backfill: Document content missing for {}", docId);
           markedFailed +=
@@ -82,8 +86,12 @@ public final class EmbeddingBackfillOps {
           failed++;
           continue;
         }
+        if (!batchContents.isEmpty()
+            && retainedChars + content.length() > MAX_PARENT_BATCH_CHARS) break;
         batchDocIds.add(docId);
         batchContents.add(content);
+        retainedChars += content.length();
+        if (retainedChars >= MAX_PARENT_BATCH_CHARS) break;
       }
 
       if (batchContents.isEmpty()) {

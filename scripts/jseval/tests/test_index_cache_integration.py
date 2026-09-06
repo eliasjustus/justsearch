@@ -18,6 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from jseval import backend as backend_mod
+from jseval import raw_corpus_manifest as rcm
 from jseval.cli import main
 
 
@@ -355,6 +356,89 @@ def test_do_run_skips_ingest_on_adopt():
 
     prep.assert_not_called()
     ex.assert_called_once()
+
+
+def test_raw_adopt_skips_ingest_but_threads_same_context_to_run(tmp_path):
+    from jseval.commands import run as run_cmd
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "one.pdf").write_bytes(b"one")
+    context = rcm.RawCorpusContext(
+        "mixed/raw", corpus.resolve(), rcm.build_raw_manifest(corpus),
+    )
+    kwargs = _do_run_kwargs({"mode": "adopted", "entry": "abc123"})
+    kwargs.update(dataset="mixed/raw", raw_context=context)
+
+    with patch("jseval.ingest.prepare_corpus") as prep, \
+            patch("jseval.run.execute_run", return_value={"dataset": "mixed/raw"}) as execute:
+        run_cmd._do_run(**kwargs)
+
+    prep.assert_not_called()
+    assert execute.call_args.kwargs["raw_context"] is context
+
+
+def test_raw_adopt_refuses_mismatched_context_dataset(tmp_path):
+    from jseval.commands import run as run_cmd
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "one.pdf").write_bytes(b"one")
+    context = rcm.RawCorpusContext(
+        "mixed/different", corpus.resolve(), rcm.build_raw_manifest(corpus),
+    )
+    kwargs = _do_run_kwargs({"mode": "adopted", "entry": "abc123"})
+    kwargs.update(dataset="mixed/raw", raw_context=context)
+
+    with patch("jseval.ingest.prepare_corpus") as prep, \
+            patch("jseval.run.execute_run") as execute, \
+            pytest.raises(rcm.RawCorpusManifestError, match="dataset"):
+        run_cmd._do_run(**kwargs)
+
+    prep.assert_not_called()
+    execute.assert_not_called()
+
+
+def test_raw_cache_refuses_historical_selector_pin(boot_mocks, tmp_path):
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    (corpus / "one.pdf").write_bytes(b"one")
+    context = rcm.RawCorpusContext(
+        "mixed/raw", corpus.resolve(), rcm.build_raw_manifest(corpus),
+    )
+
+    with pytest.raises(ValueError, match="cannot bypass strict raw corpus identity"):
+        backend_mod.start_backend(
+            data_dir=boot_mocks.data_dir,
+            clean=True,
+            index_cache_mode="on",
+            dataset_name="mixed/raw",
+            raw_context=context,
+            pin_selector_key="historical-key",
+        )
+
+    assert boot_mocks.popen.call_count == 0
+
+
+def test_raw_publication_revalidates_after_backend_stop(tmp_path):
+    from jseval.commands import run as run_cmd
+
+    corpus = tmp_path / "corpus-dir"
+    corpus.mkdir()
+    document = corpus / "one.pdf"
+    document.write_bytes(b"one")
+    context = rcm.RawCorpusContext(
+        "mixed/raw", corpus.resolve(), rcm.build_raw_manifest(corpus),
+    )
+    document.write_bytes(b"changed after capture")
+
+    with patch("jseval.index_cache.publish") as publish, \
+            pytest.raises(rcm.RawCorpusManifestError):
+        run_cmd._publish_after_stop(
+            tmp_path / "data", "selector", ("identity", "attestation"),
+            raw_context=context, env_overrides={},
+        )
+    publish.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #

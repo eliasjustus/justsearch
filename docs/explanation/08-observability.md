@@ -969,7 +969,7 @@ Consequence: the browser's ~10 s poll is no longer the reason the condition stor
 
 Key sub-messages and their fields (current):
 
-- **`CoreStatus`**: `indexState`, `indexAvailable`, `indexHealthy`, `knowledgeServerStartError`
+- **`CoreStatus`**: `indexState`, `indexAvailable`, `indexHealthy`, `knowledgeServerStartError`. A fatal indexing-loop event reports `FAILED` and `indexHealthy=false`, taking precedence over queued work and ordinary document `ERROR`. This does not imply that search serving has stopped. Consumers must check Worker-RPC freshness before treating the state as terminal evidence.
 - **`CompatibilityStatus`**: `reindexRequired`, `reindexRequiredReason`, `indexSchemaFpStored`, `indexSchemaFpCurrent`, `indexSchemaCompatState`, `embeddingCompatState`, `embeddingCompatReason`, `embeddingFingerprintStored`, `embeddingFingerprintCurrent`
 - **`EnrichmentCoverage`**: embedding/SPLADE/NER/chunk coverage percentages and counts, plus `EncoderProfile` sub-messages for embed/splade/ner (ORT call counts, sub-phase timing, latency percentiles p50/p95/p99)
 - **`MigrationStatus`**: `indexBasePath`, `activeGenerationId`, `buildingGenerationId`, `previousGenerationId`, `migrationState`, per-generation serving, cutover buffering, enumerator progress

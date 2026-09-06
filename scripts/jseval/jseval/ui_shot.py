@@ -699,8 +699,12 @@ def execute_ui_shot_affected(
     demo: bool = True,
     cooldown_ms: int = 250,
     timeout_ms: int = 30_000,
+    measure: bool = True,
+    fixtures: bool = False,
+    trace: bool = False,
+    record: bool = False,
 ) -> list[dict[str, Any]]:
-    """Capture all steps affected by a file change."""
+    """Capture all affected steps with the same options as an explicit single-step capture."""
     try:
         ui_url = _resolve_ui_url(ui_url)
     except ServeStartError as e:
@@ -730,6 +734,7 @@ def execute_ui_shot_affected(
             step_name,
             ui_url=ui_url, output_dir=output_dir,
             demo=demo, cooldown_ms=cooldown_ms, timeout_ms=timeout_ms,
+            measure=measure, fixtures=fixtures, trace=trace, record=record,
         )
         for step_name in unique
     ]

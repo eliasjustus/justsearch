@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   enrichSettledSum,
+  isWorkerReportedIndex,
   selectIndexingPhase,
   selectIndexingProgress,
   type EnrichSettleSample,
@@ -50,6 +51,19 @@ function select(
 }
 
 describe('selectIndexingProgress — phase arms (813 §3a)', () => {
+  it('fatal loop state is reported evidence but never ongoing progress or completion', () => {
+    for (const pendingJobs of [0, 200]) {
+      const status = snapshot({ core: { indexState: 'FAILED', pendingJobs } });
+      expect(isWorkerReportedIndex(status)).toBe(true);
+      expect(selectIndexingPhase(status)).toBe('unknown');
+      const progress = select(status, true, 300);
+      expect(progress.phase).toBe('unknown');
+      expect(progress.indexingPercent).toBeNull();
+      expect(progress.enrichingPercent).toBeNull();
+      expect(progress.etaSeconds).toBeNull();
+      expect(progress.enrichingEtaSeconds).toBeNull();
+    }
+  });
   it('pending jobs ⇒ "indexing", with a running/queued split that adds up to the total', () => {
     const p = select(
       snapshot({

@@ -878,4 +878,314 @@ def cmd_offset_recall(ctx, run_dir, corpus_dir, top_k, bins, out_path):
         click.echo(f"Wrote {dest}")
 
 
-COMMANDS = [cmd_counterfactual, cmd_shadow_eval, cmd_bisect, cmd_compare, cmd_trend, cmd_spot_check, cmd_correction_probe, cmd_diff, cmd_perf_report, cmd_offset_recall]
+@click.command("duplicate-prevalence")
+@click.option("--ingest", is_flag=True, help="Register the production source root on the already-owned backend before waiting.")
+@click.option("--wait-timeout-seconds", type=click.FloatRange(min=0), default=0, show_default=True,
+              help="Bounded production/VDU readiness wait; zero captures immediately.")
+@click.option("--timeline", "timeline_path", type=click.Path(dir_okay=False, path_type=Path),
+              help="Write aggregate readiness snapshots for the production wait.")
+@click.option(
+    "--input-spec",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+    help="Strict jseval.duplicate-prevalence-input.v1 or v2 JSON request.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="Destination for the aggregate-only JSON artifact.",
+)
+@click.option(
+    "--review-packet-out",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Also write a text-bearing, uncommitted-local-only human review packet. "
+        "Never commit or publish this file."
+    ),
+)
+@click.option(
+    "--review-per-stratum-quota",
+    type=click.IntRange(min=1),
+    default=2,
+    show_default=True,
+    help="Maximum sampled pairs per split/frame/stratum in the review packet.",
+)
+@click.option(
+    "--review-calibration-fraction",
+    type=click.FloatRange(min=0.0, max=1.0, min_open=True, max_open=True),
+    default=0.5,
+    show_default=True,
+    help="Candidate-family fraction assigned to calibration before pair formation.",
+)
+@click.option(
+    "--review-seed",
+    type=int,
+    default=897,
+    show_default=True,
+    help="Deterministic review partition and stratum-sampling seed.",
+)
+@click.pass_context
+def cmd_duplicate_prevalence(
+    ctx,
+    ingest,
+    wait_timeout_seconds,
+    timeline_path,
+    input_spec,
+    out_path,
+    review_packet_out,
+    review_per_stratum_quota,
+    review_calibration_fraction,
+    review_seed,
+):
+    """Measure duplicates on a strict proxy or production-extracted snapshot."""
+
+    from .. import duplicate_prevalence as prevalence
+    from .. import duplicate_prevalence_enron as adapter
+    from .. import duplicate_prevalence_production as production_adapter
+    from .. import duplicate_review_packet as review
+
+    try:
+        source_kind = adapter.input_source_kind(input_spec)
+        prepared_request = None
+        if ingest or wait_timeout_seconds or timeline_path is not None:
+            if source_kind != production_adapter.SOURCE_KIND or wait_timeout_seconds <= 0:
+                raise production_adapter.ProductionDuplicatePrevalenceError(
+                    "ingest/timeline require a production source and positive --wait-timeout-seconds"
+                )
+            from .. import timeline
+
+            protected_paths = {input_spec.resolve(), out_path.resolve()}
+            if review_packet_out is not None:
+                protected_paths.add(review_packet_out.resolve())
+            if timeline_path is not None and timeline_path.resolve() in protected_paths:
+                raise production_adapter.ProductionDuplicatePrevalenceError(
+                    "timeline destination must differ from input, aggregate, and review packet"
+                )
+            prepared_request = production_adapter.load_input_spec(input_spec)
+            raw_root = prepared_request.source.raw_root.resolve()
+            for destination in (out_path, timeline_path, review_packet_out):
+                if destination is not None and destination.resolve().is_relative_to(raw_root):
+                    raise production_adapter.ProductionDuplicatePrevalenceError(
+                        "generated output must be outside the production raw corpus"
+                    )
+            rows = []
+            try:
+                production_adapter.prepare_request(
+                    prepared_request,
+                    ingest=ingest,
+                    timeout_seconds=wait_timeout_seconds,
+                    on_snapshot=(
+                        lambda elapsed, snapshot: rows.append(timeline.snapshot_to_row(elapsed, snapshot))
+                    ) if timeline_path is not None else None,
+                )
+            finally:
+                if timeline_path is not None:
+                    timeline.write_timeline_tsv(rows, timeline_path)
+        review_packet = None
+        if review_packet_out is None:
+            artifact = (
+                production_adapter.analyze_request(prepared_request)
+                if prepared_request is not None
+                else production_adapter.analyze_input_spec(input_spec)
+                if source_kind == production_adapter.SOURCE_KIND
+                else adapter.analyze_input_spec(input_spec)
+            )
+        else:
+            aggregate_destination = out_path.resolve(strict=False)
+            review_destination = review_packet_out.resolve(strict=False)
+            if aggregate_destination == review_destination:
+                raise review.DuplicateReviewPacketError(
+                    "aggregate and review packet destinations must differ"
+                )
+            review_packet_out = review.validate_review_packet_destination(
+                review_packet_out
+            )
+            if source_kind == production_adapter.SOURCE_KIND:
+                request = prepared_request or production_adapter.load_input_spec(input_spec)
+                artifact, observations = (
+                    production_adapter.analyze_request_with_observations(request)
+                )
+            else:
+                request = adapter.load_input_spec(input_spec)
+                artifact, observations = adapter.analyze_request_with_observations(request)
+            review_packet = review.build_review_packet(
+                observations,
+                artifact,
+                config=review.ReviewPacketConfig(
+                    analysis_config=request.config,
+                    per_stratum_quota=review_per_stratum_quota,
+                    calibration_fraction=review_calibration_fraction,
+                    seed=review_seed,
+                ),
+            )
+        destination = adapter.write_artifact_atomic(out_path, artifact)
+        review_destination = (
+            adapter.write_artifact_atomic(review_packet_out, review_packet)
+            if review_packet is not None
+            else None
+        )
+    except (
+        adapter.EnronDuplicatePrevalenceError,
+        production_adapter.ProductionDuplicatePrevalenceError,
+        prevalence.DuplicatePrevalenceError,
+        review.DuplicateReviewPacketError,
+        OSError,
+        UnicodeError,
+    ) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(artifact, sort_keys=True, indent=2, ensure_ascii=False))
+    else:
+        denominators = artifact["denominators"]
+        decision = artifact["near_duplicate"]["decision"]["status"]
+        projection = artifact.get("input", {}).get("source_projection_identity")
+        population = (
+            projection["sampling"]["population_count"]
+            if projection is not None
+            and projection["schema"] == prevalence.SAMPLED_SOURCE_PROJECTION_SCHEMA
+            else None
+        )
+        click.echo(
+            "Duplicate prevalence: "
+            + (
+                f"{population} population observations, "
+                f"{denominators['source_observations']} frozen-sample observations; "
+                if population is not None
+                else f"{denominators['source_observations']} observations; "
+            )
+            + f"near-duplicate decision {decision}."
+        )
+        click.echo(f"Wrote {destination}")
+        if review_destination is not None:
+            click.echo(
+                "Wrote sensitive local review packet "
+                f"{review_destination} (do not commit or publish)"
+            )
+
+
+@click.command("duplicate-review-label")
+@click.option(
+    "--packet",
+    "packet_path",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="Sensitive review packet below scripts/jseval/tmp/.",
+)
+@click.option(
+    "--labels-out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Text-free private label state (default: a sibling of --packet).",
+)
+@click.option(
+    "--triage",
+    "triage_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Bound model-triage sidecar; show only its human-review queue.",
+)
+@click.pass_context
+def cmd_duplicate_review_label(ctx, packet_path, labels_out, triage_path):
+    """Open the private blinded duplicate-pair labeling window."""
+
+    from .. import duplicate_review_label_gui as label_gui
+    from .. import duplicate_review_labels as labels
+
+    if ctx.obj.get("json"):
+        raise click.ClickException(
+            "--json is not supported by the interactive duplicate-review-label command"
+        )
+    try:
+        session = labels.open_label_session(packet_path, labels_out, triage_path)
+        label_gui.launch_label_gui(session)
+    except (labels.DuplicateReviewLabelsError, OSError, UnicodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@click.command("duplicate-review-decide")
+@click.option("--packet", type=click.Path(path_type=Path), required=True)
+@click.option("--labels", "labels_path", type=click.Path(path_type=Path), required=True)
+@click.option("--triage", "triage_path", type=click.Path(path_type=Path), required=True)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), required=True)
+@click.pass_context
+def cmd_duplicate_review_decide(ctx, packet, labels_path, triage_path, out_path):
+    """Select on calibration labels and evaluate once on holdout."""
+
+    from .. import duplicate_review_scoring as scoring
+
+    try:
+        artifact = scoring.build_decision(packet, labels_path, triage_path)
+        destination = scoring.write_decision_atomic(
+            out_path,
+            artifact,
+            protected_paths=(packet, labels_path, triage_path),
+        )
+    except (scoring.DuplicateReviewScoringError, OSError, UnicodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(artifact, sort_keys=True, indent=2, ensure_ascii=False))
+    else:
+        click.echo(
+            "Duplicate review decision: "
+            f"{artifact['decision']['status']}; "
+            f"selected threshold {artifact['decision']['selected_threshold']}."
+        )
+        click.echo(f"Wrote {destination}")
+
+
+@click.command("duplicate-prevalence-apply-decision")
+@click.option("--prevalence", "prevalence_path", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--decision", "decision_path", type=click.Path(path_type=Path, exists=True), required=True)
+@click.option("--expected-decision-hash", required=True, help="Externally recorded canonical hash of the reviewed decision.")
+@click.option("--out", "out_path", type=click.Path(path_type=Path), required=True)
+@click.pass_context
+def cmd_duplicate_prevalence_apply_decision(ctx, prevalence_path, decision_path, expected_decision_hash, out_path):
+    """Select a measured sweep row using its frozen, cohort-bound review decision."""
+    from .. import duplicate_prevalence as prevalence
+    from .. import duplicate_prevalence_enron as adapter
+    from .. import duplicate_review_scoring as scoring
+
+    try:
+        if out_path.resolve() in {prevalence_path.resolve(), decision_path.resolve()}:
+            raise scoring.DuplicateReviewScoringError("output must differ from both frozen inputs")
+        artifact = scoring.apply_decision(
+            json.loads(prevalence_path.read_text(encoding="utf-8")),
+            json.loads(decision_path.read_text(encoding="utf-8")),
+            expected_decision_hash=expected_decision_hash,
+        )
+        if out_path.exists():
+            existing = prevalence.validate_artifact_hash(json.loads(out_path.read_text(encoding="utf-8")))
+            if existing["artifact_hash"] != artifact["artifact_hash"]:
+                raise scoring.DuplicateReviewScoringError("existing output differs and will not be overwritten")
+            destination = out_path
+        else:
+            destination = adapter.write_artifact_atomic(out_path, artifact)
+    except (scoring.DuplicateReviewScoringError, prevalence.DuplicatePrevalenceError,
+            OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(artifact, sort_keys=True, indent=2, ensure_ascii=False))
+    else:
+        click.echo(f"Applied frozen review decision; wrote {destination}")
+
+
+COMMANDS = [
+    cmd_counterfactual,
+    cmd_shadow_eval,
+    cmd_bisect,
+    cmd_compare,
+    cmd_trend,
+    cmd_spot_check,
+    cmd_correction_probe,
+    cmd_diff,
+    cmd_perf_report,
+    cmd_offset_recall,
+    cmd_duplicate_prevalence,
+    cmd_duplicate_review_label,
+    cmd_duplicate_review_decide,
+    cmd_duplicate_prevalence_apply_decision,
+]

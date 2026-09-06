@@ -574,8 +574,8 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    *
    * <p>Short texts (≤ {@code maxSeqLen} tokens) are embedded directly. Long texts are split into
    * overlapping chunks (same windowing as {@link #embed}), and chunk vectors are mean-pooled per
-   * document. All chunks across all texts are flattened into a single batch for efficient ORT
-   * inference, then reassembled per original text.
+   * document. Windows are streamed in document order through bounded ORT batches; callers of
+   * this method retain the resulting chunk vectors explicitly.
    *
    * @param texts list of text strings to embed
    * @return one {@link EmbedResult} per input text, with chunk vectors for long texts
@@ -589,16 +589,20 @@ public final class OnnxEmbeddingEncoder implements Closeable {
       return List.of(embed(texts.get(0)));
     }
 
-    // Phase 1: Tokenize in memory-bounded groups (tempdoc 686/710 crash-fix port — see
-    // TOKENIZE_GROUP_CHAR_BUDGET), chunk long ones, track doc→chunk mapping. Groups are
-    // processed in original order and appended to flatChunks/chunkMapping sequentially, so
-    // grouping changes only native-call granularity, not output order or values.
-    long tTok = System.nanoTime();
-    List<long[][]> flatChunks = new ArrayList<>();
-    // chunkMapping[i] = {startIndexInFlatChunks, chunkCount} for text i
-    int[][] chunkMapping = new int[texts.size()][2];
+    return encodeWindowBatches(texts, true);
+  }
 
-    int chunkedCount = 0;
+  /** Parent-vector path: pool windows as they finish without retaining unused chunk vectors. */
+  public List<EmbedResult> embedBatchPooled(List<String> texts) throws OrtException {
+    return encodeWindowBatches(texts, false);
+  }
+
+  private List<EmbedResult> encodeWindowBatches(List<String> texts, boolean retainChunks)
+      throws OrtException {
+    // Preserve the singleton path's one-window inference grouping and the batch path's
+    // global groups of eight, including partial groups across tokenization boundaries.
+    WindowBatch batch = new WindowBatch(retainChunks,
+        texts.size() == 1 ? 1 : MAX_ORT_BATCH_SIZE, this::embedPreTokenizedBatch);
     int n = texts.size();
     int groupStart = 0;
     while (groupStart < n) {
@@ -610,58 +614,111 @@ public final class OnnxEmbeddingEncoder implements Closeable {
         groupChars += texts.get(groupEnd).length();
         groupEnd++;
       }
-      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      long tTok = System.nanoTime();
+      Encoding[] groupEncodings = texts.size() == 1
+          ? new Encoding[] {tokenizer.encode(texts.get(0))}
+          : tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
       for (int j = 0; j < groupEncodings.length; j++) {
-        int i = groupStart + j;
         Encoding enc = groupEncodings[j];
         long[] ids = enc.getIds();
         long[] mask = enc.getAttentionMask();
         long[] typeIds = enc.getTypeIds();
 
-        if (ids.length <= maxSeqLen) {
-          // Short text: single chunk (no truncation needed)
-          chunkMapping[i] = new int[] {flatChunks.size(), 1};
-          flatChunks.add(new long[][] {ids, mask, typeIds});
-        } else {
-          // Long text: create overlapping chunks
-          List<long[][]> chunks = createChunks(ids, mask, typeIds);
-          chunkMapping[i] = new int[] {flatChunks.size(), chunks.size()};
-          flatChunks.addAll(chunks);
-          chunkedCount++;
-        }
+        List<long[][]> windows = ids.length <= maxSeqLen
+            ? java.util.Collections.singletonList(new long[][] {ids, mask, typeIds})
+            : createChunks(ids, mask, typeIds);
+        batch.addDocument(windows);
+        groupEncodings[j] = null;
       }
       groupStart = groupEnd;
     }
-    profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
+    return batch.finish();
+  }
 
-    log.debug(
-        "embedBatchWithChunking: texts={}, chunkedTexts={}, totalFlatChunks={}",
-        texts.size(),
-        chunkedCount,
-        flatChunks.size());
+  @FunctionalInterface
+  interface WindowRunner {
+    List<float[]> run(List<long[][]> windows) throws OrtException;
+  }
 
-    // Phase 2: Batch-embed all chunks (sub-batched at MAX_ORT_BATCH_SIZE internally)
-    List<float[]> allChunkVectors = embedPreTokenizedBatch(flatChunks);
+  /** Bounded materialization seam shared by full and pooled-only document encoding. */
+  static final class WindowBatch {
+    private final boolean retainChunks;
+    private final int batchSize;
+    private final WindowRunner runner;
+    private final List<long[][]> pending = new ArrayList<>();
+    private final List<WindowPool> owners = new ArrayList<>();
+    private final List<WindowPool> documents = new ArrayList<>();
 
-    // Phase 3: Reassemble per-text results
-    List<EmbedResult> results = new ArrayList<>(texts.size());
-    for (int i = 0; i < texts.size(); i++) {
-      int startIdx = chunkMapping[i][0];
-      int count = chunkMapping[i][1];
+    WindowBatch(boolean retainChunks, int batchSize, WindowRunner runner) {
+      if (batchSize < 1 || batchSize > MAX_ORT_BATCH_SIZE) {
+        throw new IllegalArgumentException("Window batch size must be between one and eight");
+      }
+      this.retainChunks = retainChunks;
+      this.batchSize = batchSize;
+      this.runner = runner;
+    }
 
-      if (count == 1) {
-        results.add(new EmbedResult(allChunkVectors.get(startIdx), List.of(), 1));
-      } else {
-        List<float[]> chunkVectors = new ArrayList<>(count);
-        for (int c = 0; c < count; c++) {
-          chunkVectors.add(allChunkVectors.get(startIdx + c));
-        }
-        float[] pooled = meanPoolChunks(chunkVectors);
-        results.add(new EmbedResult(pooled, chunkVectors, count));
+    void addDocument(List<long[][]> windows) throws OrtException {
+      WindowPool pool = new WindowPool(retainChunks);
+      documents.add(pool);
+      for (long[][] window : windows) {
+        pending.add(window);
+        owners.add(pool);
+        if (pending.size() == batchSize) flush();
       }
     }
 
-    return results;
+    private void flush() throws OrtException {
+      if (pending.isEmpty()) return;
+      List<float[]> vectors = runner.run(pending);
+      if (vectors.size() != pending.size()) {
+        throw new IllegalStateException("Window inference result count does not match input");
+      }
+      for (int i = 0; i < vectors.size(); i++) owners.get(i).add(vectors.get(i));
+      pending.clear();
+      owners.clear();
+    }
+
+    List<EmbedResult> finish() throws OrtException {
+      flush();
+      List<EmbedResult> results = new ArrayList<>(documents.size());
+      for (WindowPool pool : documents) results.add(pool.finish());
+      return results;
+    }
+  }
+
+  private static final class WindowPool {
+    private final List<float[]> retained;
+    private double[] sum;
+    private float[] first;
+    private int count;
+
+    WindowPool(boolean retainChunks) {
+      retained = retainChunks ? new ArrayList<>() : null;
+    }
+
+    void add(float[] vector) {
+      if (count == 0) {
+        first = vector;
+        sum = new double[vector.length];
+      }
+      for (int i = 0; i < Math.min(vector.length, sum.length); i++) sum[i] += vector[i];
+      if (retained != null) retained.add(vector);
+      count++;
+    }
+
+    EmbedResult finish() {
+      if (count == 0) throw new IllegalStateException("Document has no embedding windows");
+      float[] vector = first;
+      if (count > 1) {
+        vector = new float[sum.length];
+        for (int i = 0; i < vector.length; i++) vector[i] = (float) (sum[i] / count);
+        vector = l2Normalize(vector);
+      }
+      return new EmbedResult(vector,
+          retained != null && count > 1 ? retained : List.of(), count);
+    }
   }
 
   /**
@@ -683,7 +740,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
     if (ids.length <= maxSeqLen) {
       return 1;
     }
-    return createChunks(ids, encoding.getAttentionMask(), encoding.getTypeIds()).size();
+    return TokenWindows.count(ids.length, chunkSize, chunkOverlap, maxSeqLen);
   }
 
   /**
@@ -940,41 +997,7 @@ public final class OnnxEmbeddingEncoder implements Closeable {
    * @return list of chunks, each containing [ids, mask, typeIds] arrays
    */
   private List<long[][]> createChunks(long[] ids, long[] mask, long[] typeIds) {
-    List<long[][]> chunks = new ArrayList<>();
-    int stride = Math.max(1, chunkSize - chunkOverlap);
-
-    int start = 0;
-    while (start < ids.length) {
-      int end = Math.min(start + chunkSize, ids.length);
-      int len = end - start;
-
-      long[] chunkIds = new long[len];
-      long[] chunkMask = new long[len];
-      long[] chunkTypeIds = new long[len];
-      System.arraycopy(ids, start, chunkIds, 0, len);
-      System.arraycopy(mask, start, chunkMask, 0, len);
-      System.arraycopy(typeIds, start, chunkTypeIds, 0, len);
-      chunks.add(new long[][] {chunkIds, chunkMask, chunkTypeIds});
-
-      start += stride;
-
-      // If remaining tokens are very small, merge with last chunk
-      if (start < ids.length && ids.length - start < chunkSize / 4) {
-        int lastStart = start - stride;
-        int lastEnd = Math.min(ids.length, lastStart + maxSeqLen);
-        int extLen = lastEnd - lastStart;
-        long[] extIds = new long[extLen];
-        long[] extMask = new long[extLen];
-        long[] extTypeIds = new long[extLen];
-        System.arraycopy(ids, lastStart, extIds, 0, extLen);
-        System.arraycopy(mask, lastStart, extMask, 0, extLen);
-        System.arraycopy(typeIds, lastStart, extTypeIds, 0, extLen);
-        chunks.set(chunks.size() - 1, new long[][] {extIds, extMask, extTypeIds});
-        break;
-      }
-    }
-
-    return chunks;
+    return new TokenWindows(ids, mask, typeIds, chunkSize, chunkOverlap, maxSeqLen);
   }
 
   // ---------------------------------------------------------------------------

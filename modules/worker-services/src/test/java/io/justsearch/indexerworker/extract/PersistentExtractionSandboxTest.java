@@ -64,6 +64,75 @@ final class PersistentExtractionSandboxTest {
     }
   }
 
+  @Test
+  @Timeout(60)
+  void scriptedChildRoundTripsAsciiResponseAboveFormerTwoMiBCeiling() throws Exception {
+    try (PersistentExtractionSandbox sandbox =
+        sandbox(javaCommand(ScriptedChild.class), Duration.ofSeconds(45))) {
+      ExtractionArtifact artifact = sandbox.extract(file("large-ascii.txt"));
+
+      assertEquals(2 * 1024 * 1024 + 4096, artifact.result().content().length());
+      assertTrue(
+          artifact.result().content().getBytes(StandardCharsets.UTF_8).length > 2 * 1024 * 1024);
+    }
+  }
+
+  @Test
+  @Timeout(60)
+  void scriptedChildRoundTripsMultibyteResponseAboveFormerTwoMiBCeiling() throws Exception {
+    try (PersistentExtractionSandbox sandbox =
+        sandbox(javaCommand(ScriptedChild.class), Duration.ofSeconds(45))) {
+      ExtractionArtifact artifact = sandbox.extract(file("large-multibyte.txt"));
+
+      assertEquals(800_000, artifact.result().content().length());
+      assertTrue(
+          artifact.result().content().getBytes(StandardCharsets.UTF_8).length > 2 * 1024 * 1024);
+    }
+  }
+
+  @Test
+  void defaultPolicyHasARepresentableDerivedResponseCeiling() {
+    int responseBytes =
+        PersistentExtractionSandbox.responseByteCeiling(TikaExtractionPolicy.defaults());
+
+    assertEquals(66_452_608, responseBytes);
+    assertTrue(responseBytes <= SandboxFrames.MAX_FRAME_BYTES);
+  }
+
+  @Test
+  void policyAboveProtocolCeilingIsRejectedAtConstructionBeforeSpawn() {
+    TikaExtractionPolicy oversized =
+        new TikaExtractionPolicy(
+            "oversized-policy",
+            Integer.MAX_VALUE,
+            TikaExtractionPolicy.DEFAULT_MAX_INPUT_BYTES,
+            TikaExtractionPolicy.DEFAULT_MAX_OFFICE_INPUT_BYTES,
+            128,
+            128,
+            4096,
+            256,
+            8,
+            100.0d,
+            true,
+            java.util.Set.of(),
+            java.util.Set.of());
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new PersistentExtractionSandbox(
+                    javaCommand(ScriptedChild.class),
+                    oversized,
+                    OcrRoutingConfig.disabled(),
+                    Duration.ofSeconds(20),
+                    1,
+                    500,
+                    null));
+
+    assertTrue(failure.getMessage().contains("above the protocol maximum"));
+  }
+
   /**
    * Round-trips the argfile form through the JDK's own parser: a real production child is launched
    * from an argfile whose classpath begins with a directory whose name contains a space. If the
@@ -488,10 +557,17 @@ final class PersistentExtractionSandboxTest {
         }
 
         OcrRoutingConfig ocr = request.ocrConfig();
-        String content =
-            name.contains("ocr") && ocr != null && ocr.enabled()
-                ? "ocr-enabled:" + String.join(",", ocr.languages())
-                : name;
+        String content;
+        if (name.contains("large-ascii")) {
+          content = "a".repeat(2 * 1024 * 1024 + 4096);
+        } else if (name.contains("large-multibyte")) {
+          content = "€".repeat(800_000);
+        } else {
+          content =
+              name.contains("ocr") && ocr != null && ocr.enabled()
+                  ? "ocr-enabled:" + String.join(",", ocr.languages())
+                  : name;
+        }
         ExtractionArtifact artifact =
             ExtractionArtifact.full(
                 new ContentExtractor.ExtractionResult(content, null, "text/plain"),

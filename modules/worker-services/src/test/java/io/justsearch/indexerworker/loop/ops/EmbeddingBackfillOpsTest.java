@@ -170,8 +170,62 @@ class EmbeddingBackfillOpsTest {
               eq(SchemaFields.EMBEDDING_STATUS), eq(SchemaFields.EMBEDDING_STATUS_PENDING), anyInt()))
           .thenReturn(List.of("doc1", "doc2"));
       when(signalBus.isMainGpuActive()).thenReturn(false);
-      when(documentFieldOps.getDocumentContentBatch(List.of("doc1", "doc2")))
-          .thenReturn(Map.of("doc1", "content one", "doc2", "content two"));
+      when(documentFieldOps.getDocumentContent("doc1")).thenReturn("content one");
+      when(documentFieldOps.getDocumentContent("doc2")).thenReturn("content two");
+    }
+
+    @Test
+    void oversizedParentIsKeptWholeAndLaterParentsRemainPending() {
+      String large = "x".repeat((int) EmbeddingBackfillOps.MAX_PARENT_BATCH_CHARS + 1);
+      when(documentFieldOps.queryDocIdsByField(
+          eq(SchemaFields.EMBEDDING_STATUS), eq(SchemaFields.EMBEDDING_STATUS_PENDING), anyInt()))
+          .thenReturn(List.of("large", "later"));
+      when(documentFieldOps.getDocumentContent("large")).thenReturn(large);
+      when(embeddingProvider.embedDocumentBatch(List.of(large))).thenReturn(List.of());
+      when(embeddingProvider.embedDocument(large)).thenReturn(new float[] {1f});
+
+      EmbeddingBackfillOps.processEmbeddingBackfill(context());
+
+      verify(embeddingProvider).embedDocumentBatch(List.of(large));
+      verify(documentFieldOps, never()).getDocumentContent("later");
+      verify(documentFieldOps, never()).getDocumentContentBatch(anyList());
+    }
+
+    @Test
+    void oversizedNextParentWaitsForItsOwnBatch() {
+      String first = "x".repeat((int) EmbeddingBackfillOps.MAX_PARENT_BATCH_CHARS - 1);
+      String large = "y".repeat((int) EmbeddingBackfillOps.MAX_PARENT_BATCH_CHARS * 2);
+      when(documentFieldOps.queryDocIdsByField(
+          eq(SchemaFields.EMBEDDING_STATUS), eq(SchemaFields.EMBEDDING_STATUS_PENDING), anyInt()))
+          .thenReturn(List.of("first", "large", "later"));
+      when(documentFieldOps.getDocumentContent("first")).thenReturn(first);
+      when(documentFieldOps.getDocumentContent("large")).thenReturn(large);
+      when(embeddingProvider.embedDocumentBatch(List.of(first))).thenReturn(List.of());
+      when(embeddingProvider.embedDocument(first)).thenReturn(new float[] {1f});
+
+      EmbeddingBackfillOps.processEmbeddingBackfill(context());
+
+      verify(embeddingProvider).embedDocumentBatch(List.of(first));
+      verify(embeddingProvider, never()).embedDocument(large);
+      verify(indexingCoordinator, never()).updateDocument(eq("large"), anyMap());
+      verify(documentFieldOps, never()).getDocumentContent("later");
+    }
+
+    @Test
+    void aggregateTextBudgetStopsCollectionBeforeRemainingDocumentsAreRead() {
+      String half = "x".repeat((int) EmbeddingBackfillOps.MAX_PARENT_BATCH_CHARS / 2);
+      when(documentFieldOps.queryDocIdsByField(
+          eq(SchemaFields.EMBEDDING_STATUS), eq(SchemaFields.EMBEDDING_STATUS_PENDING), anyInt()))
+          .thenReturn(List.of("first", "second", "later"));
+      when(documentFieldOps.getDocumentContent("first")).thenReturn(half);
+      when(documentFieldOps.getDocumentContent("second")).thenReturn(half);
+      when(embeddingProvider.embedDocumentBatch(List.of(half, half))).thenReturn(List.of());
+      when(embeddingProvider.embedDocument(half)).thenReturn(new float[] {1f});
+
+      EmbeddingBackfillOps.processEmbeddingBackfill(context());
+
+      verify(embeddingProvider).embedDocumentBatch(List.of(half, half));
+      verify(documentFieldOps, never()).getDocumentContent("later");
     }
 
     @Test

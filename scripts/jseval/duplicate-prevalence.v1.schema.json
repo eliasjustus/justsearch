@@ -1,0 +1,818 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "jseval.duplicate-prevalence.v1",
+  "title": "jseval duplicate-prevalence aggregate artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "input",
+    "algorithm",
+    "denominators",
+    "byte_exact",
+    "content_exact",
+    "near_duplicate",
+    "privacy",
+    "artifact_hash"
+  ],
+  "properties": {
+    "schema": {"const": "jseval.duplicate-prevalence.v1"},
+    "input": {"$ref": "#/definitions/input"},
+    "algorithm": {"$ref": "#/definitions/algorithm"},
+    "denominators": {"$ref": "#/definitions/denominators"},
+    "byte_exact": {"$ref": "#/definitions/exactResult"},
+    "content_exact": {"$ref": "#/definitions/exactResult"},
+    "near_duplicate": {"$ref": "#/definitions/nearDuplicate"},
+    "privacy": {"$ref": "#/definitions/privacy"},
+    "artifact_hash": {"$ref": "#/definitions/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "input": {
+            "properties": {"source_kind": {"const": "source-body-proxy"}},
+            "required": ["source_kind"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "byte_exact": {
+            "properties": {"interpretation": {"const": "source-body-bytes-proxy"}}
+          },
+          "content_exact": {
+            "properties": {"interpretation": {"const": "source-body-proxy"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "input": {
+            "properties": {"source_kind": {"const": "production-extracted"}},
+            "required": ["source_kind"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "byte_exact": {
+            "properties": {"interpretation": {"const": "manifest-document-bytes"}}
+          },
+          "content_exact": {
+            "properties": {"interpretation": {"const": "production-extracted-content"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "input": {
+            "properties": {
+              "source_projection_identity": {
+                "type": "object",
+                "properties": {"schema": {"const": "jseval.source-body-projection.v2"}},
+                "required": ["schema"]
+              }
+            },
+            "required": ["source_projection_identity"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "algorithm": {"required": ["scope"]},
+          "denominators": {"required": ["scope"]},
+          "byte_exact": {"required": ["scope"]},
+          "content_exact": {"required": ["scope"]},
+          "near_duplicate": {"required": ["scope"]}
+        }
+      },
+      "else": {
+        "properties": {
+          "algorithm": {"not": {"required": ["scope"]}},
+          "denominators": {"not": {"required": ["scope"]}},
+          "byte_exact": {"not": {"required": ["scope"]}},
+          "content_exact": {"not": {"required": ["scope"]}},
+          "near_duplicate": {"not": {"required": ["scope"]}}
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "safeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._@:+-]{0,255}$"
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "nullableProbability": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "corpusIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "profile_id",
+        "schema",
+        "signature",
+        "file_count",
+        "total_bytes",
+        "admission_policy_digest"
+      ],
+      "properties": {
+        "kind": {"const": "raw-files"},
+        "profile_id": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/safeIdentifier"}
+          ]
+        },
+        "schema": {"const": "jseval.raw-corpus-manifest.v1"},
+        "signature": {"$ref": "#/definitions/sha256"},
+        "file_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "total_bytes": {"$ref": "#/definitions/nonNegativeInteger"},
+        "admission_policy_digest": {"$ref": "#/definitions/sha256"}
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "expected_count", "exported_count", "unique_opaque_ids"],
+      "properties": {
+        "status": {"const": "matched"},
+        "expected_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "exported_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "unique_opaque_ids": {"$ref": "#/definitions/nonNegativeInteger"}
+      }
+    },
+    "reconciliationV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "expected_count", "exported_count", "unique_opaque_ids",
+        "indexed_count", "terminal_excluded_count", "partial_success_count",
+        "terminal_exclusion_reasons"
+      ],
+      "properties": {
+        "status": {"const": "matched-with-disposition-accounting"},
+        "expected_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "exported_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "unique_opaque_ids": {"$ref": "#/definitions/nonNegativeInteger"},
+        "indexed_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "terminal_excluded_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "partial_success_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "terminal_exclusion_reasons": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/definitions/safeIdentifier"},
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "extractionIdentity": {
+      "oneOf": [
+        {"$ref": "#/definitions/extractionIdentityV1"},
+        {"$ref": "#/definitions/extractionIdentityV2"}
+      ]
+    },
+    "extractionIdentityV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "result_aliases_hmac_sha256": ["result_mapping_public_key_ed25519"],
+        "result_mapping_public_key_ed25519": ["result_aliases_hmac_sha256"]
+      },
+      "required": [
+        "schema",
+        "digest",
+        "corpus_signature",
+        "observations_digest",
+        "source_kind",
+        "extractor_build",
+        "extraction_policy_digest",
+        "document_count",
+        "reconciliation"
+      ],
+      "properties": {
+        "schema": {"const": "jseval.extracted-content-snapshot.v1"},
+        "digest": {"$ref": "#/definitions/sha256"},
+        "corpus_signature": {"$ref": "#/definitions/sha256"},
+        "observations_digest": {"$ref": "#/definitions/sha256"},
+        "source_kind": {"const": "production-extracted"},
+        "extractor_build": {"$ref": "#/definitions/safeIdentifier"},
+        "extraction_policy_digest": {"$ref": "#/definitions/sha256"},
+        "result_aliases_hmac_sha256": {"$ref": "#/definitions/sha256"},
+        "result_mapping_public_key_ed25519": {"$ref": "#/definitions/sha256"},
+        "document_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "reconciliation": {"$ref": "#/definitions/reconciliation"}
+      }
+    },
+    "extractionIdentityV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "result_aliases_hmac_sha256": ["result_mapping_public_key_ed25519"],
+        "result_mapping_public_key_ed25519": ["result_aliases_hmac_sha256"]
+      },
+      "required": [
+        "schema",
+        "digest",
+        "corpus_signature",
+        "observations_digest",
+        "source_kind",
+        "extractor_build",
+        "extraction_policy_digest",
+        "document_count",
+        "reconciliation"
+      ],
+      "properties": {
+        "schema": {"const": "jseval.extracted-content-snapshot.v2"},
+        "digest": {"$ref": "#/definitions/sha256"},
+        "corpus_signature": {"$ref": "#/definitions/sha256"},
+        "observations_digest": {"$ref": "#/definitions/sha256"},
+        "source_kind": {"const": "production-extracted"},
+        "extractor_build": {"$ref": "#/definitions/safeIdentifier"},
+        "extraction_policy_digest": {"$ref": "#/definitions/sha256"},
+        "result_aliases_hmac_sha256": {"$ref": "#/definitions/sha256"},
+        "result_mapping_public_key_ed25519": {"$ref": "#/definitions/sha256"},
+        "document_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "reconciliation": {"$ref": "#/definitions/reconciliationV2"}
+      }
+    },
+    "sourceProjectionIdentityV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "digest",
+        "corpus_signature",
+        "observations_digest",
+        "producer",
+        "measurement_stage",
+        "policy",
+        "observation_count",
+        "stage_counts"
+      ],
+      "properties": {
+        "schema": {"const": "jseval.source-body-projection.v1"},
+        "digest": {"$ref": "#/definitions/sha256"},
+        "corpus_signature": {"$ref": "#/definitions/sha256"},
+        "observations_digest": {"$ref": "#/definitions/sha256"},
+        "producer": {"const": "jseval.corpus-fetch.enron-source-stages.v1"},
+        "measurement_stage": {"const": "eligible_body"},
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text_decode",
+            "line_endings",
+            "body_selection",
+            "word_count",
+            "member_admission",
+            "member_order",
+            "retention",
+            "min_words"
+          ],
+          "properties": {
+            "text_decode": {"const": "utf-8-errors-replace"},
+            "line_endings": {"const": "crlf-to-lf"},
+            "body_selection": {"const": "first-blank-line-then-strip"},
+            "word_count": {"const": "python-str-split"},
+            "member_admission": {"const": "tar-regular-files-only"},
+            "member_order": {"const": "unicode-codepoint-member-name"},
+            "retention": {"const": "first-body-sha256"},
+            "min_words": {"$ref": "#/definitions/nonNegativeInteger"}
+          }
+        },
+        "observation_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "stage_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw_member", "parsed_body", "eligible_body", "retained_body"],
+          "properties": {
+            "raw_member": {"$ref": "#/definitions/nonNegativeInteger"},
+            "parsed_body": {"$ref": "#/definitions/nonNegativeInteger"},
+            "eligible_body": {"$ref": "#/definitions/nonNegativeInteger"},
+            "retained_body": {"$ref": "#/definitions/nonNegativeInteger"}
+          }
+        }
+      }
+    },
+    "compactExactCensus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpretation", "eligible_documents", "duplicate_documents", "prevalence",
+        "component_count", "duplicate_component_count", "singleton_count", "largest_component",
+        "size_histogram", "size_percentiles"
+      ],
+      "properties": {
+        "interpretation": {"enum": ["source-body-bytes-proxy", "source-body-proxy"]},
+        "eligible_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "prevalence": {"$ref": "#/definitions/nullableProbability"},
+        "component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "singleton_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "largest_component": {"$ref": "#/definitions/nonNegativeInteger"},
+        "size_histogram": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[1-9][0-9]*$"},
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "size_percentiles": {"$ref": "#/definitions/sizePercentiles"}
+      }
+    },
+    "populationExactCensus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema", "digest", "scope", "eligible_occurrences",
+        "content_exact_analyzable_nonempty_documents", "content_exact_excluded_empty_documents",
+        "raw_body_digest_counts_commitment", "normalized_content_digest_counts_commitment",
+        "byte_exact", "content_exact", "near_duplicate"
+      ],
+      "properties": {
+        "schema": {"const": "jseval.enron-population-exact-census.v1"},
+        "digest": {"$ref": "#/definitions/sha256"},
+        "scope": {"const": "all-eligible-body-occurrences-before-sha-retention"},
+        "eligible_occurrences": {"$ref": "#/definitions/nonNegativeInteger"},
+        "content_exact_analyzable_nonempty_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "content_exact_excluded_empty_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "raw_body_digest_counts_commitment": {"$ref": "#/definitions/sha256"},
+        "normalized_content_digest_counts_commitment": {"$ref": "#/definitions/sha256"},
+        "byte_exact": {"$ref": "#/definitions/compactExactCensus"},
+        "content_exact": {"$ref": "#/definitions/compactExactCensus"},
+        "near_duplicate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {"const": "unmeasured"},
+            "reason": {"const": "full-population body texts are not retained"}
+          }
+        }
+      }
+    },
+    "sourceProjectionIdentityV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema", "digest", "corpus_signature", "observations_digest", "producer",
+        "measurement_stage", "policy", "sampling", "observation_count", "stage_counts",
+        "population_exact_census"
+      ],
+      "properties": {
+        "schema": {"const": "jseval.source-body-projection.v2"},
+        "digest": {"$ref": "#/definitions/sha256"},
+        "corpus_signature": {"$ref": "#/definitions/sha256"},
+        "observations_digest": {"$ref": "#/definitions/sha256"},
+        "producer": {"const": "jseval.corpus-fetch.enron-source-stages.v1"},
+        "measurement_stage": {"const": "eligible_body"},
+        "policy": {"$ref": "#/definitions/enronSourcePolicy"},
+        "sampling": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "method", "frame", "requested_size", "seed", "population_count", "sample_count",
+            "per_occurrence_inclusion_probability"
+          ],
+          "properties": {
+            "method": {"const": "algorithm-r-reservoir-without-replacement-v1"},
+            "frame": {"const": "eligible_body-before-sha-retention"},
+            "requested_size": {"type": "integer", "minimum": 1, "maximum": 5000},
+            "seed": {"$ref": "#/definitions/nonNegativeInteger"},
+            "population_count": {"$ref": "#/definitions/nonNegativeInteger"},
+            "sample_count": {"$ref": "#/definitions/nonNegativeInteger"},
+            "per_occurrence_inclusion_probability": {"$ref": "#/definitions/nullableProbability"}
+          }
+        },
+        "observation_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "stage_counts": {"$ref": "#/definitions/enronStageCounts"},
+        "population_exact_census": {"$ref": "#/definitions/populationExactCensus"}
+      }
+    },
+    "enronSourcePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text_decode", "line_endings", "body_selection", "word_count", "member_admission",
+        "member_order", "retention", "min_words"
+      ],
+      "properties": {
+        "text_decode": {"const": "utf-8-errors-replace"},
+        "line_endings": {"const": "crlf-to-lf"},
+        "body_selection": {"const": "first-blank-line-then-strip"},
+        "word_count": {"const": "python-str-split"},
+        "member_admission": {"const": "tar-regular-files-only"},
+        "member_order": {"const": "unicode-codepoint-member-name"},
+        "retention": {"const": "first-body-sha256"},
+        "min_words": {"$ref": "#/definitions/nonNegativeInteger"}
+      }
+    },
+    "enronStageCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_member", "parsed_body", "eligible_body", "retained_body"],
+      "properties": {
+        "raw_member": {"$ref": "#/definitions/nonNegativeInteger"},
+        "parsed_body": {"$ref": "#/definitions/nonNegativeInteger"},
+        "eligible_body": {"$ref": "#/definitions/nonNegativeInteger"},
+        "retained_body": {"$ref": "#/definitions/nonNegativeInteger"}
+      }
+    },
+    "input": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_kind",
+            "content_interpretation",
+            "corpus_identity",
+            "observations_digest",
+            "extraction_identity",
+            "source_projection_identity"
+          ],
+          "properties": {
+            "source_kind": {"const": "source-body-proxy"},
+            "content_interpretation": {"const": "source-body-proxy"},
+            "corpus_identity": {"$ref": "#/definitions/corpusIdentity"},
+            "observations_digest": {"$ref": "#/definitions/sha256"},
+            "extraction_identity": {"type": "null"},
+            "source_projection_identity": {
+              "oneOf": [
+                {"type": "null"},
+                {"$ref": "#/definitions/sourceProjectionIdentityV1"},
+                {"$ref": "#/definitions/sourceProjectionIdentityV2"}
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_kind",
+            "content_interpretation",
+            "corpus_identity",
+            "observations_digest",
+            "extraction_identity",
+            "source_projection_identity"
+          ],
+          "properties": {
+            "source_kind": {"const": "production-extracted"},
+            "content_interpretation": {"const": "production-extracted-content"},
+            "corpus_identity": {"$ref": "#/definitions/corpusIdentity"},
+            "observations_digest": {"$ref": "#/definitions/sha256"},
+            "extraction_identity": {"$ref": "#/definitions/extractionIdentity"},
+            "source_projection_identity": {"type": "null"}
+          }
+        }
+      ]
+    },
+    "analysisConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shingle_width",
+        "simhash_bits",
+        "max_hamming",
+        "bands",
+        "jaccard_thresholds",
+        "exhaustive_slice_size",
+        "bootstrap_draws",
+        "seed",
+        "max_candidate_pairs"
+      ],
+      "properties": {
+        "shingle_width": {"type": "integer", "minimum": 1},
+        "simhash_bits": {"const": 64},
+        "max_hamming": {"type": "integer", "minimum": 0, "maximum": 63},
+        "bands": {"type": "integer", "minimum": 1, "maximum": 64},
+        "jaccard_thresholds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+        },
+        "exhaustive_slice_size": {"$ref": "#/definitions/nonNegativeInteger"},
+        "bootstrap_draws": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"},
+        "max_candidate_pairs": {"$ref": "#/definitions/nonNegativeInteger"}
+      }
+    },
+    "algorithm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "content_normalization",
+        "near_tokenizer",
+        "short_document_rule",
+        "clustering",
+        "config"
+      ],
+      "properties": {
+        "id": {"const": "duplicate-prevalence.v1"},
+        "scope": {"const": "frozen-uniform-eligible-body-sample"},
+        "content_normalization": {"const": "unicode-nfc-line-endings-unicode-whitespace-v1"},
+        "near_tokenizer": {"const": "unicode-nfc-casefold-alphanumeric-v1"},
+        "short_document_rule": {"const": "one-tagged-whole-token-sequence-shingle"},
+        "clustering": {"const": "single-linkage-connected-components"},
+        "config": {"$ref": "#/definitions/analysisConfig"}
+      }
+    },
+    "denominators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_files",
+        "source_observations",
+        "extraction_successes",
+        "extraction_failures",
+        "content_exact_analyzable_nonempty_documents",
+        "content_exact_excluded_empty_documents",
+        "near_analyzable_nonempty_documents",
+        "near_excluded_empty_documents"
+      ],
+      "properties": {
+        "scope": {"const": "frozen-uniform-eligible-body-sample"},
+        "manifest_files": {"$ref": "#/definitions/nonNegativeInteger"},
+        "source_observations": {"$ref": "#/definitions/nonNegativeInteger"},
+        "extraction_successes": {"$ref": "#/definitions/nonNegativeInteger"},
+        "extraction_failures": {"$ref": "#/definitions/nonNegativeInteger"},
+        "extraction_partial_successes": {"$ref": "#/definitions/nonNegativeInteger"},
+        "terminal_excluded_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "terminal_exclusion_reasons": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/definitions/safeIdentifier"},
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        },
+        "content_exact_analyzable_nonempty_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "content_exact_excluded_empty_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "near_analyzable_nonempty_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "near_excluded_empty_documents": {"$ref": "#/definitions/nonNegativeInteger"}
+      }
+    },
+    "sizePercentiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50", "p95"],
+      "properties": {
+        "p50": {"type": ["number", "null"], "minimum": 0},
+        "p95": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "stabilityInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "unit",
+        "draws",
+        "seed_material_sha256",
+        "central_percentile_mass",
+        "low",
+        "high",
+        "interpretation"
+      ],
+      "properties": {
+        "method": {"const": "seeded-component-percentile-bootstrap-v1"},
+        "unit": {"const": "single-linkage-component-including-singletons"},
+        "draws": {"type": "integer", "minimum": 1},
+        "seed_material_sha256": {"$ref": "#/definitions/sha256"},
+        "central_percentile_mass": {"const": 0.95},
+        "low": {"$ref": "#/definitions/probability"},
+        "high": {"$ref": "#/definitions/probability"},
+        "interpretation": {"const": "component-resampling stability, not population uncertainty"}
+      }
+    },
+    "exactResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interpretation",
+        "eligible_documents",
+        "duplicate_documents",
+        "prevalence",
+        "component_count",
+        "duplicate_component_count",
+        "singleton_count",
+        "largest_component",
+        "size_histogram",
+        "size_percentiles",
+        "duplicate_groups",
+        "stability_interval"
+      ],
+      "properties": {
+        "scope": {"const": "frozen-uniform-eligible-body-sample"},
+        "interpretation": {
+          "enum": [
+            "manifest-document-bytes",
+            "source-body-bytes-proxy",
+            "production-extracted-content",
+            "source-body-proxy"
+          ]
+        },
+        "eligible_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "prevalence": {"$ref": "#/definitions/nullableProbability"},
+        "component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "singleton_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "largest_component": {"$ref": "#/definitions/nonNegativeInteger"},
+        "size_histogram": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[1-9][0-9]*$"},
+          "additionalProperties": {"$ref": "#/definitions/nonNegativeInteger"}
+        },
+        "size_percentiles": {"$ref": "#/definitions/sizePercentiles"},
+        "duplicate_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["digest", "size"],
+            "properties": {
+              "digest": {"$ref": "#/definitions/sha256"},
+              "size": {"type": "integer", "minimum": 2}
+            }
+          }
+        },
+        "stability_interval": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/stabilityInterval"}
+          ]
+        }
+      }
+    },
+    "candidateRecall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threshold",
+        "positive_pair_count",
+        "captured_pair_count",
+        "missed_pair_count",
+        "candidate_recall",
+        "status"
+      ],
+      "properties": {
+        "threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "positive_pair_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "captured_pair_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "missed_pair_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "candidate_recall": {"$ref": "#/definitions/nullableProbability"},
+        "status": {"enum": ["measured", "undefined-no-positive-pairs"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "measured"}}},
+          "then": {"properties": {"candidate_recall": {"type": "number"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "undefined-no-positive-pairs"}}},
+          "then": {"properties": {"candidate_recall": {"type": "null"}}}
+        }
+      ]
+    },
+    "thresholdResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "threshold",
+        "confirmed_edge_count",
+        "eligible_documents",
+        "duplicate_documents",
+        "prevalence",
+        "component_count",
+        "duplicate_component_count",
+        "singleton_count",
+        "largest_component",
+        "size_histogram",
+        "size_percentiles",
+        "stability_interval"
+      ],
+      "properties": {
+        "threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "confirmed_edge_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "eligible_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_documents": {"$ref": "#/definitions/nonNegativeInteger"},
+        "prevalence": {"$ref": "#/definitions/nullableProbability"},
+        "component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "duplicate_component_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "singleton_count": {"$ref": "#/definitions/nonNegativeInteger"},
+        "largest_component": {"$ref": "#/definitions/nonNegativeInteger"},
+        "size_histogram": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[1-9][0-9]*$"},
+          "additionalProperties": {"$ref": "#/definitions/nonNegativeInteger"}
+        },
+        "size_percentiles": {"$ref": "#/definitions/sizePercentiles"},
+        "stability_interval": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/definitions/stabilityInterval"}
+          ]
+        }
+      }
+    },
+    "nearDuplicate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision", "candidate_generation", "exhaustive_slice", "threshold_sweep"],
+      "properties": {
+        "scope": {"const": "frozen-uniform-eligible-body-sample"},
+        "decision": {
+          "oneOf": [{
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "selected_threshold", "reason"],
+          "properties": {
+            "status": {"const": "UNDECIDED"},
+            "selected_threshold": {"type": "null"},
+            "reason": {
+              "const": "calibration and disjoint holdout review are outside this computational slice"
+            }
+          }
+          }, {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "selected_threshold", "reason", "analyzer_artifact_hash", "review_decision_artifact_hash"],
+            "properties": {
+              "status": {"const": "SELECTED"},
+              "selected_threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+              "reason": {"const": "frozen cohort-bound review decision; descriptive scope unchanged"},
+              "analyzer_artifact_hash": {"$ref": "#/definitions/sha256"},
+              "review_decision_artifact_hash": {"$ref": "#/definitions/sha256"}
+            }
+          }]
+        },
+        "candidate_generation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "candidate_pair_count", "banding_guarantee", "truncation"],
+          "properties": {
+            "method": {"const": "fixed-64-bit-simhash-disjoint-bands-v1"},
+            "candidate_pair_count": {"$ref": "#/definitions/nonNegativeInteger"},
+            "banding_guarantee": {
+              "type": "string",
+              "pattern": "^all pairs with SimHash Hamming distance <= ([0-9]|[1-5][0-9]|6[0-3]); no deterministic Jaccard-recall guarantee$"
+            },
+            "truncation": {"const": "none-fail-if-limit-exceeded"}
+          }
+        },
+        "exhaustive_slice": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["selection", "document_count", "pair_count", "candidate_recall_by_threshold"],
+          "properties": {
+            "selection": {"const": "deterministic-format-length-exact-status-round-robin-v1"},
+            "document_count": {"$ref": "#/definitions/nonNegativeInteger"},
+            "pair_count": {"$ref": "#/definitions/nonNegativeInteger"},
+            "candidate_recall_by_threshold": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"$ref": "#/definitions/candidateRecall"}
+            }
+          }
+        },
+        "threshold_sweep": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/definitions/thresholdResult"}
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "document_ids_emitted", "paths_emitted", "text_emitted"],
+      "properties": {
+        "mode": {"const": "aggregate-only"},
+        "document_ids_emitted": {"const": false},
+        "paths_emitted": {"const": false},
+        "text_emitted": {"const": false}
+      }
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://justsearch.dev/schemas/jseval/result-identity-sidecar.v1.schema.json",
+  "title": "jseval collision-safe result identity sidecar v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "privacy", "run_instance", "corpus_signature", "document_count", "modes"],
+  "properties": {
+    "schema": {"const": "jseval.result-identity-sidecar.v1"},
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "contains_source_paths", "contains_plain_path_hashes"],
+      "properties": {
+        "classification": {"const": "local-run-opaque"},
+        "contains_source_paths": {"const": false},
+        "contains_plain_path_hashes": {"const": false}
+      }
+    },
+    "run_instance": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "corpus_signature": {
+      "oneOf": [
+        {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        {"type": "null"}
+      ]
+    },
+    "document_count": {"type": "integer", "minimum": 0},
+    "modes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode", "queries"],
+        "properties": {
+          "mode": {"type": "string", "minLength": 1},
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["qid", "hits"],
+              "properties": {
+                "qid": {"type": "string", "minLength": 1},
+                "hits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["delivered_rank", "legacy_doc_id", "opaque_id"],
+                    "properties": {
+                      "delivered_rank": {"type": "integer", "minimum": 1},
+                      "legacy_doc_id": {"type": "string", "minLength": 1},
+                      "opaque_id": {
+                        "type": "string",
+                        "pattern": "^rdoc-[0-9a-f]{32}-[0-9]{8}$"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cluster_assignments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "cluster_source", "assignments", "mapping_signature_ed25519"],
+      "properties": {
+        "schema": {"const": "jseval.result-cluster-assignment.v1"},
+        "mapping_signature_ed25519": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{128}$"
+        },
+        "cluster_source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["analysis_artifact_sha256", "analysis_artifact_filename", "semantics", "decision", "threshold"],
+          "properties": {
+            "analysis_artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "analysis_artifact_filename": {"const": "duplicate_prevalence.v1.json"},
+            "semantics": {"const": "normalized-content-exact"},
+            "decision": {"const": "CONFIRMED"},
+            "threshold": {"const": null}
+          }
+        },
+        "assignments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["opaque_id", "content_fingerprint_sha256", "cluster_id"],
+            "properties": {
+              "opaque_id": {
+                "type": "string",
+                "pattern": "^rdoc-[0-9a-f]{32}-[0-9]{8}$"
+              },
+              "content_fingerprint_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "cluster_id": {
+                "type": "string",
+                "pattern": "^rcluster-[0-9a-f]{32}-[0-9]{8}$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

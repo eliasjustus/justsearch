@@ -44,6 +44,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-fetch-format-breadth",
+    "group": "corpus"
+  },
+  {
     "name": "corpus-fetch-miracl",
     "group": "corpus"
   },
@@ -89,6 +93,22 @@
   },
   {
     "name": "diff",
+    "group": "analysis"
+  },
+  {
+    "name": "duplicate-prevalence",
+    "group": "analysis"
+  },
+  {
+    "name": "duplicate-prevalence-apply-decision",
+    "group": "analysis"
+  },
+  {
+    "name": "duplicate-review-decide",
+    "group": "analysis"
+  },
+  {
+    "name": "duplicate-review-label",
     "group": "analysis"
   },
   {

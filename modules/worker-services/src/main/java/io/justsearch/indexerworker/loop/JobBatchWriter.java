@@ -126,7 +126,7 @@ public final class JobBatchWriter {
               log,
               precomputedEmbedding,
               new IndexingDocumentOps.SourceFileMetadata(
-                  ex.envelope().sizeBytes(), ex.envelope().modifiedAtMs()),
+                  ex.envelope().sizeBytes(), ex.envelope().modifiedAtMs(), ex.sourceSha256()),
               ex.docUid());
 
       long writeStart = System.currentTimeMillis();

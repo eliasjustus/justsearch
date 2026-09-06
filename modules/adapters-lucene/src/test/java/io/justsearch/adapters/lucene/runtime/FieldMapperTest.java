@@ -56,6 +56,7 @@ class FieldMapperTest {
         new FieldDef("path", "keyword", true, true, List.of("filter", "sort"), null, null, false),
         new FieldDef("mime", "keyword", false, true, List.of("filter", "facet"), null, null, false),
         new FieldDef("language", "keyword", false, true, List.of("filter", "facet"), null, null, false),
+        new FieldDef("source_sha256", "keyword", true, false, List.of(), null, null, false),
         // Numeric fields
         new FieldDef("created_at", "long", false, true, List.of("filter", "sort"), null, null, false),
         new FieldDef("modified_at", "long", false, true, List.of("filter", "sort"), null, null, false),
@@ -86,6 +87,17 @@ class FieldMapperTest {
     Document doc = fm.toDocument(in, null);
     assertEquals("/tmp/file.txt", doc.get("path")); // stored keyword accessible
     assertTrue(doc.getFields().stream().anyMatch(f -> f.name().equals("path")));
+  }
+
+  @Test
+  void mapsStoredOnlyKeyword() {
+    FieldMapper fm = new FieldMapper(createTestCatalog());
+    Document doc = fm.toDocument(Map.of("source_sha256", "a".repeat(64)), null);
+
+    assertEquals("a".repeat(64), doc.get("source_sha256"));
+    assertTrue(
+        doc.getFields("source_sha256")[0].fieldType().docValuesType()
+            == DocValuesType.NONE);
   }
 
   @Test

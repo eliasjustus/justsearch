@@ -27,6 +27,81 @@ import org.junit.jupiter.api.Test;
 class FacetingIntegrationTest extends RuntimeTestBase {
 
   @Test
+  void computeFacetsExcludesDeletedVersionAfterUpdate() throws Exception {
+    Path base = dataDir();
+    String yaml =
+        "app:\n  data_dir: "
+            + base.toString().replace("\\", "\\\\")
+            + "\n"
+            + "index:\n  collections:\n    - name: facetlivedocstest\n      roots: ['ignored']\n"
+            + "  vector:\n    dimension: 4\n";
+    Path cfg = writeConfig(yaml);
+    System.setProperty("justsearch.config", cfg.toString());
+
+    var runtime = createRuntimeWithDim(4);
+    try {
+      runtime
+          .session()
+          .snapshot
+          .writer()
+          .getConfig()
+          .setMergePolicy(org.apache.lucene.index.NoMergePolicy.INSTANCE);
+      runtime.indexingCoordinator().indexSingle(
+          new IndexDocument(
+              Map.of(
+                  SchemaFields.DOC_ID, "doc-1",
+                  SchemaFields.DOC_UID, "doc-1#0",
+                  SchemaFields.PATH, "doc-1",
+                  SchemaFields.FILENAME, "doc-1",
+                  SchemaFields.CONTENT, "invoice",
+                  SchemaFields.MIME, "application/pdf")));
+      runtime.indexingCoordinator().indexSingle(
+          new IndexDocument(
+              Map.of(
+                  SchemaFields.DOC_ID, "sentinel",
+                  SchemaFields.DOC_UID, "sentinel#0",
+                  SchemaFields.PATH, "sentinel",
+                  SchemaFields.FILENAME, "sentinel",
+                  SchemaFields.CONTENT, "unrelated",
+                  SchemaFields.MIME, "text/plain")));
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      assertTrue(
+          runtime
+              .indexingCoordinator()
+              .updateDocument("doc-1", Map.of(SchemaFields.MIME, "text/markdown")));
+      runtime.commitOps().commitAndTrack();
+      runtime.commitOps().maybeRefreshBlocking();
+
+      var manager = runtime.session().snapshot.searcherManager();
+      var searcher = manager.acquire();
+      try {
+        assertTrue(
+            searcher.getIndexReader().maxDoc() > searcher.getIndexReader().numDocs(),
+            "regression setup must retain the deleted pre-update Lucene document");
+      } finally {
+        manager.release(searcher);
+      }
+
+      var q =
+          runtime.textQueryOps().buildTextQuery(
+              "invoice",
+              LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+                  .includeChunks(true)
+                  .build());
+      var facets = runtime.facetingEngine().computeFacets(q, Map.of("mime", 10), 1);
+
+      assertEquals(1L, facets.matchedDocs());
+      assertFalse(facets.truncated());
+      assertFalse(facets.facets().get("mime").containsKey("application/pdf"));
+      assertEquals(1L, facets.facets().get("mime").get("text/markdown"));
+    } finally {
+      runtime.close();
+    }
+  }
+
+  @Test
   void computeFacetsCountsDocValuesAndCanTruncate() throws Exception {
     Path base = dataDir();
     String yaml =

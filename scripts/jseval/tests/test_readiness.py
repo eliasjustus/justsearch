@@ -400,6 +400,49 @@ class TestPollUntilStable:
 
     @patch("jseval.readiness.time.sleep")
     @patch("jseval.readiness._fetch_status")
+    def test_fresh_fatal_loop_aborts_before_predicate_or_sleep(self, mock_fetch, mock_sleep):
+        snapshot = _good_snapshot(indexState="FAILED", meta={"workerRpcStale": False})
+        mock_fetch.return_value = snapshot
+        predicate = MagicMock(return_value=[])
+        callback = MagicMock()
+        result = _poll_until_stable(
+            "http://localhost:33221", predicate, 600, 1, 1, on_snapshot=callback,
+        )
+        assert not result.passed
+        assert result.failure_reasons == ["indexing_loop_failed"]
+        assert result.snapshot is snapshot
+        mock_fetch.assert_called_once()
+        callback.assert_called_once()
+        predicate.assert_not_called()
+        mock_sleep.assert_not_called()
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_stale_fatal_state_does_not_override_fresh_recovery(self, mock_fetch, mock_sleep):
+        mock_fetch.side_effect = [
+            _good_snapshot(indexState="FAILED", meta={"workerRpcStale": True}),
+            _good_snapshot(indexState="IDLE", meta={"workerRpcStale": False}),
+        ]
+        result = _poll_until_stable("http://localhost:33221", lambda s: [], 600, 1, 1)
+        assert result.passed
+        assert result.snapshot["indexState"] == "IDLE"
+        assert mock_fetch.call_count == 2
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_document_error_is_left_to_corpus_predicate(self, mock_fetch, mock_sleep):
+        mock_fetch.return_value = _good_snapshot(indexState="ERROR", failedJobs=1)
+        result = _poll_until_stable(
+            "http://localhost:33221",
+            lambda s: [] if s["indexState"] == "ERROR" and s["failedJobs"] == 1 else ["pending"],
+            600, 1, 1,
+        )
+        assert result.passed
+        assert result.snapshot["failedJobs"] == 1
+        mock_sleep.assert_not_called()
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
     def test_fail_fast_on_consecutive_failures(self, mock_fetch, mock_sleep):
         """5 consecutive fetch failures should abort immediately."""
         mock_fetch.side_effect = ConnectionError("refused")
@@ -542,3 +585,26 @@ class TestWaitEmbedCompatSettled:
 
         assert state is None
         assert any("None" in r.message for r in caplog.records)
+
+
+def test_readiness_poll_caps_request_and_sleep_to_remaining_deadline(monkeypatch):
+    from jseval import readiness
+    clock = [0.0]
+    sleeps = []
+    monkeypatch.setattr(readiness.time, "monotonic", lambda: clock[0])
+
+    def fetch(client):
+        assert 0 < client.timeout.read <= 0.5
+        clock[0] += 0.4
+        return _good_snapshot()
+
+    def sleep(seconds):
+        assert seconds <= 0.1 + 1e-9
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(readiness, "_fetch_status", fetch)
+    monkeypatch.setattr(readiness.time, "sleep", sleep)
+    result = readiness._poll_until_stable("http://127.0.0.1:33221", lambda s: ["pending"], 0.5, 2, 2)
+    assert not result.passed
+    assert len(sleeps) == 1 and clock[0] == 0.5

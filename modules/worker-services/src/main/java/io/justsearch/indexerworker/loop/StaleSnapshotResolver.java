@@ -68,6 +68,30 @@ public final class StaleSnapshotResolver {
     if (validation == FileFreshnessSnapshot.SourceValidationResult.FRESH) {
       return false;
     }
+    return handleStale(filePath, envelope, collection, artifact, timing, validation);
+  }
+
+  /** Records a caller-proven stale condition through the same fail-closed outcome path. */
+  boolean handleKnownStale(
+      Path filePath,
+      FileEnvelope envelope,
+      String collection,
+      ValidatedExtractionArtifact artifact,
+      String timing,
+      FileFreshnessSnapshot.SourceValidationResult validation) {
+    if (validation == FileFreshnessSnapshot.SourceValidationResult.FRESH) {
+      throw new IllegalArgumentException("Known-stale validation must not be FRESH");
+    }
+    return handleStale(filePath, envelope, collection, artifact, timing, validation);
+  }
+
+  private boolean handleStale(
+      Path filePath,
+      FileEnvelope envelope,
+      String collection,
+      ValidatedExtractionArtifact artifact,
+      String timing,
+      FileFreshnessSnapshot.SourceValidationResult validation) {
     IngestionOutcome staleOutcome = ingestionAuthority.staleOutcome(validation, timing);
     if (validation == FileFreshnessSnapshot.SourceValidationResult.DELETED) {
       indexedDelta.accept(staleSourceHandler.deleteMissingSource(filePath));

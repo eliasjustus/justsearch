@@ -42,6 +42,7 @@ public final class WorkerProcessManager extends ManagedProcess {
 
   private String extraJvmArgs = "";
   private final java.util.Map<String, String> extraEnv = new java.util.LinkedHashMap<>();
+  private final java.util.Set<String> removedEnv = new java.util.LinkedHashSet<>();
 
   /**
    * Creates a new WorkerProcessManager using a JAR file.
@@ -171,7 +172,24 @@ public final class WorkerProcessManager extends ManagedProcess {
    * @return this, for chaining
    */
   public WorkerProcessManager withEnv(String name, String value) {
+    removedEnv.remove(name);
     extraEnv.put(name, value);
+    return this;
+  }
+
+  /**
+   * Removes an inherited environment variable from the spawned worker.
+   *
+   * <p>This is distinct from setting an empty value: configuration keys may deliberately treat blank
+   * as a request to use their default. Tests of shipped defaults need the key to be absent even when
+   * the developer or CI host defines it.
+   *
+   * @param name inherited environment variable to remove
+   * @return this, for chaining
+   */
+  public WorkerProcessManager withoutEnv(String name) {
+    extraEnv.remove(name);
+    removedEnv.add(name);
     return this;
   }
 
@@ -238,7 +256,7 @@ public final class WorkerProcessManager extends ManagedProcess {
     // Set environment variables to ensure worker uses correct paths
     pb.environment().put("JUSTSEARCH_DATA_DIR", dataDir.toAbsolutePath().toString());
     pb.environment().put("JUSTSEARCH_WORKER_SIGNAL_PATH", signalFilePath.toAbsolutePath().toString());
-    pb.environment().putAll(extraEnv);
+    applyEnvironmentOverrides(pb);
 
     // Set repo root for SSOT resolution (if not already set via JVM args)
     Path projectRoot = findProjectRoot(workerPath);
@@ -270,6 +288,7 @@ public final class WorkerProcessManager extends ManagedProcess {
     javaOpts.append("-Djustsearch.data.dir=").append(dataDir.toAbsolutePath());
 
     pb.environment().put("JAVA_OPTS", javaOpts.toString());
+    applyEnvironmentOverrides(pb);
 
     // Set repo root for SSOT resolution
     Path projectRoot = findProjectRoot(workerPath);
@@ -377,7 +396,7 @@ public final class WorkerProcessManager extends ManagedProcess {
 
     pb.environment().put("JUSTSEARCH_DATA_DIR", dataDir.toAbsolutePath().toString());
     pb.environment().put("JUSTSEARCH_WORKER_SIGNAL_PATH", signalFilePath.toAbsolutePath().toString());
-    pb.environment().putAll(extraEnv);
+    applyEnvironmentOverrides(pb);
 
     // Also set env vars for repo root (backup to system properties in argfile)
     if (repoRootForWorker != null) {
@@ -388,6 +407,11 @@ public final class WorkerProcessManager extends ManagedProcess {
     log.info("Set JUSTSEARCH_DATA_DIR={}", dataDir.toAbsolutePath());
 
     return pb;
+  }
+
+  private void applyEnvironmentOverrides(ProcessBuilder processBuilder) {
+    removedEnv.forEach(processBuilder.environment()::remove);
+    processBuilder.environment().putAll(extraEnv);
   }
 
   /**

@@ -7,9 +7,12 @@ the real sources happens separately, matching this tempdoc family's established 
 
 from __future__ import annotations
 
+from collections import Counter
 import gzip
+import hashlib
 import io
 import json
+import os
 import tarfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -311,13 +314,8 @@ _FIFTH_BODY = ("Fifth distinct message body containing more than the minimum num
                 "for inclusion in the sample today. " * 3).strip()
 
 
-def _build_fake_enron_tar_gz() -> bytes:
-    """~6 fake maildir entries exercising every filter `_sample_enron_from_raw` applies:
-    one normal message, one too-short body, one exact-duplicate body (different subject --
-    dedup is on body content, not subject), one with no Subject header (title-fallback path),
-    and two more distinct normal messages. Member names are deliberately NOT pre-sorted (tar
-    write order != alphabetical) so a passing test proves the sampler sorts by name itself."""
-    entries = {
+def _fake_enron_entries() -> dict[str, bytes]:
+    return {
         "maildir/allen-p/inbox/2.": _maildir_message(subject="Too short", body="Too short."),
         "maildir/kaminski-v/all/1.": _maildir_message(subject="Fifth message", body=_FIFTH_BODY),
         "maildir/allen-p/inbox/1.": _maildir_message(subject="Meeting notes", body=_NORMAL_BODY),
@@ -325,9 +323,17 @@ def _build_fake_enron_tar_gz() -> bytes:
         "maildir/allen-p/inbox/3.": _maildir_message(subject="Duplicate of one", body=_NORMAL_BODY),
         "maildir/bass-e/sent/1.": _maildir_message(subject=None, body=_NO_SUBJECT_BODY),
     }
+
+
+def _build_fake_enron_tar_gz() -> bytes:
+    """~6 fake maildir entries exercising every filter `_sample_enron_from_raw` applies:
+    one normal message, one too-short body, one exact-duplicate body (different subject --
+    dedup is on body content, not subject), one with no Subject header (title-fallback path),
+    and two more distinct normal messages. Member names are deliberately NOT pre-sorted (tar
+    write order != alphabetical) so a passing test proves the sampler sorts by name itself."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, content in entries.items():
+        for name, content in _fake_enron_entries().items():
             info = tarfile.TarInfo(name=name)
             info.size = len(content)
             tar.addfile(info, io.BytesIO(content))
@@ -345,6 +351,41 @@ def _patched_enron(tar_gz_bytes: bytes):
         patch("jseval.corpus_fetch.Request", _FakeReq),
         patch("jseval.corpus_fetch.urlopen", side_effect=_urlopen),
     )
+
+
+def test_iter_enron_source_stages_exposes_prefilter_counts_and_duplicate_links():
+    messages = sorted(_fake_enron_entries().items())
+    events = list(corpus_fetch.iter_enron_source_stages(messages, min_words=10))
+
+    assert Counter(event.stage for event in events) == {
+        "raw_member": 6,
+        "parsed_body": 6,
+        "eligible_body": 5,
+        "retained_body": 4,
+    }
+    duplicate = next(
+        event for event in events
+        if event.stage == "eligible_body" and event.member_name == "maildir/allen-p/inbox/3."
+    )
+    assert duplicate.duplicate_of == "maildir/allen-p/inbox/1."
+    assert duplicate.body_sha256 == hashlib.sha256(_NORMAL_BODY.encode("utf-8")).hexdigest()
+    assert [event.member_name for event in events if event.stage == "retained_body"] == [
+        "maildir/allen-p/inbox/1.",
+        "maildir/bass-e/sent/1.",
+        "maildir/bass-e/sent/2.",
+        "maildir/kaminski-v/all/1.",
+    ]
+
+
+def test_iter_enron_source_stages_preserves_decode_and_line_normalization():
+    raw = b"Subject: Replacement\r\n\r\nfirst\xff second third"
+    events = list(corpus_fetch.iter_enron_source_stages([("maildir/example/1.", raw)], min_words=3))
+
+    assert [event.stage for event in events] == [
+        "raw_member", "parsed_body", "eligible_body", "retained_body",
+    ]
+    assert events[-1].subject == "Replacement"
+    assert events[-1].body == "first\ufffd second third"
 
 
 def test_fetch_enron_raw_sample_is_deterministic_across_two_calls(tmp_path, monkeypatch):
@@ -386,6 +427,12 @@ def test_fetch_enron_raw_sample_strips_headers_filters_and_dedupes(tmp_path, mon
 
     assert len(docs) == 4  # 6 raw entries - 1 too-short - 1 exact-duplicate body = 4 eligible
     assert prov["n_docs"] == 4
+    assert prov["stage_counts"] == {
+        "raw_member": 6,
+        "parsed_body": 6,
+        "eligible_body": 5,
+        "retained_body": 4,
+    }
     assert "maildir__allen-p__inbox__2." not in doc_ids  # too-short body, filtered by min_words
     assert "maildir__allen-p__inbox__3." not in doc_ids  # exact-duplicate body, filtered by dedup
     assert "maildir__allen-p__inbox__1." in doc_ids  # the original (first in sorted order) survives
@@ -413,7 +460,22 @@ def test_fetch_enron_raw_sample_strips_headers_filters_and_dedupes(tmp_path, mon
     assert prov["seed"] == 1
     assert prov["min_words"] == 10
     assert prov["license"] == "LicenseRef-Enron-FERC-public-record"
-    assert prov["raw_source_signature"]  # non-empty: a real sha256 of the cached tarball bytes
+    assert prov["raw_source_signature"] == hashlib.sha256(tar_bytes).hexdigest()
+
+    expected_docs = [
+        {"_id": "maildir__allen-p__inbox__1.", "title": "Meeting notes", "text": _NORMAL_BODY},
+        {
+            "_id": "maildir__bass-e__sent__1.",
+            "title": " ".join(_NO_SUBJECT_BODY.split()[:8]),
+            "text": _NO_SUBJECT_BODY,
+        },
+        {"_id": "maildir__bass-e__sent__2.", "title": "Another topic", "text": _ANOTHER_BODY},
+        {"_id": "maildir__kaminski-v__all__1.", "title": "Fifth message", "text": _FIFTH_BODY},
+    ]
+    expected_bytes = "".join(
+        json.dumps(doc, ensure_ascii=False) + os.linesep for doc in expected_docs
+    ).encode("utf-8")
+    assert (tmp_path / "out" / "docs.jsonl").read_bytes() == expected_bytes
 
 
 def test_fetch_enron_raw_sample_reservoir_is_seed_dependent_but_reproducible(tmp_path, monkeypatch):
@@ -441,6 +503,12 @@ def test_fetch_enron_raw_sample_reservoir_is_seed_dependent_but_reproducible(tmp
         "maildir__allen-p__inbox__1.", "maildir__bass-e__sent__1.",
         "maildir__bass-e__sent__2.", "maildir__kaminski-v__all__1.",
     }
+    assert [d["_id"] for d in docs_a] == [
+        "maildir__bass-e__sent__1.", "maildir__kaminski-v__all__1.",
+    ]
+    assert [d["_id"] for d in docs_b] == [
+        "maildir__allen-p__inbox__1.", "maildir__bass-e__sent__2.",
+    ]
 
 
 def test_corpus_fetch_enron_raw_end_to_end_builds_zero_query_mixed_pool(tmp_path, monkeypatch):

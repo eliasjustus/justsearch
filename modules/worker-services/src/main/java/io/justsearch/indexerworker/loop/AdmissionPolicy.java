@@ -19,6 +19,7 @@ final class AdmissionPolicy {
   static String staleReasonCode(SourceValidationResult validation) {
     return switch (validation) {
       case SIZE_CHANGED -> IngestionReasonCodes.SIZE_CHANGED_AFTER_SNAPSHOT;
+      case CONTENT_CHANGED -> IngestionReasonCodes.STALE_AFTER_EXTRACTION;
       case MODIFIED_TIME_CHANGED -> IngestionReasonCodes.MODIFIED_TIME_CHANGED_AFTER_SNAPSHOT;
       case FILE_KEY_CHANGED -> IngestionReasonCodes.FILE_KEY_CHANGED_AFTER_SNAPSHOT;
       case SOURCE_KIND_CHANGED -> IngestionReasonCodes.SOURCE_KIND_CHANGED_AFTER_SNAPSHOT;

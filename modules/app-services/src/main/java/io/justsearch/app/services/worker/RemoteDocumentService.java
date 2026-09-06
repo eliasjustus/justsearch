@@ -163,11 +163,32 @@ public final class RemoteDocumentService implements DocumentService {
                 response.getTruncated(),
                 response.getNextOffsetChars(),
                 response.getTotalChars(),
+                response.getExtractionStatus(),
+                response.hasContentTruncated() ? response.getContentTruncated() : null,
+                response.getExtractionPolicyId(),
+                response.getExtractionParserId(),
+                response.getSourceSha256(),
                 error);
 
           } catch (Exception e) {
             log.error("Failed to fetch document slice via gRPC", e);
             throw new UnavailableException("Failed to fetch document slice via Worker: " + e.getMessage(), e);
+          }
+        });
+  }
+
+  @Override
+  public CompletionStage<DocumentIdPage> listAllDocumentIds(int offset, int limit) {
+    return CompletableFuture.supplyAsync(
+        () -> {
+          try {
+            var response = clientSupplier.get().listAllDocumentIds(offset, limit);
+            return new DocumentIdPage(
+                response.getDocIdsList(), response.getTotalCount(), response.getTookMs());
+          } catch (Exception e) {
+            log.error("Failed to list document IDs via gRPC", e);
+            throw new UnavailableException(
+                "Failed to list document IDs via Worker: " + e.getMessage(), e);
           }
         });
   }

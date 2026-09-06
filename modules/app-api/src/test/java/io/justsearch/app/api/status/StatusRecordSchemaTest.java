@@ -648,6 +648,7 @@ final class StatusRecordSchemaTest {
         "chunk_total",                   // chunk geometry
         "content",                       // excluded by SearchResultFormatter (too large)
         "content_sha256",                // tempdoc 931 §C.6 — feedback capture key, stripped before the HTTP response
+        "source_sha256",                 // source-byte extraction provenance, surfaced through preview
         "created_at",                    // not displayed in search results
         "doc_id",                        // identity — carried as top-level Hit.id, not fields
         "doc_uid",                       // internal dedup key

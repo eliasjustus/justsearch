@@ -168,6 +168,13 @@
       ]
     },
     {
+      "id": "source_sha256",
+      "type": "keyword",
+      "stored": true,
+      "docValues": false,
+      "roles": []
+    },
+    {
       "id": "ocr_present",
       "type": "boolean",
       "stored": true,

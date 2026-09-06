@@ -154,6 +154,24 @@ final class OnnxEmbeddingEncoderBoundedTokenizeTest {
   }
 
   @Test
+  @Timeout(value = 2, unit = TimeUnit.MINUTES)
+  void pooledOnlyEncodingMatchesFullResultsWithoutReturningUnusedChunks() throws Exception {
+    List<String> texts = List.of("short introduction", longDocText(1), "brief conclusion", longDocText(2));
+    List<EmbedResult> full = encoder.embedBatchWithChunking(texts);
+    List<EmbedResult> pooled = encoder.embedBatchPooled(texts);
+    assertEquals(full.size(), pooled.size());
+    for (int i = 0; i < full.size(); i++) {
+      assertEquals(full.get(i).chunkCount(), pooled.get(i).chunkCount());
+      assertTrue(cosine(full.get(i).vector(), pooled.get(i).vector()) > 0.999999);
+      assertTrue(pooled.get(i).chunkVectors().isEmpty());
+    }
+    EmbedResult single = encoder.embedBatchPooled(List.of(texts.get(1))).get(0);
+    assertTrue(cosine(encoder.embed(texts.get(1)).vector(), single.vector()) > 0.999999);
+    assertTrue(single.chunkCount() > 1);
+    assertTrue(single.chunkVectors().isEmpty());
+  }
+
+  @Test
   @Timeout(value = 10, unit = TimeUnit.MINUTES)
   @DisplayName("multi-group batch: sampled positions == singleton embed(), order preserved")
   void groupBoundariesPreserveResults() throws Exception {

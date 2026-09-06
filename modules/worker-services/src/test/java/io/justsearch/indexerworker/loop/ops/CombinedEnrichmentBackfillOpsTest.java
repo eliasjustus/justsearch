@@ -207,6 +207,7 @@ class CombinedEnrichmentBackfillOpsTest {
         new int[] {0},
         () -> false,
         () -> false,
+        () -> false,
         new WindowedEmbedProgress());
   }
 
@@ -709,7 +710,7 @@ class CombinedEnrichmentBackfillOpsTest {
   @Test
   @DisplayName(
       "late-chunking flag ON: embedWithSpans returns null (content exceeds the raised single-pass"
-          + " limit) — folds INLINE into the ordinary windowed batch (embedDocumentBatch), still"
+          + " limit) — folds INLINE into resumable document windows, still"
           + " ONE bundled write for the parent")
   void lateChunking_flagOn_overLimitParent_nullEmbedWithSpans_foldsIntoWindowedBatch() {
     seedDoc(
@@ -719,6 +720,8 @@ class CombinedEnrichmentBackfillOpsTest {
     seedChunkDoc("chunk-1", "parent-long", 0, 0, 10, SchemaFields.EMBEDDING_STATUS_PENDING);
 
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class))).thenReturn(null);
+    when(embeddingProvider.embedDocumentWindows(anyString(), eq(0), anyInt()))
+        .thenReturn(new EmbeddingProvider.WindowSlice(List.of(new float[] {1f, 2f}), 0, 1));
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
@@ -727,11 +730,10 @@ class CombinedEnrichmentBackfillOpsTest {
     assertTrue(didWork);
     verify(embeddingProvider, times(1)).embedWithSpans(anyString(), any(int[][].class));
     verify(embeddingProvider, times(1))
-        .embedDocumentBatch(
-            argThat(
-                texts ->
-                    texts.size() == 1
-                        && texts.contains("content that exceeds the raised single-pass limit")));
+        .embedDocumentWindows(eq("content that exceeds the raised single-pass limit"), eq(0), anyInt());
+    verify(embeddingProvider, never()).embedDocumentBatch(anyList());
+    verify(embeddingProvider, never())
+        .documentWindowCount("content that exceeds the raised single-pass limit");
 
     Map<String, Object> parentState = fakeIndex.get("parent-long");
     assertEquals(
@@ -765,6 +767,8 @@ class CombinedEnrichmentBackfillOpsTest {
     when(embeddingProvider.embedWithSpans(anyString(), any(int[][].class)))
         .thenThrow(
             new RuntimeException("Late-chunking embed failed: " + arenaOom.getMessage(), arenaOom));
+    when(embeddingProvider.embedDocumentWindows(anyString(), eq(0), anyInt()))
+        .thenReturn(new EmbeddingProvider.WindowSlice(List.of(new float[] {1f, 2f}), 0, 1));
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
@@ -772,7 +776,9 @@ class CombinedEnrichmentBackfillOpsTest {
 
     assertTrue(didWork);
     verify(embeddingProvider, times(1))
-        .embedDocumentBatch(argThat(texts -> texts.contains("poison parent content")));
+        .embedDocumentWindows(eq("poison parent content"), eq(0), anyInt());
+    verify(embeddingProvider, never()).embedDocumentBatch(anyList());
+    verify(embeddingProvider, never()).documentWindowCount("poison parent content");
 
     Map<String, Object> parentState = fakeIndex.get("parent-oom");
     assertEquals(

@@ -410,6 +410,53 @@ def cmd_corpus_fetch_enron_raw(ctx, name, seed, n_docs, min_words, datasets_dir)
                    f"pool) from CMU Enron raw maildir (seed={seed})")
 
 
+@click.command("corpus-fetch-format-breadth")
+@click.option("--datasets-dir", default=None, type=click.Path(),
+              help="Base datasets dir (default: repo datasets/).")
+@click.option("--write-manifest", is_flag=True,
+              help="First-run only: record reviewed observed source/member hashes.")
+@click.pass_context
+def cmd_corpus_fetch_format_breadth(ctx, datasets_dir, write_manifest):
+    """Materialize the frozen raw 16 EML + 9 RTF + 8 nested-ZIP sibling corpus.
+
+    All upstream artifacts use the shared dataset cache. The ordinary path requires the committed
+    observed manifest and fails on any source/member drift; ``--write-manifest`` is the explicit
+    first-materialization path used to create that reviewable manifest. Raw bytes remain gitignored.
+    """
+    from .. import format_breadth_corpus as breadth
+    from .._paths import REPO_ROOT
+    import tarfile
+    import zipfile
+
+    base = Path(datasets_dir) if datasets_dir else REPO_ROOT / "datasets"
+    recipe_dir = REPO_ROOT / "scripts" / "jseval" / "666-corpora" / "format-breadth-v1"
+    try:
+        metadata = breadth.materialize_format_breadth(
+            dataset_dir=base / "mixed" / "format-breadth-v1",
+            realdocs_dir=base / "mixed" / "realdocs-v1" / "corpus-dir",
+            realdocs_manifest_path=(
+                REPO_ROOT
+                / "scripts"
+                / "jseval"
+                / "666-corpora"
+                / "realdocs-v1"
+                / "manifest.json"
+            ),
+            recipe_path=recipe_dir / "recipe.json",
+            manifest_path=recipe_dir / "manifest.v1.json",
+            write_manifest=write_manifest,
+        )
+    except (breadth.FormatBreadthError, OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
+        raise click.ClickException(str(exc)) from exc
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(metadata, indent=2))
+    else:
+        click.echo(
+            "Fetched mixed/format-breadth-v1: 33 raw files "
+            "(16 EML, 9 RTF, 8 ZIP); realdocs-v1 SHA overlap=0"
+        )
+
+
 @click.command("corpus-certify")
 @click.option("--dataset", required=True,
               help="Dataset name. Bare names resolve under golden/ (e.g. synth-multihop-v1); "
@@ -773,4 +820,5 @@ COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member,
             cmd_corpus_scientific_evidence_build, cmd_corpus_inject_real,
             cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
             cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_fetch_enron_raw,
+            cmd_corpus_fetch_format_breadth,
             cmd_corpus_query_variant]

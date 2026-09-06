@@ -355,6 +355,11 @@ message FetchDocumentSliceResponse {
   bool truncated = 6;         // true if there is more content beyond this slice
   int32 next_offset_chars = 7; // where to resume; equals offset_chars + content.length()
   int32 total_chars = 8;      // full length of the extracted text; 0 when not found / unknown
+  string extraction_status = 9;    // persisted extraction outcome (for example SUCCESS_FULL)
+  optional bool content_truncated = 10; // persisted extraction truncation; absent on legacy docs
+  string extraction_policy_id = 11; // extraction policy identity stored with the document
+  string extraction_parser_id = 12; // parser identity stored with the document
+  string source_sha256 = 13;         // SHA-256 of the exact source bytes that were extracted
 }
 
 // === RAG Context Retrieval ===
@@ -615,14 +620,16 @@ message ListFolderFilesResponse {
 // Returns a page of document IDs from the full index, independent of folder hierarchy.
 
 message ListAllDocumentIdsRequest {
-  int32 offset = 1;  // Zero-based page start
-  int32 limit  = 2;  // Max IDs to return (0 = default 1000)
+  int32  offset         = 1;  // Zero-based page start
+  int32  limit          = 2;  // Max IDs to return (0 = default 1000)
+  string snapshot_token = 3;  // Token returned by the first page; required for a continuation
 }
 
 message ListAllDocumentIdsResponse {
-  repeated string doc_ids    = 1;
-  int64           total_count = 2;  // Total docs in index (may exceed limit)
+  repeated string doc_ids     = 1;
+  int64           total_count = 2;  // Exact live parent-document count for this snapshot
   int64           took_ms     = 3;
+  string          snapshot_token = 4;
 }
 
 // === Rerank (360: Cross-Encoder Reranking in Worker) ===
@@ -672,7 +679,7 @@ message CoreStatus {
   int64 queue_depth = 1;
   int64 doc_count = 2;
   bool is_healthy = 3;
-  string state = 4;                   // IDLE, INDEXING, ERROR
+  string state = 4;                   // IDLE, INDEXING, ERROR (document failures), FAILED (fatal indexing-loop death)
   int64 last_commit_timestamp = 5;
   int64 signal_bus_activity_ts = 6;
   int64 signal_bus_heartbeat_ts = 7;
@@ -1733,7 +1740,7 @@ message HealthCheckResponse {
   bool serving = 1;
   string version = 2;
   int64 pid = 3;              // Worker process ID (for zombie/watchdog tests)
-  string worker_state = 4;    // Worker state: RUNNING, PAUSED, IDLE (for time-lord tests)
+  string worker_state = 4;    // Worker loop state: RUNNING, PAUSED, IDLE, FAILED (fatal death); STARTING when deferred
   // DEPRECATED: actually reports embedding readiness, not LLM readiness.
   // Use embedding_ready (field 6) instead. Kept for wire compatibility.
   // The LLM (llama-server) runs in the Head process and is not visible to the Worker.

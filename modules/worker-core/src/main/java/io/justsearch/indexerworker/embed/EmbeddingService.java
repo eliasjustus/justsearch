@@ -396,6 +396,38 @@ public final class EmbeddingService implements EmbeddingProvider, Closeable {
       return List.of();
     }
 
+    if (backend
+        instanceof io.justsearch.indexerworker.embed.onnx.OnnxEmbeddingBackend onnxBackend) {
+      // Parent callers consume no chunk vectors. Avoid retaining and boxing every window
+      // through the generic backend response before immediately discarding those vectors.
+      List<String> prefixed = new ArrayList<>(texts.size());
+      for (String text : texts) prefixed.add(documentPrefix + text);
+      try {
+        var results = onnxBackend.encoder().embedBatchPooled(prefixed);
+        List<float[]> vectors = new ArrayList<>(results.size());
+        int detectedDim = 0;
+        for (var result : results) {
+          if (result.vector().length == 0) {
+            vectors.add(null);
+          } else {
+            if (detectedDim == 0) detectedDim = result.vector().length;
+            if (result.chunkCount() > 1) events.onChunked(result.chunkCount());
+            vectors.add(result.vector());
+          }
+        }
+        if (detectedDim > 0) this.dimension = detectedDim;
+        log.debug("Batch embedding: {} texts, {} vectors returned", texts.size(), vectors.size());
+        return vectors;
+      } catch (ai.onnxruntime.OrtException e) {
+        events.onInvokeFailure(
+            EmbeddingTelemetryEvents.Operation.BATCH,
+            EmbeddingTelemetryEvents.InvokeFailureReason.BACKEND_EXCEPTION);
+        log.warn("Batch embedding failed: {}", e.getMessage());
+        log.debug("Batch embedding failed (stack trace)", e);
+        return null;
+      }
+    }
+
     try (AiBackend.Session session = backend.createSession()) {
       List<EmbeddingRequest> requests = new ArrayList<>(texts.size());
       for (String text : texts) {

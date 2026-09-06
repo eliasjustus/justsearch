@@ -25,7 +25,7 @@ starting backends, debugging port issues, or running pipeline profiling.
 - **Occupied ports require identity evidence** — use `justsearch.dev.stop` for a dev-runner-owned
   process. Never kill an unattributed listener from port evidence alone; identify its owning
   lifecycle first and use that lifecycle's cleanup path.
-- **jseval's `--llm` flag cold start** (`python -m jseval run --start-backend --llm`, not a `dev.start` option) may fail once: Worker port discovery (15s timeout) races with GGUF model load (~5GB disk read). Retry succeeds because OS file cache is warm. Not a code bug.
+- **jseval's eval backend cannot activate inference:** `--start-backend --llm` is rejected because `runHeadlessEval` pins read-only settings. For isolated full-inference measurement, use the normal owned dev runner with writable settings and `JAVA_OPTS` containing `-Djustsearch.eval.mode=true` to skip bundled help. Follow the exact isolation/preflight recipe in `docs/reference/jseval-pipeline-reference.md`; verify zero initial documents before ingestion.
 - **`--clean none`** preserves embedding progress across backend restarts
 - **`RERANK_MODEL_PATH`** must be absolute (Gradle `runHeadless` CWD differs from repo root)
 - **Dev stacks default to the compact chat profile** (tempdoc 842) — smaller/faster, frees VRAM. `ai_activate {chatProfile:"standard"}` switches to the standard (user-facing) model; the engine reload takes single-digit seconds either direction. Compact model files aren't installed by default — fetch them with `node scripts/dev/fetch-compact-model.mjs` (sha-verified).

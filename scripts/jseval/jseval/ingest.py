@@ -179,12 +179,15 @@ def add_watched_root(
     base_url: str,
     docs_dir: Path,
     timeout_sec: float = 1800.0,
+    *,
+    session_token: str | None = None,
 ) -> None:
     """Add a directory as a watched root for JustSearch indexing."""
     abs_path = str(docs_dir.resolve())
     log.info("Adding watched root: %s", abs_path)
 
-    with httpx.Client(base_url=base_url, timeout=timeout_sec) as client:
+    headers = {"X-JustSearch-Session": session_token} if session_token and session_token.strip() else {}
+    with httpx.Client(base_url=base_url, timeout=timeout_sec, headers=headers) as client:
         resp = client.post(
             "/api/indexing/roots",
             json={"path": abs_path},
@@ -197,6 +200,8 @@ def prepare_corpus(
     dataset_name: str,
     config: IngestConfig,
     corpus_dir: Path | None = None,
+    raw_context=None,
+    env_overrides=None,
 ) -> dict:
     """Materialize (if needed) and ingest a dataset.
 
@@ -210,20 +215,30 @@ def prepare_corpus(
     # corpus-dir resolution so cache/materialization paths key on the same canonical name.
     dataset_name = normalize_dataset_name(dataset_name) if dataset_name else dataset_name
 
-    raw_dir = _raw_corpus_dir(dataset_name)
-    if raw_dir is not None and corpus_dir is None:
-        # Raw binary-file dataset (tempdoc 686): the files ARE the corpus — real
-        # PDFs/office docs ingested as-is so the Worker's Tika/PDFBox/POI path is
-        # exercised. No corpus.jsonl, no materialization projection, no cache
-        # sidecar (there is no projection that could go stale).
-        doc_count = sum(1 for p in raw_dir.rglob("*") if p.is_file())
-        if doc_count == 0:
-            raise FileNotFoundError(
-                f"raw_files dataset {dataset_name} has an empty corpus-dir at {raw_dir}. "
-                f"Build it first (see the dataset's metadata.json 'manifest' pointer)."
-            )
-        log.info("Raw binary corpus: %s (%d files)", raw_dir, doc_count)
-        return ingest_and_wait(config, raw_dir, corpus_doc_count=doc_count)
+    from .raw_corpus_manifest import (
+        resolve_raw_corpus_context,
+        validate_raw_corpus_context,
+    )
+
+    if raw_context is None:
+        raw_context = resolve_raw_corpus_context(
+            dataset_name, corpus_dir, env_overrides=env_overrides,
+        )
+    if raw_context is not None:
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset_name,
+            explicit_dir=corpus_dir,
+        )
+        result = ingest_and_wait(
+            config, raw_context.root, corpus_doc_count=raw_context.identity.file_count,
+        )
+        return {
+            **result,
+            "corpus_doc_count": raw_context.identity.file_count,
+            "corpus_identity": raw_context.to_corpus_identity(),
+        }
 
     resolved_dir = corpus_dir or default_corpus_dir(dataset_name)
     corpus_doc_count = _ensure_materialized(dataset_name, resolved_dir, corpus_dir)

@@ -120,6 +120,7 @@ def start_backend(
     corpus_dir: Path | None = None,
     dataset_name: str | None = None,
     pin_selector_key: str | None = None,
+    raw_context=None,
 ) -> BackendInfo:
     """Start runHeadlessEval and wait for the backend to become healthy.
 
@@ -146,6 +147,19 @@ def start_backend(
     impossible (see :data:`_EVAL_MODE_LLM_ERROR` for the verified chain and the
     out-of-band recipe). ``llm=False`` (the default) is untouched.
     """
+    if raw_context is not None:
+        from .raw_corpus_manifest import validate_raw_corpus_context
+
+        validate_raw_corpus_context(
+            raw_context,
+            env_overrides,
+            expected_dataset=dataset_name,
+            explicit_dir=corpus_dir,
+        )
+        if pin_selector_key is not None:
+            raise ValueError(
+                "--pin-index-selector-key cannot bypass strict raw corpus identity"
+            )
     if llm:
         raise EvalModeLlmUnsupportedError(_EVAL_MODE_LLM_ERROR)
     if health_timeout_sec is None:
@@ -222,6 +236,7 @@ def start_backend(
             corpus_dir=corpus_dir,
             dataset_name=dataset_name,
             pin_selector_key=pin_selector_key,
+            **({"raw_context": raw_context} if raw_context is not None else {}),
         )
         return BackendInfo(
             proc=proc, data_dir=resolved_data,
@@ -339,6 +354,7 @@ def _run_with_cache(
     corpus_dir: Path | None,
     dataset_name: str | None = None,
     pin_selector_key: str | None = None,
+    raw_context=None,
 ) -> tuple[subprocess.Popen, dict]:
     """Two-phase adopt (tempdoc 751 sec M.2); returns (healthy proc, cache_outcome).
 
@@ -354,6 +370,21 @@ def _run_with_cache(
     is identical; only the key derivation changes.
     """
     from . import index_cache, index_identity
+
+    if raw_context is not None:
+        from .raw_corpus_manifest import validate_raw_corpus_context
+
+        validate_raw_corpus_context(
+            raw_context,
+            env,
+            expected_dataset=dataset_name,
+            explicit_dir=corpus_dir,
+        )
+
+    if raw_context is not None and pin_selector_key is not None:
+        raise ValueError(
+            "--pin-index-selector-key cannot bypass strict raw corpus identity"
+        )
 
     # Pin the live-identity repo root to the checkout the backend actually boots
     # from (cwd=resolved_root) so the selector (uses resolved_root) and the live
@@ -394,6 +425,7 @@ def _run_with_cache(
     else:
         selector = index_identity.compute_selector(
             resolved_root, corpus_dir, env, dataset_name=dataset_name,
+            **({"raw_context": raw_context} if raw_context is not None else {}),
         )
         if selector.key is None:
             # Finding 1: this used to log at INFO -- a chain that passed the exploded

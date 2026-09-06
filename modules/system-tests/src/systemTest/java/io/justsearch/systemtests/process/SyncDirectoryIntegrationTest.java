@@ -54,7 +54,10 @@ class SyncDirectoryIntegrationTest {
 
         // 2. Start worker
         worker = WorkerProcessManager.fromDistribution(env.getWorkerDistDir(), env.getTempDir())
-            .withJvmArgs(env.getWorkerJvmArgs());
+            .withJvmArgs(env.getWorkerJvmArgs())
+            .withoutEnv("JUSTSEARCH_INGESTION_SKIP_PATTERNS")
+            .withoutEnv("JUSTSEARCH_INGESTION_SKIP_EXTENSIONS")
+            .withoutEnv("JUSTSEARCH_INGESTION_SKIP_DIRECTORY_NAMES");
         worker.spawnWorker();
 
         // 3. Open MMF for port discovery
@@ -334,12 +337,95 @@ class SyncDirectoryIntegrationTest {
         assertTrue(response.getError().isEmpty(), "Should have no error even with unsupported files");
     }
 
+    @Test
+    @Order(9)
+    @DisplayName("syncDirectory pins source-tree and Obsidian layout admission policy")
+    void syncPinsSourceTreeAndObsidianLayoutAdmissionPolicy() throws Exception {
+        long pendingFloor = grpcClient.getDetailedStatus().getCore().getDocCount();
+        assertTrue(
+            grpcClient.awaitIndexing(pendingFloor, 30_000, 200),
+            "Earlier ordered tests should drain before the layout baseline is captured");
+        long baseline = grpcClient.getDetailedStatus().getCore().getDocCount();
+
+        Path layoutRoot = syncTestDir.resolve("layout-admission");
+        writeLayoutFile(layoutRoot, "# Vault note\n\nvaultnote897\n", "vault", "notes", "design.md");
+        writeLayoutFile(
+            layoutRoot,
+            "final class App { String marker = \"javasource897\"; }\n",
+            "src",
+            "java",
+            "App.java");
+        writeLayoutFile(
+            layoutRoot,
+            "export const marker = \"typescriptsource897\";\n",
+            "src",
+            "typescript",
+            "app.ts");
+        writeLayoutFile(
+            layoutRoot, "marker = \"pythonsource897\"\n", "src", "python", "main.py");
+        writeLayoutFile(
+            layoutRoot, "{\"marker\":\"obsidianmetadata897\"}\n", ".obsidian", "app.json");
+        writeLayoutFile(
+            layoutRoot,
+            "final class Generated { String marker = \"buildcontent897\"; }\n",
+            "build",
+            "generated",
+            "Generated.java");
+        writeLayoutFile(
+            layoutRoot, "export const marker = \"distcontent897\";\n", "dist", "bundle.js");
+
+        writeLayoutFile(layoutRoot, "forbiddenlayout897", ".git", "config.md");
+        writeLayoutFile(layoutRoot, "forbiddenlayout897", "node_modules", "pkg", "readme.md");
+        writeLayoutFile(layoutRoot, "forbiddenlayout897", "__pycache__", "visible.md");
+        writeLayoutFile(layoutRoot, "forbiddenlayout897", "build", "classes", "App.class");
+        writeLayoutFile(layoutRoot, "forbiddenlayout897", "src", "python", "module.pyc");
+
+        mmf.keepAlive();
+        SyncDirectoryResponse response = grpcClient.syncDirectory(layoutRoot.toString(), true);
+
+        assertNotNull(response, "Response should not be null");
+        assertTrue(response.getError().isEmpty(), "Layout sync should have no error");
+        assertFalse(response.getSkipped(), "force=true layout sync should not be skipped");
+        assertEquals(7, response.getFilesAdded(), "Only the seven admitted layout files should enqueue");
+        assertTrue(
+            grpcClient.awaitIndexing(baseline + 7, 30_000, 200),
+            "The seven admitted layout files should become searchable");
+
+        for (String marker : List.of(
+            "vaultnote897",
+            "javasource897",
+            "typescriptsource897",
+            "pythonsource897",
+            "obsidianmetadata897",
+            "buildcontent897",
+            "distcontent897")) {
+            assertTrue(
+                grpcClient.searchText(marker, 10).getResultsCount() > 0,
+                () -> "Admitted layout marker should be searchable: " + marker);
+        }
+        assertEquals(
+            0,
+            grpcClient.searchText("forbiddenlayout897", 10).getResultsCount(),
+            "Skipped directories and compiled extensions must not become searchable");
+    }
+
+    private static Path writeLayoutFile(Path root, String content, String... components)
+        throws Exception {
+        Path target = root;
+        for (String component : components) {
+            target = target.resolve(component);
+        }
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, content);
+        return target;
+    }
+
     // =========================================================================
     // Performance / Timeout Tests
     // =========================================================================
 
     @Test
-    @Order(9)
+    @Order(10)
     @DisplayName("syncDirectory completes within reasonable time for moderate directory")
     void syncCompletesInReasonableTime() throws Exception {
         // Create a moderate number of files

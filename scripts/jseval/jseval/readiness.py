@@ -275,6 +275,7 @@ def _poll_until_stable(
     with httpx.Client(base_url=base_url, timeout=10) as client:
         while time.monotonic() < deadline:
             try:
+                client.timeout = httpx.Timeout(min(10.0, max(0.001, deadline - time.monotonic())))
                 snapshot = _fetch_status(client)
                 consecutive_failures = 0
             except Exception as e:
@@ -299,7 +300,7 @@ def _poll_until_stable(
                         snapshot=last_snapshot,
                     )
 
-                time.sleep(poll_interval_sec)
+                time.sleep(min(poll_interval_sec, max(0.0, deadline - time.monotonic())))
                 continue
 
             # [-1b] Check Worker RPC staleness (from 333 §5).
@@ -311,7 +312,7 @@ def _poll_until_stable(
                 last_snapshot = snapshot
                 poll_count += 1
                 _maybe_log_progress(poll_count, start, snapshot, last_reasons, json_mode)
-                time.sleep(poll_interval_sec)
+                time.sleep(min(poll_interval_sec, max(0.0, deadline - time.monotonic())))
                 continue
 
             last_snapshot = snapshot
@@ -320,6 +321,16 @@ def _poll_until_stable(
             elapsed = time.monotonic() - start
             if on_snapshot is not None:
                 on_snapshot(elapsed, snapshot)
+
+            # A fatal indexing-loop death is terminal even while the Worker process and search
+            # RPCs remain healthy. ERROR is deliberately distinct: declared document failures
+            # can be acceptable to a corpus-specific predicate. Stale snapshots were excluded above.
+            if snapshot.get("indexState") == "FAILED":
+                return ReadinessResult(
+                    passed=False,
+                    failure_reasons=["indexing_loop_failed"],
+                    snapshot=snapshot,
+                )
 
             # [335 item 11] One-time per-stage completion logging.
             _check_stage_completions(snapshot, elapsed, stage_logged, json_mode)
@@ -347,7 +358,7 @@ def _poll_until_stable(
                     snapshot=last_snapshot,
                 )
 
-            time.sleep(poll_interval_sec)
+            time.sleep(min(poll_interval_sec, max(0.0, deadline - time.monotonic())))
 
     return ReadinessResult(
         passed=False, failure_reasons=last_reasons, snapshot=last_snapshot,

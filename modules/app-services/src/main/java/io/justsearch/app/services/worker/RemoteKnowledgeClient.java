@@ -623,6 +623,12 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return searchRpcOps.listAllDocumentIds(offset, limit);
     }
 
+    /** Continues document-ID pagination against the immutable snapshot from the first page. */
+    public io.justsearch.ipc.ListAllDocumentIdsResponse listAllDocumentIds(
+            int offset, int limit, String snapshotToken) {
+        return searchRpcOps.listAllDocumentIds(offset, limit, snapshotToken);
+    }
+
     // ========== Ingest Service ==========
 
     /**
