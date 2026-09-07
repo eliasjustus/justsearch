@@ -260,6 +260,47 @@ export function localizeResourceKey(key: string): string {
   return key;
 }
 
+/** Placeholder syntax used by the backend message catalogs: `{name}` (see the key-shape header of
+ *  `modules/app-api/src/main/resources/messages/health-events.en.properties`). */
+const MESSAGE_PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
+
+/**
+ * Tempdoc 941 F4 — substitute `{name}` placeholders in a catalog message from the emitter-supplied
+ * parameter map. Until this existed, `localizeResourceKey` was the whole pipeline: a parameterized
+ * message (`An indexing job failed for {path}: {errorClass}.`) reached the user verbatim, braces
+ * and all, because nothing between the catalog and the render boundary ever filled it in.
+ *
+ * Returns `null` — not a partially-filled or blanked string — when the template asks for a
+ * parameter the caller did not supply. Both alternatives are worse than declining: a leftover
+ * `{path}` is the defect itself, and silently blanking it produces a sentence that reads as
+ * complete while asserting something the emitter never said. `null` hands the caller the decision
+ * (fall back to the short label, the id, or nothing) rather than inventing copy here.
+ *
+ * A template with no placeholders is returned unchanged, so this is safe to apply unconditionally.
+ */
+export function interpolateMessage(
+  template: string,
+  params: Readonly<Record<string, unknown>>,
+): string | null {
+  if (!template.includes('{')) return template;
+  let unresolved = false;
+  const filled = template.replace(MESSAGE_PLACEHOLDER, (whole, name: string) => {
+    // hasOwn (not `in`) so a parameter named `constructor`/`toString` resolves from the map's own
+    // keys or not at all — a prototype hit would substitute a function body into user-facing copy.
+    if (!Object.hasOwn(params, name)) {
+      unresolved = true;
+      return whole;
+    }
+    const value = params[name];
+    if (value === null || value === undefined || value === '') {
+      unresolved = true;
+      return whole;
+    }
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  });
+  return unresolved ? null : filled;
+}
+
 /**
  * 478 §4.F — register plugin-contributed translations under a
  * scoped namespace. Replaces a flat catalog merge.
