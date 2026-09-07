@@ -36,17 +36,41 @@ durable method; what *this* candidate must cover is in the staged
    - **Tool check**: does THIS session have a computer-use / screenshot
      capability? (Claude Code: search the tool list for screenshot/computer/
      browser terms. Codex: the Computer Use skill, if the operator enabled it.)
+
+     **Codex — an empty unified `cua_repl` app inventory is NOT a negative
+     result, and never the end of this probe.** Round 18 saw `cua_repl`
+     report `apps=[]` (browser-only in that task) while the staged Computer
+     Use skill's **`node_repl` + `@oai/sky`** path drove native windows in
+     the same session. Before concluding "no native Computer Use", run that
+     path: through `node_repl`, use `@oai/sky` to **list the native apps and
+     capture one image to disk**, and judge on that result. Only if the
+     `@oai/sky` probe ALSO fails is the tool check negative.
+
+     **Verify the first capture's magic bytes** (`89 50 4E 47` = PNG).
+     Round 18's Computer Use saved JPEG bytes under `.png` filenames, which
+     nothing failed on because coverage credit is by filename token — see
+     `CLAUDE.md` (*Mission*) for the one-liner and
+     `gui\convert-cu-images.ps1` for the repair.
    - **Native-capture check**: run the staged `gui\snap.ps1` (see
      `gui/README.md`) and confirm it wrote a non-blank PNG you can read
-     back. Windows provides screen capture and input (`CopyFromScreen`,
-     `SendKeys`, `mouse_event`) natively — no tool is required for this to
-     work, and it drives the real Tauri WebView2 shell.
+     back. Windows provides screen capture and input natively — no tool is
+     required for this to work, and it drives the real Tauri WebView2 shell.
+     If the desktop capture fails with **`The handle is invalid`
+     (E_HANDLE)** — Windows Sandbox's RDP indirect display does this to
+     every `CopyFromScreen` — `snap.ps1` falls back on its own to a
+     per-window `PrintWindow` capture, so read its exit code and the written
+     PNG, not the desktop error line. Force that path with
+     `.\gui\snap.ps1 -Out probe.png -ForceWindowCapture -ProcessName JustSearch`.
+     A per-window capture counts: this check is about a PNG on disk.
 
    **Only if BOTH fail** is this an API-only round — record that immediately
    as a standing round-level gap (`staging-gaps.md` or your findings notes),
    and do not plan or ask the user anything that presupposes GUI access
    (screenshots, driving the Tauri shell). Doing this probe late costs a
-   wasted round-trip to the user.
+   wasted round-trip to the user. Both checks have now produced a documented
+   false negative (`cua_repl` `apps=[]`; `CopyFromScreen` E_HANDLE), so
+   "the first thing I tried returned nothing" is not the finding — establish
+   it with the second probe before writing off the GUI tier.
 
    If you have a computer-use capability, use it — it exercises the app the
    way a user does, which is what a release-validation round is for. The one
@@ -115,7 +139,11 @@ past miss; apply them regardless of candidate.
     shell window reconnects to the same still-running backend and proves nothing;
     verify a genuine restart by the runtime manifest's `instanceId`/`pid` changing.
     Filter by process **Path**, not bare `ProcessName` — a bare `java`/`llama` pattern
-    can kill unrelated processes:
+    can kill unrelated processes. The authority for that Path is the OS process
+    `ExecutablePath` (`%LOCALAPPDATA%\JustSearch\JustSearch.exe`), **never a
+    computer-use app identifier** — round 18's named a per-harness LocalCache copy
+    of the app, so targeting it leaves the real shell running and the manifest's
+    `instanceId`/`pid` unchanged, which is exactly the proof this rule asks for:
     ```powershell
     Get-Process | Where-Object { $_.Path -like "*\JustSearch\*" -or $_.Path -like "*io.justsearch.shell*" } | Stop-Process -Force
     ```

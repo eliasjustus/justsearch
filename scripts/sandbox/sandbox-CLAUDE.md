@@ -117,10 +117,33 @@ the GUI with it** — it exercises the app the way a user does, which is the
 point of this round. The only hard requirement is that each surface ends up
 as a PNG on disk under its coverage filename.
 
+**Codex: an empty `cua_repl` app inventory is NOT a negative result.** Round
+18's unified `cua_repl` surface reported `apps=[]` (it was browser-only in
+that task) while the staged Computer Use skill's `node_repl` + `@oai/sky`
+path drove native windows and captured File Explorer in the same session.
+Probe `@oai/sky` through `node_repl` — list the native apps and save one
+image to disk — **before** reading an empty unified inventory as "no native
+Computer Use". Only both probes failing is a negative (see the Step-0 probe
+in the `/start` skill).
+
+**Codex: verify your first capture's magic bytes.** Round 18's Computer Use
+wrote its screenshots straight to the coverage filenames but as **JPEG bytes
+under `.png` names**; coverage credit is by filename token, so nothing failed
+and the whole round's evidence was mislabelled bytes. After the FIRST capture:
+
+```powershell
+$b = [System.IO.File]::ReadAllBytes("evidence\01-first-paint.png"); '{0:X2} {1:X2} {2:X2} {3:X2}' -f $b[0],$b[1],$b[2],$b[3]
+# 89 50 4E 47 = PNG (good).  FF D8 ... = JPEG -> convert, then keep checking.
+```
+
+`gui\convert-cu-images.ps1 -Directory evidence` converts JPEG-bytes-in-`.png`
+files in place (promoted from round 18's own `round-tools/`), but repairing at
+finalize is the fallback — checking after the first capture is the fix.
+
 **Guaranteed floor: the native PowerShell GUI tier**, staged at
 `<mapped folder>\gui\` (`snap.ps1`, `win-capture.ps1`, `click.ps1`,
 `crop.ps1`, `gui-approve.ps1` — see `gui/README.md`). It drives the **real**
-Tauri WebView2 shell via `System.Drawing.Graphics.CopyFromScreen` capture and
+Tauri WebView2 shell via screen/window capture and
 `SendKeys`/`mouse_event` input — proven end-to-end including a full
 GUI-driven TYPED_CONFIRM approval (backend-verified: grant issued, docCount
 incremented, file searchable). It needs no tool, no extension, no pairing, no
@@ -130,6 +153,20 @@ Approve/Deny ceremony) that the API tier's clean PASS on the same feature
 could not see. Coverage credits the PNGs these scripts write, exactly like any
 other screenshot — so it is also the fallback for writing the evidence file
 when a computer-use tool cannot save its screenshot to a path you choose.
+
+**Precisely, the floor is `snap.ps1`, which falls back to a per-window
+capture when the desktop DC is unavailable** — it is not "`CopyFromScreen`
+always works". Round 18 (finding H2) hit the counter-example: on the
+Sandbox's RDP indirect display (`rdpidd.inf`) every `CopyFromScreen` throws
+**`The handle is invalid` (E_HANDLE)** under PowerShell 7 and 5.1 and writes
+no PNG, while per-window capture and Windows Graphics Capture kept working.
+`snap.ps1` now retries such a failure with
+`PrintWindow(PW_RENDERFULLCONTENT)` against the JustSearch shell window
+(located by the OS process `ExecutablePath`, or by `-Hwnd`/`-ProcessName`),
+and `win-capture.ps1`/`click.ps1` retry through the same primitive — so a
+whole-desktop failure costs you the desktop frame, not the GUI tier. It
+remains a finding worth recording if you hit it; it is no longer a blocker.
+Details and the `-ForceWindowCapture` switch: `gui/README.md`.
 
 Alternative for the future: the tauri-driver/WebView2 path (tempdoc 374 item
 4, POC'd) — structured, element-based targeting instead of pixel coordinates,
@@ -555,6 +592,16 @@ sub-floor overlap is still expected of the round.
     runtime manifest's `instanceId`/`pid` changing. Filter kills by process **Path**
     (`*\JustSearch\*` / `*io.justsearch.shell*`), not bare `ProcessName` — a bare
     `java`/`llama` pattern can kill unrelated processes.
+    **The authority for "which process is the shell" is the OS process
+    `ExecutablePath`** (`Get-Process ... | Select-Object Path`, i.e.
+    `%LOCALAPPDATA%\JustSearch\JustSearch.exe` per ADR-0024) — **never a
+    computer-use app identifier**: round 18's Computer Use inventory named a
+    per-harness LocalCache COPY of the app, which is not the process the
+    installer runs, so killing or targeting "the app" by that identifier
+    leaves the real shell alive. The two checks are one procedure: kill by
+    `ExecutablePath`, then prove the restart happened by the manifest's
+    top-level `instanceId`/`pid` changing. A "restart" that did not move
+    those values did not restart anything, whatever the window did.
 12. **Uninstall** — run only after all evidence is saved, unless told to defer.
     Verify program files are removed and user-data behaviour matches ADR-0024.
 
@@ -616,6 +663,7 @@ Key API endpoints (`GET` needs no token; every other method needs the
 | `/api/knowledge/search` | POST | Search (`{"query":"...","limit":5}`) |
 | `/api/knowledge/ingest` | POST | Ingest (`{"paths":["..."]}` — directory inputs return `scanId`) |
 | `/api/knowledge/status` | GET | Index/enrichment progress |
+| `/api/indexing-jobs/failed` | GET | Failed extraction jobs, **substrate shape — rows carry `scanId`** (also `/by-prefix`). This is the discriminator for any scan-id claim; the legacy `GET /api/indexing/failed-jobs` returns a `FailedJob` record that has **never** carried `scanId` by design, so reading it "proves" a missing id that was never there (round 18 F2). |
 | `/api/indexing/roots` | POST | Add a folder to the library (`{"path":"...","collection"?:"..."}` — `path` must be an existing directory; 400 names the offending field) |
 | `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`). **Response is an SSE stream, not JSON** — see below. |
 | `/api/ai/install/start` | POST | Start model download (`{"acceptTerms":true}`) |
@@ -656,6 +704,27 @@ depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount`
 `/api/knowledge/status` is PENDING-only and can read 0 while a job is stuck in
 PROCESSING — always check its sibling `processingJobsCount` (same payload, also in
 `/api/debug/state`) before concluding the queue is idle.
+
+**Producing a retained failed-file row needs a CORRUPT file, not an empty or
+locked one (round 18).** The long-standing recipe — "drop a zero-byte `.pdf`
+or a file locked open by another process into a watched folder and rescan" —
+produced **no failed-job row at all**: a zero-byte or unreadable file is
+handled as *no content*, which is not an extraction failure and is not
+retained as one. The fixture that works is a file whose header claims a
+format its body then violates, e.g. a `%PDF-1.4` line followed by garbage:
+
+```powershell
+$f = "$env:USERPROFILE\Desktop\JustSearchTest\round-fixture\corrupt.pdf"
+[System.IO.File]::WriteAllBytes($f, [byte[]](
+  [System.Text.Encoding]::ASCII.GetBytes("%PDF-1.4`n") +
+  [System.Text.Encoding]::ASCII.GetBytes("not a pdf body at all, no xref, no trailer`n")))
+```
+
+Then rescan and read `GET /api/indexing-jobs/failed` (see the endpoint table
+above): the row's `scanId` should equal the `scanId` the triggering
+`POST /api/knowledge/ingest` returned. Note the row is the *wire* fact —
+whether the failed-files **drawer** renders `scanId` is a separate,
+UI-level question (round 18 F2 conflated the two; do not repeat that).
 
 **A 401 renders as zero results in any client that doesn't check status.** The
 packaged candidate boots `prod=true` (see *Key API endpoints* above); a `POST`
