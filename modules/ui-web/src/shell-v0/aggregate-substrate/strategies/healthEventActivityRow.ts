@@ -7,12 +7,16 @@
  *  - `severity` ('INFO' | 'WARNING' | 'ERROR') → row CSS class
  *    ('info' | 'warning' | 'error', lowercase — matches HealthSurface's
  *    existing .event-row.<class> CSS).
- *  - `i18nKey` → title text via localizeResourceKey; falls back to
- *    `id` if the key isn't in the catalog or unset.
- *  - `body` (HealthEventBodyUnion) → message text, variant-aware:
+ *  - `i18nKey` → title text via localizeResourceKey, with its `{name}`
+ *    placeholders filled from the body (tempdoc 941 F4 — see
+ *    `resolveTitle`); falls back to the sibling `.label` key, then to
+ *    `id`, if the key isn't in the catalog or unset.
+ *  - `body` (HealthEventBodyUnion) → the title template's parameters
+ *    (`bodyParams`) AND the message text, variant-aware:
  *      - 'condition' (AssertedCondition): message | reason | status.
  *      - 'lifecycle' (LifecycleEvent): attributes.message |
- *        attributes.disposition | flattened attributes.
+ *        attributes.disposition; otherwise none — the attributes are
+ *        the title template's parameters, not a second message.
  *      - 'threshold' (ThresholdState): message | phase + magnitudes.
  *  - `source.serviceName` → secondary chip (this metadata was
  *    dropped by the pre-followup-A local-shape rendering).
@@ -48,6 +52,7 @@ import type { AggregateStrategy } from '../aggregateRegistry.js';
 import { registerAggregateStrategy } from '../aggregateRegistry.js';
 import { assertFieldRoles, type FieldRoles } from '../assertExhaustive.js';
 import { present } from '../../display/present.js';
+import { interpolateMessage, localizeResourceKey } from '../../../i18n/resourceCatalog.js';
 import { formatRelativeIso } from '../../../utils/relativeTime.js';
 
 /**
@@ -106,12 +111,13 @@ function bodyToMessage(body: HealthEvent['body']): string {
             ? COMPLETION_DETAILS[disposition]!
             : 'The run ended, but its outcome could not be identified.';
         }
-        // Last resort: flatten the attributes map.
-        const flat = Object.entries(attrs)
-          .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-          .join(', ');
-        return flat;
       }
+      // Tempdoc 941 F4 — no last-resort `k=v` flatten of the attributes map. Those attributes are
+      // the i18n template's PARAMETERS (`worker.job.failed` sends {path, errorMessage, atMs});
+      // `resolveTitle` below renders them inside the authored sentence, so dumping them again put
+      // `atMs=1757…, errorMessage=…, path=…` under the title. Where no template consumes them the
+      // dump is not user copy either — an epoch-millis field is not a message. The row degrades to
+      // its title, exactly as this strategy's header already promised.
       return '';
     }
     case 'threshold': {
@@ -130,15 +136,70 @@ function bodyToMessage(body: HealthEvent['body']): string {
   }
 }
 
+/**
+ * Tempdoc 941 F4 — the parameter map a body variant offers the i18n template. This is the missing
+ * half of the catalog contract: the backend authors `{path}`-style placeholders in
+ * `health-events.<id>.message` and ships their values on the body, and nothing joined the two.
+ *
+ * Lifecycle carries them as `attributes` (the emitter's own map), threshold as `magnitudes`
+ * (`memory.pressure` = `{usedMb}`/`{maxMb}`). A condition has no map, so its three named scalars
+ * are offered — and only when actually present, so a missing one declines the substitution instead
+ * of filling the sentence with an empty string.
+ */
+function bodyParams(body: HealthEvent['body']): Readonly<Record<string, unknown>> {
+  if (!body) return {};
+  switch (body.kind) {
+    case 'lifecycle': {
+      const attrs = (body as LifecycleEvent).attributes;
+      return attrs && typeof attrs === 'object' ? attrs : {};
+    }
+    case 'threshold': {
+      const mags = (body as ThresholdState).magnitudes;
+      return mags && typeof mags === 'object' ? mags : {};
+    }
+    case 'condition': {
+      const c = body as AssertedCondition;
+      const params: Record<string, unknown> = {};
+      if (c.subject) params['subject'] = c.subject;
+      if (c.reason) params['reason'] = c.reason;
+      if (c.status) params['status'] = c.status;
+      return params;
+    }
+    default:
+      return {};
+  }
+}
+
+/**
+ * Title = the localized `i18nKey`, with its `{name}` placeholders filled from the body.
+ *
+ * When the template needs a parameter the emitter did not send, `interpolateMessage` returns null
+ * rather than leaking a brace, and we fall back to the sibling `.label` key — the catalog's
+ * documented short-label form for exactly this id (`health-events.<id>.label`) — then to the id,
+ * which is the pre-existing fallback. An unbacked key still renders as the raw key, unchanged from
+ * before: that is what the Pass-8 mirror pins, and it is a missing-translation signal, not copy.
+ */
+function resolveTitle(event: HealthEvent): string {
+  if (!event.i18nKey) return event.id ?? '';
+  const template = present({ kind: 'resource', key: event.i18nKey }).label || (event.id ?? '');
+  const filled = interpolateMessage(template, bodyParams(event.body));
+  if (filled !== null) return filled;
+  const MESSAGE_SUFFIX = '.message';
+  if (event.i18nKey.endsWith(MESSAGE_SUFFIX)) {
+    const labelKey = `${event.i18nKey.slice(0, -MESSAGE_SUFFIX.length)}.label`;
+    const label = localizeResourceKey(labelKey);
+    if (label && label !== labelKey) return label;
+  }
+  return event.id ?? '';
+}
+
 export const healthEventActivityRowStrategy: AggregateStrategy<
   'HealthEvent',
   'activity-row'
 > = (event, _ctx, _host) => {
   if (!event.id) return nothing;
   const severityClass = severityToClass(event.severity);
-  const title = event.i18nKey
-    ? present({ kind: 'resource', key: event.i18nKey }).label || event.id
-    : event.id;
+  const title = resolveTitle(event);
   const message = bodyToMessage(event.body);
   const sourceName = event.source?.serviceName ?? '';
   const timestamp = event.timestamp ?? '';

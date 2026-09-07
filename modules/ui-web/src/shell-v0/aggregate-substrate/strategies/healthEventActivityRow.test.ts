@@ -28,6 +28,7 @@ import type {
 } from '../../../api/generated/index.js';
 import { classifiedKeys } from '../assertExhaustive';
 import { assertBehavioralPass8 } from '../behavioralPass8';
+import { __resetForTest, __seedForTest } from '../../../i18n/resourceCatalog';
 
 const REFERENCE_LIFECYCLE: LifecycleEvent = {
   kind: 'lifecycle',
@@ -161,6 +162,134 @@ describe('(HealthEvent, activity-row) canonical strategy — Pass-8 mirror', () 
     expect(
       typeof healthEventActivityRowStrategy(eventWithoutMessage, {}, { apiBase: '' }),
     ).not.toBe('symbol');
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Tempdoc 941 F4 — the parameterized-message path.
+  //
+  // Sandbox round 18 caught a real corrupt-PDF failure rendering as the literal template
+  // "An indexing job failed for {path}: {errorClass}." followed by "atMs=…, errorMessage=…, path=…".
+  // Two independent faults: the catalog asked for a parameter (`errorClass`) no producer emits, and
+  // nothing on this path ever substituted parameters at all. Both halves are pinned below against
+  // the PRIMARY sources — the real catalog file and the real Java emitter — because a hand-copied
+  // fixture of either would re-drift silently, which is the exact failure being fixed.
+  // ---------------------------------------------------------------------------------------------
+
+  const CATALOG_PATH = resolve(
+    process.cwd(),
+    '../app-api/src/main/resources/messages/health-events.en.properties',
+  );
+  const EMITTER_PATH = resolve(
+    process.cwd(),
+    '../app-services/src/main/java/io/justsearch/app/services/observability/health/WorkerSnapshotTap.java',
+  );
+  const JOB_FAILED_KEY = 'health-events.worker.job.failed.message';
+
+  /** The authored message for `key`, read from the backend catalog itself. */
+  function catalogMessage(key: string): string {
+    const src = readFileSync(CATALOG_PATH, 'utf8');
+    const match = new RegExp(`^${key.replace(/\./g, '\\.')}\\s*=\\s*(.+)$`, 'm').exec(src);
+    expect(match, `${key} must exist in health-events.en.properties`).toBeTruthy();
+    return match![1]!.trim();
+  }
+
+  /** The attribute names WorkerSnapshotTap actually puts on the worker.job.failed body. */
+  function emittedJobFailureAttributes(): string[] {
+    const src = readFileSync(EMITTER_PATH, 'utf8');
+    const method = /private void detectJobFailureOccurrence\([\s\S]*?\n {2}}/.exec(src);
+    expect(method, 'detectJobFailureOccurrence must exist in WorkerSnapshotTap').toBeTruthy();
+    return [...method![0].matchAll(/attributes\.put\("([^"]+)"/g)].map((m) => m[1]!);
+  }
+
+  function placeholdersOf(template: string): string[] {
+    return [...template.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map((m) => m[1]!);
+  }
+
+  it('every {placeholder} in the job-failed message names an attribute the emitter sends', () => {
+    // The root cause of F4's first half: `{errorClass}` was authored against an attribute that has
+    // never existed on this event. A placeholder with no producer can never be substituted, so the
+    // whole sentence degrades to raw template text at the user.
+    const placeholders = placeholdersOf(catalogMessage(JOB_FAILED_KEY));
+    expect(placeholders.length, 'the message is parameterized — that is the point').toBeGreaterThan(0);
+    const emitted = emittedJobFailureAttributes();
+    expect(emitted).toContain('path');
+    for (const name of placeholders) {
+      expect(emitted, `catalog asks for {${name}}; WorkerSnapshotTap emits ${emitted.join(', ')}`)
+        .toContain(name);
+    }
+  });
+
+  it('renders the failed-job event as a substituted sentence — no braces, no attribute dump', () => {
+    __seedForTest({ [JOB_FAILED_KEY]: catalogMessage(JOB_FAILED_KEY) });
+    try {
+      // The exact wire shape WorkerSnapshotTap.detectJobFailureOccurrence emits.
+      const container = document.createElement('div');
+      render(
+        healthEventActivityRowStrategy(
+          {
+            id: 'worker.job.failed',
+            timestamp: '2026-09-06T12:00:00Z',
+            source: { serviceName: 'head', serviceInstanceId: 'inst-1', serviceVersion: '1' },
+            severity: 'INFO',
+            i18nKey: JOB_FAILED_KEY,
+            body: {
+              kind: 'lifecycle',
+              attributes: {
+                path: 'C:\\Sandbox\\corrupt.pdf',
+                errorMessage: 'ExtractionException: Sandbox parser failed',
+                atMs: 1_757_000_000_000,
+              },
+            } as LifecycleEvent,
+          },
+          {},
+          { apiBase: '' },
+        ),
+        container,
+      );
+      const text = (container.textContent ?? '').replace(/\s+/g, ' ');
+
+      // What the user needs: which file, and what went wrong.
+      expect(text).toContain('C:\\Sandbox\\corrupt.pdf');
+      expect(text).toContain('ExtractionException: Sandbox parser failed');
+      // …and none of what round 18 actually saw.
+      expect(text, 'an unsubstituted placeholder must never reach the user').not.toContain('{');
+      expect(text, 'the attribute map is template parameters, not a message').not.toContain('atMs=');
+      expect(text).not.toContain('errorMessage=');
+      expect(text).not.toContain('path=');
+    } finally {
+      __resetForTest();
+    }
+  });
+
+  it('declines to render a template whose parameter is missing, falling back to the short label', () => {
+    // The decline branch: silently blanking `{path}` would read as a finished sentence asserting
+    // something the emitter never said, and leaving it would be the defect itself.
+    __seedForTest({
+      'health-events.worker.job.failed.message': 'An indexing job failed for {path}.',
+      'health-events.worker.job.failed.label': 'Indexing job failed',
+    });
+    try {
+      const container = document.createElement('div');
+      render(
+        healthEventActivityRowStrategy(
+          {
+            ...REFERENCE_EVENT,
+            id: 'worker.job.failed',
+            i18nKey: 'health-events.worker.job.failed.message',
+            body: { kind: 'lifecycle', attributes: { atMs: 1 } } as LifecycleEvent,
+          },
+          {},
+          { apiBase: '' },
+        ),
+        container,
+      );
+      const text = (container.textContent ?? '').replace(/\s+/g, ' ');
+      expect(text).toContain('Indexing job failed');
+      expect(text).not.toContain('{');
+      expect(text).not.toContain('atMs');
+    } finally {
+      __resetForTest();
+    }
   });
 
   it('returns nothing when id is missing', () => {

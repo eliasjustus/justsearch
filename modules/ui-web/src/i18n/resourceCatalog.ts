@@ -195,21 +195,63 @@ export async function bootResourceCatalog(baseUrl: string): Promise<void> {
  * replacer — the bug §28 fixed). `bootResourceCatalog` stays separate: it owns the
  * extra localStorage/ETag/304 caching, but it too merges (see its note).
  *
- * Best-effort: a missing/!ok/failed fetch leaves `coreCatalog` untouched and the
- * affected keys fall back to raw-key passthrough (humanizeId / deriveTitle upstream).
+ * Best-effort but NOT one-shot: an unreachable/!ok/malformed answer is retried on the schedule
+ * below before the namespace is abandoned. Once the budget is exhausted the affected keys fall
+ * back to raw-key passthrough (humanizeId / deriveTitle upstream).
+ *
+ * Tempdoc 941 round-18 F3 — this used to be a single terminal attempt (`if (!response.ok) return;`
+ * plus a swallowing `catch`), and that is how a Settings window renders `settings.group.general`
+ * as its own key. `registry-surface` is the ONLY source of every `settings.*` label
+ * (`views/settingsRegister.ts`), the boot is fired once at module evaluation from `../i18n.ts`,
+ * and — unlike `bootResourceCatalog` — nothing here persists a body, so there is no cached copy
+ * to fall back on. The shell reloads itself the instant the Rust side reports a new backend
+ * instance (`main.jsx` `installBackendRestartBridge` → `window.location.reload()`), so the boot
+ * fetch routinely races a Head that is up enough to publish a manifest but not yet answering
+ * `/api/messages/**`. One lost race = raw keys for the rest of that document's life. Consumers
+ * already re-render on a late merge (`onCatalogUpdated`, 855 F2 S2), so retrying is enough.
+ *
+ * `cache: 'no-cache'` forces an end-to-end revalidation: the catalog is served with
+ * `Cache-Control: public, max-age=3600` and a strong ETag
+ * (`MessageCatalogController.CACHE_CONTROL`), so a webview whose HTTP cache survived an
+ * over-install could otherwise satisfy this fetch from the PREVIOUS version's catalog body —
+ * an answer that resolves the keys that version knew and no others.
  */
+const CATALOG_RETRY_DELAYS_MS: readonly number[] = [250, 1000, 3000, 8000, 20000];
+
+async function fetchCatalogMessages(
+  baseUrl: string,
+  namespace: string,
+): Promise<Record<string, string> | null> {
+  const response = await fetch(`${baseUrl}/api/messages/${namespace}/en`, { cache: 'no-cache' });
+  if (!response.ok) return null;
+  const body = (await response.json()) as ResourceCatalogResponse;
+  if (body?.messages && typeof body.messages === 'object') return body.messages;
+  return null;
+}
+
 async function bootMessageCatalog(baseUrl: string, namespace: string): Promise<void> {
   if (!baseUrl) return;
-  try {
-    const response = await fetch(`${baseUrl}/api/messages/${namespace}/en`);
-    if (!response.ok) return;
-    const body = (await response.json()) as ResourceCatalogResponse;
-    if (body?.messages && typeof body.messages === 'object') {
-      Object.assign(coreCatalog, body.messages);
-      notifyCatalogUpdated();
+  for (let attempt = 0; ; attempt++) {
+    let messages: Record<string, string> | null = null;
+    try {
+      messages = await fetchCatalogMessages(baseUrl, namespace);
+    } catch {
+      // unreachable backend — indistinguishable from a !ok answer here; both retry below
     }
-  } catch {
-    // best-effort — affected labels fall back to their upstream id-derived default
+    if (messages) {
+      Object.assign(coreCatalog, messages);
+      notifyCatalogUpdated();
+      return;
+    }
+    const delay = CATALOG_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      console.debug(
+        `[resourceCatalog] /api/messages/${namespace}/en unavailable after ` +
+        `${CATALOG_RETRY_DELAYS_MS.length + 1} attempts; keys in this namespace render raw`,
+      );
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
@@ -258,6 +300,47 @@ export function localizeResourceKey(key: string): string {
     console.debug(`[resourceCatalog] missing key in catalog: ${key} (rendering raw key as fallback)`);
   }
   return key;
+}
+
+/** Placeholder syntax used by the backend message catalogs: `{name}` (see the key-shape header of
+ *  `modules/app-api/src/main/resources/messages/health-events.en.properties`). */
+const MESSAGE_PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
+
+/**
+ * Tempdoc 941 F4 — substitute `{name}` placeholders in a catalog message from the emitter-supplied
+ * parameter map. Until this existed, `localizeResourceKey` was the whole pipeline: a parameterized
+ * message (`An indexing job failed for {path}: {errorClass}.`) reached the user verbatim, braces
+ * and all, because nothing between the catalog and the render boundary ever filled it in.
+ *
+ * Returns `null` — not a partially-filled or blanked string — when the template asks for a
+ * parameter the caller did not supply. Both alternatives are worse than declining: a leftover
+ * `{path}` is the defect itself, and silently blanking it produces a sentence that reads as
+ * complete while asserting something the emitter never said. `null` hands the caller the decision
+ * (fall back to the short label, the id, or nothing) rather than inventing copy here.
+ *
+ * A template with no placeholders is returned unchanged, so this is safe to apply unconditionally.
+ */
+export function interpolateMessage(
+  template: string,
+  params: Readonly<Record<string, unknown>>,
+): string | null {
+  if (!template.includes('{')) return template;
+  let unresolved = false;
+  const filled = template.replace(MESSAGE_PLACEHOLDER, (whole, name: string) => {
+    // hasOwn (not `in`) so a parameter named `constructor`/`toString` resolves from the map's own
+    // keys or not at all — a prototype hit would substitute a function body into user-facing copy.
+    if (!Object.hasOwn(params, name)) {
+      unresolved = true;
+      return whole;
+    }
+    const value = params[name];
+    if (value === null || value === undefined || value === '') {
+      unresolved = true;
+      return whole;
+    }
+    return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  });
+  return unresolved ? null : filled;
 }
 
 /**

@@ -29,9 +29,14 @@ namespace JustSearchGui {
     [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdcBlt, uint flags);
     public const uint LEFTDOWN = 0x0002;
     public const uint LEFTUP = 0x0004;
     public const int SW_RESTORE = 9;
+    // PW_RENDERFULLCONTENT -- required for DirectComposition/WebView2 content
+    // (the Tauri shell); PrintWindow with flags 0 returns a blank or
+    // partially-rendered client area for those windows.
+    public const uint PW_RENDERFULLCONTENT = 2;
   }
 }
 "@
@@ -330,14 +335,135 @@ function Save-AppShot {
   }
   $bmp = New-Object System.Drawing.Bitmap($w, $ht)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.CopyFromScreen((New-Object System.Drawing.Point($r.Left, $r.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $ht)))
+  try {
+    $g.CopyFromScreen((New-Object System.Drawing.Point($r.Left, $r.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $ht)))
+  }
+  catch {
+    # The DESKTOP device context is unavailable on some display stacks --
+    # Windows Sandbox's RDP indirect display (rdpidd.inf) fails every
+    # CopyFromScreen with "The handle is invalid" (E_HANDLE) under both
+    # PowerShell 5.1 and 7 (sandbox round 18 finding H2). PrintWindow asks
+    # the WINDOW to render itself and needs no desktop DC, so it still
+    # works there. Fail-loud contract is unchanged: the fallback throws if
+    # it cannot produce the PNG either.
+    $g.Dispose()
+    $bmp.Dispose()
+    Write-Host "desktop DC capture failed ($($_.Exception.Message)) -- retrying hwnd $Handle via PrintWindow"
+    return (Save-AppShotPrintWindow -Handle $Handle -Out $Out)
+  }
   return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($g))
+}
+
+function Save-AppShotPrintWindow {
+  # Per-window capture that does NOT touch the desktop device context:
+  # PrintWindow(PW_RENDERFULLCONTENT) makes the window render itself into a
+  # bitmap DC. This is the capture path that survives a display stack whose
+  # desktop DC is unusable -- Windows Sandbox's RDP indirect display, where
+  # every CopyFromScreen throws "The handle is invalid" (round 18 H2) while
+  # per-window capture keeps working. snap.ps1 falls back to this, and
+  # Save-AppShot retries through it automatically.
+  #
+  # Same fail-loud contract as every other entry point: it throws rather than
+  # returning quietly, so no caller can report a PNG that is not on disk.
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][IntPtr]$Handle,
+    [Parameter(Mandatory = $true)][string]$Out
+  )
+  $resolvedOut = Resolve-AppPath -Path $Out
+  if (($Handle -eq [IntPtr]::Zero) -or (-not [JustSearchGui.Native]::IsWindow($Handle))) {
+    throw "CAPTURE FAILED: hwnd $Handle is not a live window -- no capture written to '$resolvedOut'."
+  }
+  $r = Get-AppWindowRect -Handle $Handle
+  $w = $r.Right - $r.Left
+  $ht = $r.Bottom - $r.Top
+  if ($w -le 0 -or $ht -le 0) {
+    throw "CAPTURE FAILED: BAD RECT for hwnd $Handle ($($w)x$($ht)) -- no capture written to '$resolvedOut'."
+  }
+  $bmp = New-Object System.Drawing.Bitmap($w, $ht)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $printed = $false
+  $hdc = [IntPtr]::Zero
+  try {
+    $hdc = $g.GetHdc()
+    $printed = [JustSearchGui.Native]::PrintWindow($Handle, $hdc, [JustSearchGui.Native]::PW_RENDERFULLCONTENT)
+  }
+  finally {
+    if ($hdc -ne [IntPtr]::Zero) {
+      $g.ReleaseHdc($hdc)
+    }
+  }
+  if (-not $printed) {
+    $g.Dispose()
+    $bmp.Dispose()
+    throw "CAPTURE FAILED: PrintWindow(PW_RENDERFULLCONTENT) refused hwnd $Handle -- no capture written to '$resolvedOut'."
+  }
+  return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($g))
+}
+
+function Get-AppShellWindow {
+  # Locates the capture target for the per-window fallback WITHOUT focusing
+  # or touching it (unlike Connect-App, which restores + foregrounds).
+  #
+  # The authority for "this is the JustSearch shell" is the OS process
+  # ExecutablePath -- `%LOCALAPPDATA%\JustSearch\JustSearch.exe` per ADR-0024
+  # -- never an app identifier reported by a computer-use tool: round 18's
+  # Computer Use inventory named a per-harness LocalCache COPY of the app,
+  # which is not the process the installer runs.
+  #
+  # Returns $null when nothing matches (the caller decides the message and
+  # exit code), otherwise .Process/.Handle/.Path.
+  [CmdletBinding()]
+  param(
+    [string]$ProcessPath = "",
+    [Alias("ProcName")][string]$ProcessName = ""
+  )
+  $wanted = $ProcessPath
+  if (-not $wanted) {
+    $wanted = Join-Path $env:LOCALAPPDATA "JustSearch\JustSearch.exe"
+  }
+  $candidates = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
+  $match = $null
+  if ($ProcessName) {
+    $match = $candidates | Where-Object { $_.ProcessName -ieq $ProcessName } | Select-Object -First 1
+  }
+  else {
+    $match = $candidates | Where-Object {
+      $exe = $null
+      try {
+        $exe = $_.Path
+      }
+      catch {
+        $exe = $null
+      }
+      ($exe) -and ($exe -ieq $wanted)
+    } | Select-Object -First 1
+  }
+  if (-not $match) {
+    return $null
+  }
+  $exePath = ""
+  try {
+    $exePath = $match.Path
+  }
+  catch {
+    $exePath = ""
+  }
+  return [PSCustomObject]@{
+    Process = $match
+    Handle  = $match.MainWindowHandle
+    Path    = $exePath
+  }
 }
 
 function Save-DesktopShot {
   # Full-desktop capture (CopyFromScreen over the primary screen bounds).
   # Used by snap.ps1 for the Step-0 capability probe / whole-screen evidence.
-  # Throws if the capture cannot be produced -- see Save-PngChecked.
+  # Throws if the capture cannot be produced -- see Save-PngChecked. On a
+  # display stack with no usable desktop DC (round 18 H2) this throws
+  # "The handle is invalid" and snap.ps1 falls back to
+  # Save-AppShotPrintWindow; there is no whole-desktop equivalent, the
+  # fallback captures ONE window.
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)][string]$Out)
   $resolvedOut = Resolve-AppPath -Path $Out
@@ -562,6 +688,8 @@ Export-ModuleMember -Function `
   Send-AppKeys, `
   Send-AppText, `
   Save-AppShot, `
+  Save-AppShotPrintWindow, `
+  Get-AppShellWindow, `
   Save-DesktopShot, `
   Save-AppShotRegion, `
   Get-AppApiPort, `
