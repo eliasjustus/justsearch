@@ -34,6 +34,13 @@ import { requestAuthorization } from '../../operations/authorizationBroker.js';
 import '../DispatchSource.js';
 import { isWindowFocused } from '../../../utils/windowFocus.js';
 import { sendDesktopNotification } from '../../../utils/notify.js';
+// Tempdoc 941 F5 — the toast now goes through the SAME authorities the inbox drawer already used:
+// present() for machine ids (557 §2.A / 559 ADV-1) and formatRelativeIso for time (586 P-1c). The
+// overlay was the one advisory surface still rendering raw ids and a raw locale timestamp.
+import { present } from '../../display/present.js';
+import { formatRelativeIso } from '../../../utils/relativeTime.js';
+import { getUiMode, subscribeUiMode, type UiMode } from '../../state/uiModeState.js';
+import { interpolateMessage } from '../../../i18n/resourceCatalog.js';
 
 const TOAST_DURATION_MS = 5000;
 
@@ -84,13 +91,17 @@ export class AdvisoryToastHost extends JfElement {
     store: { attribute: false },
     operationClient: { attribute: false },
     visible: { state: true },
+    uiMode: { state: true },
   };
 
   declare store: AdvisoryStore | null;
   declare operationClient: OperationClient | null;
   declare visible: VisibleToast[];
+  /** 941 F5 — drives the Detailed-only id disclosure; kept in sync with the app-wide authority. */
+  declare uiMode: UiMode;
 
   private storeUnsubscribe: (() => void) | null = null;
+  private uiModeUnsubscribe: (() => void) | null = null;
   private seenKeys = new Set<string>();
   // Tempdoc 602 R4 — keys currently animating out, so the supersede prune in
   // onSnapshot does not double-dismiss a toast already being removed.
@@ -158,9 +169,23 @@ export class AdvisoryToastHost extends JfElement {
       color: var(--text-secondary);
       font-size: var(--font-size-xs);
     }
+    /* 941 F5 — the advisory's authored sentence, between the headline and the meta line. */
+    .body {
+      margin-bottom: 0.25rem;
+      overflow-wrap: anywhere;
+    }
     .meta {
       color: var(--text-secondary);
       font-size: var(--font-size-xs);
+    }
+    /* 941 F5 — the internal ids, Detailed mode only. Monospace + secondary tone so they read as
+       diagnostics rather than as copy. */
+    .detail-ids {
+      margin-top: 0.25rem;
+      color: var(--text-secondary);
+      font-family: var(--font-mono, monospace);
+      font-size: var(--font-size-xs);
+      overflow-wrap: anywhere;
     }
     .action-row {
       display: flex;
@@ -234,6 +259,7 @@ export class AdvisoryToastHost extends JfElement {
     this.store = null;
     this.operationClient = null;
     this.visible = [];
+    this.uiMode = getUiMode();
   }
 
   private keydownListener: ((e: KeyboardEvent) => void) | null = null;
@@ -258,12 +284,21 @@ export class AdvisoryToastHost extends JfElement {
       }
     };
     document.addEventListener('keydown', this.keydownListener);
+    // 941 F5 — subscribe (it fires synchronously on subscribe, so this also re-seeds after a
+    // detach/attach) so toggling Detailed reveals the ids on a toast that is already on screen.
+    this.uiModeUnsubscribe = subscribeUiMode((m) => {
+      this.uiMode = m;
+    });
   }
 
   override disconnectedCallback(): void {
     if (this.storeUnsubscribe) {
       this.storeUnsubscribe();
       this.storeUnsubscribe = null;
+    }
+    if (this.uiModeUnsubscribe) {
+      this.uiModeUnsubscribe();
+      this.uiModeUnsubscribe = null;
     }
     if (this.keydownListener) {
       document.removeEventListener('keydown', this.keydownListener);
@@ -467,9 +502,34 @@ export class AdvisoryToastHost extends JfElement {
       const extras = t.record.event.classExtras ?? {};
       const title = isLocal
         ? (t.record.toast?.message ?? '')
-        : t.record.event.classId === 'operation.completed'
-          ? `${extras.operationId ?? t.record.event.classId}`
-          : chrome.label;
+        : toastTitle(t.record.event.classId, chrome.label, extras);
+      // Tempdoc 941 F5 — the advisory's own authored sentence. The inbox drawer has always rendered
+      // `bodyI18nKey`; the toast rendered only the class label, a timestamp and a button, so the
+      // overlay a first-time user actually sees was the one channel that never said what happened
+      // or what to do about it.
+      //
+      // The catalog sentence is a TEMPLATE (`health-events.<id>.message` may carry `{name}`
+      // placeholders), and 941 F4 is what an unsubstituted one looks like on screen. The
+      // advisory's classExtras are exactly its parameters — HealthRecoveryProjector.projectLifecycle
+      // copies the emitter's attribute map into extras, and projectCondition puts subject/reason/
+      // severity there — so the same interpolation authority the activity row uses applies here.
+      // Declining (null) drops the body rather than showing a brace: no advisory carries a
+      // parameterized message today, so this closes the path before it can be walked.
+      const body = isLocal || !t.record.event.bodyI18nKey
+        ? ''
+        : (interpolateMessage(
+            present({ kind: 'resource', key: t.record.event.bodyI18nKey }).label,
+            extras,
+          ) ?? '');
+      // The internal ids are kept, not deleted — moved out of the headline and behind the app-wide
+      // Detailed disclosure (uiModeState), so a diagnosing user can still correlate the toast with
+      // a condition id or an operation id without a first-time user being shown either.
+      const detailIds = this.uiMode === 'advanced' && !isLocal
+        ? [
+            typeof extras['conditionId'] === 'string' ? extras['conditionId'] : '',
+            t.record.event.primaryAction?.target ?? '',
+          ].filter(Boolean).join(' · ')
+        : '';
       // 559 notice-presentation — the severity tone is a NoticeTone routed to the
       // shared <jf-system-notice>, not a per-host CSS class.
       // Tempdoc 613 §14 — a LOCAL toast's tone AND announcement politeness (live) are one projection of
@@ -491,12 +551,16 @@ export class AdvisoryToastHost extends JfElement {
           ? 'alert'
           : 'status';
       const action = t.record.event.primaryAction;
+      // Tempdoc 941 F5 — `action.target.split('.').pop()` is where the round-18 screenshot's
+      // `rebuild-index` came from: the last dotted segment of an operation id, printed as a button
+      // label. present({kind:'operation'}) resolves the catalog's authored label ("Force Rebuild"),
+      // and humanizes the id when the catalog has not booted — never the raw segment.
       const actionLabel = isLocal
         ? t.record.toast?.actionLabel
         : action
           ? t.record.event.primaryActionKind === 'undo'
             ? 'Undo'
-            : (action.target.split('.').pop() ?? 'Fix')
+            : present({ kind: 'operation', id: action.target }).label || 'Fix'
           : undefined;
       return html`
           <div
@@ -526,7 +590,8 @@ export class AdvisoryToastHost extends JfElement {
                   </jf-button>
                 </span>
               </div>
-              ${isLocal
+              ${body ? html`<div class="body" data-testid="toast-body">${body}</div>` : nothing}
+              ${isLocal || (!formatTime(t.record.event.occurredAt) && !t.record.event.provenance)
                 ? nothing
                 : html`<div class="meta">
                     ${formatTime(t.record.event.occurredAt)}
@@ -534,6 +599,9 @@ export class AdvisoryToastHost extends JfElement {
                       ? html` • <jf-dispatch-source .provenance=${t.record.event.provenance}></jf-dispatch-source>`
                       : nothing}
                   </div>`}
+              ${detailIds
+                ? html`<div class="detail-ids" data-testid="toast-detail-ids">${detailIds}</div>`
+                : nothing}
               ${actionLabel
                 ? html`
                     <div class="action-row">
@@ -568,12 +636,42 @@ function toneClassToNotice(tc: string): NoticeTone {
   }
 }
 
+/**
+ * Tempdoc 941 F5 — friendly relative time ("3 minutes ago"), the same formatter the inbox drawer
+ * moved to in 586 P-1c. `toLocaleTimeString()` rendered "19:35:18 GMT+0200 (Central European
+ * Summer Time)" into a 24rem overlay: a wall-clock reading of a machine's timezone tells a user
+ * nothing about an event they are looking at right now.
+ *
+ * Returns '' — not the raw ISO — for empty/unparseable input, so the caller can drop the meta line
+ * entirely rather than fall back to the other machine-facing spelling of the same value.
+ */
 function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString();
-  } catch {
-    return iso;
+  return formatRelativeIso(iso);
+}
+
+/**
+ * Tempdoc 941 F5 — the toast's headline for a recoverable-health advisory.
+ *
+ * It used to be the class chrome's fixed label, "Recoverable condition": true of every advisory in
+ * the class and therefore about nothing. Sandbox round 18 hit it by pressing Add Folder during an
+ * index rebuild — the toast named neither the index nor the rebuild, and its only concrete word was
+ * `rebuild-index`, an operation id leaking out of the action button. This routes the conditionId
+ * through present({kind:'condition'}), the same projection the inbox drawer's deriveTitle uses.
+ */
+function toastTitle(
+  classId: string,
+  chromeLabel: string,
+  extras: Record<string, unknown>,
+): string {
+  if (classId === 'operation.completed') {
+    const opId = typeof extras['operationId'] === 'string' ? extras['operationId'] : '';
+    return opId ? present({ kind: 'operation', id: opId }).label : classId;
   }
+  if (classId === 'health.recoverable') {
+    const condId = typeof extras['conditionId'] === 'string' ? extras['conditionId'] : '';
+    if (condId) return present({ kind: 'condition', id: condId }).label;
+  }
+  return chromeLabel;
 }
 
 if (

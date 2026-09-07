@@ -11,7 +11,9 @@
  *   - Click on toast → store.acknowledge + dismiss.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // Tempdoc 655 long-term design pass — mocked before the component import below so the
 // OS-notification wiring inside AdvisoryToastHost.onSnapshot can be observed/controlled.
@@ -34,6 +36,8 @@ import type {
   AdvisorySnapshot,
   AdvisoryStore,
 } from './AdvisoryStore.js';
+import { __resetForTest, __seedForTest } from '../../../i18n/resourceCatalog.js';
+import { __resetUiModeForTest, setUiMode } from '../../state/uiModeState.js';
 
 class StubAdvisoryStore {
   private listeners = new Set<AdvisoryListener>();
@@ -593,5 +597,171 @@ describe('AdvisoryToastHost — tempdoc 655 desktop-notification escalation', ()
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(notifyMocks.isWindowFocused).not.toHaveBeenCalled();
     expect(notifyMocks.sendDesktopNotification).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Tempdoc 941 F5 — the toast a first-time user sees for a recoverable health condition.
+ *
+ * Sandbox round 18 pressed Library → Add Folder during an index rebuild and got a toast whose
+ * headline was the class-generic "Recoverable condition", whose only concrete word was the
+ * operation id segment `rebuild-index`, and whose timestamp was a raw wall clock
+ * ("19:35:18 GMT+0200 (Central European Summer Time)"). Nothing in it said what had happened or
+ * what to do.
+ *
+ * The fixture is the real wire shape: HealthRecoveryProjector.projectCondition puts
+ * {conditionId, severity, subject, reason} in classExtras, carries the condition's `recovery` as
+ * primaryAction and the event's i18nKey as bodyI18nKey
+ * (modules/app-observability/src/main/java/io/justsearch/app/observability/advisory/HealthRecoveryProjector.java:90-103);
+ * the index.unavailable ↔ `health-events.index.unavailable.message` ↔ `core.rebuild-index` triple
+ * is pinned by modules/ui/src/test/java/io/justsearch/ui/api/HealthEventStreamControllerTest.java:130-134
+ * and modules/app-observability/src/test/java/io/justsearch/app/observability/health/ConditionStoreTest.java:181.
+ */
+describe('AdvisoryToastHost — tempdoc 941 F5 recoverable-condition copy', () => {
+  const CONDITION_ID = 'index.unavailable';
+  const RECOVERY_OP = 'core.rebuild-index';
+  const BODY_KEY = 'health-events.index.unavailable.message';
+
+  /** The authored sentence, read from the backend catalog rather than restated here. */
+  function catalogMessage(key: string): string {
+    const src = readFileSync(
+      resolve(process.cwd(), '../app-api/src/main/resources/messages/health-events.en.properties'),
+      'utf8',
+    );
+    const match = new RegExp(`^${key.replace(/\./g, '\\.')}\\s*=\\s*(.+)$`, 'm').exec(src);
+    expect(match, `${key} must exist in health-events.en.properties`).toBeTruthy();
+    return match![1]!.trim();
+  }
+
+  function recoverableRec(occurredAt: string): AdvisoryRecord {
+    return {
+      key: `health.recoverable:${CONDITION_ID}`,
+      event: {
+        classId: 'health.recoverable',
+        id: `health.recoverable:${CONDITION_ID}`,
+        occurredAt,
+        renderHint: 'PERSISTED',
+        diagnosticsLink: null,
+        provenance: null,
+        primaryAction: { target: RECOVERY_OP, defaultArgsJson: '{}' },
+        primaryActionKind: null,
+        bodyI18nKey: BODY_KEY,
+        classExtras: {
+          conditionId: CONDITION_ID,
+          severity: 'ERROR',
+          subject: 'worker',
+          reason: 'index.not_healthy',
+        },
+      },
+      acknowledged: false,
+      sourceRenderHint: 'PERSISTED',
+      origin: 'stream',
+    };
+  }
+
+  async function showRecoverable(): Promise<AdvisoryToastHost> {
+    const store = new StubAdvisoryStore();
+    const el = make(store as unknown as AdvisoryStore);
+    store.push({ advisories: [], lastFrameKind: 'snapshot' });
+    await el.updateComplete;
+    store.push({
+      // Three minutes ago: old enough to render a relative unit, recent enough that the assertion
+      // does not depend on the day/week buckets.
+      advisories: [recoverableRec(new Date(Date.now() - 3 * 60_000).toISOString())],
+      lastFrameKind: 'update',
+    });
+    await el.updateComplete;
+    expect(el.visible.length).toBe(1);
+    return el;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    __resetUiModeForTest();
+    __seedForTest({ [BODY_KEY]: catalogMessage(BODY_KEY) });
+  });
+
+  afterEach(() => {
+    __resetForTest();
+    __resetUiModeForTest();
+  });
+
+  it('headlines the condition and states it — no internal id, no class-generic label', async () => {
+    const el = await showRecoverable();
+    const title = el.shadowRoot?.querySelector('.title') as HTMLElement;
+    const titleText = (title.textContent ?? '').trim();
+
+    expect(titleText.length).toBeGreaterThan(0);
+    // The three things round 18 actually showed: the class label (true of every advisory in the
+    // class, so about nothing) and the two machine ids.
+    expect(titleText).not.toContain('Recoverable condition');
+    expect(titleText).not.toContain(CONDITION_ID);
+    expect(titleText).not.toContain('rebuild-index');
+
+    // The advisory's own authored sentence — the toast rendered no body at all before.
+    const body = el.shadowRoot?.querySelector('[data-testid="toast-body"]') as HTMLElement;
+    expect(body).not.toBeNull();
+    expect((body.textContent ?? '').trim()).toBe(catalogMessage(BODY_KEY));
+  });
+
+  it('times the toast in relative words, not a wall clock', async () => {
+    const el = await showRecoverable();
+    const meta = el.shadowRoot?.querySelector('.meta') as HTMLElement;
+    const metaText = (meta.textContent ?? '').trim();
+
+    expect(metaText).toMatch(/(ago|just now)/);
+    // `toLocaleTimeString()` produced "19:35:18 GMT+0200 (Central European Summer Time)". Assert
+    // against the clock SHAPE as well as the zone token — a happy-dom locale that omits the zone
+    // name would still emit the h:mm:ss reading, and that is the part that tells a user nothing.
+    expect(metaText).not.toContain('GMT');
+    expect(metaText).not.toMatch(/\d{1,2}:\d{2}:\d{2}/);
+  });
+
+  it('labels the recovery button from the operation, not the id segment', async () => {
+    const el = await showRecoverable();
+    const button = el.shadowRoot?.querySelector('.action-btn') as HTMLElement;
+    const label = (button.textContent ?? '').trim();
+
+    // `action.target.split('.').pop()` is where the screenshot's `rebuild-index` came from.
+    expect(label).not.toBe('rebuild-index');
+    expect(label).not.toContain(RECOVERY_OP);
+    // present({kind:'operation'}) humanizes when the operation catalog has not booted (the state a
+    // unit test is in); with a booted catalog it resolves the authored label instead.
+    expect(label).toBe('Rebuild Index');
+  });
+
+  // 941 F4 was an unsubstituted `{errorClass}` reaching the Health surface as literal copy. The
+  // toast renders the same catalog templates from the same keys, so it gets the same substitution
+  // authority: classExtras ARE the parameters (HealthRecoveryProjector.projectLifecycle copies the
+  // emitter's attribute map into extras). No advisory carries a parameterized message today — this
+  // pins the path shut before one does.
+  it('substitutes a parameterized body from classExtras, and declines rather than showing a brace', async () => {
+    __seedForTest({ [BODY_KEY]: 'The indexer stopped while reading {path}.' });
+    const el = await showRecoverable();
+    const body = el.shadowRoot?.querySelector('[data-testid="toast-body"]') as HTMLElement;
+    // `path` is not among the condition projection's extras (conditionId/severity/subject/reason),
+    // so the sentence is declined outright — the toast shows no body rather than a raw `{path}`.
+    expect(body).toBeNull();
+    expect(el.shadowRoot?.textContent ?? '').not.toContain('{path}');
+
+    document.body.innerHTML = '';
+    __seedForTest({ [BODY_KEY]: 'The indexer stopped while reading {subject}.' });
+    const el2 = await showRecoverable();
+    const body2 = el2.shadowRoot?.querySelector('[data-testid="toast-body"]') as HTMLElement;
+    expect((body2.textContent ?? '').trim()).toBe('The indexer stopped while reading worker.');
+  });
+
+  it('keeps the ids — behind Detailed mode, not in the headline', async () => {
+    const el = await showRecoverable();
+    expect(el.shadowRoot?.querySelector('[data-testid="toast-detail-ids"]')).toBeNull();
+
+    setUiMode('advanced');
+    await el.updateComplete;
+
+    const detail = el.shadowRoot?.querySelector('[data-testid="toast-detail-ids"]') as HTMLElement;
+    expect(detail, 'Detailed mode must still expose the ids for diagnosis').not.toBeNull();
+    const detailText = detail.textContent ?? '';
+    expect(detailText).toContain(CONDITION_ID);
+    expect(detailText).toContain(RECOVERY_OP);
   });
 });
