@@ -291,8 +291,13 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   and never once used the literal substring `unified-chat`, so a genuinely
   well-covered surface read as uncovered at finalize. **Every chat-surface capture's
   filename must contain `unified-chat`** (e.g. `12-unified-chat-search.png`,
-  `13-unified-chat-ask-answer.png`) — do not rely on a looser word like "chat" or
-  "search" alone to satisfy this token.
+  `13-unified-chat-rag-ask-answer.png`) — do not rely on a looser word like "chat" or
+  "search" alone to satisfy this token. The `shape` items carry a SECOND token of
+  their own (`core.rag-ask` → `rag-ask`, `core.extract` → `extract`, `core.agent-run`
+  → `agent-run`): the Documents-rung answer capture must carry `rag-ask` as well as
+  `unified-chat`, in ONE filename — one file naming both tokens is the sanctioned way
+  to credit both (round 18 named its Documents-rung answer `…-unified-chat-ask-answer.png`
+  and the shape read as uncovered at finalize).
 - **At finalize (host-side)**, the round's coverage is asserted by diffing the
   must-touch set against the exercised endpoints + screenshots. Because the sandbox
   has no Python, this runs on the **host** against the persisted evidence dir after the
