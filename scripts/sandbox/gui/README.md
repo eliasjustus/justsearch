@@ -14,11 +14,52 @@ alongside `collect-evidence.ps1`.
 | Script | Purpose |
 |---|---|
 | `JustSearchGui.psm1` | Shared module — P/Invoke boilerplate, window connect/click/capture, and the assert-then-act primitive. The other scripts are thin wrappers over this; import it directly if you're scripting something ad hoc (`Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force`). |
-| `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. Prints the PHYSICAL-pixel dimensions actually written (read back from the saved PNG), not `Screen.PrimaryScreen.Bounds`, which can be DPI-scaled and mismatch what got saved. |
+| `snap.ps1` | Full-desktop capture (`CopyFromScreen`), **falling back to a per-window `PrintWindow` capture when the desktop DC is unavailable** (see *The desktop DC is not guaranteed* below). Use for the Step-0 capability probe and whole-screen evidence. Prints the PHYSICAL-pixel dimensions actually written (read back from the saved PNG), not `Screen.PrimaryScreen.Bounds`, which can be DPI-scaled and mismatch what got saved, plus which path produced them (`[full desktop (CopyFromScreen)]` / `[per-window PrintWindow(PW_RENDERFULLCONTENT)]`). |
 | `win-capture.ps1` | Locate + focus + capture ONE window by process name (`GetWindowRect` + `SetForegroundWindow`). Optional `-Keys` sends keystrokes before capturing. |
 | `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus, **and again at capture time** — after the `-DelayMs` sleep it re-asserts the clicked hwnd is still foreground and exits 1 WITHOUT writing a file if it is not (round 16 captured a terminal window under a health-surface filename this way). `-DelayMs` is capped at 3000 ms, checked before the click so a refusal has no side effect; `NO WINDOW` failures echo the actual `-ProcName` value searched for, not a hardcoded default. |
 | `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). **The wrapper's parameters are `-In`/`-Out`** (`-InPath`/`-OutPath` belong to the module function it calls — see the table below). Dimension parameters are `-X -Y -W -H`, not `-Width`/`-Height` -- passing the wrong flag names fails loud instead of silently cropping the 100x100 default. |
 | `gui-approve.ps1` | **EXAMPLE**, not a generic tool — see below. |
+| `convert-cu-images.ps1` | Repairs computer-use screenshots written as **JPEG bytes under `.png` filenames** (round 18): `-Directory <evidence dir> [-Recurse]`, converts in place, exits non-zero if a `.png` is neither PNG nor JPEG. Better: check the magic bytes after your FIRST capture instead of repairing at finalize. |
+
+## The desktop DC is not guaranteed — `snap.ps1` falls back per-window
+
+**Symptom (round 18, tempdoc 941 finding H2):** on Windows Sandbox's RDP
+indirect display (`rdpidd.inf`), every
+`System.Drawing.Graphics.CopyFromScreen` throws
+**`The handle is invalid` (E_HANDLE)** — under PowerShell 7 *and* 5.1 — and
+no PNG is written at all. Per-window capture and Windows Graphics Capture
+worked on the same machine in the same session, so this is the desktop
+device context specifically, not "capture is unavailable".
+
+`snap.ps1` therefore no longer dead-ends there. When the desktop capture
+throws for any reason other than an unwritable `-Out`, it retries with
+`Save-AppShotPrintWindow` — `PrintWindow(PW_RENDERFULLCONTENT)`, which asks
+the window to render itself and needs no desktop DC — against:
+
+1. an explicit `-Hwnd <handle>` or `-ProcessName <name>` (`-ProcName` is an
+   accepted alias, since that is what `win-capture.ps1` calls it), else
+2. the JustSearch shell, located by the **OS process `ExecutablePath`**
+   (`%LOCALAPPDATA%\JustSearch\JustSearch.exe`, override with
+   `-ProcessPath`). Never identify the shell by a computer-use tool's app
+   identifier — round 18's named a per-harness LocalCache copy of the app,
+   not the process the installer runs.
+
+`Save-AppShot` (so `win-capture.ps1` / `click.ps1` too) retries through the
+same primitive automatically, so a window capture does not need the desktop
+DC either.
+
+Two limits worth stating plainly: the fallback captures **ONE window**, so a
+dialog or toast outside it is not in the frame (address those by `-Hwnd`),
+and an unwritable `-Out` still exits 1 immediately with no fallback — the
+fallback is for a dead capture *source*, not a bad path.
+
+`-ForceWindowCapture` takes the per-window path directly with no desktop
+attempt. That is how the fallback is exercised on a normal display (there is
+no way to make a healthy desktop DC throw E_HANDLE on demand):
+
+```powershell
+.\snap.ps1 -Out probe.png -ForceWindowCapture -ProcessName JustSearch
+```
 
 ## Parameter-signature quick reference (round 12: `-Path` silently wrote ZERO PNGs for 10 minutes)
 
@@ -40,6 +81,8 @@ comment; module parameter names are here.
 | `Connect-App` | either `-ProcName` (default `"JustSearch"`) **or** `-Hwnd <IntPtr>`, plus `-FocusDelayMs` (default `700`), `-MaxFocusAttempts` (default `4`) | Produces the connection object (`$conn` in every wrapper script's examples) that every other function below needs -- `$conn.Handle`, `$conn.Focused`, `$conn.Process`, `$conn.Foreground`. The README used to show `$conn.Handle` without ever naming this function. **`-Hwnd` addresses a window that is NOT a process's `MainWindowHandle`** -- the shell **Properties** dialog and the NSIS installer/uninstaller wizards, which the `-ProcName` lookup structurally cannot reach (round 16 needed all three for must-watch captures and rebuilt the plumbing in a scratchpad that was wiped with the sandbox). Everything after the lookup -- restore, foreground, ALT-nudge retry, `.Focused` verification -- is the same code path, so the fail-closed contract is identical. `.Process` is best-effort under `-Hwnd` (resolved from the owning pid) and can be `$null`; `.Handle`/`.Focused` are the load-bearing fields. Enumerate candidate hwnds with `[System.Diagnostics.Process]::GetProcesses()` / `EnumWindows` or read one off the process that owns the dialog. |
 | `Save-DesktopShot` | `-Out` | Full-desktop capture. **NOT `-Path`.** |
 | `Save-AppShot` | `-Handle`, `-Out` | Captures ONE window by hwnd (pass `$conn.Handle`). **NOT `-Path`, and there is NO `-ProcName`** on this function -- unlike `win-capture.ps1`, which takes `-ProcName` and calls `Connect-App` + `Save-AppShot` internally. |
+| `Save-AppShotPrintWindow` | `-Handle`, `-Out` | Same shape and same fail-loud contract as `Save-AppShot`, but captures via `PrintWindow(PW_RENDERFULLCONTENT)` instead of the desktop DC — the path that survives the E_HANDLE display stack above. `Save-AppShot` retries through it automatically; call it directly only when you want to force it. |
+| `Get-AppShellWindow` | none required; `-ProcessPath` (default `%LOCALAPPDATA%\JustSearch\JustSearch.exe`), `-ProcessName` | Finds the shell's top-level window by OS process `ExecutablePath` and does **NOT** focus, restore or touch it (that is `Connect-App`'s job). Returns `$null` if nothing matches, else `.Process`/`.Handle`/`.Path`. Use it when you need a hwnd without stealing foreground. |
 | `Save-AppShotRegion` | `-InPath`, `-OutPath`, `-X -Y -W -H`, `-Scale` (default `3`) | Crop + magnify an EXISTING PNG. Different shape from the two above: `-InPath`/`-OutPath`, not `-Out`. |
 | `Invoke-AppClick` | `-Connection`, `-X`, `-Y` | Clicks window-relative `-X`/`-Y` inside the window described by a `Connect-App` connection object. **Takes `-Connection` (the whole `$conn` object from `Connect-App`), NOT `-Handle`.** Passing `-Handle` binds to nothing, PowerShell does not error on the unrecognized parameter inside a `try/catch` that swallows it, and the click silently no-ops while the function still returns -- a round guessed `-Handle` (extrapolating from `Save-AppShot`'s shape) and got three confidently-named screenshots of a state the click never reached (round 15, tempdoc 817). Fails closed (returns `$false`, no click sent) if `$Connection.Focused` is `$false`. |
 | `Send-AppKeys` | `-Keys` | Raw `SendKeys` typing to whatever element currently has focus. **Takes `-Keys` only -- there is no connection/window parameter on this function** (unlike `Invoke-AppClick`/`win-capture.ps1`, which do take one). Click the target field first (focus is not sticky -- gotcha #1 below); do not pass `-Handle` or `-Connection` here, it will bind to nothing. |
