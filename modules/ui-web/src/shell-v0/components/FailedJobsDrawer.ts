@@ -274,6 +274,14 @@ export class FailedJobsDrawer extends JfElement {
       color: var(--text-danger);
       overflow-wrap: anywhere;
     }
+    /* Tempdoc 941 F2 — the scan that produced this failure. Secondary tone: it is provenance for
+       correlating a row with a scan in Activity, not part of the failure's explanation. */
+    .row-scan {
+      margin-top: 0.15rem;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+      overflow-wrap: anywhere;
+    }
     /* 885 item 21b — "we never managed to read it" is a WAITING outcome, not a verdict on the file,
        so it carries the secondary tone rather than the danger tone the parse-failure line uses. */
     .row-gaveup {
@@ -339,6 +347,14 @@ export class FailedJobsDrawer extends JfElement {
     // actually happened and what makes the queue try again, so the error stays as detail rather
     // than as the explanation.
     const exhausted = r.state.toUpperCase() === JOB_STATE_RETRY_EXHAUSTED;
+    // Tempdoc 941 F2 — the by-prefix wire has carried `scanId` since 911 but the drawer never
+    // rendered it, so a failed row could not be tied back to the scan that produced it. `""` is the
+    // contract's "no owning scan" (single-file ingest / watcher / pre-scan row), NOT an unknown —
+    // so that case renders no line at all rather than an empty or invented one. `toRow` does not
+    // normalize `scanId` (it coerces only the three fields dereferenced unconditionally), so the
+    // prod-posture degrade can still deliver a non-string here.
+    const scanId = typeof r.scanId === 'string' ? r.scanId : '';
+    const scanShort = scanId.length > 8 ? `${scanId.slice(0, 8)}…` : scanId;
     // Per-row retry/cancel reuse the shared <jf-row-actions> (tempdoc 599 §16.1 Move 1 + §17.2): it
     // reads the failed-jobs Resource's itemOperations and dispatches the user-invocable Operation with
     // {pathHash: rowKey} — no hand-rolled button or direct OperationClient call.
@@ -352,6 +368,11 @@ export class FailedJobsDrawer extends JfElement {
               </div>`
             : nothing}
           ${r.errorMessage ? html`<div class="row-error">${r.errorMessage}</div>` : nothing}
+          ${scanId
+            ? html`<div class="row-scan" data-testid="failed-job-scan" title=${scanId}>
+                Scan ${scanShort}
+              </div>`
+            : nothing}
         </div>
         <jf-row-actions
           resource-id=${RESOURCE_ID}

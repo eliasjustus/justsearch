@@ -252,6 +252,48 @@ describe('FailedJobsDrawer', () => {
     }
   });
 
+  it('renders the owning scan id per row, and omits the line for a row with no scan (941 F2)', async () => {
+    // Tempdoc 911 plumbed `scanId` all the way to this wire; the drawer never rendered it, so a
+    // failed row could not be tied to the scan that produced it. `""` is the contract's declared
+    // "no owning scan" (single-file ingest / watcher / pre-scan row) — that row must render NO scan
+    // line rather than an empty or invented one, which is the half this test exists to pin.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: unknown) => {
+      if (String(url).includes('/api/indexing-jobs/failed/by-prefix')) {
+        return new Response(
+          byPrefixBody([
+            job({ pathHash: 'h-scan', scanId: '959dd932-4c1e-4a77-9f0e-2b3c4d5e6f70' }),
+            job({ pathHash: 'h-noscan', scanId: '' }),
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const el = document.createElement('jf-failed-jobs-drawer') as FailedJobsDrawer;
+      el.apiBase = 'http://x';
+      document.body.appendChild(el);
+      await settle(el);
+      openFailedJobs('folder-hash');
+      await pump(el);
+
+      const rows = Array.from(el.shadowRoot?.querySelectorAll('.row') ?? []);
+      expect(rows.length).toBe(2);
+      const scanLine = rows[0]!.querySelector('[data-testid="failed-job-scan"]');
+      expect(scanLine, 'a row carrying a scanId must show it').toBeTruthy();
+      expect((scanLine!.textContent ?? '').replace(/\s+/g, ' ').trim()).toBe('Scan 959dd932…');
+      // Truncated for the row, but the full id stays recoverable without another round trip.
+      expect(scanLine!.getAttribute('title')).toBe('959dd932-4c1e-4a77-9f0e-2b3c4d5e6f70');
+
+      expect(rows[1]!.querySelector('[data-testid="failed-job-scan"]')).toBeNull();
+      expect((rows[1]!.textContent ?? '')).not.toContain('Scan');
+      el.remove();
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   it('a non-exhausted state renders WITHOUT the "gave up" line (only RETRY_EXHAUSTED opts in)', async () => {
     // The gave-up arm keys on one exact spelling. Any other state — including one this drawer has
     // never heard of — must fall through to the plain rendering rather than be treated as the
