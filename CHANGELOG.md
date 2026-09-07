@@ -78,7 +78,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 - The updater's release sequence is derived from published releases, so renaming the build workflow can no longer permanently block updates (#497)
 - An agent request that selects tools the index cannot offer yet says which tools are withheld and why, instead of a bare "no tools available"
 - Tool failures during a Worker restart reach the model as "the index is restarting, retry shortly" instead of a raw internal error, and the failure class is carried on the wire
-- The failed-files drawer shows the real scan id of a failed job instead of a placeholder
+- The failed-files drawer shows the real scan id of a failed job instead of a placeholder, and the drawer now displays it per row (#702)
+- Settings labels no longer render as raw `settings.*` keys when the window boots while the backend is restarting, or after an upgrade with a cached catalog (#702)
+- A failed-file health event reads as a sentence naming the file and the error, instead of an unfilled template and an attribute dump (#702)
+- The notification shown when a folder is added during an index rebuild uses plain words and a relative time, not an internal condition id and a raw clock (#702)
 - Undoing an agent file operation no longer garbles non-ASCII text in the response; every JSON response now declares UTF-8
 - An agent transcript written while the index was restarting is indexed once the index is back, instead of being skipped forever
 
