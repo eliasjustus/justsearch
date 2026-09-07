@@ -40,6 +40,7 @@ import { sendDesktopNotification } from '../../../utils/notify.js';
 import { present } from '../../display/present.js';
 import { formatRelativeIso } from '../../../utils/relativeTime.js';
 import { getUiMode, subscribeUiMode, type UiMode } from '../../state/uiModeState.js';
+import { interpolateMessage } from '../../../i18n/resourceCatalog.js';
 
 const TOAST_DURATION_MS = 5000;
 
@@ -506,9 +507,20 @@ export class AdvisoryToastHost extends JfElement {
       // `bodyI18nKey`; the toast rendered only the class label, a timestamp and a button, so the
       // overlay a first-time user actually sees was the one channel that never said what happened
       // or what to do about it.
+      //
+      // The catalog sentence is a TEMPLATE (`health-events.<id>.message` may carry `{name}`
+      // placeholders), and 941 F4 is what an unsubstituted one looks like on screen. The
+      // advisory's classExtras are exactly its parameters — HealthRecoveryProjector.projectLifecycle
+      // copies the emitter's attribute map into extras, and projectCondition puts subject/reason/
+      // severity there — so the same interpolation authority the activity row uses applies here.
+      // Declining (null) drops the body rather than showing a brace: no advisory carries a
+      // parameterized message today, so this closes the path before it can be walked.
       const body = isLocal || !t.record.event.bodyI18nKey
         ? ''
-        : present({ kind: 'resource', key: t.record.event.bodyI18nKey }).label;
+        : (interpolateMessage(
+            present({ kind: 'resource', key: t.record.event.bodyI18nKey }).label,
+            extras,
+          ) ?? '');
       // The internal ids are kept, not deleted — moved out of the headline and behind the app-wide
       // Detailed disclosure (uiModeState), so a diagnosing user can still correlate the toast with
       // a condition id or an operation id without a first-time user being shown either.

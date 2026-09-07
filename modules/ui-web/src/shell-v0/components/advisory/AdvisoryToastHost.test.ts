@@ -730,6 +730,27 @@ describe('AdvisoryToastHost — tempdoc 941 F5 recoverable-condition copy', () =
     expect(label).toBe('Rebuild Index');
   });
 
+  // 941 F4 was an unsubstituted `{errorClass}` reaching the Health surface as literal copy. The
+  // toast renders the same catalog templates from the same keys, so it gets the same substitution
+  // authority: classExtras ARE the parameters (HealthRecoveryProjector.projectLifecycle copies the
+  // emitter's attribute map into extras). No advisory carries a parameterized message today — this
+  // pins the path shut before one does.
+  it('substitutes a parameterized body from classExtras, and declines rather than showing a brace', async () => {
+    __seedForTest({ [BODY_KEY]: 'The indexer stopped while reading {path}.' });
+    const el = await showRecoverable();
+    const body = el.shadowRoot?.querySelector('[data-testid="toast-body"]') as HTMLElement;
+    // `path` is not among the condition projection's extras (conditionId/severity/subject/reason),
+    // so the sentence is declined outright — the toast shows no body rather than a raw `{path}`.
+    expect(body).toBeNull();
+    expect(el.shadowRoot?.textContent ?? '').not.toContain('{path}');
+
+    document.body.innerHTML = '';
+    __seedForTest({ [BODY_KEY]: 'The indexer stopped while reading {subject}.' });
+    const el2 = await showRecoverable();
+    const body2 = el2.shadowRoot?.querySelector('[data-testid="toast-body"]') as HTMLElement;
+    expect((body2.textContent ?? '').trim()).toBe('The indexer stopped while reading worker.');
+  });
+
   it('keeps the ids — behind Detailed mode, not in the headline', async () => {
     const el = await showRecoverable();
     expect(el.shadowRoot?.querySelector('[data-testid="toast-detail-ids"]')).toBeNull();
