@@ -195,21 +195,63 @@ export async function bootResourceCatalog(baseUrl: string): Promise<void> {
  * replacer — the bug §28 fixed). `bootResourceCatalog` stays separate: it owns the
  * extra localStorage/ETag/304 caching, but it too merges (see its note).
  *
- * Best-effort: a missing/!ok/failed fetch leaves `coreCatalog` untouched and the
- * affected keys fall back to raw-key passthrough (humanizeId / deriveTitle upstream).
+ * Best-effort but NOT one-shot: an unreachable/!ok/malformed answer is retried on the schedule
+ * below before the namespace is abandoned. Once the budget is exhausted the affected keys fall
+ * back to raw-key passthrough (humanizeId / deriveTitle upstream).
+ *
+ * Tempdoc 941 round-18 F3 — this used to be a single terminal attempt (`if (!response.ok) return;`
+ * plus a swallowing `catch`), and that is how a Settings window renders `settings.group.general`
+ * as its own key. `registry-surface` is the ONLY source of every `settings.*` label
+ * (`views/settingsRegister.ts`), the boot is fired once at module evaluation from `../i18n.ts`,
+ * and — unlike `bootResourceCatalog` — nothing here persists a body, so there is no cached copy
+ * to fall back on. The shell reloads itself the instant the Rust side reports a new backend
+ * instance (`main.jsx` `installBackendRestartBridge` → `window.location.reload()`), so the boot
+ * fetch routinely races a Head that is up enough to publish a manifest but not yet answering
+ * `/api/messages/**`. One lost race = raw keys for the rest of that document's life. Consumers
+ * already re-render on a late merge (`onCatalogUpdated`, 855 F2 S2), so retrying is enough.
+ *
+ * `cache: 'no-cache'` forces an end-to-end revalidation: the catalog is served with
+ * `Cache-Control: public, max-age=3600` and a strong ETag
+ * (`MessageCatalogController.CACHE_CONTROL`), so a webview whose HTTP cache survived an
+ * over-install could otherwise satisfy this fetch from the PREVIOUS version's catalog body —
+ * an answer that resolves the keys that version knew and no others.
  */
+const CATALOG_RETRY_DELAYS_MS: readonly number[] = [250, 1000, 3000, 8000, 20000];
+
+async function fetchCatalogMessages(
+  baseUrl: string,
+  namespace: string,
+): Promise<Record<string, string> | null> {
+  const response = await fetch(`${baseUrl}/api/messages/${namespace}/en`, { cache: 'no-cache' });
+  if (!response.ok) return null;
+  const body = (await response.json()) as ResourceCatalogResponse;
+  if (body?.messages && typeof body.messages === 'object') return body.messages;
+  return null;
+}
+
 async function bootMessageCatalog(baseUrl: string, namespace: string): Promise<void> {
   if (!baseUrl) return;
-  try {
-    const response = await fetch(`${baseUrl}/api/messages/${namespace}/en`);
-    if (!response.ok) return;
-    const body = (await response.json()) as ResourceCatalogResponse;
-    if (body?.messages && typeof body.messages === 'object') {
-      Object.assign(coreCatalog, body.messages);
-      notifyCatalogUpdated();
+  for (let attempt = 0; ; attempt++) {
+    let messages: Record<string, string> | null = null;
+    try {
+      messages = await fetchCatalogMessages(baseUrl, namespace);
+    } catch {
+      // unreachable backend — indistinguishable from a !ok answer here; both retry below
     }
-  } catch {
-    // best-effort — affected labels fall back to their upstream id-derived default
+    if (messages) {
+      Object.assign(coreCatalog, messages);
+      notifyCatalogUpdated();
+      return;
+    }
+    const delay = CATALOG_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) {
+      console.debug(
+        `[resourceCatalog] /api/messages/${namespace}/en unavailable after ` +
+        `${CATALOG_RETRY_DELAYS_MS.length + 1} attempts; keys in this namespace render raw`,
+      );
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 

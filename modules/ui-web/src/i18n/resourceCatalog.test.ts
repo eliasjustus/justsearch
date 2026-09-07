@@ -168,18 +168,31 @@ describe('resourceCatalog', () => {
       mod.__resetForTest();
       await mod.bootWorkflowCatalog('http://localhost:33221');
 
+      // 941 F3: the boot forces an end-to-end revalidation so a webview HTTP-cache entry that
+      // outlived an over-install cannot answer with the previous version's catalog body.
       expect(globalThis.fetch).toHaveBeenCalledWith(
         'http://localhost:33221/api/messages/registry-workflow/en',
+        { cache: 'no-cache' },
       );
       expect(mod.localizeResourceKey('registry-workflow.research-brief.label'))
         .toBe('Research brief');
     });
 
-    it('falls back to raw-key passthrough when the fetch fails', async () => {
+    it('falls back to raw-key passthrough only after the retry budget is exhausted', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'));
       const mod = await import('./resourceCatalog');
       mod.__resetForTest();
-      await mod.bootWorkflowCatalog('http://localhost:33221');
+      vi.useFakeTimers();
+      try {
+        const boot = mod.bootWorkflowCatalog('http://localhost:33221');
+        await vi.advanceTimersByTimeAsync(60_000);
+        await boot;
+      } finally {
+        vi.useRealTimers();
+      }
+      // 941 F3: one lost race must not abandon the namespace — the boot retried before giving up.
+      expect((globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length)
+        .toBeGreaterThan(1);
       // Mirrors present.ts: an unresolved labelKey => humanizeId fallback upstream.
       expect(mod.localizeResourceKey('registry-workflow.demo-compose.label'))
         .toBe('registry-workflow.demo-compose.label');
@@ -346,7 +359,14 @@ describe('resourceCatalog', () => {
       globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 }) as unknown as typeof fetch;
       const calls: number[] = [];
       const unsubscribe = mod.onCatalogUpdated(() => calls.push(1));
-      await mod.bootWorkflowCatalog('http://localhost:1234');
+      vi.useFakeTimers();
+      try {
+        const boot = mod.bootWorkflowCatalog('http://localhost:1234');
+        await vi.advanceTimersByTimeAsync(60_000);
+        await boot;
+      } finally {
+        vi.useRealTimers();
+      }
       expect(calls.length).toBe(0);
       unsubscribe();
     });
